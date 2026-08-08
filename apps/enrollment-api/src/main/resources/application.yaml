@@ -2,6 +2,12 @@ spring:
   application:
     name: pulsemetry
 
+  jackson:
+    deserialization:
+      # 계약에 없는 필드가 오면 400 invalid_request 다 (PLAN.md §6.2).
+      # 관대하게 받으면 클라이언트의 오타를 조용히 삼켜 디버깅이 불가능해진다.
+      fail-on-unknown-properties: true
+
   datasource:
     # 로컬 기본값은 docker-compose.yml 의 postgres 서비스를 가리킨다.
     # 운영에서는 환경변수로 덮어쓴다.

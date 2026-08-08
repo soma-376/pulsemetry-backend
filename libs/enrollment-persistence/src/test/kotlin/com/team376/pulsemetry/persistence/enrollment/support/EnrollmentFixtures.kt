@@ -105,8 +105,11 @@ object EnrollmentFixtures {
 	)
 
 	/**
-	 * 클라이언트 `Manifest.Validate()` 를 통과하는 최소 형태다 (PLAN.md §9 3·4번).
-	 * `otlp.endpoint` 는 https 여야 하고 `schema_version` 은 1 을 넘으면 안 된다.
+	 * `telemetryctl/contracts/enrollment-manifest.schema.json` 을 만족하는 manifest.
+	 *
+	 * 클라이언트가 `DisallowUnknownFields` 로 한 번 더 검증하므로 필수 키를 빠짐없이 넣는다:
+	 * `signals` 는 logs·metrics·traces 셋 다, `privacy` 는 collect_* 다섯 개가 필수다.
+	 * `otlp.endpoint` 는 https 여야 하고 `schema_version` 은 1 을 넘으면 안 된다 (PLAN.md §9 3·4번).
 	 */
 	const val DEFAULT_MANIFEST_JSON: String = """
 		{
@@ -114,10 +117,19 @@ object EnrollmentFixtures {
 		  "config_revision": 1,
 		  "otlp": {
 		    "endpoint": "https://otlp.pulsemetry.example.com",
-		    "protocol": "http/protobuf"
+		    "protocol": "http/protobuf",
+		    "compression": "gzip",
+		    "timeout_ms": 10000
 		  },
-		  "signals": { "metrics": true, "traces": true, "logs": false },
-		  "privacy": { "redact_prompts": true }
+		  "signals": { "logs": false, "metrics": true, "traces": true },
+		  "privacy": {
+		    "collect_user_prompts": false,
+		    "collect_assistant_responses": false,
+		    "collect_tool_details": false,
+		    "collect_tool_content": false,
+		    "collect_user_email": false,
+		    "collect_raw_api_bodies": false
+		  }
 		}
 	"""
 }

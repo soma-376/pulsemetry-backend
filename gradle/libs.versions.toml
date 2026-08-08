@@ -3,6 +3,8 @@ kotlin = "2.3.21"
 springBoot = "4.1.0"
 springDependencyManagement = "1.1.7"
 jdk = "25"
+# Spring Boot BOM 이 관리하지 않는다. 계약 테스트에서만 쓴다.
+jsonSchemaValidator = "3.0.6"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
@@ -36,3 +38,7 @@ postgresql = { module = "org.postgresql:postgresql" }
 # Testcontainers 2.x 부터 아티팩트 이름에 testcontainers- 접두사가 붙는다.
 testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql" }
 testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter" }
+
+# 계약 테스트가 telemetryctl/contracts/*.schema.json 을 오라클로 쓴다 (PLAN.md R3).
+# 3.x 는 Jackson 3(tools.jackson) 기반이라 Spring Boot 4.1 과 같은 Jackson 을 쓴다.
+json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "jsonSchemaValidator" }
