@@ -1,14 +1,23 @@
 package com.team376.pulsemetry.enrollment.support
 
+import com.team376.pulsemetry.enrollment.secret.SecretToken
 import com.team376.pulsemetry.enrollment.secret.Sha256
+import com.team376.pulsemetry.persistence.enrollment.entity.Installation
+import com.team376.pulsemetry.persistence.enrollment.entity.InstallationCredential
+import com.team376.pulsemetry.persistence.enrollment.entity.InstallationStatus
 import com.team376.pulsemetry.persistence.enrollment.entity.Invitation
 import com.team376.pulsemetry.persistence.enrollment.entity.Manifest
 import com.team376.pulsemetry.persistence.enrollment.entity.Member
 import com.team376.pulsemetry.persistence.enrollment.entity.MemberRole
+import com.team376.pulsemetry.persistence.enrollment.entity.Platform
+import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryToken
 import com.team376.pulsemetry.persistence.enrollment.entity.Tenant
+import com.team376.pulsemetry.persistence.enrollment.repository.InstallationCredentialRepository
+import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.InvitationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.ManifestRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.MemberRepository
+import com.team376.pulsemetry.persistence.enrollment.repository.TelemetryTokenRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TenantRepository
 import org.springframework.jdbc.core.simple.JdbcClient
 import java.time.Instant
@@ -30,6 +39,9 @@ class EnrollmentTestData(
 	private val members: MemberRepository,
 	private val invitations: InvitationRepository,
 	private val manifests: ManifestRepository,
+	private val installations: InstallationRepository,
+	private val credentials: InstallationCredentialRepository,
+	private val telemetryTokens: TelemetryTokenRepository,
 	private val jdbcClient: JdbcClient,
 ) {
 
@@ -98,6 +110,50 @@ class EnrollmentTestData(
 			revokedAt = revokedAt,
 		),
 	)
+
+	fun installation(
+		tenantId: UUID,
+		memberId: UUID,
+		invitationId: UUID,
+		status: InstallationStatus = InstallationStatus.active,
+	): Installation = installations.save(
+		Installation(
+			tenantId = tenantId,
+			memberId = memberId,
+			invitationId = invitationId,
+			platform = Platform.macos,
+			hostname = "my-macbook",
+			architecture = "arm64",
+			clientVersion = "0.1.0",
+			status = status,
+			revokedAt = if (status == InstallationStatus.revoked) Instant.now() else null,
+		),
+	)
+
+	/** 원본 토큰을 돌려준다. DB 에는 해시만 들어간다. */
+	fun credential(installationId: UUID, revoked: Boolean = false): String {
+		val token = SecretToken.installationToken()
+		credentials.save(
+			InstallationCredential(
+				installationId = installationId,
+				credentialHash = Sha256.hex(token),
+				revokedAt = if (revoked) Instant.now() else null,
+			),
+		)
+		return token
+	}
+
+	/** 원본 토큰을 돌려준다. DB 에는 해시만 들어간다. */
+	fun telemetryToken(installationId: UUID): String {
+		val token = SecretToken.telemetryToken()
+		telemetryTokens.save(
+			TelemetryToken(installationId = installationId, tokenHash = Sha256.hex(token)),
+		)
+		return token
+	}
+
+	fun activeTelemetryTokenCount(installationId: UUID): Int =
+		telemetryTokens.findAllByInstallationIdAndRevokedAtIsNull(installationId).size
 
 	fun countRows(table: String): Long =
 		jdbcClient.sql("SELECT count(*) FROM enrollment.$table")

@@ -8,6 +8,10 @@ import com.team376.pulsemetry.persistence.enrollment.entity.Manifest
 import com.team376.pulsemetry.persistence.enrollment.entity.Member
 import com.team376.pulsemetry.persistence.enrollment.entity.Tenant
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
+import org.springframework.data.jpa.repository.Query
+import org.springframework.data.repository.query.Param
+import java.time.Instant
 import java.util.UUID
 
 interface TenantRepository : JpaRepository<Tenant, UUID>
@@ -27,6 +31,28 @@ interface InstallationCredentialRepository : JpaRepository<InstallationCredentia
 	 * 해시가 결정론적이어야 이 조회가 성립한다 — bcrypt·Argon2 를 쓸 수 없는 이유다 (PLAN.md L11).
 	 */
 	fun findByCredentialHash(credentialHash: String): InstallationCredential?
+
+	/**
+	 * 자격증명이 마지막으로 쓰인 시각을 남긴다 (PLAN.md §6.3).
+	 *
+	 * 엔티티 setter 대신 UPDATE 문인 이유는, 같은 트랜잭션에서 도는
+	 * [TelemetryTokenRepository.revokeActiveByInstallationId] 가 영속성 컨텍스트를 비우기 때문이다.
+	 * 비워진 뒤에는 detach 된 엔티티의 변경이 flush 되지 않는다 — 순서에 의존하지 않도록 문장으로 만든다.
+	 *
+	 * @return 영향 행 수. 1이 아니면 자격증명이 사라진 것이다.
+	 */
+	@Modifying(flushAutomatically = true, clearAutomatically = true)
+	@Query(
+		"""
+		UPDATE InstallationCredential c
+		SET c.lastUsedAt = :now
+		WHERE c.id = :id
+		""",
+	)
+	fun touchLastUsedAt(
+		@Param("id") id: UUID,
+		@Param("now") now: Instant,
+	): Int
 }
 
 interface ManifestRepository : JpaRepository<Manifest, UUID> {
