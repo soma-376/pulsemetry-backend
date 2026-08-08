@@ -15,13 +15,13 @@ dependencies {
 	testImplementation(libs.json.schema.validator)
 }
 
+// 계약 테스트는 telemetryctl 의 스키마 파일을 직접 읽는다 (복사본을 두면 드리프트가 생긴다).
+// 로컬에서는 형제 디렉터리에 있고, CI 에서는 telemetryctl 을 따로 체크아웃하므로 env 로 덮어쓴다.
+val contractsDir: String = providers.environmentVariable("PULSEMETRY_CONTRACTS_DIR")
+	.getOrElse(rootProject.projectDir.parentFile.resolve("telemetryctl/contracts").absolutePath)
+
 tasks.withType<Test>().configureEach {
-	// 계약 테스트는 telemetryctl 의 스키마 파일을 직접 읽는다 (복사본을 두면 드리프트가 생긴다).
-	// rootProject 는 pulsemetry-backend 이므로 그 부모가 soma-376 이다.
-	systemProperty(
-		"pulsemetry.contracts.dir",
-		rootProject.projectDir.parentFile.resolve("telemetryctl/contracts").absolutePath,
-	)
+	systemProperty("pulsemetry.contracts.dir", contractsDir)
 
 	// 관리자 키가 비어 있으면 애플리케이션이 뜨지 않는다. 테스트 JVM 전체에 한 번만 주입해
 	// 모든 테스트가 같은 컨텍스트 캐시를 쓰게 한다 (@SpringBootTest(properties=...) 는 캐시를 쪼갠다).
