@@ -1,4 +1,13 @@
 spring:
+  jpa:
+    hibernate:
+      # 앱과 같은 설정. 엔티티와 Flyway DDL 이 어긋나면 컨텍스트가 안 뜬다.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: enrollment
+    open-in-view: false
+
   flyway:
     enabled: true
     locations: classpath:db/migration

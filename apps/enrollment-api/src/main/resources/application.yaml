@@ -9,6 +9,16 @@ spring:
     username: ${PULSEMETRY_DB_USERNAME:pulsemetry}
     password: ${PULSEMETRY_DB_PASSWORD:pulsemetry}
 
+  jpa:
+    hibernate:
+      # 스키마의 진실원은 Flyway 다. Hibernate 는 엔티티가 스키마와 어긋나면 기동을 막는 역할만 한다 (L4).
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: enrollment
+    # 뷰 렌더링 중 지연 로딩을 허용하지 않는다. 트랜잭션 경계는 서비스가 갖는다.
+    open-in-view: false
+
   flyway:
     enabled: true
     # 마이그레이션 SQL 은 libs/enrollment-persistence 의 리소스에 있다.
