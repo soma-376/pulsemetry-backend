@@ -27,4 +27,11 @@ tasks.withType<Test>().configureEach {
 	// 모든 테스트가 같은 컨텍스트 캐시를 쓰게 한다 (@SpringBootTest(properties=...) 는 캐시를 쪼갠다).
 	systemProperty("pulsemetry.admin.api-token", "test-admin-token")
 	systemProperty("pulsemetry.public-base-url", "https://get.pulsemetry.example.com")
+
+	// 바이너리 서빙 테스트가 파일을 놓을 자리. 고정 경로를 미리 주고 테스트가 직접 채운다 —
+	// @DynamicPropertySource 를 쓰면 컨텍스트 캐시가 쪼개져 컨테이너가 하나 더 뜬다.
+	systemProperty(
+		"pulsemetry.binaries.dir",
+		layout.buildDirectory.dir("test-binaries").get().asFile.absolutePath,
+	)
 }

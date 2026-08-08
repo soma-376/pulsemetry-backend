@@ -47,3 +47,6 @@ pulsemetry:
     api-token: ${PULSEMETRY_ADMIN_API_TOKEN:}
   invitation:
     default-ttl-hours: 72
+  binaries:
+    # 바이너리는 서버 로컬 디렉터리에서 서빙한다 (L9). S3·GitHub Releases 리다이렉트가 아니다.
+    dir: ${PULSEMETRY_BINARIES_DIR:./binaries}

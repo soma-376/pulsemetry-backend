@@ -17,7 +17,17 @@ data class PulsemetryProperties(
 	val admin: Admin,
 
 	val invitation: Invitation = Invitation(),
+
+	val binaries: Binaries = Binaries(),
 ) {
+	init {
+		// 이 값은 셸·PowerShell 스크립트 안에 문자열로 박혀 나간다.
+		// 운영자가 실수로 따옴표나 명령 치환 문자를 넣으면 그게 곧 사용자 PC 의 임의 코드 실행이다.
+		require(SAFE_BASE_URL.matches(publicBaseUrl)) {
+			"pulsemetry.public-base-url 이 올바른 http(s) 주소가 아니다. " +
+				"따옴표·공백·셸 메타문자를 쓸 수 없다."
+		}
+	}
 
 	/** 뒤에 슬래시가 붙어 있어도 경로를 이어 붙일 수 있게 정리한다. */
 	fun baseUrl(): String = publicBaseUrl.trimEnd('/')
@@ -30,4 +40,14 @@ data class PulsemetryProperties(
 	data class Invitation(
 		val defaultTtlHours: Long = 72,
 	)
+
+	data class Binaries(
+		/** CLI 바이너리가 놓인 서버 로컬 디렉터리 (L9). S3·GitHub Releases 로 바꾸지 않는다. */
+		val dir: String = "./binaries",
+	)
+
+	private companion object {
+		/** http(s) 스킴 + 호스트/포트/경로. 따옴표·공백·`$`·백틱은 애초에 허용하지 않는다. */
+		val SAFE_BASE_URL = Regex("^https?://[A-Za-z0-9._~:/?#\\[\\]@!&+*,;=%-]+$")
+	}
 }
