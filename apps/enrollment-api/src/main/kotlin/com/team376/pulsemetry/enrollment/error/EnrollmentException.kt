@@ -30,6 +30,16 @@ class EnrollmentException(
 			"지원하지 않는 운영체제입니다. Windows·macOS·Linux 에서만 설치할 수 있습니다.",
 		)
 
+		fun invalidEmail() = EnrollmentException(
+			EnrollmentErrorCode.INVALID_REQUEST,
+			"이메일이 비어 있습니다. 초대할 사용자의 이메일을 지정하세요.",
+		)
+
+		fun invalidExpiry() = EnrollmentException(
+			EnrollmentErrorCode.INVALID_REQUEST,
+			"만료 시간은 1시간 이상이어야 합니다.",
+		)
+
 		fun malformedBody() = EnrollmentException(
 			EnrollmentErrorCode.INVALID_REQUEST,
 			"요청 형식이 올바르지 않습니다. CLI 를 최신 버전으로 업데이트한 뒤 다시 시도하세요.",

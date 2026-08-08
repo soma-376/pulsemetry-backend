@@ -65,8 +65,16 @@ class EnrollmentTestData(
 
 	fun tenant(): Tenant = tenants.save(Tenant(name = "테스트 조직"))
 
-	fun member(tenantId: UUID, email: String = "user-${UUID.randomUUID()}@example.com"): Member =
-		members.save(Member(tenantId = tenantId, email = email, role = MemberRole.owner))
+	fun member(
+		tenantId: UUID,
+		email: String = "user-${UUID.randomUUID()}@example.com",
+		role: MemberRole = MemberRole.owner,
+	): Member = members.save(Member(tenantId = tenantId, email = email, role = role))
+
+	fun findMemberByEmail(tenantId: UUID, email: String): Member? =
+		members.findByTenantIdAndEmail(tenantId, email)
+
+	fun findInvitation(id: UUID): Invitation? = invitations.findById(id).orElse(null)
 
 	fun activeManifest(tenantId: UUID, memberId: UUID, version: Int = 3): Manifest =
 		manifests.save(

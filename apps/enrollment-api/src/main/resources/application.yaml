@@ -7,6 +7,11 @@ spring:
       # 계약에 없는 필드가 오면 400 invalid_request 다 (PLAN.md §6.2).
       # 관대하게 받으면 클라이언트의 오타를 조용히 삼켜 디버깅이 불가능해진다.
       fail-on-unknown-properties: true
+    datatype:
+      datetime:
+        # expires_at 은 "2026-08-12T00:00:00Z" 형태여야 한다 (§6.5). epoch 숫자로 나가면 안 된다.
+        # Jackson 3 에서 이 기능은 SerializationFeature 가 아니라 DateTimeFeature 로 옮겨졌다.
+        write-dates-as-timestamps: false
 
   datasource:
     # 로컬 기본값은 docker-compose.yml 의 postgres 서비스를 가리킨다.
@@ -32,3 +37,13 @@ spring:
     # enrollment 스키마를 Flyway 가 만들고 flyway_schema_history 도 그 안에 둔다.
     schemas: enrollment
     default-schema: enrollment
+
+# PLAN.md §6.8 의 설정 키
+pulsemetry:
+  # 초대 응답의 설치 명령과 부트스트랩 스크립트가 쓰는 주소. Host 헤더에서 유도하지 않는다.
+  public-base-url: ${PULSEMETRY_PUBLIC_BASE_URL:http://localhost:8080}
+  admin:
+    # 기본값이 없다. 비어 있으면 기동이 실패한다 — 빈 키로 관리자 API 가 열리면 안 된다.
+    api-token: ${PULSEMETRY_ADMIN_API_TOKEN:}
+  invitation:
+    default-ttl-hours: 72

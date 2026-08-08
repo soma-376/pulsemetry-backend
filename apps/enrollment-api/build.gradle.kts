@@ -22,4 +22,9 @@ tasks.withType<Test>().configureEach {
 		"pulsemetry.contracts.dir",
 		rootProject.projectDir.parentFile.resolve("telemetryctl/contracts").absolutePath,
 	)
+
+	// 관리자 키가 비어 있으면 애플리케이션이 뜨지 않는다. 테스트 JVM 전체에 한 번만 주입해
+	// 모든 테스트가 같은 컨텍스트 캐시를 쓰게 한다 (@SpringBootTest(properties=...) 는 캐시를 쪼갠다).
+	systemProperty("pulsemetry.admin.api-token", "test-admin-token")
+	systemProperty("pulsemetry.public-base-url", "https://get.pulsemetry.example.com")
 }

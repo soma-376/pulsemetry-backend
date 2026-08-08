@@ -5,6 +5,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 
 /**
  * 전역 에러 핸들러 (PLAN.md §6.7).
@@ -28,6 +29,20 @@ class EnrollmentExceptionHandler {
 	 */
 	@ExceptionHandler(HttpMessageNotReadableException::class)
 	fun handleUnreadableBody(exception: HttpMessageNotReadableException): ResponseEntity<ErrorResponse> {
+		val error = EnrollmentException.malformedBody()
+		return ResponseEntity
+			.status(error.errorCode.status)
+			.body(ErrorResponse(error.errorCode.code, error.message))
+	}
+
+	/**
+	 * 경로 변수의 타입이 안 맞을 때 (`/v1/invitations/not-a-uuid/revoke`).
+	 * Spring 기본 응답은 ProblemDetail 이라 우리 에러 계약과 모양이 다르다 — 여기서 통일한다.
+	 */
+	@ExceptionHandler(MethodArgumentTypeMismatchException::class)
+	fun handlePathTypeMismatch(
+		exception: MethodArgumentTypeMismatchException,
+	): ResponseEntity<ErrorResponse> {
 		val error = EnrollmentException.malformedBody()
 		return ResponseEntity
 			.status(error.errorCode.status)
