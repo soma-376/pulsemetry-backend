@@ -1,3 +1,18 @@
 spring:
   application:
     name: pulsemetry
+
+  datasource:
+    # 로컬 기본값은 docker-compose.yml 의 postgres 서비스를 가리킨다.
+    # 운영에서는 환경변수로 덮어쓴다.
+    url: ${PULSEMETRY_DB_URL:jdbc:postgresql://localhost:5432/pulsemetry}
+    username: ${PULSEMETRY_DB_USERNAME:pulsemetry}
+    password: ${PULSEMETRY_DB_PASSWORD:pulsemetry}
+
+  flyway:
+    enabled: true
+    # 마이그레이션 SQL 은 libs/enrollment-persistence 의 리소스에 있다.
+    locations: classpath:db/migration
+    # enrollment 스키마를 Flyway 가 만들고 flyway_schema_history 도 그 안에 둔다.
+    schemas: enrollment
+    default-schema: enrollment

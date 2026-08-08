@@ -1,0 +1,24 @@
+# 로컬 개발용 PostgreSQL. 스키마는 애플리케이션 기동 시 Flyway 가 적용한다.
+# 테스트는 이 컨테이너를 쓰지 않는다 — Testcontainers 가 매번 격리된 인스턴스를 띄운다.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: pulsemetry-postgres
+    environment:
+      POSTGRES_DB: pulsemetry
+      POSTGRES_USER: pulsemetry
+      POSTGRES_PASSWORD: pulsemetry
+      # 컨테이너 초기화 시점에만 쓰이는 로케일 설정
+      LANG: C.UTF-8
+    ports:
+      - "5432:5432"
+    volumes:
+      - pulsemetry-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulsemetry -d pulsemetry"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pulsemetry-postgres-data:
