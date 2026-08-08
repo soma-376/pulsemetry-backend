@@ -1,0 +1,20 @@
+[versions]
+kotlin = "2.3.21"
+springBoot = "4.1.0"
+springDependencyManagement = "1.1.7"
+jdk = "25"
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-spring = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
+spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "springDependencyManagement" }
+
+# 버전이 없는 항목은 Spring Boot BOM 이 버전을 결정한다.
+[libraries]
+kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect" }
+kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+jackson-module-kotlin = { module = "tools.jackson.module:jackson-module-kotlin" }
+spring-boot-starter-webmvc = { module = "org.springframework.boot:spring-boot-starter-webmvc" }
+spring-boot-starter-webmvc-test = { module = "org.springframework.boot:spring-boot-starter-webmvc-test" }
