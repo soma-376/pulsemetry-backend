@@ -21,4 +21,6 @@ enum class EnrollmentErrorCode(val code: String, val status: HttpStatus) {
 	UNAUTHORIZED("unauthorized", HttpStatus.UNAUTHORIZED),
 	FORBIDDEN("forbidden", HttpStatus.FORBIDDEN),
 	INSTALLATION_REVOKED("installation_revoked", HttpStatus.FORBIDDEN),
+	NOT_FOUND("not_found", HttpStatus.NOT_FOUND),
+	METHOD_NOT_ALLOWED("method_not_allowed", HttpStatus.METHOD_NOT_ALLOWED),
 }

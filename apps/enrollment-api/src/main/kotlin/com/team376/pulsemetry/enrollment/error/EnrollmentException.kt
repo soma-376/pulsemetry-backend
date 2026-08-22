@@ -84,5 +84,15 @@ class EnrollmentException(
 			EnrollmentErrorCode.INSTALLATION_REVOKED,
 			"이 설치는 폐기되었습니다. 관리자에게 새 초대 코드를 요청하세요.",
 		)
+
+		fun notFound() = EnrollmentException(
+			EnrollmentErrorCode.NOT_FOUND,
+			"요청한 주소를 찾을 수 없습니다. CLI 를 최신 버전으로 업데이트한 뒤 다시 시도하세요.",
+		)
+
+		fun methodNotAllowed() = EnrollmentException(
+			EnrollmentErrorCode.METHOD_NOT_ALLOWED,
+			"이 주소에서는 쓸 수 없는 요청 방식입니다. CLI 를 최신 버전으로 업데이트한 뒤 다시 시도하세요.",
+		)
 	}
 }

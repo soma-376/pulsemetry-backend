@@ -228,6 +228,8 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | admin 토큰 불일치 / installation 자격증명 무효 | 401 | `unauthorized` |
 | 권한 부족 (admin·owner 아님) | 403 | `forbidden` |
 | installation 폐기됨 | 403 | `installation_revoked` |
+| 알 수 없는 경로 | 404 | `not_found` |
+| 지원하지 않는 메서드 | 405 | `method_not_allowed` |
 
 소비 실패 사유의 우선순위는 **사용 → 폐기 → 만료**다.
 동시 요청에서 진 쪽은 `used_at` 을 보게 되므로 409 `invitation_used` 를 받는다.
