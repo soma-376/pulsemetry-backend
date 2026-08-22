@@ -21,9 +21,6 @@ Invoke-WebRequest -Uri "$env:PULSEMETRY_SERVER/bin/pulsemetry_windows_$arch.exe"
 
 & $exe enroll --invite $env:PULSEMETRY_INVITE_CODE --server $env:PULSEMETRY_SERVER
 
-# 로그인할 때마다 daemon 이 뜨도록 등록한다.
-schtasks /Create /SC ONLOGON /TN Pulsemetry /TR "`"$exe`" daemon" /F | Out-Null
-
-Start-Process -FilePath $exe -ArgumentList 'daemon' -WindowStyle Hidden
-
 Write-Host 'Pulsemetry 설치가 끝났습니다.'
+Write-Host 'Windows 는 daemon 자동 실행 등록이 아직 지원되지 않습니다.'
+Write-Host "필요할 때마다 `"$exe`" daemon 을 직접 실행하세요."

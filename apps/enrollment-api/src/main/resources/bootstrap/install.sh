@@ -33,44 +33,5 @@ chmod +x "$exe"
 
 "$exe" enroll --invite "$PULSEMETRY_INVITE_CODE" --server "$PULSEMETRY_SERVER"
 
-if [ "$os" = 'darwin' ]; then
-	plist="$HOME/Library/LaunchAgents/com.pulsemetry.daemon.plist"
-	mkdir -p "$(dirname "$plist")"
-	cat > "$plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>com.pulsemetry.daemon</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>$exe</string>
-		<string>daemon</string>
-	</array>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>KeepAlive</key>
-	<true/>
-</dict>
-</plist>
-PLIST
-	launchctl bootstrap "gui/$(id -u)" "$plist"
-else
-	unit="$HOME/.config/systemd/user/pulsemetry.service"
-	mkdir -p "$(dirname "$unit")"
-	cat > "$unit" <<UNIT
-[Unit]
-Description=Pulsemetry daemon
-
-[Service]
-ExecStart=$exe daemon
-Restart=always
-
-[Install]
-WantedBy=default.target
-UNIT
-	systemctl --user enable --now pulsemetry
-fi
-
 echo 'Pulsemetry 설치가 끝났습니다.'
+echo 'daemon 자동 실행 등록은 enroll 이 처리했습니다 — 해제하려면 pulsemetry autostart disable 을 쓰세요.'

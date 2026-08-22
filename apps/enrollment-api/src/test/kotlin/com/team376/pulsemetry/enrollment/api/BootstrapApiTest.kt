@@ -103,8 +103,9 @@ class BootstrapApiTest {
 		assertThat(body).contains("/bin/pulsemetry_windows_")
 		assertThat(body).contains("LOCALAPPDATA")
 		assertThat(body).contains("enroll --invite")
-		assertThat(body).contains("schtasks /Create /SC ONLOGON /TN Pulsemetry")
-		assertThat(body).contains("Start-Process")
+		// 자동 실행 등록은 telemetryctl 몫이다 — 스크립트가 따로 심으면 등록이 두 벌 생긴다.
+		assertThat(body).doesNotContain("schtasks /Create /SC ONLOGON /TN Pulsemetry")
+		assertThat(body).doesNotContain("Start-Process")
 	}
 
 	@Test
@@ -122,10 +123,11 @@ class BootstrapApiTest {
 		assertThat(body).contains("\$HOME/.pulsemetry/bin")
 		assertThat(body).contains("chmod +x")
 		assertThat(body).contains("enroll --invite")
-		assertThat(body).contains("com.pulsemetry.daemon.plist")
-		assertThat(body).contains("launchctl bootstrap")
-		assertThat(body).contains(".config/systemd/user/pulsemetry.service")
-		assertThat(body).contains("systemctl --user enable --now pulsemetry")
+		// 자동 실행 등록은 telemetryctl 몫이다 — 스크립트가 따로 심으면 식별자가 달라 등록이 두 벌 생긴다.
+		assertThat(body).doesNotContain("com.pulsemetry.daemon.plist")
+		assertThat(body).doesNotContain("launchctl bootstrap")
+		assertThat(body).doesNotContain(".config/systemd/user/pulsemetry.service")
+		assertThat(body).doesNotContain("systemctl --user enable --now pulsemetry")
 	}
 
 	// ── 코드 탐색 오라클 방지 ────────────────────────────────────────────────
