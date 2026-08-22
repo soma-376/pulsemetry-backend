@@ -117,11 +117,31 @@ class EnrollmentEntityMappingTest : AbstractPersistenceIntegrationTest() {
 	}
 
 	@Test
-	@DisplayName("owner·admin 만 초대를 발급할 수 있다")
+	@DisplayName("활성 owner·admin 만 초대를 발급할 수 있다")
 	fun onlyOwnerAndAdminCanInvite() {
 		assertThat(EnrollmentFixtures.member(tenantId, role = MemberRole.owner).canInvite()).isTrue()
 		assertThat(EnrollmentFixtures.member(tenantId, role = MemberRole.admin).canInvite()).isTrue()
 		assertThat(EnrollmentFixtures.member(tenantId, role = MemberRole.member).canInvite()).isFalse()
+	}
+
+	@Test
+	@DisplayName("정지된 owner·admin 은 초대를 발급할 수 없다 — role 만으로 판단하지 않는다")
+	fun suspendedAdminsCannotInvite() {
+		listOf(MemberRole.owner, MemberRole.admin).forEach { role ->
+			val suspended = EnrollmentFixtures.member(tenantId, role = role, status = MemberStatus.suspended)
+
+			assertThat(suspended.canInvite())
+				.describedAs("정지된 %s", role)
+				.isFalse()
+		}
+	}
+
+	@Test
+	@DisplayName("아직 설치하지 않은 invited owner·admin 도 발급할 수 없다")
+	fun invitedAdminsCannotInvite() {
+		val invited = EnrollmentFixtures.member(tenantId, role = MemberRole.owner, status = MemberStatus.invited)
+
+		assertThat(invited.canInvite()).isFalse()
 	}
 
 	// ── 조회 ─────────────────────────────────────────────────────────────────

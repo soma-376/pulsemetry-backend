@@ -51,7 +51,14 @@ class InvitationAdminService(
 		if (creator.tenantId != request.tenantId) throw EnrollmentException.forbidden()
 		if (!creator.canInvite()) throw EnrollmentException.forbidden()
 
-		val target = members.findByTenantIdAndEmail(request.tenantId, email)
+		// 정지된 사용자에게는 초대를 다시 내주지 않는다.
+		// `invited` 는 정상이다 — 아직 설치하지 않은 사용자에게 코드를 재발급하는 경로다.
+		val existing = members.findByTenantIdAndEmail(request.tenantId, email)
+		if (existing != null && existing.status == MemberStatus.suspended) {
+			throw EnrollmentException.forbidden()
+		}
+
+		val target = existing
 			?: members.save(
 				Member(
 					tenantId = request.tenantId,
@@ -89,6 +96,9 @@ class InvitationAdminService(
 	 *
 	 * 조건부 UPDATE 의 영향 행 수가 곧 결과다. 0행일 때만 사유를 조회한다 —
 	 * 먼저 조회해서 판단하면 그 사이에 누가 코드를 써 버릴 수 있다.
+	 *
+	 * **여기에는 [create] 같은 권한 검사가 없다.** `X-Admin-Token` 이 tenant 정보를 담지 않아
+	 * tenant 범위를 판정할 근거가 없기 때문이다. role 기반 인가가 서면 [create] 와 같은 검사를 넣는다.
 	 */
 	@Transactional
 	fun revoke(invitationId: UUID) {

@@ -49,6 +49,11 @@ class Member(
 	@Column(name = "updated_at", nullable = false)
 	var updatedAt: Instant = Instant.now(),
 ) {
-	/** 초대를 발급할 수 있는 권한인지 (PLAN.md §6.5 — owner 또는 admin 만 가능). */
-	fun canInvite(): Boolean = role == MemberRole.owner || role == MemberRole.admin
+	/**
+	 * 초대를 발급할 수 있는 권한인지 (PLAN.md §6.5 — owner 또는 admin 만 가능).
+	 *
+	 * 정지된 계정은 role 이 무엇이든 발급할 수 없다 — 정지의 목적이 권한을 끊는 것이다.
+	 */
+	fun canInvite(): Boolean =
+		status == MemberStatus.active && (role == MemberRole.owner || role == MemberRole.admin)
 }

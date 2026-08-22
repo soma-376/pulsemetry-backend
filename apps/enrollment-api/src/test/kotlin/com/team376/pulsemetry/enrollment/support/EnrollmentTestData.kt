@@ -9,6 +9,7 @@ import com.team376.pulsemetry.persistence.enrollment.entity.Invitation
 import com.team376.pulsemetry.persistence.enrollment.entity.Manifest
 import com.team376.pulsemetry.persistence.enrollment.entity.Member
 import com.team376.pulsemetry.persistence.enrollment.entity.MemberRole
+import com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus
 import com.team376.pulsemetry.persistence.enrollment.entity.Platform
 import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryToken
 import com.team376.pulsemetry.persistence.enrollment.entity.Tenant
@@ -69,7 +70,8 @@ class EnrollmentTestData(
 		tenantId: UUID,
 		email: String = "user-${UUID.randomUUID()}@example.com",
 		role: MemberRole = MemberRole.owner,
-	): Member = members.save(Member(tenantId = tenantId, email = email, role = role))
+		status: MemberStatus = MemberStatus.active,
+	): Member = members.save(Member(tenantId = tenantId, email = email, role = role, status = status))
 
 	fun findMemberByEmail(tenantId: UUID, email: String): Member? =
 		members.findByTenantIdAndEmail(tenantId, email)

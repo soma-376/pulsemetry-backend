@@ -285,6 +285,45 @@ class InvitationAdminApiTest {
 	}
 
 	@Test
+	@DisplayName("정지된 owner 가 발급을 시도하면 403 — 정지된 관리자 계정은 살아 있지 않다")
+	fun suspendedCreatorCannotInvite() {
+		val suspendedId = data.member(
+			tenantId,
+			"suspended-owner@example.com",
+			MemberRole.owner,
+			MemberStatus.suspended,
+		).id
+
+		val response = post("/v1/invitations", createBody(createdBy = suspendedId))
+
+		assertThat(response.statusCode()).isEqualTo(403)
+		assertThat(errorCode(response)).isEqualTo("forbidden")
+	}
+
+	@Test
+	@DisplayName("정지된 사용자를 대상으로 한 발급은 403 — invited 는 정상 경로다")
+	fun suspendedTargetCannotBeInvited() {
+		data.member(tenantId, "suspended@example.com", MemberRole.member, MemberStatus.suspended)
+
+		val response = post("/v1/invitations", createBody(email = "suspended@example.com"))
+
+		assertThat(response.statusCode()).isEqualTo(403)
+		assertThat(errorCode(response)).isEqualTo("forbidden")
+		assertThat(data.countRows("invitations")).isZero()
+	}
+
+	@Test
+	@DisplayName("아직 설치하지 않은 invited 사용자에게는 코드를 다시 발급한다")
+	fun invitedTargetStillGetsInvitation() {
+		data.member(tenantId, "pending@example.com", MemberRole.member, MemberStatus.invited)
+
+		val response = post("/v1/invitations", createBody(email = "pending@example.com"))
+
+		assertThat(response.statusCode()).isEqualTo(201)
+		assertThat(data.countRows("invitations")).isEqualTo(1)
+	}
+
+	@Test
 	@DisplayName("권한 실패 시 초대도 member 도 만들어지지 않는다")
 	fun forbiddenLeavesNothingBehind() {
 		val plainId = data.member(tenantId, "plain@example.com", MemberRole.member).id
