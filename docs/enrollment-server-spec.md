@@ -27,7 +27,7 @@
   → Codex/Claude 설정 충돌 검사 → 백업 → OTel 키 병합 → daemon 자동 실행 등록 → 완료
 ```
 
-굵은 글씨 이후(설정 병합·백업·daemon 등록)는 클라이언트와 스크립트의 몫이며 서버는 관여하지 않는다.
+위 흐름의 마지막 단계(설정 병합·백업·daemon 자동 실행 등록)는 클라이언트의 몫이며 서버는 관여하지 않는다.
 
 **범위 밖**: 웹 대시보드 API, 사용자 로그인, 설정 재조회(`GET /v1/manifest`), heartbeat,
 `uninstall`/`repair`, 초대 이메일 발송, 데이터 파이프라인.
@@ -49,6 +49,44 @@
 
 스크립트와 바이너리 경로에는 `/v1` 접두사가 없다. 사용자가 터미널에 붙여넣는 URL 이라 짧아야 한다.
 
+### 2.1 `POST /v1/invitations` 요청·응답
+
+요청 본문:
+
+| 필드 | 필수 | 설명 |
+|---|---|---|
+| `tenant_id` | 필수 | 초대를 발급할 조직 |
+| `created_by_member_id` | 필수 | 발급자. 그 tenant 의 **활성** owner·admin 이어야 한다 |
+| `email` | 필수 | 초대 대상. 앞뒤 공백은 정리된다. 같은 tenant 에 이미 있으면 그 member 를 대상으로 삼고, 없으면 `role=member`·`status=invited` 로 새로 만든다 |
+| `display_name` | 선택 | 새로 만들어지는 member 의 표시 이름 |
+| `expires_in_hours` | 선택 | 생략하면 `pulsemetry.invitation.default-ttl-hours`(기본 72). 0 이하면 400 `invalid_request` |
+
+```json
+{
+  "tenant_id": "0f9c…", "created_by_member_id": "3a71…",
+  "email": "hong@example.com", "display_name": "홍길동", "expires_in_hours": 72
+}
+```
+
+응답(201):
+
+```json
+{
+  "invitation_id": "b21e…",
+  "code": "ABCD-EFGH-JKMN",
+  "expires_at": "2026-08-12T00:00:00Z",
+  "install_commands": {
+    "windows": "irm 'https://get.../windows?code=ABCD-EFGH-JKMN' | iex",
+    "unix": "curl -fsSL 'https://get.../unix?code=ABCD-EFGH-JKMN' | sh"
+  }
+}
+```
+
+`expires_at` 은 ISO-8601 UTC 다.
+
+**원본 `code` 는 이 응답에서 딱 한 번만 나간다.** DB 에는 해시만 있어 다시 볼 방법이 없고,
+그래서 재조회 API 를 두지 않는다. 관리자가 이 응답을 잃으면 새로 발급해야 한다.
+
 ---
 
 ## 3. 초대 코드
@@ -58,6 +96,11 @@
   사람이 코드를 옮겨 적거나 불러 주는 상황을 전제하므로 헷갈리는 글자를 애초에 만들지 않는다.
 - 정규식: `^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$`
 - 생성은 `SecureRandom`. 알파벳 크기가 32(2의 거듭제곱)라 모듈로 편향이 없다.
+
+enroll 요청의 `platform` 은 클라이언트가 `runtime.GOOS` 를 그대로 보낸다.
+따라서 macOS 는 `darwin` 으로 도착하며 **서버가 `macos` 로 정규화해** 저장한다.
+이미 정규화된 `macos` 도 그대로 받는다. `windows`·`linux` 는 바꾸지 않고,
+그 밖의 값은 400 `invalid_request` 다.
 
 ### 3.1 정규화
 
@@ -94,6 +137,17 @@ WHERE code_hash = :codeHash
 응답 시간 차이로 키를 한 글자씩 알아낼 수 있다.
 
 헤더가 없든 값이 틀리든 똑같이 401 `unauthorized` 다. 둘을 구분해 주지 않는다.
+
+`X-Admin-Token` 을 통과해도 `POST /v1/invitations` 는 아래 경우 전부 **403 `forbidden`** 이다
+(404 가 아니다 — 어느 member 가 존재하는지 알려 주지 않는다).
+
+- `created_by_member_id` 가 존재하지 않는다
+- 그 member 가 `tenant_id` 소속이 아니다
+- 그 member 가 owner·admin 이 아니다
+- 그 member 가 정지(`status = 'suspended'`)됐다
+- **초대 대상** member 가 이미 있고 정지됐다
+
+`invited` 대상은 정상이다 — 아직 설치하지 않은 사용자에게 코드를 재발급하는 경로다.
 
 **설정값이 비어 있으면 애플리케이션이 기동하지 않는다.** 빈 문자열을 "인증 없음" 으로 해석하면
 설정 실수 하나로 초대 발급이 인터넷에 열린다.
@@ -184,7 +238,7 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
   인증 없는 공개 엔드포인트가 코드의 유효성을 알려 주면 코드 탐색 오라클이 된다.
 - 검증을 통과한 코드만 스크립트에 삽입한다. 정규식이 허용하는 32자에는 셸·PowerShell 메타문자가
   없으므로 **이스케이프하지 않는다** — 화이트리스트가 방어선이다.
-- `Content-Type: text/plain; charset=utf-8`, `Cache-Control: no-store`.
+- `Content-Type: text/plain;charset=UTF-8`, `Cache-Control: no-store`.
 - 스크립트 안의 서버 주소는 설정값 `pulsemetry.public-base-url` 에서만 온다.
   **`Host` 헤더에서 유도하지 않는다.** 이 설정값도 기동 시 형식을 검증한다.
 
@@ -203,6 +257,9 @@ pulsemetry_linux_amd64         pulsemetry_linux_arm64
 
 목록에 없으면 404. 목록에 있어도 `pulsemetry.binaries.dir` 에 파일이 없으면 404.
 `..` 를 문자열 치환으로 지우거나 경로를 정규화해 방어하지 않는다 — 인코딩 변형에 언젠가 뚫린다.
+
+응답 헤더는 `Content-Type: application/octet-stream` 과 함께
+`Content-Disposition: attachment; filename="…"` · `Content-Length` 를 싣는다.
 
 바이너리는 서버 로컬 디렉터리에서 서빙한다. S3·GitHub Releases 리다이렉트를 쓰지 않는다.
 
@@ -273,7 +330,7 @@ VALUES (
 설정을 바꿀 때는 기존 행을 고치지 말고 **기존 행을 비활성화한 뒤 새 `version` 행을 활성으로** 넣는다.
 
 Flyway 마이그레이션에는 시드 데이터를 넣지 않는다.
-로컬 개발용 tenant·admin member·manifest v1 은 `local` 프로파일 시더가 넣는다.
+로컬 개발용 tenant·admin member·manifest v1 은 `local` 프로파일 시더(`LocalSeeder`)가 넣는다 — §10 참고.
 
 ### 9.2 바이너리 배치
 
@@ -299,8 +356,15 @@ Flyway 마이그레이션에는 시드 데이터를 넣지 않는다.
 ```sh
 docker compose up -d                       # PostgreSQL 17
 export PULSEMETRY_ADMIN_API_TOKEN=...      # 없으면 기동 실패한다
+export SPRING_PROFILES_ACTIVE=local        # local 프로파일 시더를 켠다
 ./gradlew :apps:enrollment-api:bootRun
 ```
+
+`local` 프로파일은 `LocalSeeder` 를 켠다 — tenant 하나, 활성 owner member 하나,
+`is_active = true` 인 manifest v1 을 넣는다. 이게 없으면 §9.1 대로 manifest 를 직접 넣기 전까지
+첫 enroll 이 409 `manifest_not_configured` 로 실패한다.
+시더는 **멱등**하다. 이미 tenant 가 있으면 아무것도 하지 않는다.
+`POST /v1/invitations` 에 넣을 `tenant_id` 와 `created_by_member_id` 는 기동 로그에 찍힌다.
 
 테스트는 Testcontainers 로 실제 PostgreSQL 을 띄우므로 Docker 데몬이 필요하다.
 H2 등 임베디드 DB 로 대체하지 않는다 — jsonb·부분 유니크 인덱스·스키마 분리를 검증할 수 없다.
