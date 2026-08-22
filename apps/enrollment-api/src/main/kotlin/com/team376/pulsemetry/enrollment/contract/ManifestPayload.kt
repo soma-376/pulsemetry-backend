@@ -2,6 +2,9 @@ package com.team376.pulsemetry.enrollment.contract
 
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
+import java.net.URI
+import java.net.URISyntaxException
+import java.util.Locale
 
 /**
  * 회사 단위 OTel 설정 manifest.
@@ -41,6 +44,17 @@ data class ManifestPayload(
 ) {
 	/** 저장된 manifest 의 리비전을 `manifests.version` 으로 갈아 끼운다. */
 	fun withConfigRevision(revision: Int): ManifestPayload = copy(configRevision = revision)
+
+	/**
+	 * 클라이언트가 거부하지 않을 manifest 인가.
+	 *
+	 * 판정 기준을 Go 클라이언트의 `contract.Manifest.Validate` 와 일치시킨다 —
+	 * 서버가 통과시킨 것을 클라이언트가 거부하면 사용자만 설치에 실패하고 관리자는 이유를 모른다.
+	 *
+	 * **`schemaVersion` 의 상한은 보지 않는다.** 요청자의 `SupportedSchemaVersion` 을 서버가 알 수 없다 —
+	 * enroll 요청 본문에 그 값이 없다. 상한 판정은 클라이언트 몫이다.
+	 */
+	fun satisfiesContract(): Boolean = schemaVersion >= 1 && otlp.satisfiesContract()
 }
 
 /**
@@ -63,7 +77,36 @@ data class OtlpSettings(
 
 	@JsonProperty("timeout_ms")
 	val timeoutMs: Int? = null,
-)
+) {
+	/** Go 의 `validOTLPEndpoint` · protocol switch 와 같은 판정이다. */
+	fun satisfiesContract(): Boolean = hasAllowedEndpoint() && protocol in SUPPORTED_PROTOCOLS
+
+	/**
+	 * https 이거나, http 이면서 host 이름이 **정확히** `localhost` 여야 한다.
+	 *
+	 * `http://127.0.0.1` · `http://[::1]` · `http://localhost.evil.com` 은 전부 거부다 — Go 도 거부한다.
+	 * 스킴만 소문자로 맞춘다. Go 의 `url.Parse` 가 스킴만 소문자로 바꾸고 host 는 그대로 두기 때문이다.
+	 */
+	private fun hasAllowedEndpoint(): Boolean {
+		val parsed = try {
+			URI(endpoint)
+		} catch (_: URISyntaxException) {
+			return false
+		}
+		val host = parsed.host ?: return false
+		if (host.isEmpty()) return false
+
+		return when (parsed.scheme?.lowercase(Locale.ROOT)) {
+			"https" -> true
+			"http" -> host == "localhost"
+			else -> false
+		}
+	}
+
+	private companion object {
+		val SUPPORTED_PROTOCOLS = setOf("http/protobuf", "http/json", "grpc")
+	}
+}
 
 data class SignalSettings(
 

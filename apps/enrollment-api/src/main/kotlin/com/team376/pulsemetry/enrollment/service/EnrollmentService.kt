@@ -166,6 +166,8 @@ class EnrollmentService(
 		} catch (_: JacksonException) {
 			throw EnrollmentException.manifestNotConfigured()
 		}
+		// 역직렬화만으로는 unknown field 밖에 못 거른다. 값 자체가 계약을 어기면 여기서 끊는다.
+		if (!payload.satisfiesContract()) throw EnrollmentException.manifestNotConfigured()
 		return payload.withConfigRevision(manifest.version)
 	}
 }

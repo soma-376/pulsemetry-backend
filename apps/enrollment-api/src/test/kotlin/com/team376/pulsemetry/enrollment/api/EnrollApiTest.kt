@@ -365,6 +365,47 @@ class EnrollApiTest {
 		assertThat(errorCode(response)).isEqualTo("manifest_not_configured")
 	}
 
+	@Test
+	@DisplayName("저장된 endpoint 가 https 도 localhost 도 아니면 409 — 클라이언트가 거부할 응답을 내려보내지 않는다")
+	fun manifestWithDisallowedEndpointIsRejected() {
+		data.manifestOf(
+			tenantId,
+			memberId,
+			manifestJsonWith("https://otlp.pulsemetry.example.com", "http://collector.example.com"),
+		)
+
+		val response = postEnroll(enrollBody(seedInvitation()))
+
+		assertThat(response.statusCode()).isEqualTo(409)
+		assertThat(errorCode(response)).isEqualTo("manifest_not_configured")
+	}
+
+	@Test
+	@DisplayName("저장된 protocol 이 계약에 없는 값이면 409")
+	fun manifestWithUnsupportedProtocolIsRejected() {
+		data.manifestOf(tenantId, memberId, manifestJsonWith("http/protobuf", "thrift"))
+
+		val response = postEnroll(enrollBody(seedInvitation()))
+
+		assertThat(response.statusCode()).isEqualTo(409)
+		assertThat(errorCode(response)).isEqualTo("manifest_not_configured")
+	}
+
+	@Test
+	@DisplayName("저장된 schema_version 이 1 미만이면 409")
+	fun manifestWithTooLowSchemaVersionIsRejected() {
+		data.manifestOf(
+			tenantId,
+			memberId,
+			manifestJsonWith("\"schema_version\": 1", "\"schema_version\": 0"),
+		)
+
+		val response = postEnroll(enrollBody(seedInvitation()))
+
+		assertThat(response.statusCode()).isEqualTo(409)
+		assertThat(errorCode(response)).isEqualTo("manifest_not_configured")
+	}
+
 	// ── 동시성 ───────────────────────────────────────────────────────────────
 
 	@Test
@@ -413,6 +454,13 @@ class EnrollApiTest {
 				.build(),
 			HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
 		)
+
+	/** 정상 manifest 의 한 값만 바꿔 계약 위반을 만든다. 나머지는 그대로라 위반 지점이 하나뿐이다. */
+	private fun manifestJsonWith(target: String, replacement: String): String {
+		val json = EnrollmentTestData.MANIFEST_JSON
+		require(json.contains(target)) { "정상 manifest 에 '$target' 이 없다" }
+		return json.replace(target, replacement)
+	}
 
 	private fun errorCode(response: HttpResponse<String>): String =
 		objectMapper.readTree(response.body()).get("error").asString()

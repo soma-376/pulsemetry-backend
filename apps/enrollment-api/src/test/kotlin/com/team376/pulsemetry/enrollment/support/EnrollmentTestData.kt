@@ -77,23 +77,23 @@ class EnrollmentTestData(
 	fun findInvitation(id: UUID): Invitation? = invitations.findById(id).orElse(null)
 
 	fun activeManifest(tenantId: UUID, memberId: UUID, version: Int = 3): Manifest =
+		manifestOf(tenantId, memberId, MANIFEST_JSON, version)
+
+	fun brokenManifest(tenantId: UUID, memberId: UUID): Manifest =
+		manifestOf(tenantId, memberId, """{"schema_version": 1, "surprise": true}""")
+
+	/**
+	 * 임의 JSON 을 tenant 의 **활성** manifest 로 넣는다.
+	 *
+	 * manifest 는 대시보드가 생길 때까지 수동 INSERT 로 들어가므로,
+	 * 역직렬화는 되지만 값이 계약을 어기는 상황을 이걸로 재현한다.
+	 */
+	fun manifestOf(tenantId: UUID, memberId: UUID, json: String, version: Int = 1): Manifest =
 		manifests.save(
 			Manifest(
 				tenantId = tenantId,
 				version = version,
-				manifest = MANIFEST_JSON,
-				createdByMemberId = memberId,
-				isActive = true,
-				activatedAt = Instant.now(),
-			),
-		)
-
-	fun brokenManifest(tenantId: UUID, memberId: UUID): Manifest =
-		manifests.save(
-			Manifest(
-				tenantId = tenantId,
-				version = 1,
-				manifest = """{"schema_version": 1, "surprise": true}""",
+				manifest = json,
 				createdByMemberId = memberId,
 				isActive = true,
 				activatedAt = Instant.now(),
