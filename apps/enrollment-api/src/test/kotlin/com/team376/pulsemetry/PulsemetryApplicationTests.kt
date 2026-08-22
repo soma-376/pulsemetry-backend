@@ -26,14 +26,28 @@ class PulsemetryApplicationTests {
 		val tables = jdbcClient
 			.sql(
 				"""
-				SELECT count(*) FROM information_schema.tables
+				SELECT table_name FROM information_schema.tables
 				WHERE table_schema = 'enrollment' AND table_type = 'BASE TABLE'
 				""",
 			)
-			.query(Long::class.javaObjectType)
-			.single()
+			.query(String::class.java)
+			.list()
 
-		// 도메인 테이블 14종 + flyway_schema_history
-		assertThat(tables).isEqualTo(15L)
+		// 개수를 세지 않는다 — 테이블이 하나 늘 때마다 이 테스트가 깨지면 신호가 아니라 소음이다.
+		// enrollment 흐름이 기대는 테이블이 **있는지**만 본다.
+		assertThat(tables).containsAll(REQUIRED_TABLES)
+	}
+
+	private companion object {
+		val REQUIRED_TABLES = listOf(
+			"tenants",
+			"members",
+			"invitations",
+			"installations",
+			"installation_credentials",
+			"telemetry_tokens",
+			"manifests",
+			"installation_manifest_assignments",
+		)
 	}
 }

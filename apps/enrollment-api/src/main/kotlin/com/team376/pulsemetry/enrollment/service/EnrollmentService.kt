@@ -81,6 +81,8 @@ class EnrollmentService(
 				hostname = request.hostname,
 				architecture = request.architecture,
 				clientVersion = request.effectiveClientVersion(),
+				createdAt = now,
+				updatedAt = now,
 			),
 		)
 

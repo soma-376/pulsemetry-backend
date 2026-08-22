@@ -36,7 +36,6 @@ class HealthController(
 	 * 서로 다른 예외를 던지지만 헬스체크 입장에서는 결과가 같고,
 	 * **프로브가 예외를 밖으로 흘리면 500 이 되어 계약(503)을 어긴다.**
 	 */
-	@Suppress("TooGenericExceptionCaught", "SwallowedException")
 	private fun databaseIsReachable(): Boolean =
 		try {
 			jdbcClient.sql("SELECT 1").query(Int::class.javaObjectType).single() == 1

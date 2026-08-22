@@ -475,7 +475,14 @@ class InvitationAdminApiTest {
 		objectMapper.readTree(response.body()).get("error").asString()
 
 	private companion object {
-		/** `apps/enrollment-api/build.gradle.kts` 의 테스트 systemProperty 와 같아야 한다. */
-		const val ADMIN_TOKEN = "test-admin-token"
+		/**
+		 * 애플리케이션이 실제로 쓰는 값을 그대로 읽는다.
+		 *
+		 * `apps/enrollment-api/build.gradle.kts` 가 테스트 JVM 에 넣어 주는 systemProperty 다.
+		 * 여기에 값을 손으로 적어 두면 빌드 쪽이 바뀌었을 때 401 만 잔뜩 나고 원인이 안 보인다.
+		 */
+		val ADMIN_TOKEN: String = requireNotNull(System.getProperty("pulsemetry.admin.api-token")) {
+			"systemProperty pulsemetry.admin.api-token 이 없다 — build.gradle.kts 의 테스트 설정을 확인하라"
+		}
 	}
 }
