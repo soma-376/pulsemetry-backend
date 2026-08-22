@@ -18,7 +18,7 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
 1. 관리자가 대시보드에서 사용자 정보를 등록하고 초대한다. 초대 코드(invitation token)가 발급되고, 초대 테이블에 코드와 사용자 정보가 기록된다.
 2. 초대 링크가 담긴 메일이 발송된다.
 3. 링크로 들어가면 안내 페이지가 뜬다. 그 페이지가 OS 를 감지해 맞는 설치 명령어를 안내한다 — curl 로 URL 에서 스크립트를 받아 셸로 실행하는 형태다.
-   (예: `/bin/bash -c "$(curl -fsSL https://pulsemetry-backend/unix?code={받은 초대 코드})"` 를 입력하면 설치와 등록이 자동으로 진행된다.)
+   (예: `curl -fsSL 'https://get.../unix?code=ABCD-EFGH-JKMN' | sh`, Windows 는 `irm 'https://get.../windows?code=ABCD-EFGH-JKMN' | iex` 를 입력하면 설치와 등록이 자동으로 진행된다.)
 4. enrollment 서버가 바이너리 설치 스크립트(bootstrap)를 제공한다.
 5. bootstrap 스크립트가 CLI 를 설치한다. enrollment 서버가 서빙하는 바이너리 파일을 내려받는다.
 6. 설치가 끝나면 CLI 의 `enroll` 명령이 실행되어 등록이 진행된다. 초대 코드의 소비(consume)는 이때 일어난다.
@@ -179,4 +179,8 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
   이 결정을 구현할 때 명세의 범위와 §2 엔드포인트 표를 함께 갱신한다.
 - CLI 로그인(웹에서 로그인하고 콜백 URL 로 AT·RT 전달)의 콜백 주소 규칙과 PKCE 적용 여부는 별도 ADR 로 다룬다.
 - 데몬 → 서버 구간이 어떤 자격증명을 싣는지(사용자 AT 인지 installation 자격증명인지)를 확정해 명세 §4 에 반영한다.
-  ADR 0003 의 `telemetry_token` 은 클로드 코드 → 데몬 구간의 로컬 토큰이며, 데몬 → 서버 구간은 아직 정의되지 않았다.
+  현재 이 구간은 installation 에 귀속된 `telemetry_token` 을 쓴다 — `telemetryctl` 의 상위 전달 경로가
+  그 토큰을 OTLP 헤더에 실어 보내고, 401/403 을 받으면 토큰을 무효화한 뒤 한 번 재시도한다.
+  (클로드 코드 → 데몬 구간의 로컬 토큰은 이것과 별개인 **로컬 ingest 토큰**이다 — 위 「인증 흐름」 1번 참고.)
+  이 인증 계층이 서면 데몬 → 서버 구간을 사용자 세션 AT 로 바꿀지, installation 귀속 `telemetry_token`
+  을 유지할지 결정해 명세 §4 에 반영해야 한다.
