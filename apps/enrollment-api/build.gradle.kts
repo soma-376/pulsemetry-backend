@@ -17,6 +17,11 @@ dependencies {
 	testImplementation(libs.json.schema.validator)
 }
 
+// 실행 산출물은 bootJar 하나다. plain jar 를 만들면 Dockerfile 이 둘 중 하나를 골라내야 한다.
+tasks.jar {
+	enabled = false
+}
+
 // 계약 테스트는 telemetryctl 의 스키마 파일을 직접 읽는다 (복사본을 두면 드리프트가 생긴다).
 // 로컬에서는 형제 디렉터리에 있고, CI 에서는 telemetryctl 을 따로 체크아웃하므로 env 로 덮어쓴다.
 val contractsDir: String = providers.environmentVariable("PULSEMETRY_CONTRACTS_DIR")

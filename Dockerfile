@@ -33,7 +33,8 @@ RUN --mount=type=cache,target=/root/.gradle \
 
 # 레이어별로 풀어 둔다. 의존성과 애플리케이션 클래스가 다른 레이어에 들어가야
 # 코드만 고쳤을 때 57MB 짜리 fat jar 를 통째로 다시 올리지 않는다.
-RUN JAR="$(find apps/enrollment-api/build/libs -name '*.jar' ! -name '*-plain.jar' | head -1)" \
+# plain jar 는 apps/enrollment-api/build.gradle.kts 에서 껐다. build/libs 에는 bootJar 산출물 하나뿐이다.
+RUN JAR="$(find apps/enrollment-api/build/libs -name '*.jar' | head -1)" \
 	&& java -Djarmode=tools -jar "$JAR" extract --layers --launcher --destination /extracted
 
 
