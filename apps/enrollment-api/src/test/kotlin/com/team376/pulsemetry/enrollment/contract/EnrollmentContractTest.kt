@@ -2,7 +2,7 @@ package com.team376.pulsemetry.enrollment.contract
 
 import com.team376.pulsemetry.enrollment.support.ContractFixtures
 import com.team376.pulsemetry.enrollment.support.ContractSchemas
-import com.team376.pulsemetry.support.PostgresContainerConfig
+import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatCode
 import org.assertj.core.api.Assertions.assertThatThrownBy

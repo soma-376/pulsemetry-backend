@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.enrollment.api
 
 import com.team376.pulsemetry.enrollment.secret.InvitationCode
-import com.team376.pulsemetry.support.PostgresContainerConfig
+import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test

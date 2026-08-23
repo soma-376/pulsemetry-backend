@@ -5,7 +5,7 @@ import com.team376.pulsemetry.enrollment.secret.Sha256
 import com.team376.pulsemetry.enrollment.support.EnrollmentTestData
 import com.team376.pulsemetry.persistence.enrollment.entity.MemberRole
 import com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus
-import com.team376.pulsemetry.support.PostgresContainerConfig
+import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName

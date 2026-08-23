@@ -2,6 +2,8 @@
 // 라이브러리 모듈이므로 Spring Boot 플러그인을 적용하지 않는다 — 실행 가능한 산출물이 아니다.
 plugins {
 	`java-library`
+	// 테스트 지원 코드를 소비 모듈에 노출한다 (ADR 0008 — 별도 test 모듈을 만들지 않는다).
+	`java-test-fixtures`
 	// @Entity·@Embeddable 에 no-arg 생성자를 생성한다.
 	alias(libs.plugins.kotlin.jpa)
 }
@@ -16,6 +18,12 @@ dependencies {
 	implementation(libs.spring.boot.starter.flyway)
 	runtimeOnly(libs.flyway.database.postgresql)
 	runtimeOnly(libs.postgresql)
+
+	// 앱 모듈이 같은 컨테이너 설정을 쓰도록 노출한다.
+	// PostgreSQLContainer 는 @Bean 시그니처에 나타나므로 소비자의 컴파일 클래스패스에 있어야 한다 — api 다.
+	testFixturesApi(libs.testcontainers.postgresql)
+	testFixturesImplementation(libs.spring.boot.starter.test)
+	testFixturesImplementation(libs.spring.boot.testcontainers)
 
 	testImplementation(libs.spring.boot.starter.test)
 	testImplementation(libs.spring.boot.testcontainers)
