@@ -206,6 +206,12 @@ CREATE UNIQUE INDEX ux_manifests_tenant_active ON enrollment.manifests (tenant_i
 
 COMMENT ON TABLE enrollment.manifests IS 'tenant별 수집 및 privacy 정책의 버전 이력. 기존 row는 수정하지 않고 설정 변경 시 새 version을 생성한다.';
 
+-- 이 테이블의 소유는 manifest(정책) 가 아니라 enrollment 도메인이다 (ADR 0008).
+-- 정책의 정의가 아니라 installation 의 배포 상태다 — PK 가 (installation_id, manifest_id) 이고
+-- applied_at 이 그 installation 이 실제로 적용한 시각이며, installation 이 사라지면 함께 죽는다.
+-- 그런데도 "manifest 배포" 섹션에 있는 것은 fk_installation_manifest_assignments_manifest 가
+-- manifests(id) 를 참조해서다. "초대와 설치" 섹션으로 DDL 을 앞당기면 FK 대상이 아직 없어
+-- 마이그레이션이 실패한다. 위치는 생성 순서 제약이지 소유의 표시가 아니다.
 CREATE TABLE enrollment.installation_manifest_assignments (
     installation_id uuid        NOT NULL,
     manifest_id     uuid        NOT NULL,
