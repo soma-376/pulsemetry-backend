@@ -2,6 +2,7 @@ package com.team376.pulsemetry.enrollment.support
 
 import com.team376.pulsemetry.enrollment.secret.SecretToken
 import com.team376.pulsemetry.enrollment.secret.Sha256
+import com.team376.pulsemetry.enrollment.secret.TelemetryTokenHasher
 import com.team376.pulsemetry.persistence.enrollment.entity.Installation
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationCredential
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationStatus
@@ -43,6 +44,7 @@ class EnrollmentTestData(
 	private val installations: InstallationRepository,
 	private val credentials: InstallationCredentialRepository,
 	private val telemetryTokens: TelemetryTokenRepository,
+	private val telemetryTokenHasher: TelemetryTokenHasher,
 	private val jdbcClient: JdbcClient,
 ) {
 
@@ -153,11 +155,11 @@ class EnrollmentTestData(
 		return token
 	}
 
-	/** 원본 토큰을 돌려준다. DB 에는 해시만 들어간다. */
+	/** 원본 토큰을 돌려준다. DB 에는 해시만 들어간다 — auth-proxy 계약대로 HMAC 이다. */
 	fun telemetryToken(installationId: UUID): String {
 		val token = SecretToken.telemetryToken()
 		telemetryTokens.save(
-			TelemetryToken(installationId = installationId, tokenHash = Sha256.hex(token)),
+			TelemetryToken(installationId = installationId, tokenHash = telemetryTokenHasher.hex(token)),
 		)
 		return token
 	}

@@ -7,6 +7,7 @@ import com.team376.pulsemetry.enrollment.error.EnrollmentException
 import com.team376.pulsemetry.enrollment.secret.InvitationCode
 import com.team376.pulsemetry.enrollment.secret.Sha256
 import com.team376.pulsemetry.enrollment.secret.SecretToken
+import com.team376.pulsemetry.enrollment.secret.TelemetryTokenHasher
 import com.team376.pulsemetry.persistence.enrollment.entity.Installation
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationCredential
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationManifestAssignment
@@ -45,6 +46,7 @@ class EnrollmentService(
 	private val telemetryTokens: TelemetryTokenRepository,
 	private val manifests: ManifestRepository,
 	private val assignments: InstallationManifestAssignmentRepository,
+	private val telemetryTokenHasher: TelemetryTokenHasher,
 	private val objectMapper: ObjectMapper,
 	private val clock: Clock,
 ) {
@@ -96,12 +98,12 @@ class EnrollmentService(
 			),
 		)
 
-		// 7. telemetry token. 역시 해시만 저장한다.
+		// 7. telemetry token. 역시 해시만 저장한다 — 단 auth-proxy 가 조회하는 값이라 HMAC 이다.
 		val telemetryToken = SecretToken.telemetryToken()
 		telemetryTokens.save(
 			TelemetryToken(
 				installationId = installation.id,
-				tokenHash = Sha256.hex(telemetryToken),
+				tokenHash = telemetryTokenHasher.hex(telemetryToken),
 				issuedAt = now,
 			),
 		)

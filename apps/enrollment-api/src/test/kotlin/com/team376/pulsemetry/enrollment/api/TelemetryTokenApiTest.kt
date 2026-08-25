@@ -2,7 +2,7 @@ package com.team376.pulsemetry.enrollment.api
 
 import com.team376.pulsemetry.enrollment.secret.InvitationCode
 import com.team376.pulsemetry.enrollment.secret.SecretToken
-import com.team376.pulsemetry.enrollment.secret.Sha256
+import com.team376.pulsemetry.enrollment.secret.TelemetryTokenHasher
 import com.team376.pulsemetry.enrollment.support.ContractSchemas
 import com.team376.pulsemetry.enrollment.support.EnrollmentTestData
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
@@ -41,6 +41,9 @@ class TelemetryTokenApiTest {
 
 	@Autowired
 	private lateinit var data: EnrollmentTestData
+
+	@Autowired
+	private lateinit var telemetryTokenHasher: TelemetryTokenHasher
 
 	private val http: HttpClient = HttpClient.newHttpClient()
 
@@ -127,7 +130,7 @@ class TelemetryTokenApiTest {
 
 		assertThat(
 			data.singleColumn("SELECT token_hash FROM enrollment.telemetry_tokens WHERE revoked_at IS NULL"),
-		).isEqualTo(Sha256.hex(issued)).isNotEqualTo(issued)
+		).isEqualTo(telemetryTokenHasher.hex(issued)).isNotEqualTo(issued)
 	}
 
 	@Test

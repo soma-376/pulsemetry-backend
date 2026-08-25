@@ -45,6 +45,9 @@ pulsemetry:
   admin:
     # 기본값이 없다. 비어 있으면 기동이 실패한다 — 빈 키로 관리자 API 가 열리면 안 된다.
     api-token: ${PULSEMETRY_ADMIN_API_TOKEN:}
+  # telemetry token 해시 키. auth-proxy 와 공유해야 OTLP 인증이 성립한다 (같은 키로 HMAC-SHA256).
+  # 기본값이 없다. 비어 있으면 기동이 실패한다 — 빈 키로 해시하면 조회가 조용히 전부 어긋난다.
+  token-hash-secret: ${PULSEMETRY_TOKEN_HASH_SECRET:}
   invitation:
     default-ttl-hours: 72
   binaries:

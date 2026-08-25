@@ -299,6 +299,7 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 |---|---|---|
 | `pulsemetry.public-base-url` | `http://localhost:8080` | 설치 명령·스크립트에 박히는 서버 주소. 기동 시 형식 검증 |
 | `pulsemetry.admin.api-token` | 없음 | 관리자 API 키. **비어 있으면 기동 실패** |
+| `pulsemetry.token-hash-secret` | 없음 | telemetry token 의 HMAC-SHA256 키. **비어 있으면 기동 실패.** auth-proxy(ai-telemetry-pipeline)와 같은 값을 써야 OTLP 인증이 성립한다. dev 인프라에서는 `DevEdgeStack` 의 `TokenHashSecretArn` 이 가리키는 Secrets Manager 값. 키 변경 = 발급된 전 토큰 무효 |
 | `pulsemetry.invitation.default-ttl-hours` | `72` | `expires_in_hours` 생략 시 만료 시간 |
 | `pulsemetry.binaries.dir` | `./binaries` | CLI 바이너리가 놓인 서버 로컬 디렉터리 |
 
@@ -356,6 +357,8 @@ Flyway 마이그레이션에는 시드 데이터를 넣지 않는다.
 ```sh
 docker compose up -d                       # PostgreSQL 17
 export PULSEMETRY_ADMIN_API_TOKEN=...      # 없으면 기동 실패한다
+# auth-proxy 와 공유하는 HMAC 키. 로컬은 ai-telemetry-pipeline compose 의 기본값과 맞춘다.
+export PULSEMETRY_TOKEN_HASH_SECRET=local-development-secret-change-me
 export SPRING_PROFILES_ACTIVE=local        # local 프로파일 시더를 켠다
 ./gradlew :apps:enrollment-api:bootRun
 ```

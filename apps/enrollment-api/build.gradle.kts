@@ -33,6 +33,8 @@ tasks.withType<Test>().configureEach {
 	// 관리자 키가 비어 있으면 애플리케이션이 뜨지 않는다. 테스트 JVM 전체에 한 번만 주입해
 	// 모든 테스트가 같은 컨텍스트 캐시를 쓰게 한다 (@SpringBootTest(properties=...) 는 캐시를 쪼갠다).
 	systemProperty("pulsemetry.admin.api-token", "test-admin-token")
+	// telemetry token 해시 키도 admin 키와 같은 이유로 비어 있으면 기동이 실패한다.
+	systemProperty("pulsemetry.token-hash-secret", "test-token-hash-secret")
 	systemProperty("pulsemetry.public-base-url", "https://get.pulsemetry.example.com")
 
 	// 바이너리 서빙 테스트가 파일을 놓을 자리. 고정 경로를 미리 주고 테스트가 직접 채운다 —

@@ -55,5 +55,6 @@ class AdminAuthenticatorTest {
 	private fun properties(adminToken: String) = PulsemetryProperties(
 		publicBaseUrl = "https://get.pulsemetry.example.com",
 		admin = PulsemetryProperties.Admin(adminToken),
+		tokenHashSecret = "test-token-hash-secret",
 	)
 }

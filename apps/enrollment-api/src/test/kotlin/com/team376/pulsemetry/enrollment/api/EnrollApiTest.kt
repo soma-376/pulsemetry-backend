@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.enrollment.api
 
 import com.team376.pulsemetry.enrollment.secret.Sha256
+import com.team376.pulsemetry.enrollment.secret.TelemetryTokenHasher
 import com.team376.pulsemetry.enrollment.support.ContractSchemas
 import com.team376.pulsemetry.enrollment.support.EnrollmentTestData
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
@@ -45,6 +46,9 @@ class EnrollApiTest {
 
 	@Autowired
 	private lateinit var data: EnrollmentTestData
+
+	@Autowired
+	private lateinit var telemetryTokenHasher: TelemetryTokenHasher
 
 	private val http: HttpClient = HttpClient.newHttpClient()
 
@@ -204,8 +208,9 @@ class EnrollApiTest {
 		assertThat(data.singleColumn("SELECT credential_hash FROM enrollment.installation_credentials"))
 			.isEqualTo(Sha256.hex(installationToken))
 			.isNotEqualTo(installationToken)
+		// telemetry token 만 HMAC 이다 — auth-proxy 가 같은 연산으로 조회한다.
 		assertThat(data.singleColumn("SELECT token_hash FROM enrollment.telemetry_tokens"))
-			.isEqualTo(Sha256.hex(telemetryToken))
+			.isEqualTo(telemetryTokenHasher.hex(telemetryToken))
 			.isNotEqualTo(telemetryToken)
 	}
 
