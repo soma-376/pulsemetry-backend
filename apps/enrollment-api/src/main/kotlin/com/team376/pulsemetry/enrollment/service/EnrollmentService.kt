@@ -20,6 +20,7 @@ import com.team376.pulsemetry.persistence.enrollment.repository.InstallationMani
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.InvitationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.ManifestRepository
+import com.team376.pulsemetry.persistence.enrollment.repository.MemberRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TelemetryTokenRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -41,6 +42,7 @@ import java.util.Locale
 @Service
 class EnrollmentService(
 	private val invitations: InvitationRepository,
+	private val members: MemberRepository,
 	private val installations: InstallationRepository,
 	private val credentials: InstallationCredentialRepository,
 	private val telemetryTokens: TelemetryTokenRepository,
@@ -68,6 +70,11 @@ class EnrollmentService(
 		val invitation = requireNotNull(invitations.findByCodeHash(codeHash)) {
 			"방금 소비한 초대를 다시 찾지 못했다"
 		}
+
+		// 3.5. 설치 완료가 곧 `invited → active` 전환이다. auth-proxy 가 invited 를 거부하므로
+		// 이 전환 없이는 아래에서 발급하는 telemetry token 이 전부 401 이 된다.
+		// 0행(이미 active, 또는 suspended)이어도 enroll 은 그대로 진행한다.
+		members.activateInvited(invitation.targetMemberId, now)
 
 		// 4. platform 정규화. 클라이언트는 runtime.GOOS 를 그대로 보낸다.
 		val platform = normalizePlatform(request.effectivePlatform())

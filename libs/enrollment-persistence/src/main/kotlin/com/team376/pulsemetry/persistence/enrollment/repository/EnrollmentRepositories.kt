@@ -20,6 +20,30 @@ interface MemberRepository : JpaRepository<Member, UUID> {
 
 	/** 초대 발급 시 기존 구성원을 찾는다. 없으면 호출자가 `invited` 상태로 새로 만든다 (PLAN.md §6.5). */
 	fun findByTenantIdAndEmail(tenantId: UUID, email: String): Member?
+
+	/**
+	 * `invited` 구성원을 `active` 로 전환한다. 설치 완료(enroll, 또는 pit_ 재발급)가 전환 이벤트다 —
+	 * OTLP 경로의 auth-proxy 가 `invited` 를 거부하므로, 이 전환 없이는 발급된 토큰이 전부 401 이 된다.
+	 *
+	 * WHERE 가 `invited` 만 잡으므로 `active` 는 no-op 이고 **`suspended` 는 절대 건드리지 않는다** —
+	 * 정지 해제는 관리자의 결정이지 설치의 부수효과가 아니다.
+	 *
+	 * @return 영향 행 수. 1이면 전환됨. 0이면 이미 active 이거나 suspended 이며, 호출자는 분기하지 않는다.
+	 */
+	@Modifying(flushAutomatically = true, clearAutomatically = true)
+	@Query(
+		"""
+		UPDATE Member m
+		SET m.status = com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus.active,
+			m.updatedAt = :now
+		WHERE m.id = :id
+		  AND m.status = com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus.invited
+		""",
+	)
+	fun activateInvited(
+		@Param("id") id: UUID,
+		@Param("now") now: Instant,
+	): Int
 }
 
 interface InstallationRepository : JpaRepository<Installation, UUID>

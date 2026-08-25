@@ -156,6 +156,13 @@ WHERE code_hash = :codeHash
 
 인증이 없다. 초대 코드 자체가 자격증명이므로, 코드의 형식 검증과 원자적 소비가 전부다.
 
+**enroll 성공은 대상 멤버의 `invited → active` 전환 이벤트다.** OTLP 경로의
+auth-proxy(ai-telemetry-pipeline)가 `invited`·`suspended` 멤버의 토큰을 거부하므로,
+이 전환 없이는 발급된 telemetry token 이 전부 401 이 된다. 재발급(§6.3의
+`POST /v1/installations/telemetry-token`)도 같은 전환을 보정한다 — pit_ 인증이 과거
+enroll 완료의 증명이기 때문이다. 전환은 `invited` 에서만 일어난다. `suspended` 는
+어느 경로도 건드리지 않는다 — 정지 해제는 관리자의 결정이지 설치의 부수효과가 아니다.
+
 ### 4.3 2단 토큰 모델과 봉투 분리
 
 설치된 클라이언트는 서로 역할이 다른 두 비밀을 갖는다.
@@ -180,7 +187,9 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 
 - `installation_token`: `pit_` + base64url(32 랜덤 바이트, 패딩 없음)
 - `telemetry_token`: `ptt_` + base64url(32 랜덤 바이트, 패딩 없음)
-- 해시: **SHA-256 hex 소문자 64자**
+- 해시: 초대 코드와 `installation_token` 은 **SHA-256 hex 소문자 64자**.
+  `telemetry_token` 만 **HMAC-SHA256(`pulsemetry.token-hash-secret`, 토큰 전문) hex 소문자 64자** —
+  auth-proxy 가 같은 키·같은 연산으로 `token_hash` 를 조회하기 때문이다 (§8)
 
 토큰과 초대 코드의 원본은 DB 에 저장하지 않는다. `*_hash` 컬럼에는 해시만 들어간다.
 해시가 결정론적이어야 유니크 인덱스 조회가 성립하므로 bcrypt·Argon2 를 쓸 수 없다.

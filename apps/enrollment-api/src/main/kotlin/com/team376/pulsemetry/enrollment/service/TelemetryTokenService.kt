@@ -8,6 +8,7 @@ import com.team376.pulsemetry.enrollment.secret.TelemetryTokenHasher
 import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryToken
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationCredentialRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
+import com.team376.pulsemetry.persistence.enrollment.repository.MemberRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TelemetryTokenRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -24,6 +25,7 @@ import java.time.Clock
 class TelemetryTokenService(
 	private val credentials: InstallationCredentialRepository,
 	private val installations: InstallationRepository,
+	private val members: MemberRepository,
 	private val telemetryTokens: TelemetryTokenRepository,
 	private val telemetryTokenHasher: TelemetryTokenHasher,
 	private val clock: Clock,
@@ -45,6 +47,10 @@ class TelemetryTokenService(
 			EnrollmentException.unauthorized()
 		}
 		if (!installation.isActive()) throw EnrollmentException.installationRevoked()
+
+		// pit_ 인증은 과거 enroll 완료의 증명이므로, 여기서도 `invited → active` 를 보정한다.
+		// 전환 도입 이전에 enroll 된 invited 구성원이 데몬의 401 → 재발급 루프만으로 복구되는 경로다.
+		members.activateInvited(installation.memberId, now)
 
 		// 살아있는 토큰을 먼저 전부 폐기한다. 재발급은 곧 이전 토큰의 무효화다.
 		telemetryTokens.revokeActiveByInstallationId(installation.id, now)

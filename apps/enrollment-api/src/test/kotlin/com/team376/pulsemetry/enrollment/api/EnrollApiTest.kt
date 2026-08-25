@@ -4,6 +4,7 @@ import com.team376.pulsemetry.enrollment.secret.Sha256
 import com.team376.pulsemetry.enrollment.secret.TelemetryTokenHasher
 import com.team376.pulsemetry.enrollment.support.ContractSchemas
 import com.team376.pulsemetry.enrollment.support.EnrollmentTestData
+import com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
@@ -212,6 +213,45 @@ class EnrollApiTest {
 		assertThat(data.singleColumn("SELECT token_hash FROM enrollment.telemetry_tokens"))
 			.isEqualTo(telemetryTokenHasher.hex(telemetryToken))
 			.isNotEqualTo(telemetryToken)
+	}
+
+	// ── 멤버 상태 전환 ───────────────────────────────────────────────────────
+
+	@Test
+	@DisplayName("enroll 이 invited 멤버를 active 로 전환한다 — auth-proxy 가 invited 를 거부하기 때문이다")
+	fun enrollActivatesInvitedMember() {
+		data.activeManifest(tenantId, memberId)
+		val invited = data.member(tenantId, status = MemberStatus.invited)
+		data.invitation(tenantId, invited.id, "AAAA-BBBB-CCCC")
+
+		val response = postEnroll(enrollBody("AAAA-BBBB-CCCC"))
+
+		assertThat(response.statusCode()).isEqualTo(201)
+		assertThat(memberStatus(invited.id)).isEqualTo("active")
+	}
+
+	@Test
+	@DisplayName("이미 active 인 멤버는 그대로 active 다 — 새 기기 설치 경로")
+	fun enrollKeepsActiveMemberActive() {
+		data.activeManifest(tenantId, memberId)
+
+		val response = postEnroll(enrollBody(seedInvitation()))
+
+		assertThat(response.statusCode()).isEqualTo(201)
+		assertThat(memberStatus(memberId)).isEqualTo("active")
+	}
+
+	@Test
+	@DisplayName("suspended 멤버는 전환하지 않는다 — 정지 해제는 설치의 부수효과가 아니다")
+	fun enrollDoesNotTouchSuspendedMember() {
+		data.activeManifest(tenantId, memberId)
+		val suspended = data.member(tenantId, status = MemberStatus.suspended)
+		data.invitation(tenantId, suspended.id, "AAAA-BBBB-DDDD")
+
+		val response = postEnroll(enrollBody("AAAA-BBBB-DDDD"))
+
+		assertThat(response.statusCode()).isEqualTo(201)
+		assertThat(memberStatus(suspended.id)).isEqualTo("suspended")
 	}
 
 	// ── 초대 상태별 실패 ─────────────────────────────────────────────────────
@@ -444,6 +484,9 @@ class EnrollApiTest {
 		data.invitation(tenantId, memberId, code, expiresAt = expiresAt, revokedAt = revokedAt)
 		return code
 	}
+
+	private fun memberStatus(id: UUID): String? =
+		data.singleColumn("SELECT status FROM enrollment.members WHERE id = '$id'")
 
 	private fun enrollBody(code: String, platform: String = "darwin"): String =
 		"""

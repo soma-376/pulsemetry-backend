@@ -7,6 +7,7 @@ import com.team376.pulsemetry.enrollment.support.ContractSchemas
 import com.team376.pulsemetry.enrollment.support.EnrollmentTestData
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationStatus
+import com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
@@ -131,6 +132,21 @@ class TelemetryTokenApiTest {
 		assertThat(
 			data.singleColumn("SELECT token_hash FROM enrollment.telemetry_tokens WHERE revoked_at IS NULL"),
 		).isEqualTo(telemetryTokenHasher.hex(issued)).isNotEqualTo(issued)
+	}
+
+	@Test
+	@DisplayName("재발급이 invited 멤버를 active 로 보정한다 — 전환 도입 이전 설치의 복구 경로")
+	fun reissueActivatesInvitedMember() {
+		val invited = data.member(tenantId, status = MemberStatus.invited)
+		val invitationId = data.invitation(tenantId, invited.id, InvitationCode.generate()).id
+		val installation = data.installation(tenantId, invited.id, invitationId)
+		val installationToken = data.credential(installation.id)
+
+		val response = postReissue("Bearer $installationToken")
+
+		assertThat(response.statusCode()).isEqualTo(200)
+		assertThat(data.singleColumn("SELECT status FROM enrollment.members WHERE id = '${invited.id}'"))
+			.isEqualTo("active")
 	}
 
 	@Test
