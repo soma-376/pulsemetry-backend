@@ -6,6 +6,8 @@ import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import java.time.Instant
 import java.util.UUID
 
@@ -36,11 +38,13 @@ class Member(
 	var displayName: String? = null,
 
 	@Enumerated(EnumType.STRING)
-	@Column(name = "role", nullable = false, length = 20)
+	@JdbcTypeCode(SqlTypes.NAMED_ENUM)
+	@Column(name = "role", nullable = false, columnDefinition = "member_role")
 	var role: MemberRole = MemberRole.member,
 
 	@Enumerated(EnumType.STRING)
-	@Column(name = "status", nullable = false, length = 20)
+	@JdbcTypeCode(SqlTypes.NAMED_ENUM)
+	@Column(name = "status", nullable = false, columnDefinition = "member_status")
 	var status: MemberStatus = MemberStatus.active,
 
 	@Column(name = "created_at", nullable = false)

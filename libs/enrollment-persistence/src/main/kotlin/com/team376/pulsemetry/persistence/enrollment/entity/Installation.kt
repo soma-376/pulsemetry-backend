@@ -6,6 +6,8 @@ import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import java.time.Instant
 import java.util.UUID
 
@@ -24,7 +26,8 @@ class Installation(
 	var invitationId: UUID,
 
 	@Enumerated(EnumType.STRING)
-	@Column(name = "platform", nullable = false, length = 20)
+	@JdbcTypeCode(SqlTypes.NAMED_ENUM)
+	@Column(name = "platform", nullable = false, columnDefinition = "platform_type")
 	var platform: Platform,
 
 	@Id
@@ -41,7 +44,8 @@ class Installation(
 	var clientVersion: String? = null,
 
 	@Enumerated(EnumType.STRING)
-	@Column(name = "status", nullable = false, length = 20)
+	@JdbcTypeCode(SqlTypes.NAMED_ENUM)
+	@Column(name = "status", nullable = false, columnDefinition = "installation_status")
 	var status: InstallationStatus = InstallationStatus.active,
 
 	@Column(name = "last_seen_at")

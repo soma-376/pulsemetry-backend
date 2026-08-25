@@ -28,16 +28,21 @@ interface MemberRepository : JpaRepository<Member, UUID> {
 	 * WHERE 가 `invited` 만 잡으므로 `active` 는 no-op 이고 **`suspended` 는 절대 건드리지 않는다** —
 	 * 정지 해제는 관리자의 결정이지 설치의 부수효과가 아니다.
 	 *
+	 * native query 인 이유: JPQL 의 enum 리터럴을 Hibernate 가 `cast(? as memberstatus)` 로
+	 * 렌더링하는데, 그 타입명은 Java enum 단순명에서 유도된 것이라 실제 DB 타입
+	 * `member_status`(ADR 0009)와 어긋나 42704 로 죽는다. native SQL 의 문자열 리터럴은
+	 * enum 컬럼에 암묵 캐스트되므로 타입명 유도에 의존하지 않는다.
+	 *
 	 * @return 영향 행 수. 1이면 전환됨. 0이면 이미 active 이거나 suspended 이며, 호출자는 분기하지 않는다.
 	 */
 	@Modifying(flushAutomatically = true, clearAutomatically = true)
 	@Query(
-		"""
-		UPDATE Member m
-		SET m.status = com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus.active,
-			m.updatedAt = :now
-		WHERE m.id = :id
-		  AND m.status = com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus.invited
+		nativeQuery = true,
+		value = """
+		UPDATE enrollment.members
+		SET status = 'active', updated_at = :now
+		WHERE id = :id
+		  AND status = 'invited'
 		""",
 	)
 	fun activateInvited(

@@ -359,6 +359,38 @@ Flyway 마이그레이션에는 시드 데이터를 넣지 않는다.
 이 엔드포인트는 **로그를 남기지 않는다.** 헬스체커가 초당 호출하므로
 로그 한 줄이 하루 수만 줄이 되고 그 소음에 진짜 사고가 묻힌다.
 
+### 9.4 공유 RDS(controlplane) 접속 — 파이프라인과 같은 DB 를 본다
+
+텔레메트리 파이프라인의 auth-proxy(`DATABASE_URL`)와 post-processor(`ENRICHMENT_PG_DSN`)는
+infra 가 띄우는 RDS 의 **`controlplane`** 데이터베이스를 가리킨다. 이 서버가 발급한 토큰이
+OTLP 경로에서 검증되려면 **이 서버도 같은 DB 에 붙어야 한다** (ADR 0009).
+
+```sh
+# 엔드포인트·자격증명은 infra DevEdgeStack 의 CfnOutput 에서 얻는다.
+#   RdsEndpoint          → 호스트
+#   RdsSecretArn         → username / password (Secrets Manager)
+#   TokenHashSecretArn   → PULSEMETRY_TOKEN_HASH_SECRET (Secrets Manager)
+export PULSEMETRY_DB_URL="jdbc:postgresql://<RdsEndpoint>:5432/controlplane?sslmode=require"
+export PULSEMETRY_DB_USERNAME=postgres
+export PULSEMETRY_DB_PASSWORD=...        # RdsSecretArn 시크릿의 password
+export PULSEMETRY_TOKEN_HASH_SECRET=...  # TokenHashSecretArn 시크릿 값 (auth-proxy 와 동일해야 한다)
+export PULSEMETRY_ADMIN_API_TOKEN=...
+./gradlew :apps:enrollment-api:bootRun
+```
+
+- JDBC 의 `sslmode=require` 는 libpq 와 같은 의미다 — 암호화하되 CA 검증은 하지 않으므로
+  RDS CA 번들이 필요 없다 (infra 의 `CONTROL_DB_SSLMODE` 와 동일한 전제).
+- **스키마 부트스트랩은 Flyway 가 맡는다.** 빈 DB 면 V1 부터 생성하고, 파이프라인 DDL 로
+  수동 부트스트랩된 스키마가 이미 있으면 `baseline-on-migrate` 가 DROP 없이 baseline
+  (V1 스킵) 후 V2 부터 적용한다. V1 이 그 DDL 과 같은 물리 형태(native enum)라서
+  성립하는 동작이다 (ADR 0009).
+- **공유 DB 를 향해 `SPRING_PROFILES_ACTIVE=local` 을 켜지 마라.** LocalSeeder 가
+  로컬 개발용 가짜 tenant 와 `http://localhost:4318` manifest 를 시드한다 — 로컬 전용이다.
+- 수용 기준(B3): enroll 로 발급받은 `ptt_` 토큰으로
+  `curl -X POST http://<alb-dns>/v1/traces -H "Authorization: Bearer <ptt>"
+  -H "Content-Type: application/json" -d '{"resourceSpans":[]}'` → **2xx**,
+  토큰 없이 → 401.
+
 ---
 
 ## 10. 로컬 실행
@@ -380,3 +412,6 @@ export SPRING_PROFILES_ACTIVE=local        # local 프로파일 시더를 켠다
 
 테스트는 Testcontainers 로 실제 PostgreSQL 을 띄우므로 Docker 데몬이 필요하다.
 H2 등 임베디드 DB 로 대체하지 않는다 — jsonb·부분 유니크 인덱스·스키마 분리를 검증할 수 없다.
+
+V1 마이그레이션이 native enum 채택(ADR 0009)으로 재작성되어 Flyway 체크섬이 바뀌었다.
+이전 버전으로 만들어진 로컬 DB 는 `docker compose down -v` 로 볼륨째 지우고 다시 띄운다.

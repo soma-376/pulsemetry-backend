@@ -37,6 +37,11 @@ spring:
     # enrollment 스키마를 Flyway 가 만들고 flyway_schema_history 도 그 안에 둔다.
     schemas: enrollment
     default-schema: enrollment
+    # 공유 RDS(controlplane)에는 파이프라인 DDL 로 수동 부트스트랩된 enrollment 스키마가
+    # 이미 있을 수 있다 (infra ADR-0023 의 우회 절차). V1 이 그 DDL 과 같은 형태이므로
+    # (ADR 0009), 비어 있지 않은 스키마는 DROP 없이 baseline(V1 스킵)으로 얹고 V2 부터
+    # 적용한다. 빈 DB 에서는 평소대로 V1 부터 실행된다.
+    baseline-on-migrate: true
 
 # PLAN.md §6.8 의 설정 키
 pulsemetry:

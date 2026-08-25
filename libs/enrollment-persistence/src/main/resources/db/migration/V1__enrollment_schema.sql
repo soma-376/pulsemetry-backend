@@ -3,50 +3,69 @@
 -- 원본은 rdb-schema/dbdiagram.dbml 이며 그 파일은 읽기 전용이다.
 -- 의도적으로 다르게 옮긴 지점은 ralph-loop/PROGRESS.md 의 SCHEMA-DRIFT 에 기록한다.
 --
--- 이식 규칙
---   * dbml 의 Postgres native enum 은 varchar + CHECK 제약으로 옮긴다 (PLAN.md L5).
---     JPA 는 @Enumerated(EnumType.STRING) 으로 매핑한다.
---   * uuid PK 에 DB 기본값을 두지 않는다. 식별자는 애플리케이션이 만든다.
+-- 이식 규칙 (ADR 0009 — ADR 0004 의 varchar+CHECK 규칙을 대체)
+--   * dbml 의 Postgres native enum 은 **native enum 그대로** 옮긴다.
+--     공유 RDS(controlplane)에 수동 부트스트랩되는 파이프라인 DDL
+--     (ai-telemetry-pipeline/sql/rds/schema.sql)과 물리 형태를 일치시켜,
+--     기존 스키마 위에 DROP 없이 baseline 으로 얹을 수 있어야 하기 때문이다.
+--     JPA 는 @Enumerated(STRING) + @JdbcTypeCode(SqlTypes.NAMED_ENUM) 으로 매핑한다.
+--   * uuid PK 에 DEFAULT gen_random_uuid() 를 둔다 — 수동 INSERT 픽스처와의 호환이며,
+--     애플리케이션은 여전히 식별자를 직접 만든다(기본값은 생략 시에만 적용된다).
+--   * 이 파일은 파이프라인 DDL 과 **형태가 같아야 한다** (제약·인덱스 이름과 COMMENT 는
+--     여기만의 추가이고 구조 비교에 영향을 주지 않는다). manifests 부분 유니크 인덱스는
+--     파이프라인 DDL 에 없으므로 V2 로 분리했다 — baseline 된 DB 에도 적용되게 하기 위해서다.
 
 CREATE SCHEMA IF NOT EXISTS enrollment;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Enum 타입 (파이프라인 schema.sql 과 동일한 10종, enrollment 스키마 한정)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TYPE enrollment.tenant_status       AS ENUM ('active', 'suspended', 'terminated');
+CREATE TYPE enrollment.team_status         AS ENUM ('active', 'archived');
+CREATE TYPE enrollment.member_role         AS ENUM ('owner', 'admin', 'member');
+CREATE TYPE enrollment.member_status       AS ENUM ('invited', 'active', 'suspended');
+CREATE TYPE enrollment.installation_status AS ENUM ('active', 'revoked');
+CREATE TYPE enrollment.platform_type       AS ENUM ('windows', 'macos', 'linux');
+CREATE TYPE enrollment.ai_vendor           AS ENUM ('anthropic', 'openai', 'google');
+CREATE TYPE enrollment.contract_type       AS ENUM ('term_commitment', 'token_discount');
+CREATE TYPE enrollment.contract_status     AS ENUM ('draft', 'active', 'expired', 'terminated');
+CREATE TYPE enrollment.token_type          AS ENUM ('input', 'output', 'cache_read', 'cache_create', 'all');
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 조직과 구성원
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE enrollment.tenants (
-    id         uuid         NOT NULL,
+    id         uuid         NOT NULL DEFAULT gen_random_uuid(),
     name       varchar(100) NOT NULL,
     slug       varchar(100),
     timezone   varchar(50)  NOT NULL DEFAULT 'Asia/Seoul',
     logo_url   text,
-    status     varchar(20)  NOT NULL DEFAULT 'active',
+    status     enrollment.tenant_status NOT NULL DEFAULT 'active',
     created_at timestamptz  NOT NULL DEFAULT now(),
     updated_at timestamptz  NOT NULL DEFAULT now(),
     deleted_at timestamptz,
     CONSTRAINT pk_tenants PRIMARY KEY (id),
-    CONSTRAINT uq_tenants_slug UNIQUE (slug),
-    CONSTRAINT ck_tenants_status CHECK (status IN ('active', 'suspended', 'terminated'))
+    CONSTRAINT uq_tenants_slug UNIQUE (slug)
 );
 
 COMMENT ON TABLE enrollment.tenants IS 'Pulsemetry를 사용하는 고객 조직';
 
 CREATE TABLE enrollment.members (
-    id               uuid         NOT NULL,
+    id               uuid         NOT NULL DEFAULT gen_random_uuid(),
     tenant_id        uuid         NOT NULL,
     cognito_user_sub varchar(255),
     email            varchar(320) NOT NULL,
     display_name     varchar(100),
-    role             varchar(20)  NOT NULL DEFAULT 'member',
-    status           varchar(20)  NOT NULL DEFAULT 'active',
+    role             enrollment.member_role   NOT NULL DEFAULT 'member',
+    status           enrollment.member_status NOT NULL DEFAULT 'active',
     created_at       timestamptz  NOT NULL DEFAULT now(),
     updated_at       timestamptz  NOT NULL DEFAULT now(),
     CONSTRAINT pk_members PRIMARY KEY (id),
     CONSTRAINT fk_members_tenant FOREIGN KEY (tenant_id) REFERENCES enrollment.tenants (id),
     CONSTRAINT uq_members_tenant_cognito_user_sub UNIQUE (tenant_id, cognito_user_sub),
-    CONSTRAINT uq_members_tenant_email UNIQUE (tenant_id, email),
-    CONSTRAINT ck_members_role CHECK (role IN ('owner', 'admin', 'member')),
-    CONSTRAINT ck_members_status CHECK (status IN ('invited', 'active', 'suspended'))
+    CONSTRAINT uq_members_tenant_email UNIQUE (tenant_id, email)
 );
 
 CREATE INDEX ix_members_cognito_user_sub ON enrollment.members (cognito_user_sub);
@@ -54,16 +73,15 @@ CREATE INDEX ix_members_cognito_user_sub ON enrollment.members (cognito_user_sub
 COMMENT ON TABLE enrollment.members IS 'Pulsemetry 조직 구성원. 관리자 등 웹 사용자는 Cognito 계정과 연결되며, 일반 사용자는 installation을 통해 서비스와 연결된다.';
 
 CREATE TABLE enrollment.teams (
-    id         uuid         NOT NULL,
+    id         uuid         NOT NULL DEFAULT gen_random_uuid(),
     tenant_id  uuid         NOT NULL,
     name       varchar(100) NOT NULL,
-    status     varchar(20)  NOT NULL DEFAULT 'active',
+    status     enrollment.team_status NOT NULL DEFAULT 'active',
     created_at timestamptz  NOT NULL DEFAULT now(),
     updated_at timestamptz  NOT NULL DEFAULT now(),
     CONSTRAINT pk_teams PRIMARY KEY (id),
     CONSTRAINT fk_teams_tenant FOREIGN KEY (tenant_id) REFERENCES enrollment.tenants (id),
-    CONSTRAINT uq_teams_tenant_name UNIQUE (tenant_id, name),
-    CONSTRAINT ck_teams_status CHECK (status IN ('active', 'archived'))
+    CONSTRAINT uq_teams_tenant_name UNIQUE (tenant_id, name)
 );
 
 CREATE INDEX ix_teams_tenant ON enrollment.teams (tenant_id);
@@ -71,7 +89,7 @@ CREATE INDEX ix_teams_tenant ON enrollment.teams (tenant_id);
 COMMENT ON TABLE enrollment.teams IS 'tenant 내부에서 구성원과 AI 사용량을 구분하기 위한 팀 또는 부서 단위';
 
 CREATE TABLE enrollment.team_memberships (
-    id        uuid        NOT NULL,
+    id        uuid        NOT NULL DEFAULT gen_random_uuid(),
     team_id   uuid        NOT NULL,
     member_id uuid        NOT NULL,
     joined_at timestamptz NOT NULL DEFAULT now(),
@@ -91,7 +109,7 @@ COMMENT ON TABLE enrollment.team_memberships IS '구성원의 팀 소속 관계�
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE enrollment.invitations (
-    id                   uuid         NOT NULL,
+    id                   uuid         NOT NULL DEFAULT gen_random_uuid(),
     tenant_id            uuid         NOT NULL,
     target_member_id     uuid         NOT NULL,
     created_by_member_id uuid         NOT NULL,
@@ -114,16 +132,16 @@ CREATE INDEX ix_invitations_expires_at ON enrollment.invitations (expires_at);
 COMMENT ON TABLE enrollment.invitations IS 'CLI 설치를 허용하는 일회성 초대 코드. 관리자가 생성하여 이메일 등으로 사용자에게 전달되며, 설치(enrollment)에 한 번만 사용된다.';
 
 CREATE TABLE enrollment.installations (
-    id             uuid         NOT NULL,
+    id             uuid         NOT NULL DEFAULT gen_random_uuid(),
     tenant_id      uuid         NOT NULL,
     member_id      uuid         NOT NULL,
     invitation_id  uuid         NOT NULL,
     hostname       varchar(255),
     -- 클라이언트는 runtime.GOOS 를 그대로 보낸다(darwin). 서버가 macos 로 정규화해 저장한다.
-    platform       varchar(20)  NOT NULL,
+    platform       enrollment.platform_type NOT NULL,
     architecture   varchar(30),
     client_version varchar(50),
-    status         varchar(20)  NOT NULL DEFAULT 'active',
+    status         enrollment.installation_status NOT NULL DEFAULT 'active',
     last_seen_at   timestamptz,
     revoked_at     timestamptz,
     created_at     timestamptz  NOT NULL DEFAULT now(),
@@ -131,9 +149,7 @@ CREATE TABLE enrollment.installations (
     CONSTRAINT pk_installations PRIMARY KEY (id),
     CONSTRAINT fk_installations_tenant FOREIGN KEY (tenant_id) REFERENCES enrollment.tenants (id),
     CONSTRAINT fk_installations_member FOREIGN KEY (member_id) REFERENCES enrollment.members (id),
-    CONSTRAINT fk_installations_invitation FOREIGN KEY (invitation_id) REFERENCES enrollment.invitations (id),
-    CONSTRAINT ck_installations_platform CHECK (platform IN ('windows', 'macos', 'linux')),
-    CONSTRAINT ck_installations_status CHECK (status IN ('active', 'revoked'))
+    CONSTRAINT fk_installations_invitation FOREIGN KEY (invitation_id) REFERENCES enrollment.invitations (id)
 );
 
 CREATE INDEX ix_installations_member ON enrollment.installations (member_id);
@@ -143,7 +159,7 @@ CREATE INDEX ix_installations_tenant_status ON enrollment.installations (tenant_
 COMMENT ON TABLE enrollment.installations IS '사용자의 PC에 설치된 Pulsemetry CLI 또는 daemon';
 
 CREATE TABLE enrollment.installation_credentials (
-    id              uuid         NOT NULL,
+    id              uuid         NOT NULL DEFAULT gen_random_uuid(),
     installation_id uuid         NOT NULL,
     -- installation 의 장기 신원 자격증명(installation_token). 해시만 저장한다.
     credential_hash varchar(255) NOT NULL,
@@ -161,7 +177,7 @@ CREATE INDEX ix_installation_credentials_installation_revoked_at ON enrollment.i
 COMMENT ON TABLE enrollment.installation_credentials IS 'installation의 장기 신원을 증명하는 자격증명. telemetry token 발급에 사용하며, 원본 토큰은 로컬 기기에만 저장하고 서버에는 해시만 저장한다.';
 
 CREATE TABLE enrollment.telemetry_tokens (
-    id              uuid         NOT NULL,
+    id              uuid         NOT NULL DEFAULT gen_random_uuid(),
     installation_id uuid         NOT NULL,
     -- OTLP 헤더에 실려 나가는 교체 가능한 토큰. 해시만 저장한다.
     token_hash      varchar(255) NOT NULL,
@@ -183,7 +199,7 @@ COMMENT ON TABLE enrollment.telemetry_tokens IS 'installation_credentials를 근
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE enrollment.manifests (
-    id                   uuid        NOT NULL,
+    id                   uuid        NOT NULL DEFAULT gen_random_uuid(),
     tenant_id            uuid        NOT NULL,
     version              int         NOT NULL,
     manifest             jsonb       NOT NULL,
@@ -199,10 +215,9 @@ CREATE TABLE enrollment.manifests (
 
 CREATE INDEX ix_manifests_tenant_is_active ON enrollment.manifests (tenant_id, is_active);
 
--- SCHEMA-DRIFT: dbml 에는 없는 부분 유니크 인덱스.
--- enroll 은 "tenant 의 is_active manifest" 를 단수로 가정한다. 둘 이상이면 어느 것이 내려갈지
--- 비결정적이므로 DB 가 한 개임을 보장한다.
-CREATE UNIQUE INDEX ux_manifests_tenant_active ON enrollment.manifests (tenant_id) WHERE is_active;
+-- "tenant 당 활성 manifest 1개" 부분 유니크 인덱스는 V2 에 있다.
+-- 파이프라인 DDL 로 수동 부트스트랩된 DB 는 V1 을 baseline 으로 건너뛰므로,
+-- V1 에 두면 그런 DB 에는 영원히 적용되지 않는다.
 
 COMMENT ON TABLE enrollment.manifests IS 'tenant별 수집 및 privacy 정책의 버전 이력. 기존 row는 수정하지 않고 설정 변경 시 새 version을 생성한다.';
 
@@ -233,16 +248,16 @@ COMMENT ON TABLE enrollment.installation_manifest_assignments IS 'installation�
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE enrollment.contracts (
-    id                   uuid         NOT NULL,
+    id                   uuid         NOT NULL DEFAULT gen_random_uuid(),
     tenant_id            uuid         NOT NULL,
-    vendor               varchar(20)  NOT NULL,
-    contract_type        varchar(30)  NOT NULL,
+    vendor               enrollment.ai_vendor     NOT NULL,
+    contract_type        enrollment.contract_type NOT NULL,
     name                 varchar(100) NOT NULL,
     contract_no          varchar(100),
     contracted_at        date         NOT NULL,
     starts_at            date         NOT NULL,
     ends_at              date,
-    status               varchar(20)  NOT NULL DEFAULT 'active',
+    status               enrollment.contract_status NOT NULL DEFAULT 'active',
     created_by_member_id uuid,
     created_at           timestamptz  NOT NULL DEFAULT now(),
     updated_at           timestamptz  NOT NULL DEFAULT now(),
@@ -250,10 +265,7 @@ CREATE TABLE enrollment.contracts (
     CONSTRAINT pk_contracts PRIMARY KEY (id),
     CONSTRAINT fk_contracts_tenant FOREIGN KEY (tenant_id) REFERENCES enrollment.tenants (id),
     CONSTRAINT fk_contracts_created_by_member FOREIGN KEY (created_by_member_id) REFERENCES enrollment.members (id),
-    CONSTRAINT uq_contracts_tenant_contract_no UNIQUE (tenant_id, contract_no),
-    CONSTRAINT ck_contracts_vendor CHECK (vendor IN ('anthropic', 'openai', 'google')),
-    CONSTRAINT ck_contracts_contract_type CHECK (contract_type IN ('term_commitment', 'token_discount')),
-    CONSTRAINT ck_contracts_status CHECK (status IN ('draft', 'active', 'expired', 'terminated'))
+    CONSTRAINT uq_contracts_tenant_contract_no UNIQUE (tenant_id, contract_no)
 );
 
 CREATE INDEX ix_contracts_tenant ON enrollment.contracts (tenant_id);
@@ -278,10 +290,10 @@ CREATE TABLE enrollment.contract_term_commitments (
 COMMENT ON TABLE enrollment.contract_term_commitments IS 'contract_type이 term_commitment인 계약의 상세. contracts와 1:1이며 PK가 곧 FK다.';
 
 CREATE TABLE enrollment.contract_token_discounts (
-    id             uuid          NOT NULL,
+    id             uuid          NOT NULL DEFAULT gen_random_uuid(),
     contract_id    uuid          NOT NULL,
     model_pattern  varchar(100),
-    token_type     varchar(20)   NOT NULL DEFAULT 'all',
+    token_type     enrollment.token_type NOT NULL DEFAULT 'all',
     discount_rate  numeric(6, 5) NOT NULL,
     effective_from date          NOT NULL,
     effective_to   date,
@@ -290,9 +302,7 @@ CREATE TABLE enrollment.contract_token_discounts (
     CONSTRAINT pk_contract_token_discounts PRIMARY KEY (id),
     CONSTRAINT fk_contract_token_discounts_contract FOREIGN KEY (contract_id) REFERENCES enrollment.contracts (id),
     CONSTRAINT uq_contract_token_discounts_contract_model_token_from
-        UNIQUE (contract_id, model_pattern, token_type, effective_from),
-    CONSTRAINT ck_contract_token_discounts_token_type
-        CHECK (token_type IN ('input', 'output', 'cache_read', 'cache_create', 'all'))
+        UNIQUE (contract_id, model_pattern, token_type, effective_from)
 );
 
 CREATE INDEX ix_contract_token_discounts_contract ON enrollment.contract_token_discounts (contract_id);
@@ -301,7 +311,7 @@ CREATE INDEX ix_contract_token_discounts_contract_effective_from ON enrollment.c
 COMMENT ON TABLE enrollment.contract_token_discounts IS 'contract_type이 token_discount인 계약의 상세이자 환산용 메타(비교) 테이블. discount_rate는 정가에 곱하는 배율이다.';
 
 CREATE TABLE enrollment.contract_memberships (
-    id          uuid        NOT NULL,
+    id          uuid        NOT NULL DEFAULT gen_random_uuid(),
     contract_id uuid        NOT NULL,
     member_id   uuid        NOT NULL,
     assigned_at timestamptz NOT NULL DEFAULT now(),

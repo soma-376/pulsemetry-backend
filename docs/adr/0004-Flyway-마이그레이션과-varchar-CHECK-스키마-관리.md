@@ -1,7 +1,9 @@
 # 0004. 스키마의 진실원을 Flyway 마이그레이션에 두고 enum 을 varchar + CHECK 로 표현한다.
 
 ## Status
-Accepted
+Partially superseded by [ADR 0009](0009-enrollment-스키마-native-enum-채택.md) —
+enum 표현은 native enum 으로 대체됐다. 진실원 = Flyway, `ddl-auto: validate`,
+이름 규칙, 시드 금지, Testcontainers 결정은 그대로 유효하다.
 
 ## Context
 스키마 설계는 `rdb-schema/dbdiagram.dbml` 한 파일에 그려져 있고, 이 파일은 팀이 함께 보는 설계도다.

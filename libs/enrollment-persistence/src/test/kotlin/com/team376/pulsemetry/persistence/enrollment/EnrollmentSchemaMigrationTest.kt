@@ -14,7 +14,7 @@ import java.util.UUID
 
 /**
  * V1__enrollment_schema.sql 이 실제 PostgreSQL 에 적용되는지, 그리고
- * dbml 의 제약이 varchar + CHECK 형태로 살아있는지 확인한다.
+ * dbml 의 enum 이 Postgres native enum 타입으로 살아있는지 확인한다 (ADR 0009).
  *
  * 제약은 카탈로그 조회(존재 여부)와 실제 INSERT(동작) 양쪽으로 본다.
  * 존재만 확인하면 조건이 잘못 걸려 있어도 통과하기 때문이다.
@@ -74,11 +74,11 @@ class EnrollmentSchemaMigrationTest : AbstractPersistenceIntegrationTest() {
 		)
 	}
 
-	// ── enum 이식 방식 (PLAN.md L5) ──────────────────────────────────────────
+	// ── enum 이식 방식 (ADR 0009 — native enum, 파이프라인 DDL 과 형태 일치) ──
 
 	@Test
-	@DisplayName("Postgres native enum 타입을 만들지 않는다 — varchar + CHECK 로 이식한다")
-	fun noNativeEnumTypes() {
+	@DisplayName("dbml 의 enum 10종이 Postgres native enum 타입으로 생성된다")
+	fun nativeEnumTypesExist() {
 		val enumTypes = jdbcClient
 			.sql(
 				"""
@@ -90,28 +90,37 @@ class EnrollmentSchemaMigrationTest : AbstractPersistenceIntegrationTest() {
 			.query(String::class.java)
 			.list()
 
-		assertThat(enumTypes).isEmpty()
-	}
-
-	@Test
-	@DisplayName("dbml 의 enum 10종이 CHECK 제약으로 남아 있다")
-	fun checkConstraintsExist() {
-		assertThat(constraintNames('c')).contains(
-			"ck_tenants_status",
-			"ck_teams_status",
-			"ck_members_role",
-			"ck_members_status",
-			"ck_installations_platform",
-			"ck_installations_status",
-			"ck_contracts_vendor",
-			"ck_contracts_contract_type",
-			"ck_contracts_status",
-			"ck_contract_token_discounts_token_type",
+		assertThat(enumTypes).containsExactlyInAnyOrder(
+			"tenant_status",
+			"team_status",
+			"member_role",
+			"member_status",
+			"installation_status",
+			"platform_type",
+			"ai_vendor",
+			"contract_type",
+			"contract_status",
+			"token_type",
 		)
 	}
 
 	@Test
-	@DisplayName("platform CHECK 이 정규화되지 않은 값을 거부한다")
+	@DisplayName("enum 라벨이 dbml 의 값과 정확히 일치한다 — 라벨이 곧 계약이다")
+	fun enumLabelsMatchDbml() {
+		assertThat(enumLabels("member_status")).containsExactly("invited", "active", "suspended")
+		assertThat(enumLabels("member_role")).containsExactly("owner", "admin", "member")
+		assertThat(enumLabels("platform_type")).containsExactly("windows", "macos", "linux")
+		assertThat(enumLabels("installation_status")).containsExactly("active", "revoked")
+		assertThat(enumLabels("tenant_status")).containsExactly("active", "suspended", "terminated")
+		assertThat(enumLabels("team_status")).containsExactly("active", "archived")
+		assertThat(enumLabels("ai_vendor")).containsExactly("anthropic", "openai", "google")
+		assertThat(enumLabels("contract_type")).containsExactly("term_commitment", "token_discount")
+		assertThat(enumLabels("contract_status")).containsExactly("draft", "active", "expired", "terminated")
+		assertThat(enumLabels("token_type")).containsExactly("input", "output", "cache_read", "cache_create", "all")
+	}
+
+	@Test
+	@DisplayName("platform enum 이 정규화되지 않은 값을 거부한다")
 	fun platformCheckRejectsRawGoos() {
 		val tenantId = insertTenant()
 		val memberId = insertMember(tenantId, "user@example.com")
@@ -124,7 +133,7 @@ class EnrollmentSchemaMigrationTest : AbstractPersistenceIntegrationTest() {
 	}
 
 	@Test
-	@DisplayName("platform CHECK 이 정규화된 값은 통과시킨다")
+	@DisplayName("platform enum 이 정규화된 값은 통과시킨다")
 	fun platformCheckAcceptsNormalizedValues() {
 		val tenantId = insertTenant()
 		val memberId = insertMember(tenantId, "user@example.com")
@@ -144,7 +153,7 @@ class EnrollmentSchemaMigrationTest : AbstractPersistenceIntegrationTest() {
 	}
 
 	@Test
-	@DisplayName("member role CHECK 이 정의되지 않은 역할을 거부한다")
+	@DisplayName("member role enum 이 정의되지 않은 역할을 거부한다")
 	fun memberRoleCheckRejectsUnknownRole() {
 		val tenantId = insertTenant()
 
@@ -316,6 +325,21 @@ class EnrollmentSchemaMigrationTest : AbstractPersistenceIntegrationTest() {
 			.query(String::class.java)
 			.list()
 
+	private fun enumLabels(typeName: String): List<String?> =
+		jdbcClient
+			.sql(
+				"""
+				SELECT e.enumlabel FROM pg_enum e
+				JOIN pg_type t ON t.oid = e.enumtypid
+				JOIN pg_namespace n ON n.oid = t.typnamespace
+				WHERE n.nspname = 'enrollment' AND t.typname = :typeName
+				ORDER BY e.enumsortorder
+				""",
+			)
+			.param("typeName", typeName)
+			.query(String::class.java)
+			.list()
+
 	private fun insertTenant(): UUID {
 		val id = UUID.randomUUID()
 		jdbcClient
@@ -330,9 +354,11 @@ class EnrollmentSchemaMigrationTest : AbstractPersistenceIntegrationTest() {
 		val id = UUID.randomUUID()
 		jdbcClient
 			.sql(
+				// enum 컬럼에 varchar 파라미터를 그대로 넣으면 42804 로 거부된다 — 명시적 CAST 가 필요하다.
+				// CAST 를 거치면 미정의 라벨은 22P02(invalid input value) 로 실패한다.
 				"""
 				INSERT INTO enrollment.members (id, tenant_id, email, role, status)
-				VALUES (:id, :tenantId, :email, :role, 'active')
+				VALUES (:id, :tenantId, :email, CAST(:role AS enrollment.member_role), 'active')
 				""",
 			)
 			.param("id", id)
@@ -378,7 +404,7 @@ class EnrollmentSchemaMigrationTest : AbstractPersistenceIntegrationTest() {
 				"""
 				INSERT INTO enrollment.installations
 					(id, tenant_id, member_id, invitation_id, platform)
-				VALUES (:id, :tenantId, :memberId, :invitationId, :platform)
+				VALUES (:id, :tenantId, :memberId, :invitationId, CAST(:platform AS enrollment.platform_type))
 				""",
 			)
 			.param("id", id)
