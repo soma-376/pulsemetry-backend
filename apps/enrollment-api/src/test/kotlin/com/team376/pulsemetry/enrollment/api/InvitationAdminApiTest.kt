@@ -366,6 +366,16 @@ class InvitationAdminApiTest {
 		assertThat(post("/v1/invitations", createBody(expiresInHours = -5)).statusCode()).isEqualTo(400)
 	}
 
+	@Test
+	@DisplayName("expires_in_hours 가 상한 720 을 넘으면 400 — 만료 계산 오버플로 차단")
+	fun tooLargeTtlIsBadRequest() {
+		assertThat(post("/v1/invitations", createBody(expiresInHours = 720)).statusCode()).isEqualTo(201)
+		assertThat(post("/v1/invitations", createBody(expiresInHours = 721)).statusCode()).isEqualTo(400)
+		assertThat(
+			post("/v1/invitations", createBody(expiresInHours = Long.MAX_VALUE)).statusCode(),
+		).isEqualTo(400)
+	}
+
 	// ── 폐기 ─────────────────────────────────────────────────────────────────
 
 	@Test

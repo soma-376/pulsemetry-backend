@@ -42,7 +42,7 @@ class InvitationAdminService(
 		if (email.isEmpty()) throw EnrollmentException.invalidEmail()
 
 		val ttlHours = request.expiresInHours ?: properties.invitation.defaultTtlHours
-		if (ttlHours <= 0) throw EnrollmentException.invalidExpiry()
+		if (ttlHours !in 1..MAX_TTL_HOURS) throw EnrollmentException.invalidExpiry()
 
 		// 발급자는 그 tenant 소속의 owner·admin 이어야 한다. 없는 member 도 "소속이 아님" 이므로 403 이다.
 		val creator = members.findById(request.createdByMemberId).orElseThrow {
@@ -128,5 +128,14 @@ class InvitationAdminService(
 			windows = "irm '$base/windows?code=$code' | iex",
 			unix = "curl -fsSL '$base/unix?code=$code' | sh",
 		)
+	}
+
+	private companion object {
+		/**
+		 * 초대 TTL 상한(30일). 상한이 없으면 `Long.MAX_VALUE` 같은 값이 만료 계산
+		 * (`now.plus`)에서 ArithmeticException → 500 으로 터진다.
+		 * 720 은 잠정값이다 — 상한 정책은 팀 확정 대상.
+		 */
+		const val MAX_TTL_HOURS = 720L
 	}
 }

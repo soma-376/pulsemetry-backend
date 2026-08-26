@@ -37,7 +37,7 @@ class EnrollmentException(
 
 		fun invalidExpiry() = EnrollmentException(
 			EnrollmentErrorCode.INVALID_REQUEST,
-			"만료 시간은 1시간 이상이어야 합니다.",
+			"만료 시간은 1시간 이상 720시간(30일) 이하여야 합니다.",
 		)
 
 		fun malformedBody() = EnrollmentException(
