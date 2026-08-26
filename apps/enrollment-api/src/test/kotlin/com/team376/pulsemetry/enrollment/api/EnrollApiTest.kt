@@ -451,6 +451,36 @@ class EnrollApiTest {
 		assertThat(errorCode(response)).isEqualTo("manifest_not_configured")
 	}
 
+	@Test
+	@DisplayName("저장된 timeout_ms 가 1 미만이면 409")
+	fun manifestWithNonPositiveTimeoutIsRejected() {
+		data.manifestOf(
+			tenantId,
+			memberId,
+			manifestJsonWith("\"timeout_ms\": 10000", "\"timeout_ms\": 0"),
+		)
+
+		val response = postEnroll(enrollBody(seedInvitation()))
+
+		assertThat(response.statusCode()).isEqualTo(409)
+		assertThat(errorCode(response)).isEqualTo("manifest_not_configured")
+	}
+
+	@Test
+	@DisplayName("저장된 compression 이 none·gzip 밖의 값이면 409")
+	fun manifestWithUnsupportedCompressionIsRejected() {
+		data.manifestOf(
+			tenantId,
+			memberId,
+			manifestJsonWith("\"compression\": \"gzip\"", "\"compression\": \"zstd\""),
+		)
+
+		val response = postEnroll(enrollBody(seedInvitation()))
+
+		assertThat(response.statusCode()).isEqualTo(409)
+		assertThat(errorCode(response)).isEqualTo("manifest_not_configured")
+	}
+
 	// ── 동시성 ───────────────────────────────────────────────────────────────
 
 	@Test

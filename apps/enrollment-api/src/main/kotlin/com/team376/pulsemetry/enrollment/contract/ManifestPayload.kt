@@ -61,7 +61,8 @@ data class ManifestPayload(
  * Collector 전송 설정.
  *
  * 클라이언트가 한 번 더 검증한다: [endpoint] 는 https 여야 하고(localhost 만 http 허용),
- * [protocol] 은 `http/protobuf`·`http/json`·`grpc` 뿐이다. 어기면 설치가 실패한다.
+ * [protocol] 은 `http/protobuf`·`http/json`·`grpc` 뿐이다. 계약 스키마는 여기에 더해
+ * [timeoutMs] 1 이상, [compression] 은 `none`·`gzip` 만 허용한다. 어기면 설치가 실패한다.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class OtlpSettings(
@@ -78,8 +79,16 @@ data class OtlpSettings(
 	@JsonProperty("timeout_ms")
 	val timeoutMs: Int? = null,
 ) {
-	/** Go 의 `validOTLPEndpoint` · protocol switch 와 같은 판정이다. */
-	fun satisfiesContract(): Boolean = hasAllowedEndpoint() && protocol in SUPPORTED_PROTOCOLS
+	/**
+	 * Go 의 `validOTLPEndpoint` · protocol switch 와 같은 판정이다.
+	 * timeout_ms·compression 은 계약 스키마(`enrollment-manifest.schema.json`)의
+	 * `minimum 1` · `enum ["none","gzip"]` 을 그대로 옮긴 것이다 — 선택 필드라 null 은 통과다.
+	 */
+	fun satisfiesContract(): Boolean =
+		hasAllowedEndpoint() &&
+			protocol in SUPPORTED_PROTOCOLS &&
+			(timeoutMs == null || timeoutMs >= 1) &&
+			(compression == null || compression in SUPPORTED_COMPRESSIONS)
 
 	/**
 	 * https 이거나, http 이면서 host 이름이 **정확히** `localhost` 여야 한다.
@@ -105,6 +114,7 @@ data class OtlpSettings(
 
 	private companion object {
 		val SUPPORTED_PROTOCOLS = setOf("http/protobuf", "http/json", "grpc")
+		val SUPPORTED_COMPRESSIONS = setOf("none", "gzip")
 	}
 }
 
