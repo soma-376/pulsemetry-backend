@@ -36,8 +36,9 @@ Follow-up), dev 에서는 파이프라인 저장소의 `sql/rds/schema.sql` 을 
   애플리케이션은 여전히 식별자를 직접 생성한다.
 - `spring.flyway.baseline-on-migrate: true` 를 켠다. 수동 부트스트랩된(비어 있지 않은)
   스키마는 **DROP 없이** baseline 으로 얹고(V1 스킵), 빈 DB 는 V1 부터 적용한다.
-- 파이프라인 DDL 에 없는 백엔드 필수 불변식(manifests 부분 유니크 인덱스)은 **V2** 로
-  분리한다 — baseline 된 DB 에도 적용되게 하기 위해서다.
+- 파이프라인 DDL 에 없는 백엔드 필수 불변식은 **V2 이후 신규 마이그레이션**으로
+  분리한다 — baseline 된 DB 에도 적용되게 하기 위해서다. manifests 부분 유니크
+  인덱스가 V2, telemetry_tokens 활성 토큰 부분 유니크 인덱스가 V3 다.
 - **이후 DDL 의 권위는 이 저장소의 Flyway 다.** 파이프라인의 `sql/rds/schema.sql` 은
   그쪽 단독 개발용 픽스처로 병존하며, 드리프트가 생기면 Flyway 가 기준이다.
 

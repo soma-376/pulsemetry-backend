@@ -154,7 +154,10 @@ WHERE code_hash = :codeHash
 
 ### 4.2 enroll
 
-인증이 없다. 초대 코드 자체가 자격증명이므로, 코드의 형식 검증과 원자적 소비가 전부다.
+인증이 없다. 초대 코드 자체가 자격증명이므로, 코드의 형식 검증과 원자적 소비,
+그리고 소비 직후의 대상 멤버 정지 검사가 전부다. 대상 멤버가 `suspended` 면
+403 `forbidden` 으로 끊는다 — 발급 시점 차단(§4.1)과 같은 정책이다. 트랜잭션
+롤백으로 소비도 취소되므로 코드는 살아 있고, 정지 해제 뒤 같은 코드로 다시 설치할 수 있다.
 
 **enroll 성공은 대상 멤버의 `invited → active` 전환 이벤트다.** OTLP 경로의
 auth-proxy(ai-telemetry-pipeline)가 `invited`·`suspended` 멤버의 토큰을 거부하므로,
@@ -239,6 +242,7 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 
 - `otlp.endpoint` 는 **https 필수**. `http` 는 `localhost` 에만 허용된다.
 - `otlp.protocol` 은 `http/protobuf` · `http/json` · `grpc` 뿐이다.
+- `otlp.timeout_ms` 는 1 이상, `otlp.compression` 은 `none` · `gzip` 뿐이다(계약 스키마).
 - `schema_version` 이 클라이언트의 `SupportedSchemaVersion`(현재 1)을 넘으면 거부한다.
 
 서버가 이 규칙을 어긴 값을 주면 설치가 실패한다.
@@ -300,6 +304,7 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | active manifest 없음 | 409 | `manifest_not_configured` |
 | admin 토큰 불일치 / installation 자격증명 무효 | 401 | `unauthorized` |
 | 권한 부족 (admin·owner 아님) | 403 | `forbidden` |
+| 대상 member 정지됨 (초대 발급·enroll) | 403 | `forbidden` |
 | installation 폐기됨 | 403 | `installation_revoked` |
 | 알 수 없는 경로 | 404 | `not_found` |
 | 지원하지 않는 메서드 | 405 | `method_not_allowed` |
