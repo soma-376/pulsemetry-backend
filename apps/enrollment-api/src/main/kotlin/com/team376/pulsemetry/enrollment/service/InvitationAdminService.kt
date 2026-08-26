@@ -13,9 +13,14 @@ import com.team376.pulsemetry.persistence.enrollment.entity.MemberRole
 import com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus
 import com.team376.pulsemetry.persistence.enrollment.repository.InvitationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.MemberRepository
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
+import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
@@ -32,7 +37,17 @@ class InvitationAdminService(
 	private val invitations: InvitationRepository,
 	private val properties: PulsemetryProperties,
 	private val clock: Clock,
+	transactionManager: PlatformTransactionManager,
 ) {
+
+	/**
+	 * 신규 member INSERT 전용 분리 트랜잭션. 바깥 트랜잭션 안에서 flush 실패를 잡으면
+	 * 이미 rollback-only 로 표시된 뒤라 재조회로 이어가도 커밋에서 죽는다 —
+	 * 실패를 이 안(REQUIRES_NEW)에 가둬야 [create] 가 복구를 이어갈 수 있다.
+	 */
+	private val memberInsertTx = TransactionTemplate(transactionManager).apply {
+		propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
+	}
 
 	@Transactional
 	fun create(request: CreateInvitationRequest): CreateInvitationResponse {
@@ -58,18 +73,7 @@ class InvitationAdminService(
 			throw EnrollmentException.suspendedMemberInvitation()
 		}
 
-		val target = existing
-			?: members.save(
-				Member(
-					tenantId = request.tenantId,
-					email = email,
-					displayName = request.displayName,
-					role = MemberRole.member,
-					status = MemberStatus.invited,
-					createdAt = now,
-					updatedAt = now,
-				),
-			)
+		val target = existing ?: createInvitedMember(request, email, now)
 
 		val code = InvitationCode.generate()
 		val invitation = invitations.save(
@@ -90,6 +94,37 @@ class InvitationAdminService(
 			installCommands = installCommands(code),
 		)
 	}
+
+	/**
+	 * 같은 이메일 동시 발급은 한쪽 INSERT 가 `uq_members_tenant_email` 에 걸린다 —
+	 * 500 으로 흘리는 대신 이긴 쪽이 만든 member 를 재조회해 진행한다. 초대는 한 사용자에게
+	 * 여러 장 발급될 수 있으므로 둘 다 성공이 맞다.
+	 *
+	 * member 생성은 [memberInsertTx] 에서 즉시 확정된다 — 이후 초대 저장이 실패하면 초대 없는
+	 * invited member 가 남지만, 다음 발급이 그 member 를 재사용하므로 무해하다.
+	 */
+	private fun createInvitedMember(request: CreateInvitationRequest, email: String, now: Instant): Member =
+		try {
+			checkNotNull(
+				memberInsertTx.execute {
+					members.saveAndFlush(
+						Member(
+							tenantId = request.tenantId,
+							email = email,
+							displayName = request.displayName,
+							role = MemberRole.member,
+							status = MemberStatus.invited,
+							createdAt = now,
+							updatedAt = now,
+						),
+					)
+				},
+			)
+		} catch (_: DataIntegrityViolationException) {
+			requireNotNull(members.findByTenantIdAndEmail(request.tenantId, email)) {
+				"member 유니크 충돌 후에도 기존 member 를 찾지 못했다"
+			}
+		}
 
 	/**
 	 * 아직 쓰지도 폐기되지도 않은 초대만 폐기한다.
