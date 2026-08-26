@@ -11,7 +11,8 @@ services:
       # 컨테이너 초기화 시점에만 쓰이는 로케일 설정
       LANG: C.UTF-8
     ports:
-      - "5432:5432"
+      # 고정 계정의 개발 DB 다 — 공용 네트워크에 노출되지 않게 루프백에만 바인딩한다.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pulsemetry-postgres-data:/var/lib/postgresql/data
     healthcheck:
