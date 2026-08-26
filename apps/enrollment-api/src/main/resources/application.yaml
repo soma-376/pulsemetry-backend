@@ -19,6 +19,10 @@ spring:
     url: ${PULSEMETRY_DB_URL:jdbc:postgresql://localhost:5432/pulsemetry}
     username: ${PULSEMETRY_DB_USERNAME:pulsemetry}
     password: ${PULSEMETRY_DB_PASSWORD:pulsemetry}
+    hikari:
+      # 커넥션 획득 대기의 기본값은 30초다. DB 가 매달리면 초당 오는 헬스 요청(§6.4,
+      # ALB 헬스체크 예정 경로)이 그 30초 동안 서블릿 스레드를 잠식한다 — 3초에서 끊는다.
+      connection-timeout: 3000
 
   jpa:
     hibernate:

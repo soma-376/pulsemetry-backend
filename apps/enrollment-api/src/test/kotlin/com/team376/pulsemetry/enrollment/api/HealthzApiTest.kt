@@ -8,7 +8,6 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.context.annotation.Import
-import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.jdbc.datasource.AbstractDataSource
 import tools.jackson.databind.ObjectMapper
 import java.net.URI
@@ -66,7 +65,7 @@ class HealthzApiTest {
 	@Test
 	@DisplayName("DB 프로브가 실패하면 503 과 degraded 다 — 예외를 밖으로 흘리지 않는다")
 	fun brokenDatabaseReturnsDegraded() {
-		val controller = HealthController(JdbcClient.create(FailingDataSource()))
+		val controller = HealthController(FailingDataSource())
 
 		val response = controller.healthz()
 
