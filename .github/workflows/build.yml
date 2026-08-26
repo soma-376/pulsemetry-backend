@@ -5,6 +5,10 @@ on:
     branches: ['**']
   pull_request:
 
+# 읽기 전용 워크플로다 — 빌드와 아티팩트 업로드뿐이라 컨텐츠 읽기 권한이면 충분하다.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Gradle build (Testcontainers)
@@ -13,6 +17,9 @@ jobs:
     steps:
       - name: Checkout backend
         uses: actions/checkout@v4
+        with:
+          # 이후 단계는 git 자격증명이 필요 없다 — 워크스페이스에 토큰을 남기지 않는다.
+          persist-credentials: false
 
       # 계약 테스트는 telemetryctl 의 스키마 파일 원본을 읽는다.
       # 복사본을 backend 에 두면 언젠가 원본과 갈라지고, 그때 통과하는 건 계약이 아니게 된다.
@@ -21,6 +28,7 @@ jobs:
         with:
           repository: soma-376/telemetryctl
           path: telemetryctl
+          persist-credentials: false
 
       - name: Set up JDK 25
         uses: actions/setup-java@v4
