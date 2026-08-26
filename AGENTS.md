@@ -26,7 +26,28 @@ libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이�
 부트스트랩 스크립트·바이너리 서빙(`GET /windows|/unix|/bin/{f}`), manifest 저장,
 그리고 **enrollment 스키마의 진실원(Flyway)**.
 
-**소유하지 않는 것**: 대시보드 API, 사람 로그인, 텔레메트리 파이프라인.
+**아직 없지만 이 레포의 몫인 것** — 다른 레포로 보내지 않는다. 여기서 만들거나, 여기로 가져온다.
+
+| 항목 | 상태 | 근거 |
+|---|---|---|
+| 사람 계정·로그인 | 미구현 | 이 레포가 **Auth Service**다. `members.cognito_user_sub`가 연결 지점 |
+| manifest 작성 API | 미구현 (현재 수동 INSERT) | manifest 저장은 이미 이 레포 소유 |
+| 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | ADR-0006 Context는 이 레포로 전제. 확정 ADR은 아직 없다 |
+| 텔레메트리 파이프라인 + ClickHouse 스키마 | **ADR-0006 `Proposed`** — 이 레포로 병합 제안 | 채택 전까지는 `ai-telemetry-pipeline` 소유 |
+
+마지막 두 행은 **아직 결정이 아니다.** `Proposed`와 `미정`은 확정과 다르다 —
+**ADR-0006이 Accepted가 되기 전에는 파이프라인 코드를 이 레포로 옮기지 않는다.**
+채택되면 `../docs/architecture/repos.md`와 `../docs/contracts/telemetry-ingest.md`의
+소유권 서술도 같은 PR에서 함께 고친다.
+
+**이 레포가 소유하지 않는 것** — 요청이 오면 올바른 레포를 알린다.
+
+| 항목 | 소유 레포 |
+|---|---|
+| AWS 리소스, 태스크 정의, 배포 collector 설정 | `infra` |
+| 로컬 수신기·데몬·벤더 도구 배선, manifest **계약 스키마 파일** | `telemetryctl` |
+| 스키마 다이어그램(dbml) | `rdb-schema` — 단 **마이그레이션 진실원은 이 레포의 Flyway**다 |
+
 `ai-telemetry-pipeline`의 `sql/rds/*`는 dev 편의용이며 이 레포의 Flyway가 진실원이다.
 
 ## ⚠️ 루트의 마크다운·HTML은 스크래치다 — 신뢰 금지
