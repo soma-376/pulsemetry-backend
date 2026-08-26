@@ -18,7 +18,7 @@
 
 사용자 흐름:
 
-```
+```text
 관리자가 POST /v1/invitations 로 초대 코드 발급 → 사용자에게 전달
   → 사용자가 터미널에 한 줄 설치 명령 붙여넣기
   → GET /windows?code=... (또는 /unix?code=...) 가 설치 스크립트 반환
@@ -265,7 +265,7 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 
 아래 여섯 개와의 **문자열 동등 비교만** 한다.
 
-```
+```text
 pulsemetry_windows_amd64.exe   pulsemetry_windows_arm64.exe
 pulsemetry_darwin_amd64        pulsemetry_darwin_arm64
 pulsemetry_linux_amd64         pulsemetry_linux_arm64
