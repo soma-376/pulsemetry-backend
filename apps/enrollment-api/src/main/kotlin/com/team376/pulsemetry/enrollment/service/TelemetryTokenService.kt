@@ -42,10 +42,11 @@ class TelemetryTokenService(
 			?: throw EnrollmentException.unauthorized()
 		if (credential.isRevoked()) throw EnrollmentException.unauthorized()
 
-		val installation = installations.findById(credential.installationId).orElseThrow {
-			// 자격증명은 있는데 installation 이 없다면 데이터가 깨진 것이다. 인증 실패로 다룬다.
-			EnrollmentException.unauthorized()
-		}
+		// 행 잠금으로 재발급을 installation 단위로 직렬화한다. 잠금 없이는 동시 재발급이 서로의
+		// 미커밋 INSERT 를 못 봐 활성 토큰 2개가 남는다. 진 쪽은 기다렸다 이어서 성공한다.
+		// 자격증명은 있는데 installation 이 없다면 데이터가 깨진 것이다. 인증 실패로 다룬다.
+		val installation = installations.findWithLockById(credential.installationId)
+			?: throw EnrollmentException.unauthorized()
 		if (!installation.isActive()) throw EnrollmentException.installationRevoked()
 
 		// pit_ 인증은 과거 enroll 완료의 증명이므로, 여기서도 `invited → active` 를 보정한다.

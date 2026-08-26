@@ -7,7 +7,9 @@ import com.team376.pulsemetry.persistence.enrollment.entity.InstallationManifest
 import com.team376.pulsemetry.persistence.enrollment.entity.Manifest
 import com.team376.pulsemetry.persistence.enrollment.entity.Member
 import com.team376.pulsemetry.persistence.enrollment.entity.Tenant
+import jakarta.persistence.LockModeType
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
@@ -51,7 +53,20 @@ interface MemberRepository : JpaRepository<Member, UUID> {
 	): Int
 }
 
-interface InstallationRepository : JpaRepository<Installation, UUID>
+interface InstallationRepository : JpaRepository<Installation, UUID> {
+
+	/**
+	 * installation 행을 `SELECT … FOR UPDATE` 로 잠가서 가져온다.
+	 *
+	 * telemetry token 재발급이 이걸로 시작해야 하는 이유: READ COMMITTED 에서 동시 재발급 두
+	 * 트랜잭션의 [TelemetryTokenRepository.revokeActiveByInstallationId] 는 서로의 미커밋
+	 * INSERT 를 보지 못해 활성 토큰이 2개 남는다 — "재발급 = 이전 토큰 전면 무효화"(PLAN.md §6.3)
+	 * 계약 파괴다. 이 잠금이 재발급을 installation 단위로 직렬화하고, 부분 유니크 인덱스
+	 * `ux_telemetry_tokens_installation_active`(V3)가 최종 방어선이 된다.
+	 */
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	fun findWithLockById(id: UUID): Installation?
+}
 
 interface InstallationCredentialRepository : JpaRepository<InstallationCredential, UUID> {
 

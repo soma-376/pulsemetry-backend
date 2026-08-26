@@ -52,13 +52,13 @@ class TelemetryTokenRepositoryTest : AbstractPersistenceIntegrationTest() {
 	}
 
 	@Test
-	@DisplayName("활성 토큰 3개를 폐기하면 3행이 영향받는다")
+	@DisplayName("활성 토큰을 폐기하면 1행이 영향받는다 — 유일 인덱스(V3)로 활성은 최대 1개다")
 	fun revokeAllActiveTokens() {
-		repeat(3) { telemetryTokens.saveAndFlush(EnrollmentFixtures.telemetryToken(installationId)) }
+		telemetryTokens.saveAndFlush(EnrollmentFixtures.telemetryToken(installationId))
 
 		val affected = telemetryTokens.revokeActiveByInstallationId(installationId, Instant.now())
 
-		assertThat(affected).isEqualTo(3)
+		assertThat(affected).isEqualTo(1)
 		assertThat(telemetryTokens.findAllByInstallationIdAndRevokedAtIsNull(installationId)).isEmpty()
 	}
 

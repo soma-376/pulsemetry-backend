@@ -285,6 +285,62 @@ class EnrollmentSchemaMigrationTest : AbstractPersistenceIntegrationTest() {
 		assertThat(protocol).isEqualTo("http/protobuf")
 	}
 
+	// ── telemetry_tokens 부분 유니크 인덱스 (V3) ─────────────────────────────
+
+	@Test
+	@DisplayName("telemetry_tokens 에 (installation_id) WHERE revoked_at IS NULL 부분 유니크 인덱스가 있다")
+	fun activeTelemetryTokenPartialUniqueIndexExists() {
+		val indexDef = jdbcClient
+			.sql(
+				"""
+				SELECT indexdef FROM pg_indexes
+				WHERE schemaname = 'enrollment' AND indexname = 'ux_telemetry_tokens_installation_active'
+				""",
+			)
+			.query(String::class.java)
+			.single()
+
+		assertThat(indexDef)
+			.containsIgnoringCase("CREATE UNIQUE INDEX")
+			.containsIgnoringCase("revoked_at IS NULL")
+	}
+
+	@Test
+	@DisplayName("installation 당 활성 telemetry token 은 하나뿐이다")
+	fun onlyOneActiveTelemetryTokenPerInstallation() {
+		val tenantId = insertTenant()
+		val memberId = insertMember(tenantId, "user@example.com")
+		val invitationId = insertInvitation(tenantId, memberId)
+		val installationId = insertInstallation(tenantId, memberId, invitationId, platform = "macos")
+
+		insertTelemetryToken(installationId)
+
+		assertThatThrownBy {
+			insertTelemetryToken(installationId)
+		}.isInstanceOf(DataIntegrityViolationException::class.java)
+	}
+
+	@Test
+	@DisplayName("폐기된 telemetry token 은 installation 당 여러 개일 수 있다")
+	fun manyRevokedTelemetryTokensPerInstallation() {
+		val tenantId = insertTenant()
+		val memberId = insertMember(tenantId, "user@example.com")
+		val invitationId = insertInvitation(tenantId, memberId)
+		val installationId = insertInstallation(tenantId, memberId, invitationId, platform = "macos")
+
+		insertTelemetryToken(installationId, revokedAt = OffsetDateTime.now())
+		insertTelemetryToken(installationId, revokedAt = OffsetDateTime.now())
+		insertTelemetryToken(installationId)
+
+		val total = jdbcClient
+			.sql("SELECT count(*) FROM enrollment.telemetry_tokens WHERE installation_id = :installationId")
+			.param("installationId", installationId)
+			.query(Long::class.javaObjectType)
+			.single()
+
+		assertThat(total).isEqualTo(3L)
+	}
+
 	// ── 복합 PK ──────────────────────────────────────────────────────────────
 
 	@Test
@@ -412,6 +468,23 @@ class EnrollmentSchemaMigrationTest : AbstractPersistenceIntegrationTest() {
 			.param("memberId", memberId)
 			.param("invitationId", invitationId)
 			.param("platform", platform)
+			.update()
+		return id
+	}
+
+	private fun insertTelemetryToken(installationId: UUID, revokedAt: OffsetDateTime? = null): UUID {
+		val id = UUID.randomUUID()
+		jdbcClient
+			.sql(
+				"""
+				INSERT INTO enrollment.telemetry_tokens (id, installation_id, token_hash, revoked_at)
+				VALUES (:id, :installationId, :tokenHash, :revokedAt)
+				""",
+			)
+			.param("id", id)
+			.param("installationId", installationId)
+			.param("tokenHash", UUID.randomUUID().toString().replace("-", "").repeat(2))
+			.param("revokedAt", revokedAt)
 			.update()
 		return id
 	}

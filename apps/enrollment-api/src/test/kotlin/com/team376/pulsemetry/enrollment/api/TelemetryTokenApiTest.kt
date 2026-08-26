@@ -107,18 +107,19 @@ class TelemetryTokenApiTest {
 	}
 
 	@Test
-	@DisplayName("기존 활성 토큰이 전부 폐기된다 — 재발급은 곧 무효화다")
+	@DisplayName("기존 활성 토큰이 폐기된다 — 재발급은 곧 무효화다")
 	fun previousTokensAreRevoked() {
 		val installationToken = data.credential(installationId)
-		repeat(3) { data.telemetryToken(installationId) }
-		assertThat(data.activeTelemetryTokenCount(installationId)).isEqualTo(3)
+		// 유일 인덱스(V3)로 활성 토큰은 installation 당 최대 1개다
+		data.telemetryToken(installationId)
+		assertThat(data.activeTelemetryTokenCount(installationId)).isEqualTo(1)
 
 		postReissue("Bearer $installationToken")
 
 		// 새로 발급된 하나만 살아 있어야 한다
 		assertThat(data.activeTelemetryTokenCount(installationId)).isEqualTo(1)
-		assertThat(data.countRows("telemetry_tokens")).isEqualTo(4)
-		assertThat(data.countRows("telemetry_tokens WHERE revoked_at IS NOT NULL")).isEqualTo(3)
+		assertThat(data.countRows("telemetry_tokens")).isEqualTo(2)
+		assertThat(data.countRows("telemetry_tokens WHERE revoked_at IS NOT NULL")).isEqualTo(1)
 	}
 
 	@Test
