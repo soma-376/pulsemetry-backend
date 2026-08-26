@@ -1,6 +1,9 @@
 package com.team376.pulsemetry.enrollment.config
 
 import org.springframework.boot.context.properties.ConfigurationProperties
+import java.net.URI
+import java.net.URISyntaxException
+import java.util.Locale
 
 /**
  * PLAN.md §6.8 이 정한 설정 키.
@@ -34,6 +37,19 @@ data class PulsemetryProperties(
 		require(SAFE_BASE_URL.matches(publicBaseUrl)) {
 			"pulsemetry.public-base-url 이 올바른 http(s) 주소가 아니다. " +
 				"따옴표·공백·셸 메타문자를 쓸 수 없다."
+		}
+		// 정규식은 위험 문자만 거른다. 구조가 깨진 주소(`http:///`, 쿼리·fragment 포함)는
+		// 정규식을 통과하고도 설치 명령에 박혀 사용자 터미널에서야 깨진다 — 기동 시점에 끊는다.
+		val parsed = try {
+			URI(publicBaseUrl)
+		} catch (e: URISyntaxException) {
+			throw IllegalArgumentException("pulsemetry.public-base-url 이 URI 로 해석되지 않는다.", e)
+		}
+		require(parsed.scheme?.lowercase(Locale.ROOT) in setOf("http", "https") && !parsed.host.isNullOrEmpty()) {
+			"pulsemetry.public-base-url 은 host 가 있는 http(s) 주소여야 한다."
+		}
+		require(parsed.userInfo == null && parsed.query == null && parsed.fragment == null) {
+			"pulsemetry.public-base-url 에는 사용자 정보·쿼리·fragment 를 넣을 수 없다."
 		}
 	}
 
