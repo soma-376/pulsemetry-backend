@@ -222,10 +222,15 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 }
 ```
 
+### 5.1 저장
+
 - 저장 위치는 `enrollment.manifests.manifest` (jsonb). 기존 행을 고치지 않고 설정이 바뀌면 새 `version` 행을 만든다.
-- enroll 응답에는 저장된 manifest 를 싣되 **`config_revision` 만 `manifests.version` 으로 덮어쓴다.**
 - tenant 당 `is_active = true` 행은 **최대 하나**다. 부분 유니크 인덱스
   `UNIQUE (tenant_id) WHERE is_active` 가 이를 보장한다.
+
+### 5.2 enroll 응답
+
+- enroll 응답에는 저장된 manifest 를 싣되 **`config_revision` 만 `manifests.version` 으로 덮어쓴다.**
 - 활성 manifest 가 없으면 enroll 은 409 `manifest_not_configured` 로 실패한다.
 - 저장된 manifest 가 계약을 어기고 있으면(알 수 없는 필드 등) 서버가 같은 409 로 끊는다.
   어차피 클라이언트가 거부할 응답을 내려보내지 않고, 관리자가 고치도록 안내한다.
