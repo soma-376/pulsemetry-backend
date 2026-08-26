@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.enrollment.api
 
+import com.team376.pulsemetry.enrollment.secret.InvitationCode
 import com.team376.pulsemetry.enrollment.secret.Sha256
 import com.team376.pulsemetry.enrollment.secret.TelemetryTokenHasher
 import com.team376.pulsemetry.enrollment.support.ContractSchemas
@@ -242,7 +243,7 @@ class EnrollApiTest {
 	}
 
 	@Test
-	@DisplayName("suspended 멤버는 전환하지 않는다 — 정지 해제는 설치의 부수효과가 아니다")
+	@DisplayName("suspended 멤버는 403 이고 상태도 그대로다 — 정지 해제는 설치의 부수효과가 아니다")
 	fun enrollDoesNotTouchSuspendedMember() {
 		data.activeManifest(tenantId, memberId)
 		val suspended = data.member(tenantId, status = MemberStatus.suspended)
@@ -250,7 +251,7 @@ class EnrollApiTest {
 
 		val response = postEnroll(enrollBody("AAAA-BBBB-DDDD"))
 
-		assertThat(response.statusCode()).isEqualTo(201)
+		assertThat(response.statusCode()).isEqualTo(403)
 		assertThat(memberStatus(suspended.id)).isEqualTo("suspended")
 	}
 
@@ -479,6 +480,27 @@ class EnrollApiTest {
 
 		assertThat(response.statusCode()).isEqualTo(409)
 		assertThat(errorCode(response)).isEqualTo("manifest_not_configured")
+	}
+
+	// ── 정지된 구성원 ────────────────────────────────────────────────────────
+
+	@Test
+	@DisplayName("정지된 구성원의 유효한 코드는 403 이고 코드는 소비되지 않는다")
+	fun suspendedMemberCannotConsumeInvitation() {
+		data.activeManifest(tenantId, memberId)
+		val suspendedId = data.member(tenantId, status = MemberStatus.suspended).id
+		val code = InvitationCode.generate()
+		data.invitation(tenantId, suspendedId, code)
+
+		val first = postEnroll(enrollBody(code))
+		val second = postEnroll(enrollBody(code))
+
+		assertThat(first.statusCode()).isEqualTo(403)
+		assertThat(errorCode(first)).isEqualTo("forbidden")
+		// 소비가 롤백됐으므로 재시도도 같은 403 이다 — invitation_used 로 바뀌면 소비가 남은 것이다
+		assertThat(second.statusCode()).isEqualTo(403)
+		assertThat(errorCode(second)).isEqualTo("forbidden")
+		assertThat(data.countRows("installations")).isZero()
 	}
 
 	// ── 동시성 ───────────────────────────────────────────────────────────────

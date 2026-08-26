@@ -13,6 +13,7 @@ import com.team376.pulsemetry.persistence.enrollment.entity.InstallationCredenti
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationManifestAssignment
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationManifestAssignmentId
 import com.team376.pulsemetry.persistence.enrollment.entity.Manifest
+import com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus
 import com.team376.pulsemetry.persistence.enrollment.entity.Platform
 import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryToken
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationCredentialRepository
@@ -70,6 +71,14 @@ class EnrollmentService(
 		val invitation = requireNotNull(invitations.findByCodeHash(codeHash)) {
 			"방금 소비한 초대를 다시 찾지 못했다"
 		}
+
+		// 3.2. 코드 상태만 보면 발급 후 정지된 구성원도 설치가 된다 — 대상 member 가 suspended 면
+		// 403 으로 끊는다. 발급 시점 차단(§6.5)과 같은 정책이다. 예외 롤백이 2의 소비까지
+		// 취소하므로 코드는 살아 있고, 정지 해제 뒤 같은 코드로 다시 설치할 수 있다.
+		val target = requireNotNull(members.findById(invitation.targetMemberId).orElse(null)) {
+			"방금 소비한 초대의 대상 구성원을 찾지 못했다"
+		}
+		if (target.status == MemberStatus.suspended) throw EnrollmentException.forbidden()
 
 		// 3.5. 설치 완료가 곧 `invited → active` 전환이다. auth-proxy 가 invited 를 거부하므로
 		// 이 전환 없이는 아래에서 발급하는 telemetry token 이 전부 401 이 된다.
