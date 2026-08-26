@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RestController
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -34,9 +35,17 @@ class BinaryController(
 		val file: Path = Path.of(properties.binaries.dir).resolve(filename)
 		if (!Files.isRegularFile(file)) return ResponseEntity.notFound().build()
 
+		// isRegularFile 확인과 size 조회 사이에 파일이 교체될 수 있다(바이너리 재배포 중 열리는 창).
+		// 그 경합은 없는 파일과 같은 상황이다 — 500 대신 404 로 답한다.
+		val size = try {
+			Files.size(file)
+		} catch (_: IOException) {
+			return ResponseEntity.notFound().build()
+		}
+
 		return ResponseEntity.ok()
 			.contentType(MediaType.APPLICATION_OCTET_STREAM)
-			.contentLength(Files.size(file))
+			.contentLength(size)
 			.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"$filename\"")
 			.body(FileSystemResource(file))
 	}
