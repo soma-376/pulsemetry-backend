@@ -309,6 +309,9 @@ class InvitationAdminApiTest {
 
 		assertThat(response.statusCode()).isEqualTo(403)
 		assertThat(errorCode(response)).isEqualTo("forbidden")
+		// 권한 부족과 같은 코드지만 메시지는 대상 상태를 가리켜야 한다 — 원인 오도 방지
+		assertThat(objectMapper.readTree(response.body()).get("message").asString())
+			.isEqualTo("정지된 구성원에게는 초대를 발급할 수 없습니다.")
 		assertThat(data.countRows("invitations")).isZero()
 	}
 

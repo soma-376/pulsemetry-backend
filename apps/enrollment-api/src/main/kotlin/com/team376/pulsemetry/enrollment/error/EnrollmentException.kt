@@ -80,6 +80,15 @@ class EnrollmentException(
 			"이 작업을 수행할 권한이 없습니다.",
 		)
 
+		/**
+		 * 코드는 [forbidden] 과 같은 `forbidden` 이다 — 권한 문제가 아니라 대상 상태 문제라
+		 * 메시지만 가른다. 발급자의 권한 부족과 섞이면 관리자가 엉뚱한 데서 원인을 찾는다.
+		 */
+		fun suspendedMemberInvitation() = EnrollmentException(
+			EnrollmentErrorCode.FORBIDDEN,
+			"정지된 구성원에게는 초대를 발급할 수 없습니다.",
+		)
+
 		fun installationRevoked() = EnrollmentException(
 			EnrollmentErrorCode.INSTALLATION_REVOKED,
 			"이 설치는 폐기되었습니다. 관리자에게 새 초대 코드를 요청하세요.",

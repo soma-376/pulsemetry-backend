@@ -55,7 +55,7 @@ class InvitationAdminService(
 		// `invited` 는 정상이다 — 아직 설치하지 않은 사용자에게 코드를 재발급하는 경로다.
 		val existing = members.findByTenantIdAndEmail(request.tenantId, email)
 		if (existing != null && existing.status == MemberStatus.suspended) {
-			throw EnrollmentException.forbidden()
+			throw EnrollmentException.suspendedMemberInvitation()
 		}
 
 		val target = existing
