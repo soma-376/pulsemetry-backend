@@ -27,6 +27,7 @@ import java.sql.Connection
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import javax.sql.DataSource
 
@@ -368,6 +369,10 @@ class TelemetryTokenApiTest {
 	fun reissueWaitsForInstallationRowLock() {
 		val installationToken = data.credential(installationId)
 
+		// 첫 요청은 서블릿·Hibernate 지연 초기화 때문에 느리다. 잠그기 전에 한 번 데워 두면
+		// 「요청이 DB 까지 닿지 못해 판정 불가」 상황이 사실상 사라진다.
+		assertThat(postReissue("Bearer $installationToken").statusCode()).isEqualTo(200)
+
 		Executors.newVirtualThreadPerTaskExecutor().use { executor ->
 			val probeConnection = dataSource.connection
 			val pending = try {
@@ -379,7 +384,7 @@ class TelemetryTokenApiTest {
 				// 무엇을 기다리는지까지 본다 — installations 행의 행 잠금이어야 한다.
 				// Hibernate 는 PostgreSQL 에서 PESSIMISTIC_WRITE 를 `for update` 가 아니라
 				// `for no key update` 로 낸다. 방언이 바뀌어도 깨지지 않게 두 형태를 다 받는다.
-				assertThat(awaitBlockedSession())
+				assertThat(awaitBlockedSession(submitted))
 					.describedAs("막혀 있는 세션이 실행 중인 SQL")
 					.anySatisfy { query ->
 						assertThat(query.lowercase())
@@ -426,14 +431,26 @@ class TelemetryTokenApiTest {
 	 *
 	 * 마감까지 나타나지 않으면 재발급이 installation 행을 잠그지 않는다는 뜻이다 — 이게 회귀 신호다.
 	 */
-	private fun awaitBlockedSession(): List<String> {
+	private fun awaitBlockedSession(pending: Future<*>): List<String> {
 		val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
 		while (System.nanoTime() < deadline) {
 			val blocked = data.blockedSessionQueries()
 			if (blocked.isNotEmpty()) return blocked
+
+			// 잠금을 쥔 채인데 요청이 끝났다면 그 행을 기다리지 않았다는 뜻이다. 느린 환경과
+			// 헷갈릴 여지가 없는 확정 회귀 신호이고, 잠금이 없으면 여기까지 수십 ms 면 온다.
+			if (pending.isDone) {
+				throw AssertionError("잠금을 쥔 채인데 재발급이 끝났다 — installation 행을 잠그지 않는다")
+			}
 			Thread.sleep(25)
 		}
-		throw AssertionError("잠금을 기다리는 세션이 나타나지 않았다 — 재발급이 installation 행을 잠그지 않는다")
+
+		// 막히지도 끝나지도 않았다 = 요청이 DB 에 닿지 못했다. 잠금 유무를 판정할 수 없으므로
+		// 회귀라고 단정하지 않는다. 폴링 질의는 계속 성공했으니 DB 가 아니라 HTTP·서블릿 경로 문제다.
+		throw AssertionError(
+			"15초 안에 재발급이 DB 에 닿지 않아 잠금 유무를 판정할 수 없었다. " +
+				"폴링 질의는 계속 성공했으므로 DB 가 아니라 HTTP·서블릿 경로가 막힌 것이다 — 환경 문제일 수 있다",
+		)
 	}
 
 	private fun postReissue(authorization: String?): HttpResponse<String> {
