@@ -304,8 +304,13 @@ class TelemetryTokenApiTest {
 	fun concurrentReissuesAllSucceedAndLeaveOneActiveToken() {
 		val installationToken = data.credential(installationId)
 		// 폐기 대상 활성 토큰을 미리 심는다. 잠금이 없으면 겹친 요청들이 바로 이 행에서 경합하다가
-		// 서로의 미커밋 INSERT 를 못 본 채 각자 INSERT 하게 된다 — 이 픽스처가 있어야
-		// 잠금 제거가 우연이 아니라 항상 회귀로 드러난다.
+		// 서로의 미커밋 INSERT 를 못 본 채 각자 INSERT 해 깨진다 — 겹치기만 하면 반드시 실패한다.
+		//
+		// 겹침 자체를 API 가 보장하지는 않는다. invokeAll 의 계약은 "전부 완료될 때까지 기다린다"
+		// 뿐이라 동시 시작도 최소 병렬도도 약속하지 않는다. 다만 send() 가 소켓 대기에서 캐리어를
+		// 놓으므로 첫 응답이 돌아오기 전에 8건이 모두 나가고, 겹침은 이 시점부터 서버 스레드가
+		// 정한다. jdk.virtualThreadScheduler.parallelism 을 1 로 낮춰 확인했을 때도 잠금을 빼면
+		// 3회 모두 {200=3, 500=5} 로 검출됐다 — 확률적 검출이지만 병렬도에 기대지 않는다.
 		data.telemetryToken(installationId)
 		// Hikari 기본 풀(10)보다 작아야 한다. 잠금을 기다리는 동안에도 커넥션을 쥐고 있어서,
 		// 풀을 넘기면 connection-timeout 3초(application.yaml)에 걸려 잠금과 무관하게 깨진다.
