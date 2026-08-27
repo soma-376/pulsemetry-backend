@@ -1,0 +1,64 @@
+spring:
+  application:
+    name: pulsemetry
+
+  jackson:
+    deserialization:
+      # 계약에 없는 필드가 오면 400 invalid_request 다 (PLAN.md §6.2).
+      # 관대하게 받으면 클라이언트의 오타를 조용히 삼켜 디버깅이 불가능해진다.
+      fail-on-unknown-properties: true
+    datatype:
+      datetime:
+        # expires_at 은 "2026-08-12T00:00:00Z" 형태여야 한다 (§6.5). epoch 숫자로 나가면 안 된다.
+        # Jackson 3 에서 이 기능은 SerializationFeature 가 아니라 DateTimeFeature 로 옮겨졌다.
+        write-dates-as-timestamps: false
+
+  datasource:
+    # 로컬 기본값은 docker-compose.yml 의 postgres 서비스를 가리킨다.
+    # 운영에서는 환경변수로 덮어쓴다.
+    url: ${PULSEMETRY_DB_URL:jdbc:postgresql://localhost:5432/pulsemetry}
+    username: ${PULSEMETRY_DB_USERNAME:pulsemetry}
+    password: ${PULSEMETRY_DB_PASSWORD:pulsemetry}
+    hikari:
+      # 커넥션 획득 대기의 기본값은 30초다. DB 가 매달리면 초당 오는 헬스 요청(§6.4,
+      # ALB 헬스체크 예정 경로)이 그 30초 동안 서블릿 스레드를 잠식한다 — 3초에서 끊는다.
+      connection-timeout: 3000
+
+  jpa:
+    hibernate:
+      # 스키마의 진실원은 Flyway 다. Hibernate 는 엔티티가 스키마와 어긋나면 기동을 막는 역할만 한다 (L4).
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: enrollment
+    # 뷰 렌더링 중 지연 로딩을 허용하지 않는다. 트랜잭션 경계는 서비스가 갖는다.
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    # 마이그레이션 SQL 은 libs/enrollment-persistence 의 리소스에 있다.
+    locations: classpath:db/migration
+    # enrollment 스키마를 Flyway 가 만들고 flyway_schema_history 도 그 안에 둔다.
+    schemas: enrollment
+    default-schema: enrollment
+    # 공유 RDS(controlplane)에는 파이프라인 DDL 로 수동 부트스트랩된 enrollment 스키마가
+    # 이미 있을 수 있다 (infra ADR-0023 의 우회 절차). V1 이 그 DDL 과 같은 형태이므로
+    # (ADR 0009), 비어 있지 않은 스키마는 DROP 없이 baseline(V1 스킵)으로 얹고 V2 부터
+    # 적용한다. 빈 DB 에서는 평소대로 V1 부터 실행된다.
+    baseline-on-migrate: true
+
+# PLAN.md §6.8 의 설정 키
+pulsemetry:
+  # 초대 응답의 설치 명령과 부트스트랩 스크립트가 쓰는 주소. Host 헤더에서 유도하지 않는다.
+  public-base-url: ${PULSEMETRY_PUBLIC_BASE_URL:http://localhost:8080}
+  admin:
+    # 기본값이 없다. 비어 있으면 기동이 실패한다 — 빈 키로 관리자 API 가 열리면 안 된다.
+    api-token: ${PULSEMETRY_ADMIN_API_TOKEN:}
+  # telemetry token 해시 키. auth-proxy 와 공유해야 OTLP 인증이 성립한다 (같은 키로 HMAC-SHA256).
+  # 기본값이 없다. 비어 있으면 기동이 실패한다 — 빈 키로 해시하면 조회가 조용히 전부 어긋난다.
+  token-hash-secret: ${PULSEMETRY_TOKEN_HASH_SECRET:}
+  invitation:
+    default-ttl-hours: 72
+  binaries:
+    # 바이너리는 서버 로컬 디렉터리에서 서빙한다 (L9). S3·GitHub Releases 리다이렉트가 아니다.
+    dir: ${PULSEMETRY_BINARIES_DIR:./binaries}

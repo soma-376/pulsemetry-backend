@@ -1,0 +1,44 @@
+[versions]
+kotlin = "2.3.21"
+springBoot = "4.1.0"
+springDependencyManagement = "1.1.7"
+jdk = "25"
+# Spring Boot BOM 이 관리하지 않는다. 계약 테스트에서만 쓴다.
+jsonSchemaValidator = "3.0.6"
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-spring = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
+# @Entity·@Embeddable 에 no-arg 생성자를 넣어 준다. Hibernate 가 인스턴스를 만들려면 필요하다.
+kotlin-jpa = { id = "org.jetbrains.kotlin.plugin.jpa", version.ref = "kotlin" }
+spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "springDependencyManagement" }
+
+# 버전이 없는 항목은 Spring Boot BOM 이 버전을 결정한다.
+[libraries]
+kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect" }
+kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+jackson-module-kotlin = { module = "tools.jackson.module:jackson-module-kotlin" }
+spring-boot-starter-webmvc = { module = "org.springframework.boot:spring-boot-starter-webmvc" }
+spring-boot-starter-webmvc-test = { module = "org.springframework.boot:spring-boot-starter-webmvc-test" }
+spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc" }
+# ORM 은 JPA(Hibernate) 다 (PLAN.md L3).
+spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-starter-data-jpa" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+spring-boot-testcontainers = { module = "org.springframework.boot:spring-boot-testcontainers" }
+
+# 스키마의 진실원은 Flyway SQL 마이그레이션이다 (ADR 0004 / PLAN.md L4).
+# Spring Boot 4 는 자동설정을 모듈로 쪼갰다. flyway-core 만으로는 기동 시 마이그레이션이 돌지 않는다.
+spring-boot-starter-flyway = { module = "org.springframework.boot:spring-boot-starter-flyway" }
+flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql" }
+postgresql = { module = "org.postgresql:postgresql" }
+
+# 통합 테스트는 실제 PostgreSQL 로만 돌린다. H2 등 임베디드 DB 로 대체하지 않는다 (PLAN.md L6).
+# Testcontainers 2.x 부터 아티팩트 이름에 testcontainers- 접두사가 붙는다.
+testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql" }
+testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter" }
+
+# 계약 테스트가 telemetryctl/contracts/*.schema.json 을 오라클로 쓴다 (PLAN.md R3).
+# 3.x 는 Jackson 3(tools.jackson) 기반이라 Spring Boot 4.1 과 같은 Jackson 을 쓴다.
+json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "jsonSchemaValidator" }
