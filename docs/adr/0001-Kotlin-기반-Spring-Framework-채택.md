@@ -40,5 +40,9 @@ Accepted
 - Spring Boot 4.1과 Kotlin 2.3은 출시된 지 얼마 되지 않아, 서드파티 호환성 정보와 레퍼런스가 상대적으로 부족하다. 문제가 발생했을 때 참고할 선례가 적다.
 
 ## Follow-up
-- 러닝커브를 고려하여 ORM은 우선 JPA를 사용하되, 이후 Exposed 같은 대안을 검토한다.
-- JPA를 도입하는 시점에 `kotlin("plugin.jpa")`(all-open / no-arg)를 빌드에 추가한다.
+- ORM 은 우선 JPA 를 쓰되, 이후 Exposed 같은 대안을 검토한다.
+  - **완료(전반)** — `:libs:enrollment-persistence` 가 `spring-boot-starter-data-jpa` 로 서 있다.
+    대안 검토는 열려 있다. 재검토 조건은 Negative 에 적은 "Kotlin 과 JPA 의 궁합" 이 실제 비용으로
+    드러나는 시점이다.
+- **완료** — `kotlin("plugin.jpa")`(all-open / no-arg)는 루트에서 `alias(libs.plugins.kotlin.jpa) apply false`
+  로 버전만 고정하고, 엔티티가 있는 `:libs:enrollment-persistence` 에서만 적용한다.
