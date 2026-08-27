@@ -12,6 +12,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
@@ -23,6 +24,9 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * `POST /v1/installations/telemetry-token` 통합 테스트 (PLAN.md §6.3).
@@ -283,6 +287,53 @@ class TelemetryTokenApiTest {
 		assertThat(objectMapper.readTree(response.body()).propertyNames())
 			.containsExactlyInAnyOrder("error", "message")
 		assertThat(response.body()).doesNotContain(installationToken)
+	}
+
+	// ── 동시성 ───────────────────────────────────────────────────────────────
+
+	/**
+	 * 재발급은 installation 행 잠금으로 직렬화되므로 겹쳐도 **모두 성공한다** — enroll 과 다르다.
+	 * enroll 은 초대 코드 하나를 놓고 정확히 하나만 이기지만, 재발급은 기다렸다 이어서 수행한다.
+	 *
+	 * 잠금이 없으면 READ COMMITTED 에서 겹친 트랜잭션은 서로의 미커밋 INSERT 를 못 보고
+	 * 각자 토큰을 넣어 `ux_telemetry_tokens_installation_active`(V3) 를 위반한다 — 진 쪽은 200 이 아니다.
+	 */
+	@Test
+	@Timeout(value = 60, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+	@DisplayName("같은 installation 으로 동시 재발급 8건이 전부 200 이고 활성 토큰은 1개만 남는다")
+	fun concurrentReissuesAllSucceedAndLeaveOneActiveToken() {
+		val installationToken = data.credential(installationId)
+		// 폐기 대상 활성 토큰을 미리 심는다. 잠금이 없으면 겹친 요청들이 바로 이 행에서 경합하다가
+		// 서로의 미커밋 INSERT 를 못 본 채 각자 INSERT 하게 된다 — 이 픽스처가 있어야
+		// 잠금 제거가 우연이 아니라 항상 회귀로 드러난다.
+		data.telemetryToken(installationId)
+		// Hikari 기본 풀(10)보다 작아야 한다. 잠금을 기다리는 동안에도 커넥션을 쥐고 있어서,
+		// 풀을 넘기면 connection-timeout 3초(application.yaml)에 걸려 잠금과 무관하게 깨진다.
+		val attempts = 8
+
+		val responses = Executors.newVirtualThreadPerTaskExecutor().use { executor ->
+			executor.invokeAll(
+				List(attempts) { Callable { postReissue("Bearer $installationToken") } },
+			).map { it.get() }
+		}
+
+		// 잠금이 사라지면 여기가 깨진다. 상태 코드를 먼저 보는 이유는 본문 파싱이 앞서면
+		// 500 바디에서 터져 실패 원인이 가려지기 때문이다.
+		val statuses = responses.map { it.statusCode() }
+		assertThat(statuses)
+			.describedAs("응답 코드 분포=%s", statuses.groupingBy { it }.eachCount())
+			.containsOnly(200)
+
+		// 부분 유니크 인덱스(V3)가 사라지면 여기가 깨진다.
+		assertThat(data.activeTelemetryTokenCount(installationId)).isEqualTo(1)
+		assertThat(data.countRows("telemetry_tokens")).isEqualTo(attempts + 1L)
+		assertThat(data.countRows("telemetry_tokens WHERE revoked_at IS NOT NULL")).isEqualTo(attempts.toLong())
+
+		// 살아남은 하나는 응답으로 나간 토큰 중 하나여야 한다 — 아무도 받지 못한 유령 토큰이 아니다.
+		val issued = responses.map { objectMapper.readTree(it.body()).get("telemetry_token").asString() }
+		assertThat(issued).doesNotHaveDuplicates()
+		assertThat(data.singleColumn("SELECT token_hash FROM enrollment.telemetry_tokens WHERE revoked_at IS NULL"))
+			.isIn(issued.map { telemetryTokenHasher.hex(it) })
 	}
 
 	// ── 헬퍼 ─────────────────────────────────────────────────────────────────
