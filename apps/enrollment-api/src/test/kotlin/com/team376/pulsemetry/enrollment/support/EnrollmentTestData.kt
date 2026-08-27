@@ -167,6 +167,21 @@ class EnrollmentTestData(
 	fun activeTelemetryTokenCount(installationId: UUID): Int =
 		telemetryTokens.findAllByInstallationIdAndRevokedAtIsNull(installationId).size
 
+	/**
+	 * 다른 세션에 막혀 대기 중인 세션들이 지금 실행 중인 SQL.
+	 *
+	 * 「얼마나 지나도 안 끝나더라」 식의 타이밍 단언 대신 이걸 쓰면 스케줄링 운이 개입하지 않는다 —
+	 * 대기 사실과 **무엇을 기다리는지**를 DB 에 직접 묻는다.
+	 */
+	fun blockedSessionQueries(): List<String> =
+		jdbcClient.sql(
+			"""
+			SELECT query FROM pg_stat_activity
+			WHERE datname = current_database()
+			  AND cardinality(pg_blocking_pids(pid)) > 0
+			""",
+		).query(String::class.java).list().filterNotNull()
+
 	fun countRows(table: String): Long =
 		jdbcClient.sql("SELECT count(*) FROM enrollment.$table")
 			.query(Long::class.javaObjectType)

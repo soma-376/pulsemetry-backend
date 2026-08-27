@@ -23,10 +23,12 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
+import java.sql.Connection
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import javax.sql.DataSource
 
 /**
  * `POST /v1/installations/telemetry-token` 통합 테스트 (PLAN.md §6.3).
@@ -49,6 +51,9 @@ class TelemetryTokenApiTest {
 
 	@Autowired
 	private lateinit var telemetryTokenHasher: TelemetryTokenHasher
+
+	@Autowired
+	private lateinit var dataSource: DataSource
 
 	private val http: HttpClient = HttpClient.newHttpClient()
 
@@ -341,7 +346,95 @@ class TelemetryTokenApiTest {
 			.isIn(issued.map { telemetryTokenHasher.hex(it) })
 	}
 
+	/**
+	 * 위 버스트 테스트가 못 하는 일을 한다.
+	 *
+	 * 버스트는 요청들이 실제로 겹쳐야만 의미가 있는데, 겹침은 API 가 보장하지 않는다.
+	 * 안 겹친 날에도 8건 모두 200 이라 **아무것도 검증하지 않고 초록**이 될 수 있다.
+	 *
+	 * 여기서는 경합을 우연에 맡기지 않고 **구성으로 강제한다** — 테스트가 먼저 installation 행을
+	 * 잠가 두고 재발급을 던진다. 서비스가 그 행을 잠그지 않는 구현이면 요청이 그냥 끝나 버려
+	 * 대기 세션이 생기지 않고, 그 사실만으로 실패한다. 스케줄러도 병렬도도 개입하지 않는다.
+	 *
+	 * 프로브가 `FOR UPDATE` 가 아니라 `FOR NO KEY UPDATE` 로 잡는 것이 핵심이다.
+	 * `FOR UPDATE` 로 잡으면 `telemetry_tokens` INSERT 의 외래키 검사(참조되는 installation 행에
+	 * `FOR KEY SHARE` 를 잡는다)까지 막혀서, 서비스가 잠금을 안 잡아도 대기 세션이 생긴다 —
+	 * 서비스가 아니라 외래키를 검증하는 테스트가 되어 버린다. `FOR NO KEY UPDATE` 는
+	 * `FOR KEY SHARE` 와 충돌하지 않으므로 서비스의 잠금하고만 부딪힌다.
+	 */
+	@Test
+	@Timeout(value = 60, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+	@DisplayName("재발급은 installation 행 잠금을 기다린다 — 먼저 잠가 두면 요청이 막힌다")
+	fun reissueWaitsForInstallationRowLock() {
+		val installationToken = data.credential(installationId)
+
+		Executors.newVirtualThreadPerTaskExecutor().use { executor ->
+			val probeConnection = dataSource.connection
+			val pending = try {
+				probeConnection.autoCommit = false
+				lockInstallationRow(probeConnection, installationId)
+
+				val submitted = executor.submit(Callable { postReissue("Bearer $installationToken") })
+
+				// 무엇을 기다리는지까지 본다 — installations 행의 행 잠금이어야 한다.
+				// Hibernate 는 PostgreSQL 에서 PESSIMISTIC_WRITE 를 `for update` 가 아니라
+				// `for no key update` 로 낸다. 방언이 바뀌어도 깨지지 않게 두 형태를 다 받는다.
+				assertThat(awaitBlockedSession())
+					.describedAs("막혀 있는 세션이 실행 중인 SQL")
+					.anySatisfy { query ->
+						assertThat(query.lowercase())
+							.contains("enrollment.installations")
+							.containsPattern("for (no key )?update")
+					}
+
+				assertThat(submitted.isDone)
+					.describedAs("행 잠금을 기다리는 중이므로 아직 끝나 있으면 안 된다")
+					.isFalse()
+				submitted
+			} finally {
+				// 잠금을 반드시 놓는다. 남겨 두면 다음 테스트의 TRUNCATE 가 영원히 막힌다.
+				probeConnection.rollback()
+				probeConnection.close()
+			}
+
+			// 잠금이 풀리면 이어서 성공해야 한다 — 진 쪽은 실패가 아니라 지연이다.
+			val response = pending.get(30, TimeUnit.SECONDS)
+			assertThat(response.statusCode()).isEqualTo(200)
+			assertThat(data.activeTelemetryTokenCount(installationId)).isEqualTo(1)
+		}
+	}
+
 	// ── 헬퍼 ─────────────────────────────────────────────────────────────────
+
+	/**
+	 * 다른 세션이 installation 행을 먼저 잠근 상태를 만든다. 서비스의 findWithLockById 와 같은 행이다.
+	 *
+	 * `FOR UPDATE` 가 아니라 `FOR NO KEY UPDATE` 인 이유는 위 테스트 KDoc 에 적었다 —
+	 * 외래키 검사까지 막아 버리면 잠금이 없어도 통과하는 테스트가 된다.
+	 */
+	private fun lockInstallationRow(connection: Connection, id: UUID) {
+		connection.prepareStatement("SELECT id FROM enrollment.installations WHERE id = ? FOR NO KEY UPDATE").use { statement ->
+			statement.setObject(1, id)
+			statement.executeQuery().use { rows ->
+				check(rows.next()) { "잠글 installation 행이 없다" }
+			}
+		}
+	}
+
+	/**
+	 * 잠금을 기다리는 세션이 나타날 때까지 기다린다.
+	 *
+	 * 마감까지 나타나지 않으면 재발급이 installation 행을 잠그지 않는다는 뜻이다 — 이게 회귀 신호다.
+	 */
+	private fun awaitBlockedSession(): List<String> {
+		val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
+		while (System.nanoTime() < deadline) {
+			val blocked = data.blockedSessionQueries()
+			if (blocked.isNotEmpty()) return blocked
+			Thread.sleep(25)
+		}
+		throw AssertionError("잠금을 기다리는 세션이 나타나지 않았다 — 재발급이 installation 행을 잠그지 않는다")
+	}
 
 	private fun postReissue(authorization: String?): HttpResponse<String> {
 		val builder = HttpRequest.newBuilder(URI.create("http://localhost:$port/v1/installations/telemetry-token"))
