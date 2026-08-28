@@ -206,7 +206,7 @@ class EnrollmentSchemaMigrationTest : AbstractPersistenceIntegrationTest() {
 		}.isInstanceOf(DataIntegrityViolationException::class.java)
 	}
 
-	// ── manifests 부분 유니크 인덱스 (SCHEMA-DRIFT) ──────────────────────────
+	// ── manifests 부분 유니크 인덱스 (SCHEMA-DRIFT — docs/enrollment-server-spec.md §5.1.1) ──
 
 	@Test
 	@DisplayName("manifests 에 (tenant_id) WHERE is_active 부분 유니크 인덱스가 있다")

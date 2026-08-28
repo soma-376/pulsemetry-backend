@@ -13,7 +13,7 @@ import java.util.UUID
  * tenant 별 수집·privacy 정책의 버전 이력.
  *
  * 기존 행은 고치지 않고 설정이 바뀌면 새 [version] 행을 만든다.
- * `is_active` 인 행은 tenant 당 최대 하나다 — 부분 유니크 인덱스가 강제한다(SCHEMA-DRIFT).
+ * `is_active` 인 행은 tenant 당 최대 하나다 — 부분 유니크 인덱스가 강제한다(SCHEMA-DRIFT — docs/enrollment-server-spec.md §5.1.1).
  *
  * [manifest] 는 jsonb 원문을 그대로 담는다. 봉투(installation_id·토큰)와 섞지 않는다 (PLAN.md A5).
  * 파싱과 `config_revision` 덮어쓰기는 상위 계층의 몫이다.

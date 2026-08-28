@@ -231,6 +231,16 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 - tenant 당 `is_active = true` 행은 **최대 하나**다. 부분 유니크 인덱스
   `UNIQUE (tenant_id) WHERE is_active` 가 이를 보장한다.
 
+### 5.1.1 dbml 과의 의도적 차이 (SCHEMA-DRIFT)
+
+ADR 0004 가 요구한 기록처다 — 스키마가 설계도(`rdb-schema/dbdiagram.dbml`)와 **의도적으로**
+다르게 이식된 지점을 여기에 남긴다. 마이그레이션·엔티티·테스트의 `SCHEMA-DRIFT` 주석이 이 절을 가리킨다.
+
+| # | 차이 | 위치 | 이유 |
+|---|---|---|---|
+| 1 | `enrollment.manifests` 의 부분 유니크 인덱스 `ux_manifests_tenant_active` — dbml 에 없다 | `V2__manifests_single_active_index.sql` | enroll 이 "tenant 의 활성 manifest" 를 단수로 가정하므로 DB 가 보장한다. baseline 된 DB 에도 적용되도록 V1 이 아니라 V2 에 두었다 |
+| 2 | `enrollment.telemetry_tokens` 의 부분 유니크 인덱스 `ux_telemetry_tokens_installation_active` — dbml 에 없다 | `V3__telemetry_tokens_single_active_index.sql` | 재발급("전부 폐기 후 발급") 계약의 동시성 최종 방어선 |
+
 ### 5.2 enroll 응답
 
 - enroll 응답에는 저장된 manifest 를 싣되 **`config_revision` 만 `manifests.version` 으로 덮어쓴다.**
@@ -381,6 +391,10 @@ Flyway 마이그레이션에는 시드 데이터를 넣지 않는다.
 infra 가 띄우는 RDS 의 **`controlplane`** 데이터베이스를 가리킨다. 이 서버가 발급한 토큰이
 OTLP 경로에서 검증되려면 **이 서버도 같은 DB 에 붙어야 한다** (ADR 0009).
 
+**이 절의 로컬 `bootRun` 레시피는 enrollment 서버가 dev 에 배포되기 전까지의 공식 잠정 절차다.**
+공유 RDS 의 `enrollment` 스키마 부트스트랩(마이그레이션 적용)은 이 절차로만 한다 —
+파이프라인 DDL 을 `psql` 로 직접 넣는 우회는 쓰지 않는다. 부트스트랩 주체는 backend Flyway 다.
+
 ```sh
 # 엔드포인트·자격증명은 infra DevEdgeStack 의 CfnOutput 에서 얻는다.
 #   RdsEndpoint          → 호스트
@@ -401,7 +415,8 @@ export PULSEMETRY_ADMIN_API_TOKEN=...
   (V1 스킵) 후 V2 부터 적용한다. V1 이 그 DDL 과 같은 물리 형태(native enum)라서
   성립하는 동작이다 (ADR 0009).
 - **공유 DB 를 향해 `SPRING_PROFILES_ACTIVE=local` 을 켜지 마라.** LocalSeeder 가
-  로컬 개발용 가짜 tenant 와 `http://localhost:4318` manifest 를 시드한다 — 로컬 전용이다.
+  로컬 개발용 가짜 tenant 와 `http://localhost:4316`(기본값, `pulsemetry.local-seed.otlp-endpoint`)
+  manifest 를 시드한다 — 로컬 전용이다.
 - 수용 기준(B3): enroll 로 발급받은 `ptt_` 토큰으로
   `curl -X POST http://<alb-dns>/v1/traces -H "Authorization: Bearer <ptt>"
   -H "Content-Type: application/json" -d '{"resourceSpans":[]}'` → **2xx**,
@@ -412,7 +427,7 @@ export PULSEMETRY_ADMIN_API_TOKEN=...
 ## 10. 로컬 실행
 
 ```sh
-docker compose up -d                       # PostgreSQL 17
+docker compose up -d                       # PostgreSQL 16 (infra 배포 대상과 같은 메이저)
 export PULSEMETRY_ADMIN_API_TOKEN=...      # 없으면 기동 실패한다
 # auth-proxy 와 공유하는 HMAC 키. 로컬은 ai-telemetry-pipeline compose 의 기본값과 맞춘다.
 export PULSEMETRY_TOKEN_HASH_SECRET=local-development-secret-change-me
