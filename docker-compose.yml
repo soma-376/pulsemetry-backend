@@ -2,7 +2,7 @@
 # 테스트는 이 컨테이너를 쓰지 않는다 — Testcontainers 가 매번 격리된 인스턴스를 띄운다.
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:16-alpine
     container_name: pulsemetry-postgres
     environment:
       POSTGRES_DB: pulsemetry
