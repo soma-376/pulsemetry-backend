@@ -30,12 +30,12 @@ libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이�
 
 | 항목 | 상태 | 근거 |
 |---|---|---|
-| 사람 계정·로그인 | 미구현 | 이 레포가 **Auth Service**다. `members.cognito_user_sub`가 연결 지점 |
+| 사람 계정·로그인 | 미구현 | 이 레포가 **Auth Service**다. Spring Security가 AT·RT를 직접 발급한다(ADR-0007 — Cognito 미사용). `members.cognito_user_sub`는 폐기 예정 컬럼(제거 마이그레이션은 ADR-0007 Follow-up) |
 | manifest 작성 API | 미구현 (현재 수동 INSERT) | manifest 저장은 이미 이 레포 소유 |
 | 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | 확정 ADR은 아직 없다 |
 | collector(OTLP 수신) 이관 | 미구현 — 도착지는 `:apps:telemetry-ingest` | ADR-0007 방향. 인증 계층은 `:libs:security`(횡단 라이브러리)로 |
 
-**파이프라인 전체 병합(ADR-0006)은 기각으로 닫혔다(`Rejected`).** 파이프라인 앱과
+**파이프라인 전체 병합(ADR-0006)은 기각으로 닫혔다(`Superseded by 허브 ADR 0003`).** 파이프라인 앱과
 ClickHouse 스키마는 `ai-telemetry-pipeline`에 남고, **collector 이관은 별개 경로**로 진행한다.
 collector 이관 시 collector config 소유권이 함께 이동하며, `../docs/architecture/repos.md`와
 `../docs/contracts/telemetry-ingest.md`의 소유권 서술도 같은 PR에서 함께 고친다.

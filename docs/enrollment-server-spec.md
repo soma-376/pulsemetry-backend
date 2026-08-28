@@ -178,6 +178,8 @@ enroll 완료의 증명이기 때문이다. 전환은 `invited` 에서만 일어
 `telemetry_token` 은 벤더 설정 파일로 나가지 않는다. enroll 이 로컬 텔레메트리 파이프라인을
 자동 배선하면서 Codex/Claude 설정에는 **로컬 ingest 토큰**이 들어가고, 회사 `ptt_` 는 OS
 키링에 저장되어 데몬이 상위 전송 시 `Authorization` 헤더에 주입한다(telemetryctl `forward.go`).
+이 서술은 로컬 배선이 성립할 때다 — grpc manifest·키링 불가 등으로 회사 직결로 강등된 설치에서는
+벤더 설정의 `Authorization` 에 `ptt_` 가 실린다(허브 `contracts/telemetry-ingest.md` §6).
 그래도 `ptt_` 는 전송 경로에 실리는 값이라 유출을 전제로 언제든 교체할 수 있어야 한다.
 `installation_token` 은 그 교체를 요청할 근거이며, 재발급 요청 외에는 키링 밖으로 나가지 않는다.
 

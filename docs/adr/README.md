@@ -9,7 +9,7 @@
 | 0003 | [enrollment API 계약과 2단 토큰 모델](0003-enrollment-API-계약과-2단-토큰-모델.md) | Accepted |
 | 0004 | [Flyway 마이그레이션과 varchar + CHECK 스키마 관리](0004-Flyway-마이그레이션과-varchar-CHECK-스키마-관리.md) | Accepted |
 | 0005 | [설치 부트스트랩 스크립트와 바이너리 서빙](0005-설치-부트스트랩-스크립트와-바이너리-서빙.md) | Accepted |
-| 0006 | [데이터 파이프라인을 백엔드 프로젝트에 병합](0006-데이터-파이프라인을-백엔드-프로젝트에-병합.md) | Rejected |
+| 0006 | [데이터 파이프라인을 백엔드 프로젝트에 병합](0006-데이터-파이프라인을-백엔드-프로젝트에-병합.md) | Superseded by 허브 ADR 0003 |
 | 0007 | [인증 계층으로 spring security 사용](0007-인증-계층으로-spring-security-사용.md) | Accepted |
 | 0008 | [모듈 경계와 네임스페이스 규칙 확정](0008-모듈-경계와-네임스페이스-규칙-확정.md) | Accepted |
 | 0009 | [enrollment 스키마 native enum 채택](0009-enrollment-스키마-native-enum-채택.md) | Accepted |
