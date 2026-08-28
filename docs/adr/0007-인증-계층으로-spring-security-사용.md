@@ -175,10 +175,10 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
 - 스키마의 `members.cognito_user_sub` 와 그 유니크 제약·인덱스가 쓰이지 않게 된다. 이 결정은 ADR 0003 follow-up 의 "관리자 인증을 Cognito 로 옮긴다" 를 **대체**한다.
 
 ## Follow-up
-- **완료** — manifest 배정 단위는 **tenant** 로 확정했다(PROJ-80, [허브 ADR 0002](../../../docs/adr/0002-manifest-assignment-unit-is-tenant.md)).
+- **완료** — manifest 배정 단위는 **tenant** 로 확정했다(PROJ-79, [허브 ADR 0002](../../../docs/adr/0002-manifest-assignment-unit-is-tenant.md)).
   `ux_manifests_tenant_active` 의 불변식이 유지되며, 부서 단위 배정은 `teams` 가 실제로 쓰이게 될 때
   별도 개정 ADR 로 다룬다.
-- **완료** — 이 결정의 ALB 인증 전제 기각은 [허브 ADR 0001](../../../docs/adr/0001-otlp-authentication-model.md) 로 확정됐고(PROJ-80),
+- **완료** — 이 결정의 ALB 인증 전제 기각은 [허브 ADR 0001](../../../docs/adr/0001-otlp-authentication-model.md) 로 확정됐고(PROJ-79),
   infra ADR-0008 은 그 ADR 을 대체 대상으로 `Superseded by` 로 닫혔다.
 - ADR 0003 follow-up 의 "웹 대시보드가 생기면 관리자 인증을 정적 키에서 Cognito 로 옮긴다" 는 이 ADR 로 대체된다.
   `X-Admin-Token` 과 `AdminAuthenticator` 는 이 계층이 서는 시점에 제거하고 관리자 API 를 role 기반 인가로 옮긴다.

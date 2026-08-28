@@ -71,7 +71,7 @@ Follow-up), dev 에서는 파이프라인 저장소의 `sql/rds/schema.sql` 을 
   dev 배포 전까지는 §9.4 의 로컬 `bootRun` 레시피가 **공식 잠정 절차**다 — `psql` 직접 주입은 쓰지 않는다.
 - 수용 기준: enroll 로 발급한 토큰으로 ALB `/v1/traces` POST → 2xx (B1·B2·B3 동시 입증).
 - **완료** — 파이프라인 `sql/rds/schema.sql`·`seed.sql` 동기화(V2·V3 부분 유니크 인덱스,
-  초대 코드 무염 SHA-256)를 PROJ-80 에서 반영했다.
+  초대 코드 무염 SHA-256)를 PROJ-79 에서 반영했다.
   **이후 마이그레이션을 추가할 때마다 파이프라인 사본 동기화를 체크리스트로 확인한다.**
 - **완료** — infra 문서의 "부트스트랩 주체 없음" 서술 정정(AGENTS.md 5장 (H)·6장, ADR-0023 Follow-up)을
-  PROJ-80 에서 반영했다. 네 레포가 같은 한 문장을 적는다 — "부트스트랩 주체는 backend Flyway 다."
+  PROJ-79 에서 반영했다. 네 레포가 같은 한 문장을 적는다 — "부트스트랩 주체는 backend Flyway 다."
