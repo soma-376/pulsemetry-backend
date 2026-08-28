@@ -252,6 +252,10 @@ ADR 0004 가 요구한 기록처다 — 스키마가 설계도(`rdb-schema/dbdia
 
 - `otlp.endpoint` 는 **https 필수**. `http` 는 `localhost` 에만 허용된다.
 - `otlp.protocol` 은 `http/protobuf` · `http/json` · `grpc` 뿐이다.
+  단 **`grpc` 는 계약상 유효해도 클라이언트가 배선하지 못한다** — telemetryctl 이 grpc 상위 전송을
+  지원하지 않아 그 테넌트의 설치는 로컬 파이프라인 배선에서 제외되고 회사 직결로 강등된다
+  (로컬 대시보드가 빈다 — telemetryctl ADR 0001·0006, 허브 `contracts/telemetry-ingest.md` §6).
+  grpc 테넌트를 구성하기 전에 이 제약을 확인한다. 현재 grpc 테넌트는 없다.
 - `otlp.timeout_ms` 는 1 이상, `otlp.compression` 은 `none` · `gzip` 뿐이다(계약 스키마).
 - `schema_version` 이 클라이언트의 `SupportedSchemaVersion`(현재 1)을 넘으면 거부한다.
 
