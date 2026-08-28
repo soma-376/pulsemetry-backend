@@ -2,7 +2,9 @@
 
 ## Status
 Accepted — 부분 대체: [ADR 0009](0009-enrollment-스키마-native-enum-채택.md) 가 enum 표현을
-native enum 으로 대체한다. 진실원 = Flyway, `ddl-auto: validate`, 이름 규칙, 시드 금지,
+native enum 으로 대체한다 (CHECK 제약이 사라져 이름 규칙의 `ck_` 는 현재 대상이 0건이다.
+접두사는 native enum 밖의 값 제약(범위·형식 CHECK)을 새로 둘 때를 위해 남긴다).
+진실원 = Flyway, `ddl-auto: validate`, 나머지 이름 규칙, 시드 금지,
 Testcontainers 결정은 그대로 유효하다.
 
 ## Context
@@ -25,8 +27,12 @@ PostgreSQL 로 그대로 옮기면 `CREATE TYPE ... AS ENUM` 이 된다.
 - dbml 의 enum 컬럼은 **`varchar(n)` + `CHECK (col IN (...))`** 으로 이식한다.
   JPA 는 `@Enumerated(EnumType.STRING)` 으로 매핑한다.
 - 제약과 인덱스에는 이름을 붙인다(`pk_` `uq_` `fk_` `ck_` `ix_` `ux_`).
+  `ck_` 는 native enum 채택(ADR 0009) 이후 현재 대상이 0건이며, 값 범위·형식 CHECK 를 새로 둘 때 쓴다.
 - 마이그레이션에 시드 데이터를 넣지 않는다. 로컬 개발용 데이터는 `local` 프로파일 시더가 넣는다.
 - 통합 테스트는 Testcontainers 로 띄운 실제 PostgreSQL 에서만 돈다.
+  **PostgreSQL 메이저 버전의 단일 출처는 infra 의 `lib/` 상수(현재 16.13)다** —
+  테스트 픽스처와 로컬 compose 는 그것을 따라 `postgres:16-alpine` 을 쓴다.
+  방향이 반대로 굳으면 인프라가 앱 테스트에 맞춰 버전을 고르게 되므로, 이 방향을 유지한다.
 
 ## Alternatives
 ### A. Hibernate `ddl-auto: update` 로 스키마를 관리한다
@@ -68,6 +74,11 @@ PostgreSQL 로 그대로 옮기면 `CREATE TYPE ... AS ENUM` 이 된다.
 ## Follow-up
 - `enrollment.manifests` 에는 dbml 에 없는 `UNIQUE (tenant_id) WHERE is_active` 부분 유니크 인덱스를 추가했다.
   enroll 이 "tenant 의 활성 manifest" 를 단수로 가정하므로 DB 가 그것을 보장하게 한다.
+  이 인덱스는 [ADR 0009](0009-enrollment-스키마-native-enum-채택.md) 이후
+  `V2__manifests_single_active_index.sql` 에 있다 — 파이프라인 DDL 로 baseline 된 DB 에도
+  적용되게 하기 위해서다.
 - `teams`·`team_memberships`·`contracts*` 테이블은 DDL 로는 이식했지만 이 API 가 쓰지 않으므로 엔티티를 만들지 않았다.
   대시보드 서버가 생기면 그때 엔티티를 추가한다.
-- 마이그레이션이 늘어나면 `V1` 을 baseline 으로 접는 시점을 검토한다.
+- **완료** — 마이그레이션이 늘어나면 `V1` 을 baseline 으로 접는 시점을 검토한다.
+  [ADR 0009](0009-enrollment-스키마-native-enum-채택.md) 가 `spring.flyway.baseline-on-migrate: true` 로 답했다.
+  V1 을 접는 대신 수동 부트스트랩된 스키마를 baseline 으로 얹는다.
