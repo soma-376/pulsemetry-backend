@@ -9,6 +9,7 @@ import com.team376.pulsemetry.persistence.enrollment.repository.ManifestReposito
 import com.team376.pulsemetry.persistence.enrollment.repository.MemberRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TenantRepository
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.ApplicationArguments
 import org.springframework.boot.ApplicationRunner
 import org.springframework.context.annotation.Profile
@@ -32,6 +33,18 @@ class LocalSeeder(
 	private val members: MemberRepository,
 	private val manifests: ManifestRepository,
 	private val clock: Clock,
+	/**
+	 * 시드 manifest 의 `otlp.endpoint`. 파이프라인 compose 와 함께 쓸 때는 같은 값을 주입해
+	 * 두 시드(backend · pipeline)가 한 곳에서 정의된 값을 공유한다.
+	 *
+	 * 기본값이 `:4316`(auth-proxy 경유 정상 경로)인 이유 — 계약이 허용하는 http 는
+	 * host 가 정확히 `localhost` 인 것 전부이므로 `:4316` 도 허용된다.
+	 * (이전의 `:4318` 고정은 ":4318 만 계약이 허용한다" 는 잘못된 근거 위에 있었고,
+	 * `:4318` 은 collector 직결 포트라 auth-proxy 인증·신원 귀속을 건너뛰는 데다
+	 * telemetryctl 로컬 수신기 기본 포트와 겹쳐 자기참조가 된다 — 기본값으로 부적절하다.)
+	 */
+	@Value("\${pulsemetry.local-seed.otlp-endpoint:http://localhost:4316}")
+	private val seedOtlpEndpoint: String,
 ) : ApplicationRunner {
 
 	private val log = LoggerFactory.getLogger(javaClass)
@@ -68,7 +81,7 @@ class LocalSeeder(
 			Manifest(
 				tenantId = tenant.id,
 				version = 1,
-				manifest = SEED_MANIFEST_JSON,
+				manifest = seedManifestJson(),
 				createdByMemberId = owner.id,
 				isActive = true,
 				createdAt = now,
@@ -85,34 +98,34 @@ class LocalSeeder(
 		)
 	}
 
+	/**
+	 * host 는 정확히 `localhost` 여야 한다 — `http://127.0.0.1` 은 서버도 클라이언트도 거부한다.
+	 * 포트는 [seedOtlpEndpoint] 설정값에서 온다.
+	 */
+	private fun seedManifestJson(): String = """
+		{
+		  "schema_version": 1,
+		  "config_revision": 1,
+		  "otlp": {
+		    "endpoint": "$seedOtlpEndpoint",
+		    "protocol": "http/protobuf",
+		    "compression": "gzip",
+		    "timeout_ms": 10000
+		  },
+		  "signals": { "logs": false, "metrics": true, "traces": true },
+		  "privacy": {
+		    "collect_user_prompts": false,
+		    "collect_assistant_responses": false,
+		    "collect_tool_details": false,
+		    "collect_tool_content": false,
+		    "collect_user_email": false,
+		    "collect_raw_api_bodies": false
+		  }
+		}
+	""".trimIndent()
+
 	private companion object {
 		const val SEED_TENANT_NAME = "로컬 개발 조직"
 		const val SEED_OWNER_EMAIL = "local-owner@example.com"
-
-		/**
-		 * `otlp.endpoint` 가 `http://localhost:4318` 인 이유는 계약이 허용하는 유일한 http 형태이기 때문이다.
-		 * `http://127.0.0.1` 은 서버도 클라이언트도 거부한다 — host 이름이 정확히 `localhost` 여야 한다.
-		 */
-		val SEED_MANIFEST_JSON: String = """
-			{
-			  "schema_version": 1,
-			  "config_revision": 1,
-			  "otlp": {
-			    "endpoint": "http://localhost:4318",
-			    "protocol": "http/protobuf",
-			    "compression": "gzip",
-			    "timeout_ms": 10000
-			  },
-			  "signals": { "logs": false, "metrics": true, "traces": true },
-			  "privacy": {
-			    "collect_user_prompts": false,
-			    "collect_assistant_responses": false,
-			    "collect_tool_details": false,
-			    "collect_tool_content": false,
-			    "collect_user_email": false,
-			    "collect_raw_api_bodies": false
-			  }
-			}
-		""".trimIndent()
 	}
 }
