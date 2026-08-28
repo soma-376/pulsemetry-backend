@@ -88,3 +88,4 @@ Accepted — 부분 대체: [ADR 0007](0007-인증-계층으로-spring-security-
 - **대체됨** — "웹 대시보드가 생기면 관리자 인증을 정적 키에서 Cognito 로 옮긴다" 는
   [ADR 0007](0007-인증-계층으로-spring-security-사용.md) 이 대체한다. Cognito 를 쓰지 않고
   Spring Security 로 직접 발급하며, `X-Admin-Token` 은 그 계층이 서는 시점에 role 기반 인가로 대체한다.
+- OTLP 인증 모델(토큰 종류·검증 지점·`TOKEN_HASH_SECRET` 회전 불가 제약)은 [허브 ADR 0001](../../../docs/adr/0001-otlp-authentication-model.md) 이 소유한다.
