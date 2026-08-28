@@ -32,13 +32,13 @@ libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이�
 |---|---|---|
 | 사람 계정·로그인 | 미구현 | 이 레포가 **Auth Service**다. `members.cognito_user_sub`가 연결 지점 |
 | manifest 작성 API | 미구현 (현재 수동 INSERT) | manifest 저장은 이미 이 레포 소유 |
-| 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | ADR-0006 Context는 이 레포로 전제. 확정 ADR은 아직 없다 |
-| 텔레메트리 파이프라인 + ClickHouse 스키마 | **ADR-0006 `Proposed`** — 이 레포로 병합 제안 | 채택 전까지는 `ai-telemetry-pipeline` 소유 |
+| 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | 확정 ADR은 아직 없다 |
+| collector(OTLP 수신) 이관 | 미구현 — 도착지는 `:apps:telemetry-ingest` | ADR-0007 방향. 인증 계층은 `:libs:security`(횡단 라이브러리)로 |
 
-마지막 두 행은 **아직 결정이 아니다.** `Proposed`와 `미정`은 확정과 다르다 —
-**ADR-0006이 Accepted가 되기 전에는 파이프라인 코드를 이 레포로 옮기지 않는다.**
-채택되면 `../docs/architecture/repos.md`와 `../docs/contracts/telemetry-ingest.md`의
-소유권 서술도 같은 PR에서 함께 고친다.
+**파이프라인 전체 병합(ADR-0006)은 기각으로 닫혔다(`Rejected`).** 파이프라인 앱과
+ClickHouse 스키마는 `ai-telemetry-pipeline`에 남고, **collector 이관은 별개 경로**로 진행한다.
+collector 이관 시 collector config 소유권이 함께 이동하며, `../docs/architecture/repos.md`와
+`../docs/contracts/telemetry-ingest.md`의 소유권 서술도 같은 PR에서 함께 고친다.
 
 **이 레포가 소유하지 않는 것** — 요청이 오면 올바른 레포를 알린다.
 
@@ -84,4 +84,5 @@ docker compose up -d                              # 로컬 Postgres
   **필드를 추가하면 배포된 전 클라이언트가 깨진다.** 이 제약은 중첩 manifest까지 적용된다.
 - **스키마 enum은 native enum**이다(ADR-0009가 ADR-0004의 varchar+CHECK를 대체). 진실원은 여전히 Flyway.
 - 모듈 경계·네임스페이스 규칙은 ADR-0008.
-- ADR을 추가하면 `0010`부터. 파일명은 **한국어 슬러그**. 이 레포에는 `docs/adr/README.md` 인덱스가 없다.
+- ADR을 추가하면 `0010`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
+  Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.
