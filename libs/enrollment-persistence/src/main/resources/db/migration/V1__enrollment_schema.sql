@@ -1,7 +1,7 @@
 -- enrollment 스키마 초기 생성.
 --
 -- 원본은 rdb-schema/dbdiagram.dbml 이며 그 파일은 읽기 전용이다.
--- 의도적으로 다르게 옮긴 지점은 ralph-loop/PROGRESS.md 의 SCHEMA-DRIFT 에 기록한다.
+-- 의도적으로 다르게 옮긴 지점은 docs/enrollment-server-spec.md §5.1.1 (SCHEMA-DRIFT) 에 기록한다.
 --
 -- 이식 규칙 (ADR 0009 — ADR 0004 의 varchar+CHECK 규칙을 대체)
 --   * dbml 의 Postgres native enum 은 **native enum 그대로** 옮긴다.

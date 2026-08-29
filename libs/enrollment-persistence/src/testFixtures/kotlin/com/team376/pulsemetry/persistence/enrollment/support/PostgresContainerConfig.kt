@@ -22,7 +22,10 @@ class PostgresContainerConfig {
 		PostgreSQLContainer(POSTGRES_IMAGE)
 
 	companion object {
-		/** docker-compose.yml 과 같은 메이저 버전을 쓴다. */
-		const val POSTGRES_IMAGE = "postgres:17-alpine"
+		/**
+		 * 메이저 버전의 단일 출처는 infra 의 `lib/` 상수(현재 16.13)다 — 배포 대상과 같은 메이저에서
+		 * 검증해야 "CI 통과 후 배포에서만 깨지는" 경로가 닫힌다(ADR 0004). docker-compose.yml 도 같다.
+		 */
+		const val POSTGRES_IMAGE = "postgres:16-alpine"
 	}
 }

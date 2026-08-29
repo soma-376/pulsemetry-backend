@@ -1,7 +1,7 @@
 # 0009. enrollment 스키마의 enum 을 PostgreSQL native enum 으로 표현한다.
 
 ## Status
-Accepted (ADR 0004 의 "varchar + CHECK 이식" 결정을 대체한다. 진실원 = Flyway 등 나머지 결정은 유지)
+Accepted ([ADR 0004](0004-Flyway-마이그레이션과-varchar-CHECK-스키마-관리.md) 의 "varchar + CHECK 이식" 결정을 대체한다. 진실원 = Flyway 등 나머지 결정은 유지)
 
 ## Context
 E2E 검증(soma-376/E2E-FLOW-VERIFICATION.md B3)에서 이 서버와 텔레메트리 파이프라인이
@@ -68,4 +68,10 @@ Follow-up), dev 에서는 파이프라인 저장소의 `sql/rds/schema.sql` 을 
 
 ## Follow-up
 - 공유 RDS 접속 레시피와 부트스트랩 절차는 `docs/enrollment-server-spec.md` §9 에 있다.
+  dev 배포 전까지는 §9.4 의 로컬 `bootRun` 레시피가 **공식 잠정 절차**다 — `psql` 직접 주입은 쓰지 않는다.
 - 수용 기준: enroll 로 발급한 토큰으로 ALB `/v1/traces` POST → 2xx (B1·B2·B3 동시 입증).
+- **완료** — 파이프라인 `sql/rds/schema.sql`·`seed.sql` 동기화(V2·V3 부분 유니크 인덱스,
+  초대 코드 무염 SHA-256)를 PROJ-79 에서 반영했다.
+  **이후 마이그레이션을 추가할 때마다 파이프라인 사본 동기화를 체크리스트로 확인한다.**
+- **완료** — infra 문서의 "부트스트랩 주체 없음" 서술 정정(AGENTS.md 5장 (H)·6장, ADR-0023 Follow-up)을
+  PROJ-79 에서 반영했다. 네 레포가 같은 한 문장을 적는다 — "부트스트랩 주체는 backend Flyway 다."

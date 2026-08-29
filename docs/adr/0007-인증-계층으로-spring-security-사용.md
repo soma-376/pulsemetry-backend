@@ -1,7 +1,7 @@
 # 0007. 인증 계층을 백엔드의 Spring Security 로 두고 토큰을 직접 발급한다.
 
 ## Status
-Proposed
+Accepted
 
 ## Context
 
@@ -10,7 +10,8 @@ Proposed
 관리자 인증을 정적 키에서 Cognito 로 옮긴다" 로 남아 있고, `enrollment.members` 에는 그 전제에서 나온
 `cognito_user_sub` 컬럼이 있다. 이 ADR 은 그 전제를 다시 검토한 기록이다.
 
-검토의 출발점은 기능 요구가 아니라 하나의 운영 시나리오다 — **사원이 부서를 옮기면 그 PC 의 manifest 는 누가 바꿔 주는가.**
+검토의 출발점은 기능 요구가 아니라 하나의 운영 시나리오다 — **tenant 의 manifest 가 개정되면
+이미 설치된 PC 의 manifest 는 누가 바꿔 주는가.**
 manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이버시 정책이므로, 이 질문은 편의 문제가 아니라 정책 집행 문제다.
 
 ### 사용자가 telemetryctl 를 설치하는 플로우
@@ -32,7 +33,7 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
 3. 사용자가 메일을 받고 회원가입 링크로 이동해 id + pw + 초대 코드를 입력한다.
 4. 회원가입이 끝나면 (앞선 플로우대로) CLI 를 내려받는다.
 5. CLI 설치 후 사용자가 로그인한다. 웹 페이지를 띄워 로그인하고, 콜백 URL 로 CLI 에 AT 와 RT 를 전달한다. Codex 나 Claude Code 를 CLI 에서 로그인하는 방식과 같다.
-6. CLI 가 초기 설정을 진행한다. 해당 사용자가 소속된 부서의 manifest 를 적용한다.
+6. CLI 가 초기 설정을 진행한다. 해당 사용자 tenant 의 활성 manifest 를 적용한다.
 
 ---
 
@@ -54,9 +55,13 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
 
 ### 사원들의 local desktop(telemetryctl)의 manifest 변경 시나리오
 
-- 부서 A — public 한 프로덕트를 만든다. manifest 가 상대적으로 널널하다.
-- 부서 B — 사내 전용 프로덕트이고 보안 요구가 높다. manifest 가 좀 빡세다.
-- 부서 A 이던 직원 X 가 부서 B 로 인사이동했다. 로컬 manifest 는 어떻게 변경해 주어야 하는가?
+- tenant 의 manifest 는 개정(revision)으로 바뀐다 — 예: 보안 요구가 높아져
+  프롬프트 수집을 끄는 새 버전(v2)을 활성화한다.
+- 활성 manifest 가 v1 → v2 로 바뀌었을 때, 이미 v1 을 적용하고 있는 직원 X 의 PC 의
+  로컬 manifest 는 어떻게 변경해 주어야 하는가?
+- (manifest 배정 단위는 **tenant 로 확정**됐다 — tenant 당 활성 manifest 는 최대 하나이며
+  `ux_manifests_tenant_active` 가 그것을 강제한다. 부서 단위 배정은 `teams` 가 실제로
+  쓰이게 될 때 별도 개정 ADR 로 다시 연다.)
 
 > Cognito User Pool 에서 발급한 토큰을, 요청이 서버 파이프라인에 닿기 전에 분석할 수 있는가?
 
@@ -112,9 +117,11 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
   - ADR 0003 이 상태 없는 JWT 를 탈락시킨 근거("이 API 의 핵심 동작은 폐기다")는 그대로 유효하다.
     설치 자격증명(`pit_`·`ptt_`)은 계속 불투명 토큰이고 해시만 저장한다. 단수명 JWT 는 **사용자 세션 AT 에만** 적용하며,
     폐기 경로는 RT 회전과 installation 폐기가 계속 담당한다.
-- **manifest revision 대조를 애플리케이션이 한다.** 요청 경로에서 AT 클레임의 revision 과
-  DB 의 활성 manifest `version`(tenant 당 하나 — ADR 0004 의 부분 유니크 인덱스)을 비교하고,
-  어긋나면 전용 에러 코드로 끊어 클라이언트에게 재동기화를 지시한다.
+- **manifest revision 대조를 애플리케이션이 한다.** 사용자 세션 AT 가 실리는 **관리자 API 경로**에서
+  AT 클레임의 revision 과 DB 의 활성 manifest `version`(tenant 당 하나 — ADR 0004 의 부분 유니크
+  인덱스)을 비교하고, 어긋나면 전용 에러 코드로 끊어 클라이언트에게 재동기화를 지시한다.
+  **텔레메트리(OTLP) 경로에는 적용되지 않는다** — 그 경로의 `Authorization` 은 불투명 `ptt_` 라
+  클레임이 없다. 재동기화는 별도 엔드포인트가 담당한다.
 - **manifest 재동기화 응답이 새 AT·RT 를 함께 내려준다.** manifest 갱신과 토큰 재발급을 한 응답, 한 트랜잭션으로 묶는다.
   Context 의 Dream State 가 그대로 성립한다 — 발급자가 우리이므로 호환성 문제가 없다.
   이로써 "AT 를 누가 바꿔 주나" 라는 딜레마가 사라진다. 새 토큰은 **manifest 적용이 끝났다는 증거**이고,
@@ -168,6 +175,11 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
 - 스키마의 `members.cognito_user_sub` 와 그 유니크 제약·인덱스가 쓰이지 않게 된다. 이 결정은 ADR 0003 follow-up 의 "관리자 인증을 Cognito 로 옮긴다" 를 **대체**한다.
 
 ## Follow-up
+- **완료** — manifest 배정 단위는 **tenant** 로 확정했다(PROJ-79, [허브 ADR 0002](../../../docs/adr/0002-manifest-assignment-unit-is-tenant.md)).
+  `ux_manifests_tenant_active` 의 불변식이 유지되며, 부서 단위 배정은 `teams` 가 실제로 쓰이게 될 때
+  별도 개정 ADR 로 다룬다.
+- **완료** — 이 결정의 ALB 인증 전제 기각은 [허브 ADR 0001](../../../docs/adr/0001-otlp-authentication-model.md) 로 확정됐고(PROJ-79),
+  infra ADR-0008 은 그 ADR 을 대체 대상으로 `Superseded by` 로 닫혔다.
 - ADR 0003 follow-up 의 "웹 대시보드가 생기면 관리자 인증을 정적 키에서 Cognito 로 옮긴다" 는 이 ADR 로 대체된다.
   `X-Admin-Token` 과 `AdminAuthenticator` 는 이 계층이 서는 시점에 제거하고 관리자 API 를 role 기반 인가로 옮긴다.
 - `members.cognito_user_sub` 컬럼·유니크 제약·인덱스를 제거하고 비밀번호 자격증명을 담을 자리를 만드는 마이그레이션이 필요하다.
@@ -188,8 +200,9 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
   클라이언트에서 **새 AT 저장과 manifest 반영은 별개 동작이라 원자적이지 않다.**
   AT 는 저장됐는데 반영이 실패하면 낡은 설정인 채로 유효한 토큰을 들게 되어
   "적용에 실패한 클라이언트는 계속 거부된다" 가 성립하지 않는다. 채택 논의 때
-  클라이언트의 원자 적용 프로토콜(반영 완료 후에만 새 AT 를 저장)을 계약으로 정의하거나,
-  fail-closed 문구를 서버 관점(서버는 낡은 revision 의 AT 를 거부한다)으로 한정해야 한다.
+  구현에 착수하기 전에 클라이언트의 원자 적용 프로토콜(반영 완료 후에만 새 AT 를 저장)을 계약으로
+  정의하거나, fail-closed 문구를 서버 관점(서버는 낡은 revision 의 AT 를 거부한다)으로 한정해야 한다.
+  **`telemetryctl` 과 함께 정하는 계약이다.**
 - **보안 통제의 수용 기준 (미결)**: 직접 운영으로 떠안은 로그인 시도 제한(rate limit)·계정
   잠금(lockout)·서명 키 회전은 Negative 와 위 서명 키 항목이 존재만 언급할 뿐 수용 기준이
-  결정문에 없다. 각 통제의 기준치와 담당을 명시하는 것을 채택 조건으로 한다.
+  결정문에 없다. 각 통제의 기준치와 담당을 구현 착수 전에 명시한다.

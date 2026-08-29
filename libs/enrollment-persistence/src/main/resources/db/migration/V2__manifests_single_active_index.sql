@@ -2,7 +2,7 @@
 --
 -- enroll 은 tenant 의 활성 manifest 를 단수로 가정한다(findByTenantIdAndIsActiveTrue).
 -- 둘 이상이면 어느 것이 내려갈지 비결정적이므로 DB 레벨에서 한 개임을 강제한다.
--- dbml 에는 없는 의도적 추가다 (SCHEMA-DRIFT).
+-- dbml 에는 없는 의도적 추가다 (SCHEMA-DRIFT — docs/enrollment-server-spec.md §5.1.1).
 --
 -- V1 이 아니라 V2 인 이유: 공유 RDS 에 파이프라인 DDL(ai-telemetry-pipeline/sql/rds/schema.sql)로
 -- 수동 부트스트랩된 스키마가 있으면 baseline-on-migrate 가 V1 을 건너뛴다. 그 DDL 에는
