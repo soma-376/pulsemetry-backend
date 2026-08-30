@@ -49,6 +49,9 @@ pulsemetry-backend
 **ClickHouse는 Flyway가 다루지 않는다.** `enriched_events`의 DDL 진실원과 적용 경로는 아직
 정해지지 않았다 — [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) Follow-up이 다룬다.
 
+**이 표는 테이블만 다룬다.** Raw Signal Object Storage에는 `CREATE TABLE`이 없어 규칙 1의 판정법이
+닿지 않으므로 표에 넣지 않는다. 그 쓰기 주체는 `:libs:telemetry-collector`의 `archive` 패키지다(5절).
+
 `installation_manifest_assignments`는 policy가 아니라 **enrollment 소유**다. 정책의 정의가 아니라
 installation의 배포 상태를 담기 때문이다.
 
@@ -140,8 +143,13 @@ libs/
 - **단계 모듈의 패키지는 `<컨텍스트>.<단계>` 어순이다**(ADR 0010). 3절의 `<역할>.<컨텍스트>` 역전은
   `-persistence`처럼 여러 컨텍스트에 같은 역할이 생기는 모듈에만 쓴다 — `adapter.telemetry`는
   묶일 짝이 영원히 없다.
-- **단계 모듈은 테이블을 소유하지 않아도 된다**(ADR 0010이 규칙 1에 더한 분할 축). 쓰기 소유는
-  `:libs:telemetry-persistence` 하나이고, 나머지 단계는 변환만 한다.
+- **단계 모듈은 테이블을 소유하지 않아도 된다**(ADR 0010이 규칙 1에 더한 분할 축).
+  **테이블** 쓰기 소유는 `:libs:telemetry-persistence` 하나다 — 규칙 1의 판정법이 `CREATE TABLE`의
+  위치이므로 그 판정은 테이블에만 걸린다.
+- **외부 저장소 쓰기는 별개다.** 마스킹 직후 원본을 Object Storage에 쓰는 것은
+  `telemetry-collector`의 `archive` 패키지이고, 허브 [`overview.md`](../../docs/architecture/overview.md)
+  3절이 그 쓰기를 Masker에게 주었다. 적재 모듈로 미룰 수 없다 — 변환이 실패해도 원본이 남아 있어야
+  재처리(흐름 D)의 복구 원천이 성립한다. 두 저장소의 쓰기 주체가 각각 하나라는 제약은 그대로다.
 - **소비자가 조립 앱 하나뿐인데도 지금 모듈로 나눈다.** 경계가 이미 `ai-telemetry-pipeline` 구현에서
   실측됐고 이음매가 특성화 테스트로 고정돼 있기 때문이다(ADR 0010이 규칙 5에 더한 단서).
 - `:libs:security`는 컨텍스트에 속하지 않는 횡단 모듈이므로 `<컨텍스트>-<역할>`이 아니라 `<역할>`
