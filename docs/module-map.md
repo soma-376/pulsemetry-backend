@@ -78,6 +78,20 @@ installation의 배포 상태를 담기 때문이다.
 - `<역할>`로 확정된 것은 `-persistence` · `-event`와 횡단 모듈 `security`뿐이다. 그 밖의 역할 이름은
   필요한 시점에 정한다.
 
+**이름의 어형은 층마다 다르다**([ADR 0010](adr/0010-파이프라인-단계를-모듈-경계로-나눈다.md)).
+
+| 층 | 규칙 | 예 |
+|---|---|---|
+| 단계 모듈 · 루트 패키지 | 허브 [`glossary.md`](../../docs/glossary.md)가 확정한 노드 이름. 품사를 따지지 않는다 | `collector` · `adapter` · `enricher` |
+| 역할 모듈 | 추상명사 | `persistence` · `security` · `event` |
+| 하위 패키지 | 인터페이스와 그 구현만 모이면 인터페이스 이름의 소문자형, 다른 타입이 섞이면 추상명사 | `provider` · `source` · `model` · `masking` |
+| 클래스 | 행위자·개념명사 | `EnrichmentProvider` · `OtlpReceiver` · `SecretMasker` |
+| 함수 | 동사 | `enrich()` |
+
+한 낱말이 층마다 다른 형태로 나타난다 — 모듈은 `enricher`, 그 안의 SPI 패키지는 `provider`,
+함수는 `enrich()`다. **계약으로 굳은 이름은 이 규칙보다 우선한다** — ClickHouse 컬럼
+`enrichment_json`은 그대로 둔다.
+
 ## 4. 의존 방향
 
 - `:apps:*`는 `:libs:*`에만 의존한다.
@@ -101,23 +115,31 @@ apps/
                                      앱은 조립만 한다 — 필터 체인 배선 · 단계 호출
 libs/
 ├── security/                        com.team376.pulsemetry.security
-│                                    ptt_ 검증 · manifest revision 대조 (ADR 0007)
+│                                    OTLP 경로의 ptt_ 검증 · 관리자 API 경로의 AT 검증 (ADR 0007)
 ├── telemetry-collector/             com.team376.pulsemetry.telemetry.collector
-│                                    OTLP 수신 · 마스킹 · 마스킹 후 원본의 외부 저장소 적재
-├── telemetry-normalizer/            com.team376.pulsemetry.telemetry.normalizer
-│                                    공통 스키마 매핑 · 벤더별 스키마 · 공시가 환산 · 재처리 읽기
-├── telemetry-enrichment/            com.team376.pulsemetry.telemetry.enrichment
-│                                    사원 정보 결합 · 외부 의존성 참조
+│                                    OTLP 수신
+│                                    ├ masking/    서버 마스킹 — 허브 Masker 노드의 소재
+│                                    └ archive/    마스킹 후 원본의 외부 저장소 적재
+├── telemetry-adapter/               com.team376.pulsemetry.telemetry.adapter
+│                                    공시가 환산 · 재처리 읽기
+│                                    ├ model/      공통 스키마
+│                                    └ source/     벤더별 매핑 (claude_code · codex)
+├── telemetry-enricher/              com.team376.pulsemetry.telemetry.enricher
+│                                    사원 정보 결합
+│                                    └ provider/   EnrichmentProvider 와 그 구현
 └── telemetry-persistence/           com.team376.pulsemetry.persistence.telemetry
                                      ClickHouse 스키마 · 적재 — 쓰기 소유 모듈
 ```
 
-- **인증이 가장 앞이다.** 필터 체인이 통과시킨 요청만 수집 단계에 닿는다. manifest revision 대조로
-  반려될 요청의 데이터가 외부 저장소에 적재되지 않게 하려면 이 순서여야 한다(허브 ADR 0005).
+- **인증이 가장 앞이다.** 필터 체인이 통과시킨 요청만 수집 단계에 닿는다. 폐기된 토큰이나 정지된
+  tenant의 요청처럼 거부될 데이터가 외부 저장소에 적재되지 않게 하려면 이 순서여야 한다(허브 ADR 0005).
 - **신원은 `SecurityContextHolder`에서 얻는다.** 단계 사이에 신원 헤더를 실어 나르지 않는다.
-- **마스킹은 모듈이다.** 클라이언트 마스킹을 신뢰해 서버 마스킹을 생략하지 않는다.
+- **마스킹은 `telemetry.collector.masking` 패키지다.** 허브가 Masker를 별도 노드로 그리지만 이
+  저장소에서는 수집 모듈 안에 둔다 — 정규식 규칙 묶음이라 모듈 하나를 지탱할 부피가 아니다.
+  클라이언트 마스킹을 신뢰해 서버 마스킹을 생략하지 않는다는 원칙은 그대로다.
 - **단계 모듈의 패키지는 `<컨텍스트>.<단계>` 어순이다**(ADR 0010). 3절의 `<역할>.<컨텍스트>` 역전은
-  `-persistence`처럼 여러 컨텍스트에 같은 역할이 생기는 모듈에만 쓴다 — 단계 이름은 묶일 짝이 없다.
+  `-persistence`처럼 여러 컨텍스트에 같은 역할이 생기는 모듈에만 쓴다 — `adapter.telemetry`는
+  묶일 짝이 영원히 없다.
 - **단계 모듈은 테이블을 소유하지 않아도 된다**(ADR 0010이 규칙 1에 더한 분할 축). 쓰기 소유는
   `:libs:telemetry-persistence` 하나이고, 나머지 단계는 변환만 한다.
 - **소비자가 조립 앱 하나뿐인데도 지금 모듈로 나눈다.** 경계가 이미 `ai-telemetry-pipeline` 구현에서
