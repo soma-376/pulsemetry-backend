@@ -36,11 +36,11 @@ libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이�
 | 텔레메트리 파이프라인 이관 | 미구현 — 도착지는 `:apps:telemetry-ingest`와 단계별 `:libs:` 모듈 | 허브 ADR 0004(병합 채택). 인증 계층은 `:libs:security`(횡단 라이브러리)로 |
 
 **파이프라인 전체 병합은 채택됐다(허브 ADR 0004 — ADR-0006은 `Superseded by 허브 ADR 0004`).**
-파이프라인 로직 전체와 ClickHouse 스키마 소유권이 이 레포로 온다. 배포 단위는 앱 하나와 OTel Collector
-컨테이너 하나이고, 단계는 배포 경계가 아니라 모듈 경계로 나뉜다 — 구성은 `docs/module-map.md`가 담는다.
-**이관은 아직 진행 전이며 동작하는 파이프라인은 `ai-telemetry-pipeline`에 있다.** 이관 시 collector
-config 소유권이 함께 이동하고, `../docs/contracts/telemetry-ingest.md`의 검증 주체 서술은 전환이
-실제로 끝난 시점에 고친다.
+파이프라인 로직 전체와 ClickHouse 스키마 소유권이 이 레포로 온다. **배포 단위는 하나이고 OTel Collector
+바이너리를 쓰지 않는다** — 수집·마스킹도 이 레포가 구현한다(허브 ADR 0005). 단계는 배포 경계가 아니라
+모듈 경계로 나뉘며, 구성은 `docs/module-map.md`가 담는다.
+**이관은 아직 진행 전이며 동작하는 파이프라인은 `ai-telemetry-pipeline`에 있다.**
+`../docs/contracts/telemetry-ingest.md`의 검증 주체·신원 전파 서술은 전환이 실제로 끝난 시점에 고친다.
 
 **이 레포가 소유하지 않는 것** — 요청이 오면 올바른 레포를 알린다.
 

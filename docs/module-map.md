@@ -9,7 +9,8 @@
 관련 결정 기록: [ADR 0002](adr/0002-멀티모듈-프로젝트-구축.md) ·
 [ADR 0007](adr/0007-인증-계층으로-spring-security-사용.md) ·
 [ADR 0008](adr/0008-모듈-경계와-네임스페이스-규칙-확정.md) ·
-[허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md)
+[허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
+[허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md)
 
 ---
 
@@ -29,7 +30,7 @@ pulsemetry-backend
 ## 2. 도메인 경계 — 쓰기 소유권
 
 **한 테이블의 쓰기 로직은 한 모듈이 소유한다. 읽는 모듈은 몇 개든 좋다.**
-도메인이란 한 모듈이 쓰기를 독점하는 테이블 묶음이다. 스키마의 진실원이 Flyway이므로(ADR 0004),
+도메인이란 한 모듈이 쓰기를 독점하는 테이블 묶음이다. RDB 스키마의 진실원이 Flyway이므로(ADR 0004),
 소유 질문은 "이 테이블의 `CREATE TABLE`이 어느 모듈 아래에 있는가"라는 파일 경로 질문으로 환원된다.
 
 | 도메인 | 테이블 | 쓰기 소유 |
@@ -39,6 +40,9 @@ pulsemetry-backend
 | policy | `manifests` | 관리자 API (미구현) |
 | contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 관리자 API (미구현) |
 | telemetry | ClickHouse `enriched_events` | `telemetry-ingest` (미구현) |
+
+**ClickHouse는 Flyway가 다루지 않는다.** `enriched_events`의 DDL 진실원과 적용 경로는 아직
+정해지지 않았다 — [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) Follow-up이 다룬다.
 
 `installation_manifest_assignments`는 policy가 아니라 **enrollment 소유**다. 정책의 정의가 아니라
 installation의 배포 상태를 담기 때문이다.
@@ -82,28 +86,31 @@ installation의 배포 상태를 담기 때문이다.
 ## 5. 텔레메트리 파이프라인이 들어올 자리
 
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md)가 파이프라인을 이 저장소로
-병합하기로 정했다. **배포 단위는 앱 하나와 OTel Collector 컨테이너 하나**이고, 파이프라인의 단계는
-배포 경계가 아니라 위 규칙에 따른 **모듈 경계**로 나뉜다.
+병합하기로, [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md)가 전 계층을
+**단일 애플리케이션**으로 띄우기로 정했다. OTel Collector 바이너리를 쓰지 않으므로 수집과 마스킹도
+이 저장소의 모듈이다. 단계는 배포 경계가 아니라 위 규칙에 따른 **모듈 경계**로 나뉜다.
 
 ```text
 apps/
 └── telemetry-ingest/                com.team376.pulsemetry.telemetry
-                                     앱은 조립만 한다 — 인증 배선 · 수신 · 단계 호출 · 적재 호출
+                                     앱은 조립만 한다 — 필터 체인 배선 · 단계 호출
 libs/
 ├── security/                        com.team376.pulsemetry.security
-│                                    ptt_ 검증 · 신원 헤더 부여 (ADR 0007)
+│                                    ptt_ 검증 · manifest revision 대조 (ADR 0007)
+├── telemetry-collector/             com.team376.pulsemetry.collector.telemetry
+│                                    OTLP 수신 · 마스킹 · 마스킹 후 원본의 외부 저장소 적재
 ├── telemetry-normalizer/            com.team376.pulsemetry.normalizer.telemetry
-│                                    OTLP 판독 · 벤더 어댑터 · 정규화 모델
+│                                    공통 스키마 매핑 · 벤더별 스키마 · 공시가 환산 · 재처리 읽기
 ├── telemetry-enrichment/            com.team376.pulsemetry.enrichment.telemetry
-│                                    조직 결합 (team_memberships as-of 조인)
+│                                    사원 정보 결합 · 외부 의존성 참조
 └── telemetry-persistence/           com.team376.pulsemetry.persistence.telemetry
                                      ClickHouse 스키마 · 적재
 ```
 
-- 앱은 collector의 **앞**(인증·신원 헤더 부여)과 **뒤**(정규화·보강·적재) 양쪽에 선다. 두 경로는 같은
-  앱의 서로 다른 엔드포인트다.
-- **마스킹은 모듈이 아니다.** collector 설정의 `redaction`·`secrets` processor가 담당하며 앱이
-  재구현하지 않는다.
+- **인증이 가장 앞이다.** 필터 체인이 통과시킨 요청만 수집 단계에 닿는다. manifest revision 대조로
+  반려될 요청의 데이터가 외부 저장소에 적재되지 않게 하려면 이 순서여야 한다(허브 ADR 0005).
+- **신원은 `SecurityContextHolder`에서 얻는다.** 단계 사이에 신원 헤더를 실어 나르지 않는다.
+- **마스킹은 모듈이다.** 클라이언트 마스킹을 신뢰해 서버 마스킹을 생략하지 않는다.
 - `:libs:security`는 컨텍스트에 속하지 않는 횡단 모듈이므로 `<컨텍스트>-<역할>`이 아니라 `<역할>`
   형태를 쓴다. OTLP 경로와 관리자 API 경로가 같은 인증 코드를 공유할 자리가 여기다.
 - 이 컨텍스트의 배포 단위는 하나이므로 3절의 내림 조항(`<컨텍스트>.<인바운드>`)은 발동하지 않는다.
