@@ -13,11 +13,12 @@
 | 0007 | [인증 계층으로 spring security 사용](0007-인증-계층으로-spring-security-사용.md) | Accepted |
 | 0008 | [모듈 경계와 네임스페이스 규칙 확정](0008-모듈-경계와-네임스페이스-규칙-확정.md) | Accepted |
 | 0009 | [enrollment 스키마 native enum 채택](0009-enrollment-스키마-native-enum-채택.md) | Accepted |
+| 0010 | [파이프라인 단계를 모듈 경계로 나눈다](0010-파이프라인-단계를-모듈-경계로-나눈다.md) | Accepted |
 
 Status 열은 각 ADR Status 줄의 **첫 토큰**만 싣는다. 부분 대체·부연은 해당 파일에서 확인한다.
 Status 첫 토큰이 바뀌는 커밋에서는 이 표도 같은 커밋에서 갱신한다.
 
-새 ADR을 작성할 때는 다음 미사용 번호(`0010-...`)를 사용하고
+새 ADR을 작성할 때는 다음 미사용 번호(`0011-...`)를 사용하고
 [`0000-adr-template.md`](0000-adr-template.md)의 구조를 따른다. 파일명은 **한국어 슬러그**다.
 
 섹션 순서는 다음과 같다.

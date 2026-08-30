@@ -46,7 +46,7 @@ libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이�
 
 | 항목 | 소유 레포 |
 |---|---|
-| AWS 리소스, 태스크 정의, 배포 collector 설정 | `infra` |
+| AWS 리소스, 태스크 정의, **현행 파이프라인의** 배포 collector 설정 | `infra` |
 | 로컬 수신기·데몬·벤더 도구 배선, manifest **계약 스키마 파일** | `telemetryctl` |
 | 스키마 다이어그램(dbml) | `rdb-schema` — 단 **마이그레이션 진실원은 이 레포의 Flyway**다 |
 
@@ -92,7 +92,8 @@ docker compose up -d                              # 로컬 Postgres
 - **enroll 응답은 정확히 4키다.** 클라이언트가 `DisallowUnknownFields`로 파싱하므로
   **필드를 추가하면 배포된 전 클라이언트가 깨진다.** 이 제약은 중첩 manifest까지 적용된다.
 - **스키마 enum은 native enum**이다(ADR-0009가 ADR-0004의 varchar+CHECK를 대체). 진실원은 여전히 Flyway.
-- 모듈 경계·네임스페이스 규칙은 ADR-0008이 정하고, 현재 구성과 이름은 `docs/module-map.md`가 담는다.
+- 모듈 경계·네임스페이스 규칙은 ADR-0008(파이프라인 단계는 ADR-0010이 개정)이 정하고,
+  현재 구성과 이름은 `docs/module-map.md`가 담는다.
   모듈을 추가하기 전에 둘 다 본다.
 - ADR을 추가하면 `0010`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

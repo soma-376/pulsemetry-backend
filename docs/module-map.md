@@ -9,6 +9,7 @@
 관련 결정 기록: [ADR 0002](adr/0002-멀티모듈-프로젝트-구축.md) ·
 [ADR 0007](adr/0007-인증-계층으로-spring-security-사용.md) ·
 [ADR 0008](adr/0008-모듈-경계와-네임스페이스-규칙-확정.md) ·
+[ADR 0010](adr/0010-파이프라인-단계를-모듈-경계로-나눈다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md)
 
@@ -39,7 +40,11 @@ pulsemetry-backend
 | enrollment | `invitations` · `installations` · `installation_credentials` · `telemetry_tokens` · `installation_manifest_assignments` | `enrollment-api` |
 | policy | `manifests` | 관리자 API (미구현) |
 | contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 관리자 API (미구현) |
-| telemetry | ClickHouse `enriched_events` | `telemetry-ingest` (미구현) |
+| telemetry | ClickHouse `enriched_events` | `:libs:telemetry-persistence` (미구현) |
+
+**쓰기 소유는 모듈이다**(ADR 0008 규칙 1). 표가 앱 이름을 적은 행은 그 도메인의 쓰기가 아직 앱에
+직접 있다는 뜻이고, 규칙 5의 승격 트리거가 당겨지면 모듈로 내려간다. telemetry는 새 도메인이라
+처음부터 모듈이 소유한다([ADR 0010](adr/0010-파이프라인-단계를-모듈-경계로-나눈다.md)).
 
 **ClickHouse는 Flyway가 다루지 않는다.** `enriched_events`의 DDL 진실원과 적용 경로는 아직
 정해지지 않았다 — [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) Follow-up이 다룬다.
@@ -97,20 +102,26 @@ apps/
 libs/
 ├── security/                        com.team376.pulsemetry.security
 │                                    ptt_ 검증 · manifest revision 대조 (ADR 0007)
-├── telemetry-collector/             com.team376.pulsemetry.collector.telemetry
+├── telemetry-collector/             com.team376.pulsemetry.telemetry.collector
 │                                    OTLP 수신 · 마스킹 · 마스킹 후 원본의 외부 저장소 적재
-├── telemetry-normalizer/            com.team376.pulsemetry.normalizer.telemetry
+├── telemetry-normalizer/            com.team376.pulsemetry.telemetry.normalizer
 │                                    공통 스키마 매핑 · 벤더별 스키마 · 공시가 환산 · 재처리 읽기
-├── telemetry-enrichment/            com.team376.pulsemetry.enrichment.telemetry
+├── telemetry-enrichment/            com.team376.pulsemetry.telemetry.enrichment
 │                                    사원 정보 결합 · 외부 의존성 참조
 └── telemetry-persistence/           com.team376.pulsemetry.persistence.telemetry
-                                     ClickHouse 스키마 · 적재
+                                     ClickHouse 스키마 · 적재 — 쓰기 소유 모듈
 ```
 
 - **인증이 가장 앞이다.** 필터 체인이 통과시킨 요청만 수집 단계에 닿는다. manifest revision 대조로
   반려될 요청의 데이터가 외부 저장소에 적재되지 않게 하려면 이 순서여야 한다(허브 ADR 0005).
 - **신원은 `SecurityContextHolder`에서 얻는다.** 단계 사이에 신원 헤더를 실어 나르지 않는다.
 - **마스킹은 모듈이다.** 클라이언트 마스킹을 신뢰해 서버 마스킹을 생략하지 않는다.
+- **단계 모듈의 패키지는 `<컨텍스트>.<단계>` 어순이다**(ADR 0010). 3절의 `<역할>.<컨텍스트>` 역전은
+  `-persistence`처럼 여러 컨텍스트에 같은 역할이 생기는 모듈에만 쓴다 — 단계 이름은 묶일 짝이 없다.
+- **단계 모듈은 테이블을 소유하지 않아도 된다**(ADR 0010이 규칙 1에 더한 분할 축). 쓰기 소유는
+  `:libs:telemetry-persistence` 하나이고, 나머지 단계는 변환만 한다.
+- **소비자가 조립 앱 하나뿐인데도 지금 모듈로 나눈다.** 경계가 이미 `ai-telemetry-pipeline` 구현에서
+  실측됐고 이음매가 특성화 테스트로 고정돼 있기 때문이다(ADR 0010이 규칙 5에 더한 단서).
 - `:libs:security`는 컨텍스트에 속하지 않는 횡단 모듈이므로 `<컨텍스트>-<역할>`이 아니라 `<역할>`
   형태를 쓴다. OTLP 경로와 관리자 API 경로가 같은 인증 코드를 공유할 자리가 여기다.
 - 이 컨텍스트의 배포 단위는 하나이므로 3절의 내림 조항(`<컨텍스트>.<인바운드>`)은 발동하지 않는다.
@@ -118,6 +129,8 @@ libs/
 ## 6. 모듈을 언제 만드는가
 
 **두 번째 소비자가 실제로 생겼을 때 승격한다.** 예측으로 나누지 않는다.
+단 **경계가 이미 실측된 경우는 예외다** — 5절의 단계 모듈이 그렇고, 이벤트 payload 모듈도 그렇다
+(ADR 0008 규칙 4 · [ADR 0010](adr/0010-파이프라인-단계를-모듈-경계로-나눈다.md)).
 
 - `:libs:enrollment-persistence`의 도메인별 분할(directory · enrollment · policy · contract)은
   예정돼 있고, 트리거는 **관리자 API 앱의 첫 커밋**이다. 같은 시점에
