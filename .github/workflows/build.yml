@@ -1,8 +1,6 @@
 name: build
 
 on:
-  push:
-    branches: ['**']
   pull_request:
 
 # 읽기 전용 워크플로다 — 빌드와 아티팩트 업로드뿐이라 컨텐츠 읽기 권한이면 충분하다.

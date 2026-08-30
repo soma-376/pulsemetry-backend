@@ -1,0 +1,159 @@
+name: Deploy to Dev
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+# 배포는 겹치면 안 된다. 진행 중인 배포를 취소하면 ECS가 어중간한 상태로 남을 수 있으므로
+# cancel-in-progress는 false다. 뒤 커밋의 배포는 앞 배포가 끝난 뒤에 돈다.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+# 기본은 읽기만 허용한다. OIDC 토큰 발급 권한은 deploy 잡에만 준다.
+permissions:
+  contents: read
+
+env:
+  # AWS_REGION은 공통 이름을 쓰고, 나머지는 _DEV 접미사가 붙은 GitHub Actions Secrets를 쓴다.
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+  # infra의 DEV_DEFAULT_IMAGE_TAG와 반드시 일치해야 한다.
+  # 태스크 정의가 이 가변 태그를 가리키고, 강제 재배포가 같은 태그를 다시 당겨온다.
+  IMAGE_TAG: ${{ secrets.IMAGE_TAG_DEV }}
+  ECR_REPO_API_SERVER: ${{ secrets.ECR_REPO_API_SERVER_DEV }}
+
+  AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN_DEV }}
+  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_DEV }}
+  ECS_SERVICE_DASHBOARD: ${{ secrets.ECS_SERVICE_DASHBOARD_DEV }}
+
+jobs:
+  validate:
+    name: Gradle build (Testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout backend
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # 계약 테스트는 telemetryctl의 스키마 파일 원본을 읽는다.
+      # 복사본을 backend에 두면 원본과 갈라질 수 있으므로 직접 체크아웃한다.
+      - name: Checkout telemetryctl (계약 원천)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: soma-376/telemetryctl
+          path: telemetryctl
+          persist-credentials: false
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+
+      # 통합 테스트는 Testcontainers로 실제 PostgreSQL을 띄운다.
+      - name: Build
+        run: ./gradlew build --no-daemon
+        env:
+          PULSEMETRY_CONTRACTS_DIR: ${{ github.workspace }}/telemetryctl/contracts
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-reports
+          path: '**/build/reports/tests/test'
+          retention-days: 7
+
+  deploy:
+    name: Build, push to ECR and force-deploy ECS
+    needs: validate
+    # dev 앱 호스트가 Graviton이므로 linux/arm64 이미지를 네이티브 ARM 러너에서 만든다.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      # 미등록 GitHub Secret은 빈 문자열이 된다. 실제 값은 노출하지 않고 이름만 보고한다.
+      - name: Verify required GitHub Secrets
+        run: |
+          missing=()
+          for mapping in \
+            AWS_REGION:AWS_REGION \
+            IMAGE_TAG:IMAGE_TAG_DEV \
+            ECR_REPO_API_SERVER:ECR_REPO_API_SERVER_DEV \
+            AWS_DEPLOY_ROLE_ARN:AWS_DEPLOY_ROLE_ARN_DEV \
+            ECS_CLUSTER:ECS_CLUSTER_DEV \
+            ECS_SERVICE_DASHBOARD:ECS_SERVICE_DASHBOARD_DEV; do
+            env_name="${mapping%%:*}"
+            secret_name="${mapping#*:}"
+            if [[ -z "${!env_name}" ]]; then
+              missing+=("$secret_name")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            printf '::error::필수 GitHub Secret이 등록되지 않았거나 비어 있다: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+          echo "배포 설정 확인 완료"
+
+      - name: Checkout backend
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # 장기 액세스 키를 쓰지 않는다(인프라 ADR-0024). 신뢰 정책이 develop ref를
+      # StringEquals로 고정하므로 이 잡에 environment를 붙이지 않는다.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # registry 출력으로 URI를 얻어 계정 ID를 워크플로우에 기록하지 않는다.
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      # Dockerfile과 빌드 컨텍스트는 레포 루트다. 배포 역할에 ECR pull 권한이 없으므로
+      # registry cache 대신 GitHub Actions cache만 쓴다.
+      # batch-processor는 MVP 미구현이므로 api-server 이미지만 만든다.
+      - name: Build and push api-server
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/arm64
+          provenance: false
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_API_SERVER }}:${{ env.IMAGE_TAG }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_API_SERVER }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=api-server
+          cache-to: type=gha,mode=max,scope=api-server
+
+      # 태스크 정의는 CDK가 소유한다. 기존 리비전을 유지한 채 가변 태그를 다시 당기도록
+      # api-server 컨테이너가 속한 dashboard 서비스만 강제 재배포한다.
+      - name: Force new deployment
+        run: |
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE_DASHBOARD" \
+            --force-new-deployment --no-cli-pager --query 'service.serviceName' --output text
+
+      # dev dashboard는 minHealthyPercent가 0이므로 재배포 중 짧은 다운타임이 정상이다.
+      - name: Wait for service to stabilize
+        run: |
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE_DASHBOARD"
+          echo "배포 완료: $ECS_SERVICE_DASHBOARD"
