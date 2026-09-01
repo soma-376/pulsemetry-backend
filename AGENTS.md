@@ -33,18 +33,20 @@ libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이�
 | 사람 계정·로그인 | 미구현 | 이 레포가 **Auth Service**다. Spring Security가 AT·RT를 직접 발급한다(ADR-0007 — Cognito 미사용). `members.cognito_user_sub`는 폐기 예정 컬럼(제거 마이그레이션은 ADR-0007 Follow-up) |
 | manifest 작성 API | 미구현 (현재 수동 INSERT) | manifest 저장은 이미 이 레포 소유 |
 | 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | 확정 ADR은 아직 없다 |
-| collector(OTLP 수신) 이관 | 미구현 — 도착지는 `:apps:telemetry-ingest` | ADR-0007 방향. 인증 계층은 `:libs:security`(횡단 라이브러리)로 |
+| 텔레메트리 파이프라인 이관 | 미구현 — 도착지는 `:apps:telemetry-ingest`와 단계별 `:libs:` 모듈 | 허브 ADR 0004(병합 채택). 인증 계층은 `:libs:security`(횡단 라이브러리)로 |
 
-**파이프라인 전체 병합(ADR-0006)은 기각으로 닫혔다(`Superseded by 허브 ADR 0003`).** 파이프라인 앱과
-ClickHouse 스키마는 `ai-telemetry-pipeline`에 남고, **collector 이관은 별개 경로**로 진행한다.
-collector 이관 시 collector config 소유권이 함께 이동하며, `../docs/architecture/repos.md`와
-`../docs/contracts/telemetry-ingest.md`의 소유권 서술도 같은 PR에서 함께 고친다.
+**파이프라인 전체 병합은 채택됐다(허브 ADR 0004 — ADR-0006은 `Superseded by 허브 ADR 0004`).**
+파이프라인 로직 전체와 ClickHouse 스키마 소유권이 이 레포로 온다. **배포 단위는 하나이고 OTel Collector
+바이너리를 쓰지 않는다** — 수집·마스킹도 이 레포가 구현한다(허브 ADR 0005). 단계는 배포 경계가 아니라
+모듈 경계로 나뉘며, 구성은 `docs/module-map.md`가 담는다.
+**이관은 아직 진행 전이며 동작하는 파이프라인은 `ai-telemetry-pipeline`에 있다.**
+`../docs/contracts/telemetry-ingest.md`의 검증 주체·신원 전파 서술은 전환이 실제로 끝난 시점에 고친다.
 
 **이 레포가 소유하지 않는 것** — 요청이 오면 올바른 레포를 알린다.
 
 | 항목 | 소유 레포 |
 |---|---|
-| AWS 리소스, 태스크 정의, 배포 collector 설정 | `infra` |
+| AWS 리소스, 태스크 정의, **현행 파이프라인의** 배포 collector 설정 | `infra` |
 | 로컬 수신기·데몬·벤더 도구 배선, manifest **계약 스키마 파일** | `telemetryctl` |
 | 스키마 다이어그램(dbml) | `rdb-schema` — 단 **마이그레이션 진실원은 이 레포의 Flyway**다 |
 
@@ -64,11 +66,12 @@ collector 이관 시 collector config 소유권이 함께 이동하며, `../docs
 의도적으로 유보했다. 정리 전까지는 어떤 `PLAN.md §…` 인용도 근거로 읽지 않는다 —
 같은 내용이 필요하면 위 권위 문서 셋에서 찾는다.
 
-**권위 있는 문서는 셋뿐이다.**
+**권위 있는 문서는 넷뿐이다.**
 
 | 문서 | 담는 것 |
 |---|---|
 | `docs/enrollment-server-spec.md` | 서버 측 상세 명세 |
+| `docs/module-map.md` | 모듈 구성·네임스페이스·의존 방향 — 모듈을 추가하기 전에 본다 |
 | `docs/adr/` (0001–0009) | 설계 결정 |
 | `../docs/contracts/enrollment-api.md` | telemetryctl과의 **계약** — 경계에 걸리는 변경은 여기가 기준 |
 
@@ -89,6 +92,8 @@ docker compose up -d                              # 로컬 Postgres
 - **enroll 응답은 정확히 4키다.** 클라이언트가 `DisallowUnknownFields`로 파싱하므로
   **필드를 추가하면 배포된 전 클라이언트가 깨진다.** 이 제약은 중첩 manifest까지 적용된다.
 - **스키마 enum은 native enum**이다(ADR-0009가 ADR-0004의 varchar+CHECK를 대체). 진실원은 여전히 Flyway.
-- 모듈 경계·네임스페이스 규칙은 ADR-0008.
+- 모듈 경계·네임스페이스 규칙은 ADR-0008(파이프라인 단계는 ADR-0010이 개정)이 정하고,
+  현재 구성과 이름은 `docs/module-map.md`가 담는다.
+  모듈을 추가하기 전에 둘 다 본다.
 - ADR을 추가하면 `0010`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.
