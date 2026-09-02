@@ -14,7 +14,7 @@ import java.util.UUID
 /**
  * 조직 구성원.
  *
- * 관리자 등 웹 사용자는 Cognito 계정(`cognitoUserSub`)과 연결되지만,
+ * 관리자 등 웹 사용자는 우리가 직접 발급·검증하는 세션 토큰으로 인증하고(ADR 0007 — Cognito 미사용),
  * 초대로 들어온 일반 사용자는 `status='invited'` 로만 만들어지고 installation 으로 서비스와 이어진다.
  */
 @Entity
@@ -30,9 +30,6 @@ class Member(
 	@Id
 	@Column(name = "id", nullable = false)
 	var id: UUID = UUID.randomUUID(),
-
-	@Column(name = "cognito_user_sub", length = 255)
-	var cognitoUserSub: String? = null,
 
 	@Column(name = "display_name", length = 100)
 	var displayName: String? = null,
@@ -52,6 +49,15 @@ class Member(
 
 	@Column(name = "updated_at", nullable = false)
 	var updatedAt: Instant = Instant.now(),
+
+	/**
+	 * Spring Security 의 `PasswordEncoder` 로 해싱한 비밀번호 (ADR 0007, `V4`).
+	 *
+	 * 아직 로그인 경로가 없어 쓰는 곳이 없다 — 컬럼과 매핑을 함께 세워 두는 자리다.
+	 * `null` 은 "초대만 받고 아직 가입하지 않음" 이다. 결정론적 해시가 아니므로 조회 키로 쓰지 않는다.
+	 */
+	@Column(name = "password_hash", length = 255)
+	var passwordHash: String? = null,
 ) {
 	/**
 	 * 초대를 발급할 수 있는 권한인지 (PLAN.md §6.5 — owner 또는 admin 만 가능).

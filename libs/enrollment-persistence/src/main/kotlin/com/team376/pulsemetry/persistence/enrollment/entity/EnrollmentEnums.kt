@@ -12,6 +12,8 @@ package com.team376.pulsemetry.persistence.enrollment.entity
 
 enum class TenantStatus { active, suspended, terminated }
 
+enum class TeamStatus { active, archived }
+
 enum class MemberRole { owner, admin, member }
 
 enum class MemberStatus { invited, active, suspended }

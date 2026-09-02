@@ -170,7 +170,6 @@ class EnrollmentSchemaMigrationTest : AbstractPersistenceIntegrationTest() {
 		assertThat(constraintNames('u')).contains(
 			"uq_tenants_slug",
 			"uq_teams_tenant_name",
-			"uq_members_tenant_cognito_user_sub",
 			"uq_members_tenant_email",
 			"uq_invitations_code_hash",
 			"uq_installation_credentials_credential_hash",

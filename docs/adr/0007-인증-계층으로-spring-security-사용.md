@@ -182,8 +182,12 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
   infra ADR-0008 은 그 ADR 을 대체 대상으로 `Superseded by` 로 닫혔다.
 - ADR 0003 follow-up 의 "웹 대시보드가 생기면 관리자 인증을 정적 키에서 Cognito 로 옮긴다" 는 이 ADR 로 대체된다.
   `X-Admin-Token` 과 `AdminAuthenticator` 는 이 계층이 서는 시점에 제거하고 관리자 API 를 role 기반 인가로 옮긴다.
-- `members.cognito_user_sub` 컬럼·유니크 제약·인덱스를 제거하고 비밀번호 자격증명을 담을 자리를 만드는 마이그레이션이 필요하다.
-  스키마의 진실원은 Flyway 이므로(ADR 0004) 새 버전 마이그레이션으로 처리하고, dbml 과 의도적으로 달라진 지점을 기록한다.
+- **완료** — `V4__members_replace_cognito_sub_with_password_hash.sql` 이 `members.cognito_user_sub` 컬럼과
+  거기 딸린 유니크 제약·인덱스를 걷고 `password_hash` 자리를 만들었다(PROJ-101).
+  스키마의 진실원은 Flyway 이므로(ADR 0004) 신규 버전 마이그레이션으로 처리했고,
+  dbml(`rdb-schema/dbdiagram.dbml`)과 허브 `contracts/data-model.md` 를 같은 라운드에서 뒤따라 맞췄다 —
+  그래서 기록할 **의도적 차이는 남지 않았다.** 비밀번호를 실제로 읽고 쓰는 로그인 경로는 아직 없다.
+  구성원 식별은 이제 `(tenant_id, email)` 유니크 하나뿐이다.
 - AT 클레임 스키마(발급자, 수명, manifest revision 필드명)와 재동기화 응답 봉투는 CLI 계약이므로 `telemetryctl` 쪽과 함께 확정한다.
   봉투 분리(ADR 0003)를 유지해 manifest 안에 토큰을 넣지 않는다.
 - 서명 키의 보관과 회전 절차(`kid` 를 통한 무중단 교체)를 정해야 한다. 키가 하나뿐이면 유출 시 전 사용자 재로그인이다.
