@@ -8,6 +8,9 @@ import com.team376.pulsemetry.persistence.enrollment.entity.Member
 import com.team376.pulsemetry.persistence.enrollment.entity.MemberRole
 import com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus
 import com.team376.pulsemetry.persistence.enrollment.entity.Platform
+import com.team376.pulsemetry.persistence.enrollment.entity.Team
+import com.team376.pulsemetry.persistence.enrollment.entity.TeamMembership
+import com.team376.pulsemetry.persistence.enrollment.entity.TeamStatus
 import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryToken
 import com.team376.pulsemetry.persistence.enrollment.entity.Tenant
 import java.time.Instant
@@ -35,6 +38,24 @@ object EnrollmentFixtures {
 		role: MemberRole = MemberRole.owner,
 		status: MemberStatus = MemberStatus.active,
 	): Member = Member(tenantId = tenantId, email = email, role = role, status = status)
+
+	fun team(
+		tenantId: UUID,
+		name: String = "팀-${UUID.randomUUID()}",
+		status: TeamStatus = TeamStatus.active,
+	): Team = Team(tenantId = tenantId, name = name, status = status)
+
+	fun teamMembership(
+		teamId: UUID,
+		memberId: UUID,
+		joinedAt: Instant = Instant.now().minus(30, ChronoUnit.DAYS),
+		leftAt: Instant? = null,
+	): TeamMembership = TeamMembership(
+		teamId = teamId,
+		memberId = memberId,
+		joinedAt = joinedAt,
+		leftAt = leftAt,
+	)
 
 	fun invitation(
 		tenantId: UUID,

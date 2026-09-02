@@ -6,6 +6,8 @@ import com.team376.pulsemetry.persistence.enrollment.entity.InstallationManifest
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationManifestAssignmentId
 import com.team376.pulsemetry.persistence.enrollment.entity.Manifest
 import com.team376.pulsemetry.persistence.enrollment.entity.Member
+import com.team376.pulsemetry.persistence.enrollment.entity.Team
+import com.team376.pulsemetry.persistence.enrollment.entity.TeamMembership
 import com.team376.pulsemetry.persistence.enrollment.entity.Tenant
 import jakarta.persistence.LockModeType
 import org.springframework.data.jpa.repository.JpaRepository
@@ -51,6 +53,41 @@ interface MemberRepository : JpaRepository<Member, UUID> {
 		@Param("id") id: UUID,
 		@Param("now") now: Instant,
 	): Int
+}
+
+interface TeamRepository : JpaRepository<Team, UUID> {
+
+	fun findAllByTenantId(tenantId: UUID): List<Team>
+}
+
+interface TeamMembershipRepository : JpaRepository<TeamMembership, UUID> {
+
+	fun findAllByMemberId(memberId: UUID): List<TeamMembership>
+
+	/**
+	 * installation 이 귀속된 구성원의 소속 이력을 **활성 팀에 한해** 전부 가져온다.
+	 *
+	 * 시점 필터(`joined_at <= at < left_at`)를 SQL 에 넣지 않는 이유: enrichment 는 push 하나에
+	 * 담긴 여러 이벤트를 서로 다른 `ts` 로 판정하므로, installation 당 한 번만 읽어 두고 각 이벤트를
+	 * [TeamMembership.coversAt] 으로 거른다. 시점을 SQL 에 넣으면 이벤트 수만큼 조회가 늘어난다.
+	 * 현행 파이프라인(`ai-telemetry-pipeline` org provider)이 같은 모양이며, 이관 시 이 쿼리가 그 자리를 받는다.
+	 *
+	 * native query 인 이유: `teams.status` 는 native enum 이라(ADR 0009) JPQL 의 enum 리터럴이
+	 * `cast(? as teamstatus)` 로 렌더링돼 실제 타입명 `team_status` 와 어긋난다
+	 * ([MemberRepository.activateInvited] 와 같은 이유다).
+	 */
+	@Query(
+		nativeQuery = true,
+		value = """
+		SELECT tm.* FROM enrollment.team_memberships tm
+		JOIN enrollment.installations i ON i.member_id = tm.member_id
+		JOIN enrollment.teams t ON t.id = tm.team_id AND t.status = 'active'
+		WHERE i.id = :installationId
+		""",
+	)
+	fun findActiveTeamMembershipsByInstallationId(
+		@Param("installationId") installationId: UUID,
+	): List<TeamMembership>
 }
 
 interface InstallationRepository : JpaRepository<Installation, UUID> {
