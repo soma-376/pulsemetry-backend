@@ -10,6 +10,7 @@
 [ADR 0007](adr/0007-인증-계층으로-spring-security-사용.md) ·
 [ADR 0008](adr/0008-모듈-경계와-네임스페이스-규칙-확정.md) ·
 [ADR 0010](adr/0010-파이프라인-단계를-모듈-경계로-나눈다.md) ·
+[ADR 0011](adr/0011-라이브러리-모듈은-spring-조립을-앱에-위임한다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md)
 
@@ -22,11 +23,17 @@ pulsemetry-backend
 ├── apps/
 │   └── enrollment-api/              com.team376.pulsemetry.enrollment
 └── libs/
-    └── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
-                                     └ enrollment 스키마 14 테이블 · Flyway 마이그레이션
+    ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
+    │                                └ enrollment 스키마 14 테이블 · Flyway 마이그레이션
+    └── security/                    com.team376.pulsemetry.security
+                                     └ OTLP 경로의 ptt_ 검증 · telemetry token 해시
 ```
 
-`settings.gradle.kts`의 `include`는 이 둘뿐이다. 아래 2절부터 나오는 모듈은 **아직 없다.**
+`settings.gradle.kts`의 `include`는 이 셋뿐이다. 아래 2절부터 나오는 나머지 모듈은 **아직 없다.**
+
+`:libs:security`에는 아직 **OTLP 경로의 `ptt_` 검증만** 있다(PROJ-102). 관리자 API 경로의 AT 검증은
+PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 — 지금은 내용물 묶음이 하나뿐이라
+3절의 판정 기준이 나눌 근거를 주지 않는다.
 
 ## 2. 도메인 경계 — 쓰기 소유권
 
@@ -104,6 +111,11 @@ installation의 배포 상태를 담기 때문이다.
 - `project()` 간선은 기본 `implementation`이고, `api()`는 그 타입이 소비자의 계약일 때만 쓴다
   (`:libs:enrollment-persistence`가 JPA·JDBC를 `api()`로 노출한 것이 선례다).
 - 아웃바운드 기술이 둘 이상이면 라이브러리를 기술별로 나눈다(`-persistence` / `-messaging`).
+- **`:libs:*`는 Spring 스테레오타입을 두지 않고 Boot starter도 끌지 않는다**
+  ([ADR 0011](adr/0011-라이브러리-모듈은-spring-조립을-앱에-위임한다.md)). 컴포넌트 스캔 루트가
+  저장소 전체라 라이브러리에 붙은 `@Component`는 그 라이브러리를 올린 **모든** 앱에서 살아난다.
+  빈 등록과 필터 체인 배선은 앱의 몫이고, 라이브러리는 값을 생성자로 받는다.
+  예외는 JPA 엔티티·Spring Data 리포지토리 인터페이스와 `testFixtures`뿐이다.
 
 ## 5. 텔레메트리 파이프라인이 들어올 자리
 
@@ -117,7 +129,7 @@ apps/
 └── telemetry-ingest/                com.team376.pulsemetry.telemetry
                                      앱은 조립만 한다 — 필터 체인 배선 · 단계 호출
 libs/
-├── security/                        com.team376.pulsemetry.security
+├── security/                        com.team376.pulsemetry.security          ← 있다 (1절)
 │                                    OTLP 경로의 ptt_ 검증 · 관리자 API 경로의 AT 검증 (ADR 0007)
 ├── telemetry-collector/             com.team376.pulsemetry.telemetry.collector
 │                                    OTLP 수신

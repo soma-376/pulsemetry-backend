@@ -28,6 +28,15 @@ spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-
 spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
 spring-boot-testcontainers = { module = "org.springframework.boot:spring-boot-testcontainers" }
 
+# 인증 계층 (ADR 0007). :libs:security 는 starter 를 쓰지 않는다 —
+# starter 가 딸고 오는 자동설정 모듈은 클래스패스만 보고 발동해서
+# 이 라이브러리를 올린 모든 앱의 엔드포인트를 잠근다 (ADR 0011).
+# 버전은 Boot BOM 이 import 하는 spring-security-bom 이 정한다.
+spring-security-core = { module = "org.springframework.security:spring-security-core" }
+spring-security-web = { module = "org.springframework.security:spring-security-web" }
+# 서블릿 컨테이너가 런타임에 제공한다. 라이브러리는 compileOnly 로만 쓴다.
+jakarta-servlet-api = { module = "jakarta.servlet:jakarta.servlet-api" }
+
 # 스키마의 진실원은 Flyway SQL 마이그레이션이다 (ADR 0004 / PLAN.md L4).
 # Spring Boot 4 는 자동설정을 모듈로 쪼갰다. flyway-core 만으로는 기동 시 마이그레이션이 돌지 않는다.
 spring-boot-starter-flyway = { module = "org.springframework.boot:spring-boot-starter-flyway" }

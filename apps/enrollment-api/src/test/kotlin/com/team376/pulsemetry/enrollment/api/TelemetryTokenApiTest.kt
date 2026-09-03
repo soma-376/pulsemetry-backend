@@ -2,7 +2,7 @@ package com.team376.pulsemetry.enrollment.api
 
 import com.team376.pulsemetry.enrollment.secret.InvitationCode
 import com.team376.pulsemetry.enrollment.secret.SecretToken
-import com.team376.pulsemetry.enrollment.secret.TelemetryTokenHasher
+import com.team376.pulsemetry.security.TelemetryTokenHasher
 import com.team376.pulsemetry.enrollment.support.ContractSchemas
 import com.team376.pulsemetry.enrollment.support.EnrollmentTestData
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
