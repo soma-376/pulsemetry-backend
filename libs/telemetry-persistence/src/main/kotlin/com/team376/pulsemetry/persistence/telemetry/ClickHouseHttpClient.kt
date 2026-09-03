@@ -13,8 +13,9 @@ import java.time.Duration
  * ClickHouse HTTP 인터페이스(:8123)를 직접 부르는 최소 클라이언트.
  *
  * **드라이버를 쓰지 않는다.** 이식 원본이 stdlib 만 쓴 것과 같은 선택이고, 이유는 취향이
- * 아니라 계약이다 — 드라이버는 응답을 자기 예외 계층으로 옮기므로 "4xx 까지 전부 일시 장애"
- * 라는 [TelemetrySinkUnavailableException] 의 고정 동작을 유지할 수 없다.
+ * 아니라 계약이다 — 드라이버는 응답을 자기 예외 계층으로 옮기므로, 어떤 상태가 일시 장애이고
+ * 어떤 상태가 영구 오류인지를 이 클래스가 정할 수 없게 된다. 그 분류가 곧 HTTP 계약이다
+ * (허브 ADR 0006).
  *
  * ## 조립
  *
@@ -40,8 +41,9 @@ public class ClickHouseHttpClient(
 	 *
 	 * DDL·SELECT 는 [body] 가 `null` 이고, INSERT 는 행 바이트를 싣는다.
 	 *
-	 * **모든 실패가 [TelemetrySinkUnavailableException] 이다** — 상태 코드가 4xx 든 5xx 든,
-	 * 연결이 아예 안 되든 같다. 그 비대칭의 근거는 그 예외의 KDoc 에 있다.
+	 * **실패는 둘로 갈린다** — 연결 계열과 `5xx · 429 · 408` 은
+	 * [TelemetrySinkUnavailableException](일시 장애 → 503), 그 밖의 4xx 는
+	 * [TelemetrySinkRejectedException](영구 오류 → 400)이다. 근거는 허브 ADR 0006 이다.
 	 */
 	public fun execute(query: String, body: ByteArray? = null): String {
 		val uri = URI.create(
@@ -64,15 +66,31 @@ public class ClickHouseHttpClient(
 			throw TelemetrySinkUnavailableException("clickhouse unreachable: $exception", exception)
 		}
 
-		if (response.statusCode() >= FIRST_ERROR_STATUS) {
+		val status = response.statusCode()
+		if (status >= FIRST_ERROR_STATUS) {
 			// 본문을 자른다. ClickHouse 의 오류 본문은 스택 트레이스까지 실려 로그를 덮는다.
 			val detail = response.body().take(MAX_ERROR_DETAIL)
-			throw TelemetrySinkUnavailableException("clickhouse ${response.statusCode()}: $detail")
+			val message = "clickhouse $status: $detail"
+			throw if (isTransient(status)) {
+				TelemetrySinkUnavailableException(message)
+			} else {
+				TelemetrySinkRejectedException(message)
+			}
 		}
 		return response.body()
 	}
 
 	private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8)
+
+	/**
+	 * 다시 보내면 답이 달라질 수 있는 상태인가.
+	 *
+	 * 5xx 는 서버 쪽 사정이고, `429` 는 과부하, `408` 은 타이밍이다. 나머지 4xx 는 구문·인증·
+	 * 대상 부재라 같은 배치를 다시 보내도 같은 답이 온다. **목록을 넓히지 마라** — 넓히면
+	 * 스키마 불일치가 다시 재시도로 맴돈다(허브 ADR 0006).
+	 */
+	private fun isTransient(status: Int): Boolean =
+		status >= FIRST_SERVER_ERROR_STATUS || status == TOO_MANY_REQUESTS || status == REQUEST_TIMEOUT
 
 	public companion object {
 		public const val DEFAULT_DATABASE: String = "default"
@@ -81,6 +99,9 @@ public class ClickHouseHttpClient(
 		public val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(30)
 
 		private const val FIRST_ERROR_STATUS: Int = 400
+		private const val FIRST_SERVER_ERROR_STATUS: Int = 500
+		private const val REQUEST_TIMEOUT: Int = 408
+		private const val TOO_MANY_REQUESTS: Int = 429
 		private const val MAX_ERROR_DETAIL: Int = 500
 	}
 }

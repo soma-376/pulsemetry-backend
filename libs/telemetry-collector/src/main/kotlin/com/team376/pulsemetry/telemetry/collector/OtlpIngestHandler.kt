@@ -20,9 +20,16 @@ import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
  *
  * ```
  * 1. 마스킹      logs·traces 만. metrics 는 현행 설정에 redaction 이 없다 (Signal.masked)
- * 2. 아카이브     제품별로 갈라 외부 저장소에 쓴다
- * 3. 다음 단계    변환·보강·적재
+ * 2. 신원 스탬프  검증된 tenant·installation 을 리소스 속성으로 승격한다
+ * 3. 아카이브     제품별로 갈라 외부 저장소에 쓴다
+ * 4. 다음 단계    변환·보강·적재
  * ```
+ *
+ * **스탬프가 아카이브보다 먼저다.** 신원은 멱등 키의 재료이기 때문이다 — 변환 단계가
+ * `tenant.id` 를 `record_id` 해시의 첫 자리에 넣고, 그 값이 `enriched_events` 의 `ORDER BY` 키다.
+ * 신원 없는 원본을 나중에 재처리하면 그 자리에 `(unknown)` 이 들어가 실시간 경로가 만든 키와
+ * **다른 키**가 나오고, 합쳐져야 할 행이 중복으로 쌓인다. 이식 원본은 신원을 헤더로만 날라
+ * 아카이브에 남기지 않았지만, 그 아카이브는 휘발성이라 재처리 대상이 아니었다(ADR 0012 · 0016).
  *
  * **아카이브가 다음 단계보다 먼저다.** 허브 `architecture/overview.md` 2절이 "Adapter 이후 변환이
  * 실패하면 그 시그널은 Object Storage 에만 남는다. 이것이 흐름 D 의 복구 원천이며 별도 DLQ 에
@@ -44,6 +51,7 @@ import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
 public class OtlpIngestHandler(
 	private val archive: ArchiveWriter,
 	private val next: SignalConsumer,
+	private val identity: IdentitySource = IdentitySource { null },
 	maxDecompressedBytes: Long = OtlpRequestDecoder.DEFAULT_MAX_DECOMPRESSED_BYTES,
 ) {
 
@@ -76,6 +84,9 @@ public class OtlpIngestHandler(
 
 		if (signal.masked) mask(signal, builder)
 
+		// 아카이브보다 먼저다. 빌더에 찍으므로 아카이브와 다음 단계가 같은 값을 본다.
+		identity.current()?.let { IdentityStamper.stamp(builder, it) }
+
 		val message = builder.build()
 
 		return try {
@@ -85,8 +96,9 @@ public class OtlpIngestHandler(
 			next.consume(signal, message)
 			success(signal, encoding)
 		} catch (e: PermanentIngestException) {
-			// 영구 오류. 재시도해도 같으므로 클라이언트가 배치를 버리게 한다.
-			status(encoding, 500, GrpcCode.INTERNAL, e.message.orEmpty())
+			// 영구 오류. 재시도해도 같으므로 클라이언트가 배치를 버리게 한다 — 그러려면 4xx 여야 한다.
+			// 데몬은 5xx 를 전부 재시도하므로 500 으로는 폐기가 만들어지지 않는다(허브 ADR 0006).
+			status(encoding, 400, GrpcCode.INVALID_ARGUMENT, e.message.orEmpty())
 		} catch (e: RuntimeException) {
 			// 상태가 실리지 않은 오류의 기본은 재시도 가능이다 — 상위 GetStatusFromError 와 같다.
 			status(encoding, 503, GrpcCode.UNAVAILABLE, e.message.orEmpty())

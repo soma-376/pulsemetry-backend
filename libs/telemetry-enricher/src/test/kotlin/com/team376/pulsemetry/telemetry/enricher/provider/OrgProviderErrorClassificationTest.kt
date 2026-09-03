@@ -18,12 +18,13 @@ import java.util.UUID
 /**
  * 오류 분류를 좁게 고정한다. **넓히지 마라.**
  *
- * 일시 장애만 [EnrichmentUnavailableException] 이고, 앱이 그것을 503 으로 돌려 업스트림이
- * 재전송하게 한다. 스키마 드리프트 같은 **영구 오류를 여기 넣으면 재시도 큐가 막힌다** —
+ * 일시 장애만 [EnrichmentUnavailableException] 이고, 앱이 그것을 503 으로 돌려 데몬이
+ * 재전송하게 한다. 스키마 드리프트 같은 **영구 오류를 여기 넣으면 그 오류가 드러나지 않는다** —
  * 이식 원본이 `psycopg.OperationalError` 만 잡고 `ProgrammingError` 는 전파한 이유다.
  *
- * 적재 단계의 분류는 정반대로 넓다(4xx 까지 전부 일시 장애). 그 비대칭도 의도된 것이며
- * `TelemetrySinkUnavailableException` 쪽에 근거가 있다.
+ * 적재 단계도 이제 같은 원칙이다 — 연결 계열과 과부하만 일시 장애이고 그 밖의 4xx 는
+ * `TelemetrySinkRejectedException` 이다. 한때 그쪽만 정반대로 넓었고, 허브 ADR 0006 이 그
+ * 비대칭을 없앴다.
  */
 class OrgProviderErrorClassificationTest {
 

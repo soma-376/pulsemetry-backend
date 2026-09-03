@@ -13,13 +13,20 @@ import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 
 /**
- * **오류 분류를 고치지 말고 그대로 고정한다.**
+ * **오류 분류를 고정한다.**
  *
- * 4xx 까지 전부 [TelemetrySinkUnavailableException] 이고 앱이 그것을 503 으로 돌린다. 영구
- * 오류(400)로 돌려보내면 업스트림이 배치를 폐기하므로, 유실 없는 쪽으로 치우친 것이다.
- * 이식 원본의 같은 테스트가 *"고치지 말고 그대로 고정한다"* 로 못박았다.
+ * 연결 계열과 `5xx · 429 · 408` 은 [TelemetrySinkUnavailableException](일시 장애 → 503),
+ * 그 밖의 4xx 는 [TelemetrySinkRejectedException](영구 오류 → 400)이다.
  *
- * 보강 단계는 정반대로 좁다 — `OrgProviderErrorClassificationTest` 와 나란히 읽는다.
+ * ## 이 테스트는 한 번 뒤집혔다
+ *
+ * 이식 원본과 이 테스트의 초판은 **4xx 까지 전부 일시 장애**로 고정했고, 그 KDoc 이
+ * *"고치지 말고 그대로 고정한다"* 라고 적었다. 그 편향은 업스트림 collector 가 5분 예산으로
+ * 재시도한다는 전제 위에 있었고, 단일 앱 토폴로지(허브 ADR 0005)가 그 collector 를 걷어내면서
+ * 전제가 사라졌다. **허브 ADR 0006 이 그 문장을 대체하는 근거다** — 그 ADR 없이 다시 넓히지 마라.
+ *
+ * 보강 단계는 처음부터 좁았다 — `OrgProviderErrorClassificationTest` 와 나란히 읽는다.
+ * 이제 두 단계가 같은 원칙 위에 선다.
  *
  * ClickHouse 없이 돈다. 판정 대상이 상태 코드의 분류이지 ClickHouse 의 동작이 아니다.
  */
@@ -49,15 +56,38 @@ class ClickHouseErrorClassificationTest {
 		ClickHouseHttpClient("http://127.0.0.1:${server.address.port}")
 
 	@ParameterizedTest(name = "HTTP {0}")
-	@ValueSource(ints = [400, 401, 403, 404, 413, 500, 502, 503])
-	@DisplayName("어떤 오류 상태든 일시 장애로 분류한다 — 4xx 도 마찬가지다")
-	fun everyErrorStatusBecomesUnavailable(code: Int) {
+	@ValueSource(ints = [500, 502, 503, 504, 429, 408])
+	@DisplayName("5xx·429·408 은 일시 장애다 — 다시 보내면 답이 달라질 수 있다")
+	fun serverAndOverloadStatusesBecomeUnavailable(code: Int) {
 		status = code
-		body = "Code: 62. DB::Exception: Syntax error"
+		body = "Code: 210. DB::NetException: Connection reset"
 
 		assertThatThrownBy { client().execute("SELECT 1") }
 			.isInstanceOf(TelemetrySinkUnavailableException::class.java)
 			.hasMessageContaining("clickhouse $code")
+	}
+
+	@ParameterizedTest(name = "HTTP {0}")
+	@ValueSource(ints = [400, 401, 403, 404, 413, 415, 422])
+	@DisplayName("그 밖의 4xx 는 영구 오류다 — 같은 배치를 다시 보내도 같은 답이 온다")
+	fun otherClientErrorStatusesBecomeRejected(code: Int) {
+		status = code
+		body = "Code: 62. DB::Exception: Syntax error"
+
+		assertThatThrownBy { client().execute("SELECT 1") }
+			.isInstanceOf(TelemetrySinkRejectedException::class.java)
+			.hasMessageContaining("clickhouse $code")
+	}
+
+	@Test
+	@DisplayName("스키마 불일치(400)가 일시 장애로 위장하지 않는다 — 이 테스트가 뒤집힌 자리다")
+	fun aSchemaMismatchIsNotTransient() {
+		status = 400
+		body = "Code: 16. DB::Exception: No such column team_ids_as_of"
+
+		assertThatThrownBy { client().execute("INSERT INTO enriched_events FORMAT JSONEachRow") }
+			.isInstanceOf(TelemetrySinkRejectedException::class.java)
+			.isNotInstanceOf(TelemetrySinkUnavailableException::class.java)
 	}
 
 	@Test

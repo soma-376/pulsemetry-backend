@@ -1,20 +1,22 @@
 package com.team376.pulsemetry.persistence.telemetry
 
 /**
- * ClickHouse 적재가 실패했다. 조립 앱이 **503** 으로 매핑한다.
+ * ClickHouse 에 닿지 못했거나 ClickHouse 가 지금은 못 받겠다고 답했다 — **일시 장애**다.
+ * 조립 앱이 **503** 과 `Retry-After` 로 매핑한다.
  *
- * ## 4xx 까지 이 타입이다 — 의도된 비대칭이다
+ * ## 무엇이 여기 오는가
  *
- * 400·401·403 처럼 보통은 영구 오류인 응답까지 전부 여기로 묶는다. 영구 오류(400)로
- * 돌려보내면 업스트림이 배치를 **폐기**하므로, 유실 없는 쪽으로 치우친 것이다. 이식 원본의
- * 오류 분류 테스트가 *"고치지 말고 그대로 고정한다"* 로 못박은 동작이다.
+ * 연결 실패 · 타임아웃 · 인터럽트, 그리고 응답 상태 중 **5xx · 429 · 408** 이다.
+ * 그 밖의 4xx 는 [TelemetrySinkRejectedException] 이고 400 이 된다.
  *
- * **대가도 같이 온다** — 진짜 스키마 불일치(ClickHouse 400)가 빠르게 죽지 않고 재시도로
- * 맴돈다. 보강 단계의 `EnrichmentUnavailableException` 이 정반대로 좁은 것과 대비된다.
+ * ## 짝
  *
- * ⚠️ 이 편향은 **업스트림이 재시도한다**는 전제 위에 있는데, 단일 앱 토폴로지(허브 ADR 0005)가
- * OTel Collector 를 걷어내면서 그 전제가 사라진다. 재시도·백프레셔 정책을 다시 정하는 것은
- * 허브 ADR 0005 Follow-up 이 별도 결정으로 지정했다 — 그때 이 분류도 함께 본다.
+ * 보강 단계의 짝은 `:libs:telemetry-enricher` 의 `EnrichmentUnavailableException` 이다.
+ * 이식 원본은 두 단계가 예외 한 벌(`BackendUnavailable`)을 공유했지만 여기서는 모듈이 갈리므로
+ * 각자 자기 계약을 갖는다. **둘을 함께 503 으로 묶는 것은 앱의 몫이다.**
+ *
+ * 한때 이 타입이 4xx 까지 전부 삼켰고 보강 쪽은 정반대로 좁았다. 그 비대칭은 허브 ADR 0006 이
+ * 없앴다 — 이제 두 단계가 같은 원칙 위에 선다. 연결 계열과 과부하만 일시 장애다.
  */
 public class TelemetrySinkUnavailableException(
 	message: String,

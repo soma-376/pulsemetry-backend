@@ -19,10 +19,12 @@ class OtlpIngestHandlerTest {
 	private val archive = RecordingArchiveWriter()
 	private val consumed = mutableListOf<Pair<Signal, Message>>()
 	private var downstream: (Signal, Message) -> Unit = { s, m -> consumed += s to m }
+	private var identity: StampedIdentity? = null
 
 	private val handler = OtlpIngestHandler(
 		archive = archive,
 		next = { signal, request -> downstream(signal, request) },
+		identity = { identity },
 	)
 
 	// ------------------------------------------------------------------ 상태 매핑
@@ -97,15 +99,17 @@ class OtlpIngestHandlerTest {
 	}
 
 	@Test
-	@DisplayName("하류가 영구 오류를 던지면 500 이다 — 배치를 버리게 한다")
+	@DisplayName("하류가 영구 오류를 던지면 400 이다 — 데몬이 즉시 폐기하는 코드는 4xx 뿐이다")
 	fun permanentDownstreamFailureIsNotRetryable() {
 		downstream = { _, _ -> throw PermanentIngestException("schema mismatch") }
 
 		val response = handler.handle(request(body = oneLogRecord()))
 
-		assertThat(response.status).isEqualTo(500)
+		// 한때 500(INTERNAL) 이었다. 그 의미론의 수신자는 otlphttp exporter 였고, 지금 상태 코드를
+		// 읽는 telemetryctl 데몬은 5xx 를 전부 재시도한다 — 허브 ADR 0006 이 뒤집은 자리다.
+		assertThat(response.status).isEqualTo(400)
 		assertThat(response.body.toString(Charsets.UTF_8))
-			.isEqualTo("""{"code":13,"message":"schema mismatch"}""")
+			.isEqualTo("""{"code":3,"message":"schema mismatch"}""")
 	}
 
 	// ------------------------------------------------------------------ 수신 · 왕복
@@ -296,6 +300,83 @@ class OtlpIngestHandlerTest {
 			.build()
 
 		assertThat(fromArchive).isEqualTo(fromDownstream)
+	}
+
+	// ------------------------------------------------------------------ 신원 스탬프
+
+	@Test
+	@DisplayName("검증된 신원을 리소스 속성으로 심는다 — 아카이브와 하류가 같은 값을 본다")
+	fun stampsIdentityIntoResourceAttributes() {
+		identity = StampedIdentity(tenantId = "ten-1", installationId = "inst-1")
+
+		handler.handle(request(body = oneLogRecord()))
+
+		// 아카이브가 먼저 쓰이므로, 여기 보이면 외부 저장소의 원본도 신원을 갖는다는 뜻이다.
+		val archived = archive.written.single().body.toString(Charsets.UTF_8)
+		assertThat(archived).contains("tenant.id").contains("ten-1")
+		assertThat(archived).contains("developer.installation_id").contains("inst-1")
+
+		val resource = (consumed.single().second as ExportLogsServiceRequest).getResourceLogs(0).resource
+		assertThat(resource.attributesList.associate { it.key to it.value.stringValue })
+			.containsEntry("tenant.id", "ten-1")
+			.containsEntry("developer.installation_id", "inst-1")
+	}
+
+	@Test
+	@DisplayName("클라이언트 자기신고를 덮어쓴다 — 검증된 값이 신뢰 경계다")
+	fun theVerifiedValueWinsOverSelfReport() {
+		identity = StampedIdentity(tenantId = "ten-real", installationId = null)
+		val body = """
+			{"resourceLogs":[{"resource":{"attributes":[
+			  {"key":"service.name","value":{"stringValue":"claude-code"}},
+			  {"key":"tenant.id","value":{"stringValue":"ten-fake"}}]},
+			 "scopeLogs":[{"logRecords":[{"body":{"stringValue":"hi"}}]}]}]}
+		""".trimIndent().toByteArray()
+
+		handler.handle(request(body = body))
+
+		val resource = (consumed.single().second as ExportLogsServiceRequest).getResourceLogs(0).resource
+		val attributes = resource.attributesList.filter { it.key == "tenant.id" }
+		assertThat(attributes).singleElement()
+		assertThat(attributes.single().value.stringValue).isEqualTo("ten-real")
+	}
+
+	@Test
+	@DisplayName("빈 값은 건너뛴다 — 없는 신원으로 있는 값을 지우지 않는다")
+	fun anEmptyValueIsNotStamped() {
+		identity = StampedIdentity(tenantId = "", installationId = null)
+
+		handler.handle(request(body = oneLogRecord()))
+
+		val resource = (consumed.single().second as ExportLogsServiceRequest).getResourceLogs(0).resource
+		assertThat(resource.attributesList.map { it.key }).doesNotContain("tenant.id")
+	}
+
+	@Test
+	@DisplayName("신원이 없으면 아무것도 심지 않는다 — 인증을 세우지 않은 호출자의 기본값이다")
+	fun noIdentityStampsNothing() {
+		identity = null
+
+		handler.handle(request(body = oneLogRecord()))
+
+		val resource = (consumed.single().second as ExportLogsServiceRequest).getResourceLogs(0).resource
+		assertThat(resource.attributesList.map { it.key }).containsExactly("service.name")
+	}
+
+	@Test
+	@DisplayName("metrics 에도 심는다 — 마스킹하지 않는 신호라고 신원까지 빠지지 않는다")
+	fun stampsMetricsToo() {
+		identity = StampedIdentity(tenantId = "ten-1", installationId = "inst-1")
+		val body = """
+			{"resourceMetrics":[{"resource":{"attributes":[
+			  {"key":"service.name","value":{"stringValue":"claude-code"}}]},
+			 "scopeMetrics":[{"metrics":[{"name":"m"}]}]}]}
+		""".trimIndent().toByteArray()
+
+		handler.handle(request(path = "/v1/metrics", body = body))
+
+		assertThat(archive.written.single().body.toString(Charsets.UTF_8))
+			.contains("developer.installation_id").contains("inst-1")
 	}
 
 	// ------------------------------------------------------------------ 도구

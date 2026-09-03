@@ -18,8 +18,10 @@ package com.team376.pulsemetry.persistence.telemetry
  *
  * ## 조립
  *
- * 빈이 아니다(ADR 0011). **언제 부를지와 실패했을 때 어떻게 할지는 조립 앱이 정한다** —
- * 이식 원본은 다섯 번까지 재시도한 뒤 실패해도 서버를 띄웠고, 이후 적재가 503 을 돌려주게 했다.
+ * 빈이 아니다(ADR 0011). **언제 부를지와 실패했을 때 어떻게 할지는 조립 앱이 정한다.**
+ * `:apps:telemetry-ingest` 가 기동 시 다섯 번까지 재시도한 뒤 실패해도 애플리케이션을 띄운다
+ * (ADR 0016) — 아카이브가 다음 단계보다 앞이라, 앱이 떠 있으면 ClickHouse 가 죽어도 원본은
+ * 외부 저장소에 남기 때문이다. 그동안 적재는 503 을 돌려준다.
  */
 public class ClickHouseSchemaMigrator(
 	private val client: ClickHouseHttpClient,

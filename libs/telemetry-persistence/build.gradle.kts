@@ -12,7 +12,8 @@ dependencies {
 
 	// ClickHouse 접속에 드라이버를 쓰지 않는다. JDK 의 HttpClient 로 HTTP 인터페이스를 직접 부른다 —
 	// 이식 원본이 "무거운 클라이언트 도입 금지" 로 stdlib 만 쓴 것과 같은 선택이고, 드라이버를 넣으면
-	// 자체 오류 매핑이 "4xx 까지 전부 일시 장애" 라는 고정 동작을 덮는다. 신규 런타임 의존은 없다.
+	// 자체 오류 매핑이 상태 코드별 처분(일시 장애 / 영구 오류)을 덮는다 — 그 분류가 곧 HTTP
+	// 계약이다(허브 ADR 0006). 신규 런타임 의존은 없다.
 
 	testImplementation(libs.spring.boot.starter.test)
 	// 적재 테스트는 실제 ClickHouse 로만 돈다 — ReplacingMergeTree 의 FINAL dedup 이 판정 대상이다.
