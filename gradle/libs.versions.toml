@@ -40,6 +40,10 @@ spring-boot-testcontainers = { module = "org.springframework.boot:spring-boot-te
 # 버전은 Boot BOM 이 import 하는 spring-security-bom 이 정한다.
 spring-security-core = { module = "org.springframework.security:spring-security-core" }
 spring-security-web = { module = "org.springframework.security:spring-security-web" }
+# 조립 앱 전용이다. 필터 체인을 세우려면 spring-security-config 가 필요하고, 그 자동설정을
+# 켜는 것이 조립 앱에서는 의도된 선택이다 — 명시적 SecurityFilterChain 빈이 있으면 Boot 의
+# 기본 체인은 물러난다. :libs: 에는 여전히 붙이지 않는다 (ADR 0011 · 0016).
+spring-boot-starter-security = { module = "org.springframework.boot:spring-boot-starter-security" }
 # 서블릿 컨테이너가 런타임에 제공한다. 라이브러리는 compileOnly 로만 쓴다.
 jakarta-servlet-api = { module = "jakarta.servlet:jakarta.servlet-api" }
 

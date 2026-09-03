@@ -1,0 +1,16 @@
+# 앱은 Flyway 를 끈다(enrollment-api 가 소유). 테스트는 격리된 Testcontainers 인스턴스라
+# 스키마를 만들 주체가 없으므로 여기서만 켠다. :libs: 의 테스트 yaml 셋과 같은 형태다.
+spring:
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    schemas: enrollment
+    default-schema: enrollment
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: enrollment
+    open-in-view: false

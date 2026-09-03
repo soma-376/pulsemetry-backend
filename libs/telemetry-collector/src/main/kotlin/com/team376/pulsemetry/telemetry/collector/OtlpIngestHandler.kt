@@ -169,4 +169,13 @@ public class OtlpIngestHandler(
 		contentType = "text/plain",
 		body = "404 not found".toByteArray(Charsets.UTF_8),
 	)
+
+	public companion object {
+		/**
+		 * 압축을 푼 뒤 본문의 기본 상한. 실제 상한은 생성자 인자가 정하고, 이 값은 조립 앱이
+		 * 자기 설정의 기본값으로 쓰라고 공개한다 — 디코더 자체는 `internal` 이다.
+		 */
+		public const val DEFAULT_MAX_DECOMPRESSED_BYTES: Long =
+			OtlpRequestDecoder.DEFAULT_MAX_DECOMPRESSED_BYTES
+	}
 }
