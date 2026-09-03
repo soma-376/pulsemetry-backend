@@ -23,6 +23,8 @@ libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이�
 libs/security/               횡단 인증 라이브러리 — OTLP 경로 ptt_ 검증 · telemetry token 해시
 libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 원본 아카이브
 libs/telemetry-adapter/      파이프라인 변환 단계 — OTLP 읽기 · 정규화 모델 · 벤더별 매핑
+libs/telemetry-enricher/     파이프라인 보강 단계 — 팀 소속 as-of 조인 · provider 주석
+libs/telemetry-persistence/  파이프라인 적재 단계 — ClickHouse 스키마 소유 · JSONEachRow sink
 ```
 
 **소유하는 것**: `POST /v1/enroll`, `POST /v1/installations/telemetry-token`, `POST /v1/invitations`,
@@ -36,17 +38,18 @@ libs/telemetry-adapter/      파이프라인 변환 단계 — OTLP 읽기 · �
 | 사람 계정·로그인 | 미구현 | 이 레포가 **Auth Service**다. Spring Security가 AT·RT를 직접 발급한다(ADR-0007 — Cognito 미사용). `members.cognito_user_sub`는 제거됐고(`V4`) 비밀번호 자리는 `members.password_hash`다 — 담을 곳만 있고 로그인 경로는 아직 없다. 얹힐 자리는 `:libs:security`이고 모듈은 이미 서 있다 |
 | manifest 작성 API | 미구현 (현재 수동 INSERT) | manifest 저장은 이미 이 레포 소유 |
 | 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | 확정 ADR은 아직 없다 |
-| 텔레메트리 파이프라인 이관 | 일부 착수 — 도착지는 `:apps:telemetry-ingest`와 단계별 `:libs:` 모듈 | 허브 ADR 0004(병합 채택). **인증 계층 `:libs:security`(PROJ-102) · 수집 단계 `:libs:telemetry-collector`(PROJ-114) · 변환 단계 `:libs:telemetry-adapter`(PROJ-103)는 모듈 이식만 끝났다** — 조립 앱이 없어 셋 다 트래픽을 안 받는다. 보강·적재는 미착수 |
+| 텔레메트리 파이프라인 이관 | **모듈은 전부 섰다. 조립 앱만 남았다** | 허브 ADR 0004(병합 채택). 인증(`:libs:security`, PROJ-102) · 수집(`:libs:telemetry-collector`, PROJ-114) · 변환(`:libs:telemetry-adapter`, PROJ-103) · 보강(`:libs:telemetry-enricher`)과 적재(`:libs:telemetry-persistence`, 둘 다 PROJ-104)까지 이식이 끝났다 — **조립 앱 `:apps:telemetry-ingest`(PROJ-105)가 없어 다섯 다 트래픽을 안 받는다** |
 
 **파이프라인 전체 병합은 채택됐다(허브 ADR 0004 — ADR-0006은 `Superseded by 허브 ADR 0004`).**
 파이프라인 로직 전체와 ClickHouse 스키마 소유권이 이 레포로 온다. **배포 단위는 하나이고 OTel Collector
 바이너리를 쓰지 않는다** — 수집·마스킹도 이 레포가 구현한다(허브 ADR 0005). 단계는 배포 경계가 아니라
 모듈 경계로 나뉘며, 구성은 `docs/module-map.md`가 담는다.
 **동작하는 파이프라인은 여전히 `ai-telemetry-pipeline`에 있다.** 이식은 인증 계층
-(`:libs:security`, PROJ-102) · 수집 단계(`:libs:telemetry-collector`, PROJ-114) ·
-변환 단계(`:libs:telemetry-adapter`, PROJ-103)까지 끝났고,
-그 모듈들을 조립할 앱이 아직 없어 **실제 OTLP 트래픽은 계속 auth-proxy와 collector 컨테이너가
-받는다.** 보강·적재는 진행 전이다.
+(`:libs:security`, PROJ-102) · 수집(`:libs:telemetry-collector`, PROJ-114) ·
+변환(`:libs:telemetry-adapter`, PROJ-103) · 보강과 적재
+(`:libs:telemetry-enricher`·`:libs:telemetry-persistence`, PROJ-104)까지 **모듈이 전부 섰지만**,
+그것들을 조립할 앱이 아직 없어 **실제 OTLP 트래픽은 계속 auth-proxy와 collector 컨테이너가
+받는다.** 남은 것은 조립(PROJ-105)이다.
 `../docs/contracts/telemetry-ingest.md`의 검증 주체·신원 전파 서술은 전환이 실제로 끝난 시점에 고친다
 (허브 ADR 0005 Follow-up이 "그전까지 현행 서술이 사실"로 못박았다).
 
@@ -121,7 +124,19 @@ docker compose up -d                              # 로컬 Postgres
   특히 `redaction`의 `blocked_values`는 v0.157.0에서 **적용 순서가 비결정적**이었다(Go 맵 순회).
   이식본은 상위가 그 뒤에 고친 **선언 순서**를 따르고, `MaskingRules` KDoc이 근거를 담는다 —
   **그 목록의 순서를 바꾸면 마스킹 결과가 바뀐다.**
+- **`enriched_events`의 DDL은 멱등 문장만 허용된다**(ADR 0015). 진실원은
+  `libs/telemetry-persistence/src/main/resources/clickhouse/`의 `V*.sql`이고 기동 시 전량이 다시 돈다.
+  **`V1`을 고치지 마라** — `CREATE TABLE IF NOT EXISTS`는 이미 있는 테이블에 아무 일도 하지 않아
+  변경이 조용히 무시된다. 컬럼은 `V2` 파일에 `ALTER TABLE … ADD COLUMN IF NOT EXISTS`로 더한다.
+  `IF NOT EXISTS`를 빠뜨린 문장은 **첫 기동에서는 성공하고 두 번째 기동에서 죽는다.**
+- **적재의 JSON 표기 규칙이 두 개다.** 행 한 줄은 화이트리스트 **삽입 순서**이고, 그 안의
+  `enrichment_json` 문자열만 **키 정렬**이다(`TelemetryJson.compact` / `.sorted`). 섞으면 저장되는
+  값이 바뀐다. 어댑터에도 같은 성격의 인코더가 둘 있지만 `internal`이라 쓸 수 없다 — 그 중복은
+  ADR 0014 Negative가 근거를 적어 뒀다.
+- **`enrichment_json`에는 no-op provider 스텁 셋(github·jira·ai_analysis)의 빈 항목도 들어간다.**
+  구 registry가 발견된 모든 provider에 항상 항목을 쓰기 때문이고, 스텁을 지우면 저장되는 값이
+  현행과 달라진다. 그래서 아무것도 하지 않는 클래스 셋이 일부러 남아 있다.
 - **metrics는 마스킹하지 않는다**(`Signal.METRICS.masked = false`). 현행 설정을 그대로 옮긴 것이고
   허브 계약 §5가 M6로 등록한 결함이다. 고치는 것은 별도 티켓이며 ADR 0012 Negative가 대가를 적어 뒀다.
-- ADR을 추가하면 `0014`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
+- ADR을 추가하면 `0016`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

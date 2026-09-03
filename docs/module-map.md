@@ -12,6 +12,8 @@
 [ADR 0010](adr/0010-파이프라인-단계를-모듈-경계로-나눈다.md) ·
 [ADR 0011](adr/0011-라이브러리-모듈은-spring-조립을-앱에-위임한다.md) ·
 [ADR 0013](adr/0013-정규화-입력은-protobuf-이고-원본-해시는-정규-json-으로-되살린다.md) ·
+[ADR 0014](adr/0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md) ·
+[ADR 0015](adr/0015-clickhouse-ddl-은-번호-붙은-멱등-파일이고-기동-시-적용한다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md)
 
@@ -32,13 +34,19 @@ pulsemetry-backend
     │                                OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
     │                                ├ masking/    blocked_values 14종 값 마스킹
     │                                └ archive/    제품별 원본 적재 (S3 · 파일)
-    └── telemetry-adapter/           com.team376.pulsemetry.telemetry.adapter
-                                     OTLP 읽기 · record_id 생성 · call_id 페어링
-                                     ├ model/      공통 스키마 (봉투 · payload · enum)
-                                     └ source/     벤더별 매핑 (claude_code · codex)
+    ├── telemetry-adapter/           com.team376.pulsemetry.telemetry.adapter
+    │                                OTLP 읽기 · record_id 생성 · call_id 페어링
+    │                                ├ model/      공통 스키마 (봉투 · payload · enum)
+    │                                └ source/     벤더별 매핑 (claude_code · codex)
+    ├── telemetry-enricher/          com.team376.pulsemetry.telemetry.enricher
+    │                                사원 정보 결합 — as-of 조인 · provider 주석
+    │                                └ provider/   EnrichmentProvider 와 그 구현
+    └── telemetry-persistence/       com.team376.pulsemetry.persistence.telemetry
+                                     ClickHouse 스키마 · 적재 — 쓰기 소유 모듈
 ```
 
-`settings.gradle.kts`의 `include`는 이 다섯뿐이다. 아래 2절부터 나오는 나머지 모듈은 **아직 없다.**
+`settings.gradle.kts`의 `include`는 이 일곱뿐이다. 5절이 예고한 모듈 중 남은 것은
+**조립 앱 `:apps:telemetry-ingest` 하나뿐이다.**
 
 `:libs:security`에는 아직 **OTLP 경로의 `ptt_` 검증만** 있다(PROJ-102). 관리자 API 경로의 AT 검증은
 PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 — 지금은 내용물 묶음이 하나뿐이라
@@ -54,9 +62,19 @@ PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 —
 `model/`·`source/` 둘이고, 읽기·키 생성·페어링은 모듈 루트 패키지에 둔다.
 **입력은 수집 단계가 넘겨주는 protobuf 요청이다**
 ([ADR 0013](adr/0013-정규화-입력은-protobuf-이고-원본-해시는-정규-json-으로-되살린다.md)).
-`model/`의 봉투와 payload 타입은 **모듈 경계를 넘는 공개 API**다 — PROJ-104의 보강·적재 단계가
-그대로 받는다. **두 단계 모듈은 서로 `project()` 의존을 두지 않는다** — 수집의 `SignalConsumer`에
-변환을 잇는 배선은 조립 앱의 몫이다(ADR 0011).
+`model/`의 봉투와 payload 타입은 **모듈 경계를 넘는 공개 API**다 — 보강·적재 단계가 그대로 받는다.
+**단계 모듈은 이웃의 seam 인터페이스를 구현하지 않지만, 공개된 데이터 타입은 `project()` 간선으로
+직접 받는다**([ADR 0014](adr/0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md)). 수집의
+`SignalConsumer`에 변환을 잇는 배선은 여전히 조립 앱의 몫이다(ADR 0011).
+
+`:libs:telemetry-enricher`는 세 번째 단계 모듈이다(PROJ-104). 하위 패키지는 `provider/` 하나이고,
+`Enriched`와 `Enricher`는 모듈 루트 패키지에 둔다. **RDS를 읽는 provider는 `org` 하나뿐이며**
+PROJ-101이 만든 `TeamMembershipRepository.findActiveTeamMembershipsByInstallationId`와
+`TeamMembership.coversAt`를 그대로 쓴다 — 읽기 전용이고 `team_memberships`의 쓰기 소유는 그대로다.
+
+`:libs:telemetry-persistence`는 단계가 아니라 **역할** 모듈이라 어순이 뒤집힌다(ADR 0010).
+`enriched_events`의 DDL과 쓰기를 소유하고, ClickHouse HTTP 인터페이스를 JDK `HttpClient`로 직접
+부른다 — 드라이버를 넣으면 자체 오류 매핑이 "4xx까지 전부 일시 장애"라는 고정 동작을 덮는다.
 
 ## 2. 도메인 경계 — 쓰기 소유권
 
@@ -70,14 +88,18 @@ PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 —
 | enrollment | `invitations` · `installations` · `installation_credentials` · `telemetry_tokens` · `installation_manifest_assignments` | `enrollment-api` |
 | policy | `manifests` | 관리자 API (미구현) |
 | contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 관리자 API (미구현) |
-| telemetry | ClickHouse `enriched_events` | `:libs:telemetry-persistence` (미구현) |
+| telemetry | ClickHouse `enriched_events` | `:libs:telemetry-persistence` |
 
 **쓰기 소유는 모듈이다**(ADR 0008 규칙 1). 표가 앱 이름을 적은 행은 그 도메인의 쓰기가 아직 앱에
 직접 있다는 뜻이고, 규칙 5의 승격 트리거가 당겨지면 모듈로 내려간다. telemetry는 새 도메인이라
 처음부터 모듈이 소유한다([ADR 0010](adr/0010-파이프라인-단계를-모듈-경계로-나눈다.md)).
 
-**ClickHouse는 Flyway가 다루지 않는다.** `enriched_events`의 DDL 진실원과 적용 경로는 아직
-정해지지 않았다 — [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) Follow-up이 다룬다.
+**ClickHouse는 Flyway가 다루지 않는다** — 구현 모듈이 10.24.0에서 멈춰 이 저장소가 해석하는
+`flyway-core` 12.x 계열에 없다. `enriched_events`의 DDL 진실원은
+`libs/telemetry-persistence/src/main/resources/clickhouse/`의 `V*.sql`이고, 적용은 기동 시 전량이다
+([ADR 0015](adr/0015-clickhouse-ddl-은-번호-붙은-멱등-파일이고-기동-시-적용한다.md)가
+허브 ADR 0004 Follow-up이 넘긴 이 항목을 닫는다). **모든 문장은 `IF NOT EXISTS` 형태여야 하고,
+`V1`을 고치는 대신 새 번호 파일을 더한다** — 그것이 원장 테이블과 분산 락을 대신하는 규약이다.
 
 **이 표는 테이블만 다룬다.** Raw Signal Object Storage에는 `CREATE TABLE`이 없어 규칙 1의 판정법이
 닿지 않으므로 표에 넣지 않는다. 그 쓰기 주체는 `:libs:telemetry-collector`의 `archive` 패키지다(5절).
@@ -133,6 +155,10 @@ installation의 배포 상태를 담기 때문이다.
 - `:libs:*`는 `:apps:*`에 의존하지 않는다. `:libs:*` 사이의 의존은 단방향만 둔다.
 - `project()` 간선은 기본 `implementation`이고, `api()`는 그 타입이 소비자의 계약일 때만 쓴다
   (`:libs:enrollment-persistence`가 JPA·JDBC를 `api()`로 노출한 것이 선례다).
+- **단계 모듈 사이에도 데이터 타입 간선을 둔다**
+  ([ADR 0014](adr/0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md)). 방향은 데이터 흐름과 같고
+  단방향이다 — `adapter ← enricher ← persistence`. 금지되는 것은 **이웃의 seam 인터페이스를
+  구현하는 것**이고, 그 배선은 조립 앱이 한다. 타입을 복제하거나 `-event` 모듈로 빼지 않는다.
 - 아웃바운드 기술이 둘 이상이면 라이브러리를 기술별로 나눈다(`-persistence` / `-messaging`).
 - **`:libs:*`는 Spring 스테레오타입을 두지 않고 Boot starter도 끌지 않는다**
   ([ADR 0011](adr/0011-라이브러리-모듈은-spring-조립을-앱에-위임한다.md)). 컴포넌트 스캔 루트가
@@ -162,10 +188,10 @@ libs/
 │                                    공시가 환산 · 재처리 읽기
 │                                    ├ model/      공통 스키마
 │                                    └ source/     벤더별 매핑 (claude_code · codex)
-├── telemetry-enricher/              com.team376.pulsemetry.telemetry.enricher
+├── telemetry-enricher/              com.team376.pulsemetry.telemetry.enricher    ← 있다 (1절)
 │                                    사원 정보 결합
 │                                    └ provider/   EnrichmentProvider 와 그 구현
-└── telemetry-persistence/           com.team376.pulsemetry.persistence.telemetry
+└── telemetry-persistence/           com.team376.pulsemetry.persistence.telemetry ← 있다 (1절)
                                      ClickHouse 스키마 · 적재 — 쓰기 소유 모듈
 ```
 
