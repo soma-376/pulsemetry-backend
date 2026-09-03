@@ -21,6 +21,7 @@ Kotlin + Spring Boot, Gradle 멀티모듈. 시스템 아키텍처의 **Auth Serv
 apps/enrollment-api/         Spring Boot 애플리케이션 (현재 유일한 app)
 libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이그레이션
 libs/security/               횡단 인증 라이브러리 — OTLP 경로 ptt_ 검증 · telemetry token 해시
+libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 원본 아카이브
 ```
 
 **소유하는 것**: `POST /v1/enroll`, `POST /v1/installations/telemetry-token`, `POST /v1/invitations`,
@@ -34,15 +35,16 @@ libs/security/               횡단 인증 라이브러리 — OTLP 경로 ptt_ 
 | 사람 계정·로그인 | 미구현 | 이 레포가 **Auth Service**다. Spring Security가 AT·RT를 직접 발급한다(ADR-0007 — Cognito 미사용). `members.cognito_user_sub`는 제거됐고(`V4`) 비밀번호 자리는 `members.password_hash`다 — 담을 곳만 있고 로그인 경로는 아직 없다. 얹힐 자리는 `:libs:security`이고 모듈은 이미 서 있다 |
 | manifest 작성 API | 미구현 (현재 수동 INSERT) | manifest 저장은 이미 이 레포 소유 |
 | 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | 확정 ADR은 아직 없다 |
-| 텔레메트리 파이프라인 이관 | 일부 착수 — 도착지는 `:apps:telemetry-ingest`와 단계별 `:libs:` 모듈 | 허브 ADR 0004(병합 채택). **인증 계층 `:libs:security`는 모듈 이식만 끝났다**(OTLP `ptt_` 검증 — 조립 전이라 트래픽은 안 받는다). 수집·변환·보강·적재는 미착수 |
+| 텔레메트리 파이프라인 이관 | 일부 착수 — 도착지는 `:apps:telemetry-ingest`와 단계별 `:libs:` 모듈 | 허브 ADR 0004(병합 채택). **인증 계층 `:libs:security`(PROJ-102)와 수집 단계 `:libs:telemetry-collector`(PROJ-114)는 모듈 이식만 끝났다** — 조립 앱이 없어 둘 다 트래픽을 안 받는다. 변환·보강·적재는 미착수 |
 
 **파이프라인 전체 병합은 채택됐다(허브 ADR 0004 — ADR-0006은 `Superseded by 허브 ADR 0004`).**
 파이프라인 로직 전체와 ClickHouse 스키마 소유권이 이 레포로 온다. **배포 단위는 하나이고 OTel Collector
 바이너리를 쓰지 않는다** — 수집·마스킹도 이 레포가 구현한다(허브 ADR 0005). 단계는 배포 경계가 아니라
 모듈 경계로 나뉘며, 구성은 `docs/module-map.md`가 담는다.
 **동작하는 파이프라인은 여전히 `ai-telemetry-pipeline`에 있다.** 이식은 인증 계층
-(`:libs:security`, PROJ-102)만 끝났고, 그 모듈을 조립할 앱이 아직 없어 **실제 OTLP 트래픽은
-계속 auth-proxy가 받는다.** 나머지 단계는 진행 전이다.
+(`:libs:security`, PROJ-102)과 수집 단계(`:libs:telemetry-collector`, PROJ-114)까지 끝났고,
+그 모듈들을 조립할 앱이 아직 없어 **실제 OTLP 트래픽은 계속 auth-proxy와 collector 컨테이너가
+받는다.** 변환·보강·적재는 진행 전이다.
 `../docs/contracts/telemetry-ingest.md`의 검증 주체·신원 전파 서술은 전환이 실제로 끝난 시점에 고친다
 (허브 ADR 0005 Follow-up이 "그전까지 현행 서술이 사실"로 못박았다).
 
@@ -105,5 +107,12 @@ docker compose up -d                              # 로컬 Postgres
 - **`:libs:` 모듈에 `@Component`·`@Configuration`을 달지 않고 Boot starter도 끌지 않는다**(ADR-0011).
   컴포넌트 스캔 루트가 저장소 전체라, 라이브러리의 빈은 그 라이브러리를 올린 **모든** 앱에서 살아난다.
   starter 하나가 인증을 켠 적 없는 앱의 엔드포인트를 전부 잠글 수 있다. 조립은 앱이 한다.
-- ADR을 추가하면 `0012`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
+- **OTel 컴포넌트를 이식할 때는 상위 저장소가 사양서다.** 운영 버전은 `v0.157.0`이고 형제 클론의
+  워킹트리는 그보다 앞서 있으므로 **태그를 찍어 읽는다**(`git show v0.157.0:<path>`).
+  특히 `redaction`의 `blocked_values`는 v0.157.0에서 **적용 순서가 비결정적**이었다(Go 맵 순회).
+  이식본은 상위가 그 뒤에 고친 **선언 순서**를 따르고, `MaskingRules` KDoc이 근거를 담는다 —
+  **그 목록의 순서를 바꾸면 마스킹 결과가 바뀐다.**
+- **metrics는 마스킹하지 않는다**(`Signal.METRICS.masked = false`). 현행 설정을 그대로 옮긴 것이고
+  허브 계약 §5가 M6로 등록한 결함이다. 고치는 것은 별도 티켓이며 ADR 0012 Negative가 대가를 적어 뒀다.
+- ADR을 추가하면 `0013`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

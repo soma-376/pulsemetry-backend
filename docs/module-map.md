@@ -25,15 +25,25 @@ pulsemetry-backend
 └── libs/
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
     │                                └ enrollment 스키마 14 테이블 · Flyway 마이그레이션
-    └── security/                    com.team376.pulsemetry.security
-                                     └ OTLP 경로의 ptt_ 검증 · telemetry token 해시
+    ├── security/                    com.team376.pulsemetry.security
+    │                                └ OTLP 경로의 ptt_ 검증 · telemetry token 해시
+    └── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
+                                     OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
+                                     ├ masking/    blocked_values 14종 값 마스킹
+                                     └ archive/    제품별 원본 적재 (S3 · 파일)
 ```
 
-`settings.gradle.kts`의 `include`는 이 셋뿐이다. 아래 2절부터 나오는 나머지 모듈은 **아직 없다.**
+`settings.gradle.kts`의 `include`는 이 넷뿐이다. 아래 2절부터 나오는 나머지 모듈은 **아직 없다.**
 
 `:libs:security`에는 아직 **OTLP 경로의 `ptt_` 검증만** 있다(PROJ-102). 관리자 API 경로의 AT 검증은
 PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 — 지금은 내용물 묶음이 하나뿐이라
 3절의 판정 기준이 나눌 근거를 주지 않는다.
+
+`:libs:telemetry-collector`는 5절이 예고한 단계 모듈 중 첫 번째다(PROJ-114). 하위 패키지는 5절이
+정한 대로 `masking/`·`archive/` 둘이고, 수신 관련 타입은 모듈 루트 패키지에 둔다.
+**조립 앱이 아직 없어 실제 OTLP 트래픽은 받지 않는다** — HTTP 라우팅은 PROJ-105가 붙인다.
+적재 대상은 [ADR 0012](adr/0012-원본-아카이브를-S3에-쓰고-파일-구현은-로컬에만-남긴다.md)가 정했다 —
+배포는 S3, 로컬 dev는 파일이고 어느 쪽을 쓸지는 조립 앱이 고른다.
 
 ## 2. 도메인 경계 — 쓰기 소유권
 
@@ -131,7 +141,7 @@ apps/
 libs/
 ├── security/                        com.team376.pulsemetry.security          ← 있다 (1절)
 │                                    OTLP 경로의 ptt_ 검증 · 관리자 API 경로의 AT 검증 (ADR 0007)
-├── telemetry-collector/             com.team376.pulsemetry.telemetry.collector
+├── telemetry-collector/             com.team376.pulsemetry.telemetry.collector   ← 있다 (1절)
 │                                    OTLP 수신
 │                                    ├ masking/    서버 마스킹 — 허브 Masker 노드의 소재
 │                                    └ archive/    마스킹 후 원본의 외부 저장소 적재

@@ -5,6 +5,12 @@ springDependencyManagement = "1.1.7"
 jdk = "25"
 # Spring Boot BOM 이 관리하지 않는다. 계약 테스트에서만 쓴다.
 jsonSchemaValidator = "3.0.6"
+# 아래 셋도 Spring Boot BOM 밖이다 — 텔레메트리 수집 모듈이 처음 끌어온다 (PROJ-114).
+# OTLP 와이어 포맷의 진실원은 상위 opentelemetry-proto 다.
+otelProto = "1.11.0-alpha"
+protobuf = "4.36.1"
+# 아카이브 적재 (ADR 0012). BOM 을 import 해 하위 모듈 버전을 맞춘다.
+awsSdk = "2.40.11"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
@@ -51,3 +57,16 @@ testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-jun
 # 계약 테스트가 telemetryctl/contracts/*.schema.json 을 오라클로 쓴다 (PLAN.md R3).
 # 3.x 는 Jackson 3(tools.jackson) 기반이라 Spring Boot 4.1 과 같은 Jackson 을 쓴다.
 json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "jsonSchemaValidator" }
+
+# --- 텔레메트리 수집 (:libs:telemetry-collector, PROJ-114) ---
+# OTLP 메시지의 가변 모델. protobuf-java 생성 클래스의 Builder 를 그대로 쓴다.
+# 상위 README 가 "not intended for production use" 를 달았지만, 대안은 .proto 벤더링뿐이고
+# 우리가 쓰는 것은 생성된 메시지 타입과 그 디스크립터뿐이라 그 경고의 사정거리 밖이다 (ADR 0012).
+opentelemetry-proto = { module = "io.opentelemetry.proto:opentelemetry-proto", version.ref = "otelProto" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
+# OTLP/JSON 코덱이 쓰는 스트리밍 파서. databind 는 쓰지 않는다 — 디스크립터로 직접 순회한다.
+# Boot BOM 이 tools.jackson(Jackson 3) 을 관리하므로 버전을 적지 않는다.
+jackson-core = { module = "tools.jackson.core:jackson-core" }
+# 아카이브 적재 대상 (ADR 0012). BOM 으로 하위 모듈 버전을 맞춘다.
+awssdk-bom = { module = "software.amazon.awssdk:bom", version.ref = "awsSdk" }
+awssdk-s3 = { module = "software.amazon.awssdk:s3" }

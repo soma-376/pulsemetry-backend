@@ -8,3 +8,6 @@ include(":libs:enrollment-persistence")
 
 // 컨텍스트에 속하지 않는 횡단 모듈. 인증 계층의 자리다 (ADR 0007·0008 규칙 2)
 include(":libs:security")
+
+// 파이프라인 단계 모듈. 테이블을 소유하지 않는다 (ADR 0010)
+include(":libs:telemetry-collector")
