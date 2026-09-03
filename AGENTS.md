@@ -18,10 +18,11 @@ Pulsemetry는 Claude Code·Codex 등 개발 AI 도구의 사용량과 비용을 
 Kotlin + Spring Boot, Gradle 멀티모듈. 시스템 아키텍처의 **Auth Service** 자리를 맡는다.
 
 ```
-apps/enrollment-api/         Spring Boot 애플리케이션 (현재 유일한 app)
+apps/enrollment-api/         enrollment · manifest · 부트스트랩 서빙 (HTTP)
+apps/telemetry-ingest/       조립 앱 — OTLP 수신부터 적재까지 한 프로세스. 배선만 한다
 libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이그레이션
 libs/security/               횡단 인증 라이브러리 — OTLP 경로 ptt_ 검증 · telemetry token 해시
-libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 원본 아카이브
+libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 신원 스탬프 · 원본 아카이브
 libs/telemetry-adapter/      파이프라인 변환 단계 — OTLP 읽기 · 정규화 모델 · 벤더별 매핑
 libs/telemetry-enricher/     파이프라인 보강 단계 — 팀 소속 as-of 조인 · provider 주석
 libs/telemetry-persistence/  파이프라인 적재 단계 — ClickHouse 스키마 소유 · JSONEachRow sink
@@ -38,18 +39,19 @@ libs/telemetry-persistence/  파이프라인 적재 단계 — ClickHouse 스키
 | 사람 계정·로그인 | 미구현 | 이 레포가 **Auth Service**다. Spring Security가 AT·RT를 직접 발급한다(ADR-0007 — Cognito 미사용). `members.cognito_user_sub`는 제거됐고(`V4`) 비밀번호 자리는 `members.password_hash`다 — 담을 곳만 있고 로그인 경로는 아직 없다. 얹힐 자리는 `:libs:security`이고 모듈은 이미 서 있다 |
 | manifest 작성 API | 미구현 (현재 수동 INSERT) | manifest 저장은 이미 이 레포 소유 |
 | 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | 확정 ADR은 아직 없다 |
-| 텔레메트리 파이프라인 이관 | **모듈은 전부 섰다. 조립 앱만 남았다** | 허브 ADR 0004(병합 채택). 인증(`:libs:security`, PROJ-102) · 수집(`:libs:telemetry-collector`, PROJ-114) · 변환(`:libs:telemetry-adapter`, PROJ-103) · 보강(`:libs:telemetry-enricher`)과 적재(`:libs:telemetry-persistence`, 둘 다 PROJ-104)까지 이식이 끝났다 — **조립 앱 `:apps:telemetry-ingest`(PROJ-105)가 없어 다섯 다 트래픽을 안 받는다** |
+| 텔레메트리 파이프라인 이관 | **코드는 끝났다. 배포만 남았다** | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 로컬에서는 다섯 모듈이 한 요청에서 돈다 — 남은 것은 infra 가 이 앱을 배포하고 collector 컨테이너를 내리는 일이다(PROJ-106) |
 
 **파이프라인 전체 병합은 채택됐다(허브 ADR 0004 — ADR-0006은 `Superseded by 허브 ADR 0004`).**
 파이프라인 로직 전체와 ClickHouse 스키마 소유권이 이 레포로 온다. **배포 단위는 하나이고 OTel Collector
 바이너리를 쓰지 않는다** — 수집·마스킹도 이 레포가 구현한다(허브 ADR 0005). 단계는 배포 경계가 아니라
 모듈 경계로 나뉘며, 구성은 `docs/module-map.md`가 담는다.
-**동작하는 파이프라인은 여전히 `ai-telemetry-pipeline`에 있다.** 이식은 인증 계층
-(`:libs:security`, PROJ-102) · 수집(`:libs:telemetry-collector`, PROJ-114) ·
-변환(`:libs:telemetry-adapter`, PROJ-103) · 보강과 적재
-(`:libs:telemetry-enricher`·`:libs:telemetry-persistence`, PROJ-104)까지 **모듈이 전부 섰지만**,
-그것들을 조립할 앱이 아직 없어 **실제 OTLP 트래픽은 계속 auth-proxy와 collector 컨테이너가
-받는다.** 남은 것은 조립(PROJ-105)이다.
+**이식은 끝났다.** 인증 계층(`:libs:security`, PROJ-102) · 수집(`:libs:telemetry-collector`,
+PROJ-114) · 변환(`:libs:telemetry-adapter`, PROJ-103) · 보강과 적재
+(`:libs:telemetry-enricher`·`:libs:telemetry-persistence`, PROJ-104)에 이어 조립 앱
+`:apps:telemetry-ingest`(PROJ-105)가 다섯을 잇고, 로컬에서는 한 요청이 OTLP 수신부터
+`enriched_events` 행까지 간다.
+**다만 배포가 아직이라 실제 OTLP 트래픽은 계속 auth-proxy와 collector 컨테이너가 받는다** —
+그 전환은 infra의 몫이다(PROJ-106).
 `../docs/contracts/telemetry-ingest.md`의 검증 주체·신원 전파 서술은 전환이 실제로 끝난 시점에 고친다
 (허브 ADR 0005 Follow-up이 "그전까지 현행 서술이 사실"로 못박았다).
 
@@ -91,9 +93,12 @@ libs/telemetry-persistence/  파이프라인 적재 단계 — ClickHouse 스키
 ```bash
 ./gradlew build                                   # 전체 빌드
 ./gradlew :apps:enrollment-api:test               # 테스트
-./gradlew :apps:enrollment-api:bootRun            # 로컬 실행
-docker compose up -d                              # 로컬 Postgres
+./gradlew :apps:enrollment-api:bootRun            # enrollment 서버 (8080)
+./gradlew :apps:telemetry-ingest:bootRun          # OTLP 수집 서버 (4316)
+docker compose up -d                              # 로컬 Postgres · ClickHouse
 ```
+
+로컬에서 파이프라인 전체를 돌리는 절차는 `docs/enrollment-server-spec.md` 10절에 있다.
 
 ## 이 레포에서 특히 조심할 것
 
@@ -138,5 +143,15 @@ docker compose up -d                              # 로컬 Postgres
   현행과 달라진다. 그래서 아무것도 하지 않는 클래스 셋이 일부러 남아 있다.
 - **metrics는 마스킹하지 않는다**(`Signal.METRICS.masked = false`). 현행 설정을 그대로 옮긴 것이고
   허브 계약 §5가 M6로 등록한 결함이다. 고치는 것은 별도 티켓이며 ADR 0012 Negative가 대가를 적어 뒀다.
-- ADR을 추가하면 `0016`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
+- **상태 코드가 곧 크로스레포 계약이다**(허브 ADR 0006). 영구 실패는 **400**, 일시 실패는
+  **503 + `Retry-After`** 다. telemetryctl 데몬이 4xx만 즉시 폐기하고 5xx는 전부 재시도하므로,
+  영구 실패를 5xx로 돌리면 스키마 오류가 매 push마다 재시도 예산을 태우고도 드러나지 않는다.
+  ClickHouse 응답의 4xx는 영구, `5xx`·`429`·`408`은 일시다 — **이 목록을 넓히지 마라.**
+- **신원 스탬핑은 마스킹 뒤·아카이브 앞이다**(ADR 0016). 검증된 `tenant.id`가 `record_id` 해시의
+  재료이고 그것이 ReplacingMergeTree의 멱등 키라, 신원 없는 원본을 재처리하면 실시간 경로와
+  **다른 키**가 나와 중복으로 쌓인다. 순서를 뒤집지 마라.
+- **`:libs:` 는 Boot starter를 끌지 않지만 조립 앱은 켠다**(ADR 0016). ADR 0011의 검사 대상은
+  `:apps:enrollment-api`의 클래스패스다. `:apps:telemetry-ingest`의
+  `spring-boot-starter-security`는 규칙 위반이 아니라 의도된 선택이다.
+- ADR을 추가하면 `0017`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

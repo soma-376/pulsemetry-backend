@@ -14,8 +14,10 @@
 [ADR 0013](adr/0013-정규화-입력은-protobuf-이고-원본-해시는-정규-json-으로-되살린다.md) ·
 [ADR 0014](adr/0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md) ·
 [ADR 0015](adr/0015-clickhouse-ddl-은-번호-붙은-멱등-파일이고-기동-시-적용한다.md) ·
+[ADR 0016](adr/0016-조립-앱은-인증-체인과-단계-호출을-배선하고-스키마-적용-실패를-견딘다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
-[허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md)
+[허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md) ·
+[허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)
 
 ---
 
@@ -24,7 +26,9 @@
 ```text
 pulsemetry-backend
 ├── apps/
-│   └── enrollment-api/              com.team376.pulsemetry.enrollment
+│   ├── enrollment-api/              com.team376.pulsemetry.enrollment
+│   └── telemetry-ingest/            com.team376.pulsemetry.telemetry
+│                                    OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
 └── libs/
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
     │                                └ enrollment 스키마 14 테이블 · Flyway 마이그레이션
@@ -45,8 +49,12 @@ pulsemetry-backend
                                      ClickHouse 스키마 · 적재 — 쓰기 소유 모듈
 ```
 
-`settings.gradle.kts`의 `include`는 이 일곱뿐이다. 5절이 예고한 모듈 중 남은 것은
-**조립 앱 `:apps:telemetry-ingest` 하나뿐이다.**
+`settings.gradle.kts`의 `include`는 이 여덟뿐이다. **5절이 예고한 모듈이 전부 섰다.**
+
+`:apps:telemetry-ingest`는 조립 앱이다(PROJ-105). 도메인 로직을 담지 않는다 — 빈 등록·필터 체인
+배선·설정 바인딩과 단계 호출이 전부이고, 그것이 ADR 0011이 라이브러리에서 걷어낸 몫이다.
+기동·배선 정책은 [ADR 0016](adr/0016-조립-앱은-인증-체인과-단계-호출을-배선하고-스키마-적용-실패를-견딘다.md),
+상태 코드 계약은 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)이 담는다.
 
 `:libs:security`에는 아직 **OTLP 경로의 `ptt_` 검증만** 있다(PROJ-102). 관리자 API 경로의 AT 검증은
 PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 — 지금은 내용물 묶음이 하나뿐이라
@@ -54,7 +62,10 @@ PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 —
 
 `:libs:telemetry-collector`는 5절이 예고한 단계 모듈 중 첫 번째다(PROJ-114). 하위 패키지는 5절이
 정한 대로 `masking/`·`archive/` 둘이고, 수신 관련 타입은 모듈 루트 패키지에 둔다.
-**조립 앱이 아직 없어 실제 OTLP 트래픽은 받지 않는다** — HTTP 라우팅은 PROJ-105가 붙인다.
+HTTP 라우팅과 인증 체인은 `:apps:telemetry-ingest`가 붙인다.
+**검증된 신원을 리소스 속성으로 승격하는 것도 이 모듈이다**(`IdentitySource`) — 변환 단계가
+`tenant.id`·`developer.installation_id`를 거기서 읽고, 그 값이 `record_id` 해시의 재료다.
+심는 자리는 마스킹 뒤·아카이브 앞이다(ADR 0016).
 적재 대상은 [ADR 0012](adr/0012-원본-아카이브를-S3에-쓰고-파일-구현은-로컬에만-남긴다.md)가 정했다 —
 배포는 S3, 로컬 dev는 파일이고 어느 쪽을 쓸지는 조립 앱이 고른다.
 
@@ -74,7 +85,8 @@ PROJ-101이 만든 `TeamMembershipRepository.findActiveTeamMembershipsByInstalla
 
 `:libs:telemetry-persistence`는 단계가 아니라 **역할** 모듈이라 어순이 뒤집힌다(ADR 0010).
 `enriched_events`의 DDL과 쓰기를 소유하고, ClickHouse HTTP 인터페이스를 JDK `HttpClient`로 직접
-부른다 — 드라이버를 넣으면 자체 오류 매핑이 "4xx까지 전부 일시 장애"라는 고정 동작을 덮는다.
+부른다 — 드라이버를 넣으면 자체 오류 매핑이 상태 코드별 처분을 덮는데, 그 분류가 곧 HTTP
+계약이다(허브 ADR 0006 — 연결 계열과 `5xx`·`429`·`408`은 일시 장애, 그 밖의 4xx는 영구 오류).
 
 ## 2. 도메인 경계 — 쓰기 소유권
 
@@ -175,7 +187,7 @@ installation의 배포 상태를 담기 때문이다.
 
 ```text
 apps/
-└── telemetry-ingest/                com.team376.pulsemetry.telemetry
+└── telemetry-ingest/                com.team376.pulsemetry.telemetry          ← 있다 (1절)
                                      앱은 조립만 한다 — 필터 체인 배선 · 단계 호출
 libs/
 ├── security/                        com.team376.pulsemetry.security          ← 있다 (1절)
