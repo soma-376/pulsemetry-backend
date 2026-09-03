@@ -22,6 +22,7 @@ apps/enrollment-api/         Spring Boot 애플리케이션 (현재 유일한 ap
 libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이그레이션
 libs/security/               횡단 인증 라이브러리 — OTLP 경로 ptt_ 검증 · telemetry token 해시
 libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 원본 아카이브
+libs/telemetry-adapter/      파이프라인 변환 단계 — OTLP 읽기 · 정규화 모델 · 벤더별 매핑
 ```
 
 **소유하는 것**: `POST /v1/enroll`, `POST /v1/installations/telemetry-token`, `POST /v1/invitations`,
@@ -35,16 +36,17 @@ libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · �
 | 사람 계정·로그인 | 미구현 | 이 레포가 **Auth Service**다. Spring Security가 AT·RT를 직접 발급한다(ADR-0007 — Cognito 미사용). `members.cognito_user_sub`는 제거됐고(`V4`) 비밀번호 자리는 `members.password_hash`다 — 담을 곳만 있고 로그인 경로는 아직 없다. 얹힐 자리는 `:libs:security`이고 모듈은 이미 서 있다 |
 | manifest 작성 API | 미구현 (현재 수동 INSERT) | manifest 저장은 이미 이 레포 소유 |
 | 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | 확정 ADR은 아직 없다 |
-| 텔레메트리 파이프라인 이관 | 일부 착수 — 도착지는 `:apps:telemetry-ingest`와 단계별 `:libs:` 모듈 | 허브 ADR 0004(병합 채택). **인증 계층 `:libs:security`(PROJ-102)와 수집 단계 `:libs:telemetry-collector`(PROJ-114)는 모듈 이식만 끝났다** — 조립 앱이 없어 둘 다 트래픽을 안 받는다. 변환·보강·적재는 미착수 |
+| 텔레메트리 파이프라인 이관 | 일부 착수 — 도착지는 `:apps:telemetry-ingest`와 단계별 `:libs:` 모듈 | 허브 ADR 0004(병합 채택). **인증 계층 `:libs:security`(PROJ-102) · 수집 단계 `:libs:telemetry-collector`(PROJ-114) · 변환 단계 `:libs:telemetry-adapter`(PROJ-103)는 모듈 이식만 끝났다** — 조립 앱이 없어 셋 다 트래픽을 안 받는다. 보강·적재는 미착수 |
 
 **파이프라인 전체 병합은 채택됐다(허브 ADR 0004 — ADR-0006은 `Superseded by 허브 ADR 0004`).**
 파이프라인 로직 전체와 ClickHouse 스키마 소유권이 이 레포로 온다. **배포 단위는 하나이고 OTel Collector
 바이너리를 쓰지 않는다** — 수집·마스킹도 이 레포가 구현한다(허브 ADR 0005). 단계는 배포 경계가 아니라
 모듈 경계로 나뉘며, 구성은 `docs/module-map.md`가 담는다.
 **동작하는 파이프라인은 여전히 `ai-telemetry-pipeline`에 있다.** 이식은 인증 계층
-(`:libs:security`, PROJ-102)과 수집 단계(`:libs:telemetry-collector`, PROJ-114)까지 끝났고,
+(`:libs:security`, PROJ-102) · 수집 단계(`:libs:telemetry-collector`, PROJ-114) ·
+변환 단계(`:libs:telemetry-adapter`, PROJ-103)까지 끝났고,
 그 모듈들을 조립할 앱이 아직 없어 **실제 OTLP 트래픽은 계속 auth-proxy와 collector 컨테이너가
-받는다.** 변환·보강·적재는 진행 전이다.
+받는다.** 보강·적재는 진행 전이다.
 `../docs/contracts/telemetry-ingest.md`의 검증 주체·신원 전파 서술은 전환이 실제로 끝난 시점에 고친다
 (허브 ADR 0005 Follow-up이 "그전까지 현행 서술이 사실"로 못박았다).
 
@@ -104,6 +106,13 @@ docker compose up -d                              # 로컬 Postgres
 - 모듈 경계·네임스페이스 규칙은 ADR-0008(파이프라인 단계는 ADR-0010이 개정)이 정하고,
   현재 구성과 이름은 `docs/module-map.md`가 담는다.
   모듈을 추가하기 전에 둘 다 본다.
+- **정규화 golden fixture의 기대값을 손으로 고치지 마라.** `libs/telemetry-adapter/src/test/resources/otlp/`의
+  `*.normalized.jsonl`은 구 파이프라인의 Python normalizer가 구운 것이고, 그것이 이식의 오라클이다.
+  기대값이 바뀌어야 하면 **먼저 구 레포에서 다시 굽고**(`scripts/regen-golden.py`) 그 변화가 의도된
+  것인지 따진 다음 가져온다. 현행 결함 넷도 일부러 고정돼 있다 — 그 README가 목록을 담는다.
+- **`_ingest.source_record_id`와 `record_id`는 다른 것이다.** 앞은 원본 추적용 해시이고 뒤가
+  ClickHouse ReplacingMergeTree의 **멱등 키**다. 뒤의 해시 재료는 Python `str()` 표기라
+  `None`·`True`처럼 적힌다 — Kotlin 기본 표기로 바꾸면 전 이벤트의 키가 바뀐다(ADR-0013).
 - **`:libs:` 모듈에 `@Component`·`@Configuration`을 달지 않고 Boot starter도 끌지 않는다**(ADR-0011).
   컴포넌트 스캔 루트가 저장소 전체라, 라이브러리의 빈은 그 라이브러리를 올린 **모든** 앱에서 살아난다.
   starter 하나가 인증을 켠 적 없는 앱의 엔드포인트를 전부 잠글 수 있다. 조립은 앱이 한다.
@@ -114,5 +123,5 @@ docker compose up -d                              # 로컬 Postgres
   **그 목록의 순서를 바꾸면 마스킹 결과가 바뀐다.**
 - **metrics는 마스킹하지 않는다**(`Signal.METRICS.masked = false`). 현행 설정을 그대로 옮긴 것이고
   허브 계약 §5가 M6로 등록한 결함이다. 고치는 것은 별도 티켓이며 ADR 0012 Negative가 대가를 적어 뒀다.
-- ADR을 추가하면 `0013`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
+- ADR을 추가하면 `0014`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

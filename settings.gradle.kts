@@ -11,3 +11,4 @@ include(":libs:security")
 
 // 파이프라인 단계 모듈. 테이블을 소유하지 않는다 (ADR 0010)
 include(":libs:telemetry-collector")
+include(":libs:telemetry-adapter")

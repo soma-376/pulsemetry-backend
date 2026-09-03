@@ -11,6 +11,7 @@
 [ADR 0008](adr/0008-모듈-경계와-네임스페이스-규칙-확정.md) ·
 [ADR 0010](adr/0010-파이프라인-단계를-모듈-경계로-나눈다.md) ·
 [ADR 0011](adr/0011-라이브러리-모듈은-spring-조립을-앱에-위임한다.md) ·
+[ADR 0013](adr/0013-정규화-입력은-protobuf-이고-원본-해시는-정규-json-으로-되살린다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md)
 
@@ -27,13 +28,17 @@ pulsemetry-backend
     │                                └ enrollment 스키마 14 테이블 · Flyway 마이그레이션
     ├── security/                    com.team376.pulsemetry.security
     │                                └ OTLP 경로의 ptt_ 검증 · telemetry token 해시
-    └── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
-                                     OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
-                                     ├ masking/    blocked_values 14종 값 마스킹
-                                     └ archive/    제품별 원본 적재 (S3 · 파일)
+    ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
+    │                                OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
+    │                                ├ masking/    blocked_values 14종 값 마스킹
+    │                                └ archive/    제품별 원본 적재 (S3 · 파일)
+    └── telemetry-adapter/           com.team376.pulsemetry.telemetry.adapter
+                                     OTLP 읽기 · record_id 생성 · call_id 페어링
+                                     ├ model/      공통 스키마 (봉투 · payload · enum)
+                                     └ source/     벤더별 매핑 (claude_code · codex)
 ```
 
-`settings.gradle.kts`의 `include`는 이 넷뿐이다. 아래 2절부터 나오는 나머지 모듈은 **아직 없다.**
+`settings.gradle.kts`의 `include`는 이 다섯뿐이다. 아래 2절부터 나오는 나머지 모듈은 **아직 없다.**
 
 `:libs:security`에는 아직 **OTLP 경로의 `ptt_` 검증만** 있다(PROJ-102). 관리자 API 경로의 AT 검증은
 PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 — 지금은 내용물 묶음이 하나뿐이라
@@ -44,6 +49,14 @@ PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 —
 **조립 앱이 아직 없어 실제 OTLP 트래픽은 받지 않는다** — HTTP 라우팅은 PROJ-105가 붙인다.
 적재 대상은 [ADR 0012](adr/0012-원본-아카이브를-S3에-쓰고-파일-구현은-로컬에만-남긴다.md)가 정했다 —
 배포는 S3, 로컬 dev는 파일이고 어느 쪽을 쓸지는 조립 앱이 고른다.
+
+`:libs:telemetry-adapter`는 두 번째 단계 모듈이다(PROJ-103). 하위 패키지는 5절이 정한 대로
+`model/`·`source/` 둘이고, 읽기·키 생성·페어링은 모듈 루트 패키지에 둔다.
+**입력은 수집 단계가 넘겨주는 protobuf 요청이다**
+([ADR 0013](adr/0013-정규화-입력은-protobuf-이고-원본-해시는-정규-json-으로-되살린다.md)).
+`model/`의 봉투와 payload 타입은 **모듈 경계를 넘는 공개 API**다 — PROJ-104의 보강·적재 단계가
+그대로 받는다. **두 단계 모듈은 서로 `project()` 의존을 두지 않는다** — 수집의 `SignalConsumer`에
+변환을 잇는 배선은 조립 앱의 몫이다(ADR 0011).
 
 ## 2. 도메인 경계 — 쓰기 소유권
 
@@ -145,7 +158,7 @@ libs/
 │                                    OTLP 수신
 │                                    ├ masking/    서버 마스킹 — 허브 Masker 노드의 소재
 │                                    └ archive/    마스킹 후 원본의 외부 저장소 적재
-├── telemetry-adapter/               com.team376.pulsemetry.telemetry.adapter
+├── telemetry-adapter/               com.team376.pulsemetry.telemetry.adapter    ← 있다 (1절)
 │                                    공시가 환산 · 재처리 읽기
 │                                    ├ model/      공통 스키마
 │                                    └ source/     벤더별 매핑 (claude_code · codex)
