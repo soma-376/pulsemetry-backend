@@ -21,11 +21,11 @@ import com.team376.pulsemetry.telemetry.adapter.model.ToolKind
  * claude_code 스팬 → [NormalizedSpan]. 스팬 하나가 이벤트 하나다. 이름 6종.
  *
  * 로그와 같은 무상태 규칙이다. 스팬 셋(`tool`·`tool.execution`·`tool.blocked_on_user`)을
- * 합치는 것은 조인이라 여기서 하지 않는다 — 뷰(트리 조립)의 몫이다. 구조는
+ * 합치는 것은 조인이라 여기서 하지 않는다 — 뷰(트리 조립)의 몫이다(ADR 0017). 구조는
  * [NormalizedSpan.spanId]·[NormalizedSpan.parentId] 로, 역할은 [SpanKind] 로 보존한다.
  *
  * **토큰·비용은 담지 않는다.** 같은 LLM 호출을 로그(`api_request`)가 이미 싣고 둘은
- * `request_id` 로 조인된다 — 여기서 또 실으면 이중계산이다.
+ * `request_id` 로 조인된다 — 여기서 또 실으면 이중계산이다(ADR 0017).
  */
 internal object ClaudeCodeTraces {
 
@@ -144,7 +144,7 @@ internal object ClaudeCodeTraces {
 			else -> return null
 		}
 
-		return RecordId.finalize(event) as NormalizedSpan
+		return RecordId.finalize(event)
 	}
 
 	/** null 과 빈 문자열을 뺀 뒤 문자열로 눕힌다. */

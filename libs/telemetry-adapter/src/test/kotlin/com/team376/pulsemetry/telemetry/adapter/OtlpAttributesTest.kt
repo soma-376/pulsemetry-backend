@@ -38,6 +38,34 @@ internal class OtlpAttributesTest {
 	}
 
 	@Test
+	@DisplayName("NaN 과 Int 범위 밖은 0 도 감싼 값도 아니라 null 이다")
+	fun nanAndOutOfRangeAreAbsent() {
+		// toInt() 는 NaN 을 0 으로, 2^31 이상을 감싸서 돌려준다 — 둘 다 "없음" 을 "0건" 으로 바꾼다.
+		assertThat(OtlpAttributes.optInt(mapOf("k" to Double.NaN), "k")).isNull()
+		assertThat(OtlpAttributes.optInt(mapOf("k" to Double.POSITIVE_INFINITY), "k")).isNull()
+		assertThat(OtlpAttributes.optInt(mapOf("k" to 8_589_934_592L), "k")).isNull()
+		assertThat(OtlpAttributes.optInt(mapOf("k" to 3.0e9), "k")).isNull()
+		assertThat(OtlpAttributes.optInt(mapOf("k" to Int.MAX_VALUE.toLong()), "k")).isEqualTo(Int.MAX_VALUE)
+		assertThat(OtlpAttributes.optInt(mapOf("k" to "99999999999"), "k")).isNull()
+	}
+
+	@Test
+	@DisplayName("edits[].file_path 는 비어 있지 않은 문자열일 때만 파일이다")
+	fun editFilePathsMustBeNonEmptyStrings() {
+		val payload = mapOf(
+			"edits" to listOf(
+				mapOf("file_path" to "a\\b.kt"),
+				mapOf("file_path" to ""),
+				mapOf("file_path" to 0L),
+				mapOf("file_path" to false),
+				mapOf("other" to "x"),
+			),
+		)
+
+		assertThat(OtlpAttributes.extractFiles(payload, emptyArray())).isEqualTo(listOf("a/b.kt"))
+	}
+
+	@Test
 	@DisplayName("빈 문자열은 없는 것으로 본다")
 	fun emptyStringCountsAsAbsent() {
 		assertThat(OtlpAttributes.optString(mapOf("k" to ""), "k")).isNull()

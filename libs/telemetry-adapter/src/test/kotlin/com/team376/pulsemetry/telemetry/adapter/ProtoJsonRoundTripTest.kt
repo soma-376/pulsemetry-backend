@@ -16,7 +16,10 @@ import java.util.stream.Stream
  *
  * 이 테스트는 fixture 전 문서에 대해 그런 필드가 없음을 확인한다. 실패하면 그 문서의
  * `source_record_id` 가 구 파이프라인과 갈라진다는 뜻이다 — **fixture 를 규격에 맞게 고쳐라.**
- * `record_id`(ReplacingMergeTree 멱등 키)는 이 해시를 재료로 쓰지 않으므로 무사하다.
+ * optional·oneof 가 아닌 스칼라 필드(`count`·`is_monotonic`·`aggregation_temporality`·
+ * `timeUnixNano`·`startTimeUnixNano` 등)의 명시 기본값은 protobuf 가 부재와 구별하지 못하므로
+ * 그런 문서는 **출력값과 `record_id` 도 갈릴 수 있다**(ADR 0013). 이 테스트가 막는 것은
+ * fixture 뿐이고 실트래픽은 막지 못한다.
  */
 internal class ProtoJsonRoundTripTest {
 

@@ -9,9 +9,6 @@ import com.team376.pulsemetry.telemetry.adapter.model.Normalized
  *
  * `Normalizer` 가 등록 순서대로 [match] 를 물어 **첫 매치를 쓴다.** 그래서 목록 순서가
  * 의미를 갖는다.
- *
- * 이식 원본은 파이썬 모듈 덕타이핑이었다 — `match`/`to_event` 와 세 상수를 가진 모듈이면
- * 소스였다. 여기서는 인터페이스로 세운다.
  */
 internal interface TelemetrySource {
 

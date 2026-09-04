@@ -66,18 +66,20 @@ internal object MetricEvents {
 			aggregationTemporality = (meta["aggregationTemporality"] as? Number)?.toInt(),
 			isMonotonic = meta["isMonotonic"] as? Boolean,
 			startTime = OtlpTimestamp.nanosToSeconds(record.record["startTimeUnixNano"]),
-			count = longOf(record.record["count"])?.toInt(),
+			// fixed64 → Int. Int 범위 밖은 감싸지 않고 null 이다 — "없음" 과 "0건" 을 섞지 않는다.
+			count = longOf(record.record["count"])?.let { OtlpAttributes.intOrNull(it) },
 			sum = doubleOf(record.record["sum"]),
 			min = doubleOf(record.record["min"]),
 			max = doubleOf(record.record["max"]),
 			bucketCounts = (record.record["bucketCounts"] as? List<*>)
-				?.mapNotNull { longOf(it)?.toInt() } ?: emptyList(),
+				?.mapNotNull { longOf(it)?.let { count -> OtlpAttributes.intOrNull(count) } }
+				?: emptyList(),
 			explicitBounds = (record.record["explicitBounds"] as? List<*>)
 				?.mapNotNull { doubleOf(it) } ?: emptyList(),
 			attrs = Stringify.attrs(record.attributes),
 		)
 
-		return RecordId.finalize(NormalizedMetric(envelope, point)) as NormalizedMetric
+		return RecordId.finalize(NormalizedMetric(envelope, point))
 	}
 
 	/** `asInt` 가 있으면 정수, 없고 `asDouble` 이 있으면 실수, 둘 다 없으면 null. */

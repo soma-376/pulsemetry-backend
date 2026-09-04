@@ -20,6 +20,23 @@ import java.math.BigDecimal
  */
 internal object CanonicalJson {
 
+	/**
+	 * Python `sorted()` 의 문자열 순서 — **코드 포인트 순**.
+	 *
+	 * Kotlin `String.compareTo` 는 UTF-16 코드 유닛 순이라 보조평면 문자(U+10000 이상)와
+	 * U+E000..U+FFFF 사이에서 Python 과 갈린다. 키에 그런 문자가 오면 해시가 조용히 어긋나므로
+	 * 코드 포인트로 비교한다. [RecordId] 의 메트릭 차원 정렬도 이것을 쓴다.
+	 */
+	val CODE_POINT_ORDER: Comparator<String> = Comparator { left, right ->
+		val a = left.codePoints().toArray()
+		val b = right.codePoints().toArray()
+		val length = minOf(a.size, b.size)
+		for (index in 0 until length) {
+			if (a[index] != b[index]) return@Comparator a[index].compareTo(b[index])
+		}
+		a.size.compareTo(b.size)
+	}
+
 	/** 트리를 Python 과 같은 표기의 JSON 문자열로 만든다. */
 	fun encode(value: Any?): String = StringBuilder().also { write(it, value) }.toString()
 
@@ -39,8 +56,8 @@ internal object CanonicalJson {
 
 	private fun writeObject(out: StringBuilder, value: Map<*, *>) {
 		out.append('{')
-		// sort_keys=True — 코드 포인트 순. Kotlin 의 String 비교가 그것과 같다.
-		val keys = value.keys.map { it as String }.sorted()
+		// sort_keys=True — 코드 포인트 순 ([CODE_POINT_ORDER]).
+		val keys = value.keys.map { it as String }.sortedWith(CODE_POINT_ORDER)
 		keys.forEachIndexed { index, key ->
 			if (index > 0) out.append(", ")
 			writeString(out, key)

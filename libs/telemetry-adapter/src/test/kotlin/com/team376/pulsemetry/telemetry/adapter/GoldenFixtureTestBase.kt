@@ -56,6 +56,22 @@ internal abstract class GoldenFixtureTestBase(
 	}
 
 	@Test
+	@DisplayName("한 줄 JSON 표기가 golden 원문과 문자열로 같다 — ClickHouse raw_json 에 들어가는 그 바이트")
+	fun jsonStringMatchesGoldenVerbatim() {
+		// 값 동등성(위 테스트)은 실수 표기·키 순서를 보지 않는다. `NormalizedJson.toJson` 이 곧
+		// `raw_json` 이므로 여기서는 golden 줄의 `"event":` 뒤 부분문자열과 문자열로 대조한다.
+		val expected = GoldenFixtures.lines(goldenFixture).map { GoldenFixtures.eventJsonOf(it) }
+		val actual = requests.flatMap { request ->
+			Normalizer.normalize(request).map { NormalizedJson.toJson(it) }
+		}
+
+		assertThat(actual).hasSameSizeAs(expected)
+		actual.forEachIndexed { index, produced ->
+			assertThat(produced).`as`("행 $index 의 event 원문").isEqualTo(expected[index])
+		}
+	}
+
+	@Test
 	@DisplayName("같은 요청을 두 번 태워도 record_id 가 같다")
 	fun recordIdIsDeterministicAcrossRuns() {
 		val first = GoldenFixtures.normalize(requests).map { it.at("envelope", "record_id") }

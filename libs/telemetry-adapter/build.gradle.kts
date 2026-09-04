@@ -5,10 +5,11 @@ plugins {
 }
 
 dependencies {
-	// OTLP 메시지 타입. 수집 단계가 넘겨주는 요청이 곧 이 모듈의 입력이다.
-	// api() 다 — ExportLogsServiceRequest 등이 Normalizer 의 공개 시그니처에 나타난다 (ADR 0008 규칙 3).
-	api(libs.opentelemetry.proto)
+	// 진입점 시그니처는 protobuf 의 MessageOrBuilder 다 — 그 타입이 소비자의 계약이므로 api() 다
+	// (ADR 0008 규칙 3). 어느 OTLP 요청인지는 런타임에 디스크립터로 가른다.
 	api(libs.protobuf.java)
+	// OTLP 요청 타입은 main 시그니처에 나타나지 않는다. fixture 를 요청 메시지로 만드는 테스트만 쓴다.
+	testImplementation(libs.opentelemetry.proto)
 
 	// canonical JSON 인코더가 쓰는 스트리밍 생성기. 계약에 나타나지 않으므로 implementation 이다.
 	// databind 는 쓰지 않는다 — 수집 모듈과 같은 이유로 디스크립터·모델을 직접 순회한다.

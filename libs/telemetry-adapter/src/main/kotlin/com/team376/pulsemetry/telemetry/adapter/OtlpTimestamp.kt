@@ -1,14 +1,16 @@
 package com.team376.pulsemetry.telemetry.adapter
 
-import java.time.Instant
 import java.time.OffsetDateTime
 
 /**
  * 타임스탬프 파싱 — ISO8601 문자열 / `timeUnixNano` 를 epoch 초(Double)로 통일한다.
  *
  * ⚠️ **파싱 실패는 진단 없이 `0.0`(1970-01-01)이 된다.** `record_id` 해시와 페어링 정렬이
- * 전부 이 값에 걸려 있어 한 건이 세션 정렬을 망가뜨릴 수 있다. 구 파이프라인의 알려진
- * 결함이고(그쪽 `data-gaps-and-schema-risks.md` 2.1) 동작 동일성 때문에 그대로 옮긴다.
+ * 전부 이 값에 걸려 있어 한 건이 세션 정렬을 망가뜨릴 수 있다. 현행 결함이고 동작 동일성
+ * 때문에 그대로 옮긴다.
+ *
+ * ISO 문자열은 오프셋이 있는 형태(`…T05:06:07Z`, `…+09:00`)만 받는다. 오프셋 없는 문자열은
+ * 파싱 실패로 보고 나노초 필드로 물러난다.
  */
 internal object OtlpTimestamp {
 
@@ -54,9 +56,7 @@ internal object OtlpTimestamp {
 	}
 
 	private fun parseIso(text: String): Double? = runCatching {
-		val normalized = text.replace("Z", "+00:00")
-		val instant = runCatching { OffsetDateTime.parse(normalized).toInstant() }
-			.getOrElse { Instant.parse(text) }
+		val instant = OffsetDateTime.parse(text.replace("Z", "+00:00")).toInstant()
 		instant.epochSecond + instant.nano / 1e9
 	}.getOrNull()
 }

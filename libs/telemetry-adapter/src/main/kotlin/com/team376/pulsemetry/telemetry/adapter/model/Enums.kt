@@ -23,7 +23,7 @@ public enum class Surface(override val wire: String) : WireValued {
 
 /**
  * 어느 OTel 신호에서 왔는가. 리더가 요청 타입으로 분기해 스탬프한다.
- * 조인은 이 값이 아니라 `call_id` 로 한다.
+ * 조인은 이 값이 아니라 `call_id` 로 한다(ADR 0017).
  */
 public enum class SignalType(override val wire: String) : WireValued {
 	LOG("log"),
@@ -57,7 +57,7 @@ public enum class LogKind(override val wire: String) : WireValued {
  * 스팬 = 구간(interval). type 이 곧 역할이다. claude_code 스팬 이름 기준.
  *
  * **[LogKind.TOOL_CALL]·[LogKind.TOOL_DECISION] 과 겹치는 값이 하나도 없다.**
- * 페어링이 로그만 고르는 이유가 이것이다 — `CallIdPairing` KDoc 참고.
+ * 페어링이 로그만 고르는 이유가 이것이다 — `CallId` KDoc 참고.
  */
 public enum class SpanKind(override val wire: String) : WireValued {
 	/** `claude_code.interaction` · `codex.conversation_starts` */

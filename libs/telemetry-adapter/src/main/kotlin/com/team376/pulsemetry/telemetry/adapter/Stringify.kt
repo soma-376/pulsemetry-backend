@@ -19,16 +19,12 @@ internal object Stringify {
 		is Float -> CanonicalJson.formatDouble(value.toDouble())
 		is String -> value
 		// 속성값은 `AnyValue` 에서 오므로 컨테이너가 실제로 나타나지는 않는다
-		// (`OtlpAttributes.value` 가 스칼라 넷과 null 만 낸다). 원본의 분기를 유지할 뿐이다.
+		// (`OtlpAttributes.value` 가 스칼라 넷과 null 만 낸다). 도달하지 않는 분기다.
 		is Map<*, *>, is Iterable<*> -> CompactJson.encode(value)
 		else -> value.toString()
 	}
 
-	/**
-	 * `MetricPoint.attrs` 전용 — 컨테이너는 compact JSON, 나머지는 [of] 와 같다.
-	 *
-	 * 원본 `common/metric.py:_string_attrs` 가 컨테이너만 다르게 다룬다.
-	 */
+	/** `MetricPoint.attrs` 전용 — 메트릭 속성만 컨테이너를 compact JSON 으로 눕히고, 나머지는 [of] 와 같다. */
 	fun attrs(attrs: Map<String, Any?>): Map<String, String> =
 		attrs.mapValues { (_, value) -> of(value) }
 }

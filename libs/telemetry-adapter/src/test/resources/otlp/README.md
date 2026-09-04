@@ -1,8 +1,7 @@
 # golden fixture — 입력과 기대출력 한 쌍
 
-PROJ-100 이 확보한 golden 을 **쌍으로** 가져왔다. 수집 모듈
-(`libs/telemetry-collector/src/test/resources/otlp/`)이 입력만 가져가면서
-*"짝인 `.normalized.jsonl` 은 … 변환 단계를 이식하는 PROJ-103 이 가져간다"* 고 적어 둔 그 파일들이다.
+PROJ-100 이 확보한 golden 을 **쌍으로** 가져왔다. 입력 `.otlp.jsonl` 은 수집 모듈
+(`libs/telemetry-collector/src/test/resources/otlp/`)의 것과 같은 파일이다.
 
 | 파일 쌍 | 신호 | 덮는 것 |
 |---|---|---|
@@ -32,10 +31,8 @@ PROJ-100 이 확보한 golden 을 **쌍으로** 가져왔다. 수집 모듈
 
 ## 문서 하나는 신호 하나다
 
-이 쌍은 양쪽이 다 읽을 수 있어야 한다. 이 모듈의 입력은 protobuf 요청이라 구 리더가 받아 주던
-두 가지 — `resourceTraces` 키와 한 문서에 신호가 섞인 경우 — 를 구조적으로 표현할 수 없다.
-그래서 구 레포가 그 둘을 공유 fixture 에서 빼고 `ReaderToleranceTest` 로 옮겼다.
-발산 자체는 ADR 0013 이 기록한다.
+이 모듈의 입력은 protobuf 요청이라 `resourceTraces` 키와 한 문서에 신호가 섞인 경우를
+구조적으로 표현할 수 없다. 이 쌍에는 그 두 모양이 없다. 발산은 ADR 0013 이 기록한다.
 
 ## ⚠️ 이 fixture 가 보증하는 것과 못 하는 것
 

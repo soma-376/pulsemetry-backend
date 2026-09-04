@@ -25,8 +25,8 @@ import com.team376.pulsemetry.telemetry.adapter.model.ValueSource
 /**
  * claude_code 로그 → [NormalizedLog]. 이벤트 9종.
  *
- * **프롬프트·응답 원문은 읽지 않는다.** 수집 단계에서 지워져 도착하지만 어댑터도 방어적으로
- * 드롭한다 — 애초에 담을 필드가 없다([Prompt] 는 길이와 커맨드 이름뿐이다).
+ * **프롬프트·응답 원문은 읽지 않는다**(ADR 0017). 수집 단계에서 지워져 도착하지만 어댑터도
+ * 방어적으로 드롭한다 — 애초에 담을 필드가 없다([Prompt] 는 길이와 커맨드 이름뿐이다).
  */
 internal object ClaudeCodeLogs {
 
@@ -211,7 +211,7 @@ internal object ClaudeCodeLogs {
 			else -> return null
 		}
 
-		return RecordId.finalize(event) as NormalizedLog
+		return RecordId.finalize(event)
 	}
 
 	/**

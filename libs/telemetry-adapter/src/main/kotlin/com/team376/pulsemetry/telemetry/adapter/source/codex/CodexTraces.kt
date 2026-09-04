@@ -68,11 +68,8 @@ internal object CodexTraces {
 						"duration_ms" to duration,
 						"reasoning_effort" to
 							OtlpAttributes.optString(attrs, "model_reasoning_effort"),
-						// ⚠️ 아래 둘은 **언제나 null 이다.** 이식 원본이 소스 키를 하나도
-						//    넘기지 않아(`_map_str(attrs, "approval_policy")` — 첫 인자는
-						//    진단 라벨이다) 값을 읽지 못한다. 입력에 실려 있어도 승격되지
-						//    않는 현행 결함이고, 동작 동일성 때문에 그대로 옮긴다.
-						//    golden fixture 의 codex/traces_synthetic 이 이것을 고정한다.
+						// ⚠️ 아래 둘은 **언제나 null 이다.** 입력에 실려 있어도 읽지 않는다 —
+						//    현행 결함이고 golden fixture 의 codex/traces_synthetic 이 고정한다.
 						"approval_policy" to null,
 						"sandbox_policy" to null,
 					),
@@ -132,7 +129,7 @@ internal object CodexTraces {
 			else -> return null
 		}
 
-		return RecordId.finalize(event) as NormalizedSpan
+		return RecordId.finalize(event)
 	}
 
 	/** null 을 뺀 뒤 문자열로 눕힌다. */

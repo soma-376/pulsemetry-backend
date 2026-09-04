@@ -3,11 +3,10 @@ package com.team376.pulsemetry.telemetry.adapter.model
 /**
  * 정규화된 이벤트 하나. 세 신호가 각각 한 갈래다.
  *
- * 이식 원본은 판별 필드 없이 `isinstance` 로 갈랐고, 직렬화에도 태그가 없다 —
- * `point` 가 있으면 메트릭, `type`+`payload` 가 있으면 로그나 스팬이다. Kotlin 에서는
- * sealed interface 로 그 갈래를 타입으로 세운다.
+ * 직렬화에는 판별 태그가 없다 — `point` 가 있으면 메트릭, `type`+`payload` 가 있으면 로그나
+ * 스팬이다. 코드에서는 sealed interface 가 그 갈래를 타입으로 세운다.
  *
- * [callId] 는 `CallIdPairing` 이 **제자리에서** 고쳐 쓰므로 `var` 다. [Envelope.recordId] 는
+ * [callId] 는 `CallId` 페어링이 **제자리에서** 고쳐 쓰므로 `var` 다. [Envelope.recordId] 는
  * 그전에 확정되므로 페어링에 흔들리지 않는다.
  */
 public sealed interface Normalized {

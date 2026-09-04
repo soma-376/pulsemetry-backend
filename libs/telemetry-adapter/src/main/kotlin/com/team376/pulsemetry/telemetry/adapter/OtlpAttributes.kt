@@ -3,14 +3,7 @@ package com.team376.pulsemetry.telemetry.adapter
 /**
  * OTLP 속성 추출 — 툴 무관 공용.
  *
- * **규칙: 값이 없으면 0 이 아니라 null 이다.** "0건"과 "측정 불가"는 다른 사실이다.
- *
- * ## 이식 노트 — 진단 타깃 라벨을 떼었다
- *
- * 이식 원본의 `_map_str(attrs, target, *keys)` 는 첫 문자열이 **진단 타깃 라벨**이고 소스
- * 키는 그 뒤였다. 이 모듈은 진단 엔진을 이식하지 않으므로(golden 에 나타나지 않는다) 라벨을
- * 떼고 소스 키만 받는다. 부수 효과로 원본에서 라벨과 키를 헷갈리기 쉬웠던 자리가 사라진다 —
- * 실제로 그 실수가 `codex/traces.py` 에 두 곳 있었고, 그 결함은 golden 이 고정하고 있다.
+ * **규칙: 값이 없으면 0 이 아니라 null 이다.** "0건"과 "측정 불가"는 다른 사실이다(ADR 0017).
  */
 internal object OtlpAttributes {
 
@@ -46,12 +39,14 @@ internal object OtlpAttributes {
 	 *
 	 * Boolean 은 건너뛴다 — 원본에서 Python 의 bool 이 int 의 하위 타입이라 명시적으로
 	 * 걸러 냈고, 그 판정을 유지한다. 문자열은 전부 숫자일 때만 받는다(부호는 받지 않는다).
+	 * NaN 과 Int 범위 밖의 수는 null 이다 — `toInt()` 가 NaN 을 0 으로, 큰 수를 감싸서
+	 * 돌려주면 "없음" 이 "0건" 이 된다.
 	 */
 	fun optInt(attrs: Map<String, Any?>, vararg keys: String): Int? {
 		for (key in keys) {
 			when (val raw = attrs[key]) {
 				is Boolean -> continue
-				is Number -> return raw.toInt()
+				is Number -> return intOrNull(raw)
 				is String -> {
 					val text = raw.trim()
 					if (text.isNotEmpty() && text.all { it.isDigit() }) {
@@ -61,6 +56,24 @@ internal object OtlpAttributes {
 			}
 		}
 		return null
+	}
+
+	/** Int 로 정확히 담기는 수만 Int 로. NaN·무한·범위 밖은 null. */
+	fun intOrNull(raw: Number): Int? = when (raw) {
+		is Int -> raw
+		is Long -> if (raw in Int.MIN_VALUE..Int.MAX_VALUE) raw.toInt() else null
+		is Double, is Float -> {
+			val value = raw.toDouble()
+			if (value.isNaN() || value.isInfinite()) {
+				null
+			} else if (value < Int.MIN_VALUE || value > Int.MAX_VALUE) {
+				null
+			} else {
+				value.toInt()
+			}
+		}
+
+		else -> intOrNull(raw.toLong())
 	}
 
 	/** 없으면 null. 문자열은 파싱되면 받는다(정수와 달리 부호·소수점을 허용한다). */
@@ -143,8 +156,10 @@ internal object OtlpAttributes {
 			}
 		}
 		for (edit in payload["edits"] as? List<*> ?: emptyList<Any?>()) {
-			val path = (edit as? Map<*, *>)?.get("file_path") ?: continue
-			files += Stringify.of(path).replace("\\", "/")
+			// 비어 있지 않은 문자열만 경로다. 원본이 truthy 검사라 ""·0·false 를 버렸다.
+			val path = (edit as? Map<*, *>)?.get("file_path") as? String ?: continue
+			if (path.isEmpty()) continue
+			files += path.replace("\\", "/")
 		}
 		return files
 	}

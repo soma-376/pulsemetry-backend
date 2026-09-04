@@ -39,8 +39,8 @@ import com.team376.pulsemetry.telemetry.adapter.model.ToolDecision
  */
 internal object RecordId {
 
-	/** payload 확정 후 [Envelope.recordId] 를 계산해 박는다. */
-	fun finalize(event: Normalized): Normalized {
+	/** payload 확정 후 [Envelope.recordId] 를 계산해 박는다. 받은 이벤트를 그대로 돌려준다. */
+	fun <T : Normalized> finalize(event: T): T {
 		val envelope = event.envelope
 		val (sequence, type, discriminator) = idemFields(event)
 		// 이식 원본과 같은 경로로 깎는다 — 위 KDoc 2번.
@@ -110,8 +110,9 @@ internal object RecordId {
 		is Lifecycle -> payload.kind
 
 		is MetricPoint -> {
+			// Python sorted() 와 같은 코드 포인트 순이다 — [CanonicalJson.CODE_POINT_ORDER] 참고.
 			val dimensions = payload.attrs.entries
-				.sortedBy { it.key }
+				.sortedWith(compareBy(CanonicalJson.CODE_POINT_ORDER) { it.key })
 				.joinToString("|") { "${it.key}=${it.value}" }
 			"${payload.name}|${Stringify.of(payload.value)}|" +
 				"${Stringify.of(payload.count)}|${Stringify.of(payload.sum)}|$dimensions"

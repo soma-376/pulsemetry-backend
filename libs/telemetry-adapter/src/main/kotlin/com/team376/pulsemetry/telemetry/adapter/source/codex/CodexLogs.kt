@@ -151,7 +151,7 @@ internal object CodexLogs {
 			else -> return null
 		}
 
-		return RecordId.finalize(event) as NormalizedLog
+		return RecordId.finalize(event)
 	}
 
 	/**

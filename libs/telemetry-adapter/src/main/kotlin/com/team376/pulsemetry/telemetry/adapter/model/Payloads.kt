@@ -1,11 +1,12 @@
 package com.team376.pulsemetry.telemetry.adapter.model
 
 /**
- * 토큰 계수. **없는 값은 0 이 아니라 null 이다** — "0건"과 "측정 불가"는 다른 사실이다.
+ * 토큰 계수. **없는 값은 0 이 아니라 null 이다** — "0건"과 "측정 불가"는 다른 사실이다
+ * (ADR 0017).
  *
- * [billable] 이 [reasoning]·[tool] 을 빼는 것이 이 클래스의 요점이다. 둘은 [output] 의
+ * [billable] 이 [reasoning]·[tool] 을 빼는 것이 이 클래스의 요점이다(ADR 0017). 둘은 [output] 의
  * 부분집합일 수 있어 더하면 이중계산이 된다. 두 프로퍼티 모두 **직렬화되지 않는다** —
- * 이식 원본이 계산 프로퍼티로 두었고 golden fixture 에도 나타나지 않는다.
+ * 계산값이고 golden fixture 에도 나타나지 않는다.
  */
 public class Tokens(
 	public val input: Int? = null,
@@ -38,7 +39,7 @@ public sealed interface SpanPayload : Payload
  *
  * **스팬에서는 [tokens]·[costUsd]·[source] 를 채우지 않는다.** 같은 호출을 로그가 이미
  * 싣고 둘은 [requestId] 로 조인되므로, 스팬에서 또 실으면 이중계산이다. 필드는 공유하되
- * 값만 비운다.
+ * 값만 비운다. 신호 간 조인은 이 모듈이 아니라 다운스트림의 몫이다(ADR 0017).
  */
 public class LlmCall(
 	public val model: String? = null,

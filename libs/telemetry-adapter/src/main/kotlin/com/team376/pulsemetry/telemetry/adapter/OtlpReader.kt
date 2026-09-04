@@ -4,9 +4,6 @@ import com.team376.pulsemetry.telemetry.adapter.model.SignalType
 
 /**
  * 리더가 낸 레코드 하나. 세 신호가 여기서 같은 모양이 된다.
- *
- * 이식 원본은 5튜플이었다 — `(res_attrs, rec, attrs, name, signal_type)`. Kotlin 에서는
- * 자리 순서를 외우지 않아도 되게 이름 붙인 클래스로 둔다.
  */
 internal class OtlpRecord(
 	val resourceAttributes: Map<String, Any?>,

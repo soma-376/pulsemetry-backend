@@ -14,8 +14,11 @@ import java.security.MessageDigest
  * ## 이 값이 무엇이 아닌지
  *
  * **`record_id` 의 재료가 아니다.** ClickHouse ReplacingMergeTree 의 멱등 키는
- * [RecordId] 가 따로 만들고, 그 해시에는 이 값이 들어가지 않는다. 그래서 복원이 원본과
- * 어긋나도 중복 제거는 무사하다 — 추적성만 잃는다(ADR 0013).
+ * [RecordId] 가 따로 만들고, 그 해시에는 이 값이 들어가지 않는다. 복원이 원본과 어긋나는
+ * 문서(기본값을 명시한 문서)는 `source_record_id` 가 갈린다. 다만 optional·oneof 가 아닌
+ * 스칼라 필드(`count`·`is_monotonic`·`aggregation_temporality`·`timeUnixNano`·
+ * `startTimeUnixNano` 등)의 명시 기본값은 protobuf 가 부재와 구별하지 못하므로 그 문서는
+ * **출력값과 `record_id` 도 갈릴 수 있다**(ADR 0013).
  */
 internal object SourceRecordId {
 

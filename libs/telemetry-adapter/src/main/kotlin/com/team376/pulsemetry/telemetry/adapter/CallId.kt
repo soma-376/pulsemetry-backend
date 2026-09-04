@@ -11,7 +11,8 @@ import com.team376.pulsemetry.telemetry.adapter.model.ToolDecision
  *
  * `tool_use_id` 를 주는 툴(claude_code)은 손대지 않는다. 안 주는 툴(codex)만 어댑터가
  * 합성하고([synthesize]), 여기서 세션 내 시간순으로 잇는다.
- * **"AI 제안 수락률" KPI 가 이 조인에 걸려 있다.**
+ * **"AI 제안 수락률" KPI 가 이 조인에 걸려 있다.** `call_id` 가 조인 키라는 규칙은
+ * ADR 0017 이 정한다.
  */
 internal object CallId {
 
@@ -42,8 +43,7 @@ internal object CallId {
 	 * 합성 키를 달고도 짝지어지지 않는다. 이식은 동작 동일성이 판정 기준이라 고치지 않는다 —
 	 * golden fixture 의 `codex/pairing_synthetic` 이 이 성질을 고정하고 있다.
 	 *
-	 * 그 결과 이 함수는 [NormalizedLog] 만 본다. 원본이 타입을 가리지 않고 `type` 값만 비교해
-	 * 우연히 로그만 걸리던 것을, 여기서는 의도를 드러내 타입으로 좁혔다 — 결과는 같다.
+	 * 그 결과 이 함수는 [NormalizedLog] 만 본다.
 	 */
 	fun pair(events: List<Normalized>) {
 		val bySession = LinkedHashMap<String, MutableList<NormalizedLog>>()

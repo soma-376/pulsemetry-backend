@@ -78,6 +78,19 @@ internal object GoldenFixtures {
 		else -> value
 	}
 
+	/**
+	 * golden 한 줄에서 `"event":` 뒤의 원문을 그대로 잘라 낸다.
+	 *
+	 * 행 모양이 `{"document_index":N,"event_index":M,"event":{…}}` 로 고정돼 있으므로 `"event":`
+	 * 뒤부터 마지막 `}` 앞까지가 이벤트 JSON 이다. 파싱해 다시 적지 않는다 — 표기 자체가 판정 대상이다.
+	 */
+	fun eventJsonOf(line: String): String {
+		val marker = "\"event\":"
+		val start = line.indexOf(marker)
+		require(start >= 0 && line.endsWith("}")) { "golden 행 모양이 아니다: $line" }
+		return line.substring(start + marker.length, line.length - 1)
+	}
+
 	fun lines(resource: String): List<String> =
 		GoldenFixtures::class.java.getResourceAsStream(resource)
 			?.bufferedReader()?.readLines()?.filter { it.isNotBlank() }

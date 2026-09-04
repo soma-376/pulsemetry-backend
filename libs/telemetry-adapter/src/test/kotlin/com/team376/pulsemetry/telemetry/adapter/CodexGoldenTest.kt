@@ -199,9 +199,7 @@ internal class CodexGoldenTest {
 		@Test
 		@DisplayName("approval_policy·sandbox_policy 는 입력에 있어도 승격되지 않는다")
 		fun policyAttributesAreNeverPromoted() {
-			// 이식 원본이 `_map_str(attrs, "approval_policy", ...)` 처럼 불러 소스 키를 하나도
-			// 넘기지 않는다 — 첫 문자열은 진단 타깃 라벨이다. 그래서 값이 실려 있어도 읽히지
-			// 않는다. 결함이지만 동작 동일성이 판정 기준이라 그대로 옮겼다.
+			// 입력에 실려 있어도 읽지 않는다 — 현행 결함이고 golden 이 고정한다.
 			val turn = eventsOf(0).single { it["type"] == "turn" }
 
 			assertThat(turn.at("payload", "attrs")).isEqualTo(

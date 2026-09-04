@@ -90,4 +90,18 @@ internal class CanonicalJsonTest {
 		assertThat(CanonicalJson.encode(listOf("c", "a", "b")))
 			.isEqualTo("""["c", "a", "b"]""")
 	}
+
+	@Test
+	@DisplayName("키 정렬은 UTF-16 코드 유닛이 아니라 코드 포인트 순이다 — Python sorted() 와 같다")
+	fun sortsKeysByCodePointNotCodeUnit() {
+		// U+FFDD 는 BMP 끝, U+1F600(😀) 은 보조평면이라 UTF-16 으로는 서로게이트 0xD83D 로 시작한다.
+		// 코드 유닛 비교는 😀 를 앞에 두고, Python 은 코드 포인트라 뒤에 둔다.
+		val supplementary = "😀"
+		val bmpHigh = "￝"
+		assertThat(supplementary.compareTo(bmpHigh)).isLessThan(0)
+
+		val encoded = CanonicalJson.encode(linkedMapOf(supplementary to 1L, bmpHigh to 2L))
+
+		assertThat(encoded).isEqualTo("""{"$bmpHigh": 2, "$supplementary": 1}""")
+	}
 }

@@ -13,13 +13,12 @@ import com.google.protobuf.MessageOrBuilder
  * **원본 레코드 JSON 의 해시**라, protobuf 에서 그 JSON 을 다시 뽑아야 한다
  * ([SourceRecordId] 참고).
  *
- * ## 기록 규칙 — [OtlpJson] 과 다른 곳이 하나 있다
+ * ## 기록 규칙 — 수집 모듈의 코덱과 다른 곳이 하나 있다
  *
- * 수집 모듈의 코덱은 Go pdata 를 따라 **단일 메시지 필드를 비어 있어도 항상 쓴다**
- * (`"body":{}`). 여기서는 **쓰지 않는다.** 목적이 다르기 때문이다 — 저쪽은 상위와
- * 바이트가 같아야 하고, 이쪽은 **클라이언트가 보낸 원본 문서와 같아야 한다.**
- * 실제 exporter 는 값이 없는 필드를 아예 싣지 않으므로, 기본값을 전부 생략하는 쪽이
- * 원본에 가깝다.
+ * 수집 모듈의 OTLP/JSON 코덱은 빈 메시지 필드도 쓴다(`"body":{}`). 여기서는 **쓰지 않는다.**
+ * 목적이 다르기 때문이다 — 저쪽은 아카이브 문서의 표기가 고정되어야 하고, 이쪽은
+ * **클라이언트가 보낸 원본 문서와 같아야 한다.** 실제 exporter 는 값이 없는 필드를 아예
+ * 싣지 않으므로, 기본값을 전부 생략하는 쪽이 원본에 가깝다.
  *
  * 나머지는 OTLP/JSON 규격 그대로다.
  *
@@ -36,9 +35,10 @@ import com.google.protobuf.MessageOrBuilder
  * ## 한계 — 되돌릴 수 없는 정보가 있다
  *
  * 클라이언트가 **기본값을 명시적으로 실어 보내면**(`"droppedAttributesCount":0`) protobuf 가
- * 그것을 떨어뜨려 여기서 되살릴 수 없다. 그런 문서는 `source_record_id` 가 구 파이프라인과
- * 갈라진다. `record_id`(ClickHouse 멱등 키)는 이 해시를 재료로 쓰지 않으므로 무사하다.
- * 근거와 대가는 ADR 0013 에 있다.
+ * 그것을 떨어뜨려 여기서 되살릴 수 없다. 기본값을 명시한 문서는 `source_record_id` 가 갈린다.
+ * optional·oneof 가 아닌 스칼라 필드(`count`·`is_monotonic`·`aggregation_temporality`·
+ * `timeUnixNano`·`startTimeUnixNano` 등)의 명시 기본값은 protobuf 가 부재와 구별하지 못하므로
+ * **출력값과 `record_id` 도 갈릴 수 있다**(ADR 0013).
  */
 internal object ProtoJson {
 
