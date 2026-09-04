@@ -87,6 +87,34 @@ class OtlpIngestHandlerTest {
 	}
 
 	@Test
+	@DisplayName("깨진 gzip 이면 400 이다 — ZipException 은 RuntimeException 이 아니라 따로 잡아야 한다")
+	fun rejectsCorruptGzip() {
+		val response = handler.handle(
+			request(contentEncoding = "gzip", body = "definitely not gzip".toByteArray()),
+		)
+
+		assertThat(response.status).isEqualTo(400)
+		assertThat(response.body.toString(Charsets.UTF_8)).startsWith("""{"code":3,""")
+		assertThat(consumed).isEmpty()
+	}
+
+	@Test
+	@DisplayName("깨진 protobuf 면 400 이다 — InvalidProtocolBufferException 은 IOException 계열이다")
+	fun rejectsCorruptProtobuf() {
+		// 필드 1, wire type 2(길이 접두) 뒤에 길이 0xff 를 선언하고 바이트가 없다 — 잘린 메시지다.
+		val truncated = byteArrayOf(0x0a, 0xff.toByte(), 0x01)
+		val response = handler.handle(
+			request(contentType = "application/x-protobuf", body = truncated),
+		)
+
+		assertThat(response.status).isEqualTo(400)
+		assertThat(response.contentType).isEqualTo("application/x-protobuf")
+		// google.rpc.Status 의 code=3 은 varint 필드 1 → 바이트 08 03 으로 시작한다.
+		assertThat(response.body.take(2)).containsExactly(0x08, 0x03)
+		assertThat(consumed).isEmpty()
+	}
+
+	@Test
 	@DisplayName("하류의 일반 예외는 503 이다 — 상태가 없는 오류의 기본은 재시도 가능이다")
 	fun downstreamFailureIsRetryable() {
 		downstream = { _, _ -> throw IllegalStateException("clickhouse down") }
@@ -105,8 +133,7 @@ class OtlpIngestHandlerTest {
 
 		val response = handler.handle(request(body = oneLogRecord()))
 
-		// 한때 500(INTERNAL) 이었다. 그 의미론의 수신자는 otlphttp exporter 였고, 지금 상태 코드를
-		// 읽는 telemetryctl 데몬은 5xx 를 전부 재시도한다 — 허브 ADR 0006 이 뒤집은 자리다.
+		// 근거는 허브 ADR 0006 이다. 그 ADR 없이 분류를 넓히지 마라.
 		assertThat(response.status).isEqualTo(400)
 		assertThat(response.body.toString(Charsets.UTF_8))
 			.isEqualTo("""{"code":3,"message":"schema mismatch"}""")
@@ -163,6 +190,22 @@ class OtlpIngestHandlerTest {
 	}
 
 	@Test
+	@DisplayName("데이터포인트가 0개인 metrics 는 하류를 부르지 않고 200 이다 — 상위는 메트릭 수가 아니라 DataPointCount 를 본다")
+	fun shortCircuitsMetricsWithoutDataPoints() {
+		val body = """
+			{"resourceMetrics":[{"resource":{"attributes":[
+			  {"key":"service.name","value":{"stringValue":"claude-code"}}]},
+			 "scopeMetrics":[{"metrics":[{"name":"m"},{"name":"h","histogram":{"dataPoints":[]}}]}]}]}
+		""".trimIndent().toByteArray()
+
+		val response = handler.handle(request(path = "/v1/metrics", body = body))
+
+		assertThat(response.status).isEqualTo(200)
+		assertThat(consumed).isEmpty()
+		assertThat(archive.written).isEmpty()
+	}
+
+	@Test
 	@DisplayName("snake_case 와 모르는 필드를 받아들인다 — 상위 파서가 관대하다")
 	fun parsesLeniently() {
 		val body = """
@@ -188,10 +231,13 @@ class OtlpIngestHandlerTest {
 		assertThat(archived.body.toString(Charsets.UTF_8)).contains("****")
 
 		val downstreamRequest = consumed.single().second as ExportLogsServiceRequest
-		assertThat(
-			downstreamRequest.getResourceLogs(0).getScopeLogs(0).getLogRecords(0)
-				.getAttributes(0).value.stringValue,
-		).isEqualTo("****")
+		val record = downstreamRequest.getResourceLogs(0).getScopeLogs(0).getLogRecords(0)
+		assertThat(record.getAttributes(0).value.stringValue).isEqualTo("****")
+
+		// summary: silent — 마스킹이 일어나도 redaction.* 요약 속성을 붙이지 않는다.
+		val keys = downstreamRequest.getResourceLogs(0).resource.attributesList.map { it.key } +
+			record.attributesList.map { it.key }
+		assertThat(keys).noneMatch { it.startsWith("redaction.") }
 	}
 
 	@Test
@@ -202,7 +248,7 @@ class OtlpIngestHandlerTest {
 			{"resourceMetrics":[{"resource":{"attributes":[
 			  {"key":"service.name","value":{"stringValue":"claude-code"}},
 			  {"key":"leak","value":{"stringValue":"$secret"}}]},
-			 "scopeMetrics":[{"metrics":[{"name":"m"}]}]}]}
+			 "scopeMetrics":[{"metrics":[{"name":"m","gauge":{"dataPoints":[{"asInt":"1"}]}}]}]}]}
 		""".trimIndent().toByteArray()
 
 		handler.handle(request(path = "/v1/metrics", body = body))
@@ -370,7 +416,7 @@ class OtlpIngestHandlerTest {
 		val body = """
 			{"resourceMetrics":[{"resource":{"attributes":[
 			  {"key":"service.name","value":{"stringValue":"claude-code"}}]},
-			 "scopeMetrics":[{"metrics":[{"name":"m"}]}]}]}
+			 "scopeMetrics":[{"metrics":[{"name":"m","sum":{"dataPoints":[{"asInt":"1"}]}}]}]}]}
 		""".trimIndent().toByteArray()
 
 		handler.handle(request(path = "/v1/metrics", body = body))

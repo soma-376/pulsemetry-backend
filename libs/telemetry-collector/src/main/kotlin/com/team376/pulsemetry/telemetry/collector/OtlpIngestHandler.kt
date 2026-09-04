@@ -8,6 +8,7 @@ import com.team376.pulsemetry.telemetry.collector.masking.SecretMasker
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
+import io.opentelemetry.proto.metrics.v1.Metric
 
 /**
  * 수집 단계의 진입점. OTLP 수신 → 마스킹 → 원본 아카이브 → 다음 단계.
@@ -28,8 +29,7 @@ import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
  * **스탬프가 아카이브보다 먼저다.** 신원은 멱등 키의 재료이기 때문이다 — 변환 단계가
  * `tenant.id` 를 `record_id` 해시의 첫 자리에 넣고, 그 값이 `enriched_events` 의 `ORDER BY` 키다.
  * 신원 없는 원본을 나중에 재처리하면 그 자리에 `(unknown)` 이 들어가 실시간 경로가 만든 키와
- * **다른 키**가 나오고, 합쳐져야 할 행이 중복으로 쌓인다. 이식 원본은 신원을 헤더로만 날라
- * 아카이브에 남기지 않았지만, 그 아카이브는 휘발성이라 재처리 대상이 아니었다(ADR 0012 · 0016).
+ * **다른 키**가 나오고, 합쳐져야 할 행이 중복으로 쌓인다(ADR 0012 · 0016).
  *
  * **아카이브가 다음 단계보다 먼저다.** 허브 `architecture/overview.md` 2절이 "Adapter 이후 변환이
  * 실패하면 그 시그널은 Object Storage 에만 남는다. 이것이 흐름 D 의 복구 원천이며 별도 DLQ 에
@@ -66,16 +66,19 @@ public class OtlpIngestHandler(
 
 		val encoding = OtlpEncoding.ofContentType(request.contentType) ?: return unsupportedMediaType()
 
+		// 디코드·압축 해제 실패는 전부 400 이다(허브 ADR 0006). IOException 계열도 잡는다 —
+		// 깨진 gzip 은 ZipException, 깨진 protobuf 는 InvalidProtocolBufferException 이고 둘 다
+		// RuntimeException 이 아니다. 놓치면 500 이 되어 데몬이 깨진 배치를 영구히 재시도한다.
 		val body = try {
 			decoder.decompress(request.contentEncoding, request.body)
-		} catch (e: RuntimeException) {
+		} catch (e: Exception) {
 			return status(encoding, 400, GrpcCode.INVALID_ARGUMENT, e.message.orEmpty())
 		}
 
 		val builder = signal.newRequestBuilder()
 		try {
 			encoding.decode(body, builder)
-		} catch (e: RuntimeException) {
+		} catch (e: Exception) {
 			return status(encoding, 400, GrpcCode.INVALID_ARGUMENT, e.message.orEmpty())
 		}
 
@@ -114,7 +117,11 @@ public class OtlpIngestHandler(
 		}
 	}
 
-	/** 상위가 성공 단축에 쓰는 수 — logs 는 레코드, traces 는 span, metrics 는 데이터포인트다. */
+	/**
+	 * 상위가 성공 단축에 쓰는 수 — logs 는 `LogRecordCount()`, traces 는 `SpanCount()`, metrics 는
+	 * `DataPointCount()` 다. metrics 는 메트릭 수가 아니라 **데이터포인트 수**라, 데이터포인트 없는
+	 * 메트릭만 담긴 요청은 소비자를 부르지 않고 200 이다.
+	 */
 	private fun recordCount(builder: Message.Builder): Int = when (builder) {
 		is ExportLogsServiceRequest.Builder ->
 			builder.resourceLogsBuilderList.sumOf { rl ->
@@ -128,10 +135,20 @@ public class OtlpIngestHandler(
 
 		is ExportMetricsServiceRequest.Builder ->
 			builder.resourceMetricsBuilderList.sumOf { rm ->
-				rm.scopeMetricsBuilderList.sumOf { it.metricsCount }
+				rm.scopeMetricsBuilderList.sumOf { sm -> sm.metricsBuilderList.sumOf { dataPointCount(it) } }
 			}
 
 		else -> error("모르는 요청 타입이다: ${builder.descriptorForType.fullName}")
+	}
+
+	/** 다섯 데이터 종류 중 하나만 설정된다(oneof). 설정되지 않은 것은 0 이다. */
+	private fun dataPointCount(metric: Metric.Builder): Int = when (metric.dataCase) {
+		Metric.DataCase.GAUGE -> metric.gauge.dataPointsCount
+		Metric.DataCase.SUM -> metric.sum.dataPointsCount
+		Metric.DataCase.HISTOGRAM -> metric.histogram.dataPointsCount
+		Metric.DataCase.EXPONENTIAL_HISTOGRAM -> metric.exponentialHistogram.dataPointsCount
+		Metric.DataCase.SUMMARY -> metric.summary.dataPointsCount
+		Metric.DataCase.DATA_NOT_SET, null -> 0
 	}
 
 	private fun success(signal: Signal, encoding: OtlpEncoding) = OtlpHttpResponse(

@@ -35,9 +35,11 @@ public class FileArchiveWriter(
 		val file = root.resolve(product.archiveSegment).resolve("${signal.fileStem}.jsonl")
 		// 현행 설정의 create_directory: true 에 해당한다. 없으면 기동 직후 죽는다.
 		Files.createDirectories(file.parent)
+		// 본문과 개행을 한 번의 write 로 쓴다. APPEND 는 write 한 번의 원자성만 보장하므로,
+		// 둘로 나누면 동시 요청의 줄이 섞인다.
+		val line = body.copyOf(body.size + 1).also { it[body.size] = '\n'.code.toByte() }
 		Files.newOutputStream(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND).use { out ->
-			out.write(body)
-			out.write('\n'.code)
+			out.write(line)
 		}
 	}
 }

@@ -17,10 +17,9 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * OTLP/JSON 코덱. 상위 Go `pdata/internal/json` 과 각 메시지의 `MarshalJSON`/`UnmarshalJSON` 이식.
  *
- * 이식 원본은 형제 체크아웃 `otelcol-kotlin` 의
- * `otelcol-pdata/src/main/kotlin/io/opentelemetry/collector/pdata/json/OtlpJson.kt` 이고,
- * 그쪽이 실제 Go 출력 바이트와 페이로드 7종을 대조해 검증한 코드다. 여기서는 Jackson 3
- * (`tools.jackson`, Boot 4.1 이 관리하는 버전)으로 옮기고 pdata 파사드 의존을 걷어냈다.
+ * 출력 바이트는 이 모듈의 테스트가 고정한다 — 성공·상태 본문은 `OtlpResponsesTest`,
+ * 실측 캡처 48문서의 왕복은 `OtlpIngestHandlerTest`. Jackson 3(`tools.jackson`, Boot 가
+ * 관리하는 버전)의 스트리밍 API 만 쓴다(출처: 형제 체크아웃 `otelcol-kotlin` 의 `OtlpJson.kt`).
  *
  * ## `com.google.protobuf.util.JsonFormat` 을 쓸 수 없는 이유
  *

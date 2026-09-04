@@ -18,8 +18,9 @@ import java.util.zip.InflaterInputStream
  *
  * ## 압축 폭탄
  *
- * 상위는 압축된 본문에만 상한을 걸고 해제 결과는 스트리밍으로 흘려보내므로 해제 크기에 상한이 없다.
- * 여기서는 **해제 바이트에 상한을 건다** — 작은 gzip 이 힙을 다 먹는 경로를 열어 둘 이유가 없다.
+ * **해제 바이트에 상한을 건다.** 상위와 같다 — `confighttp` 의 `compression.go` 가 해제된 리더에
+ * `http.MaxBytesReader` 로 `max_request_body_size` 를 씌운다. 작은 gzip 이 힙을 다 먹는 경로를
+ * 열어 둘 이유가 없다.
  */
 internal class OtlpRequestDecoder(
 	/** 해제 후 허용하는 최대 바이트. 상위 `max_request_body_size` 기본값과 같은 20 MiB. */
@@ -29,6 +30,8 @@ internal class OtlpRequestDecoder(
 	/**
 	 * @throws UnsupportedContentEncodingException 모르는 인코딩 — 호출자가 400 을 낸다.
 	 * @throws OtlpBodyTooLargeException 해제 결과가 상한을 넘었다 — 호출자가 400 을 낸다.
+	 * @throws java.io.IOException 깨진 스트림(`ZipException`·`EOFException`) — 호출자가 400 을 낸다.
+	 *   `RuntimeException` 이 아니므로 호출자는 `Exception` 으로 잡아야 한다.
 	 */
 	fun decompress(contentEncoding: String?, body: ByteArray): ByteArray {
 		val encoding = contentEncoding.orEmpty().trim().lowercase()

@@ -46,6 +46,8 @@ internal enum class GrpcCode(val number: Int) {
 		/**
 		 * 상위 `NewStatusFromMsgAndHTTPCode`. grpc 공식 매핑과 두 자리가 다른데
 		 * (429 → ResourceExhausted, 400 → InvalidArgument) 상위 주석이 그것을 의도된 예외로 못박았다.
+		 *
+		 * main 에서 호출처가 없다 — 상위 표의 전사이고 테스트만 쓴다.
 		 */
 		fun ofHttpStatus(httpStatus: Int): GrpcCode = when (httpStatus) {
 			400 -> INVALID_ARGUMENT

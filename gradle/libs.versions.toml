@@ -69,8 +69,9 @@ json-schema-validator = { module = "com.networknt:json-schema-validator", versio
 
 # --- 텔레메트리 수집 (:libs:telemetry-collector, PROJ-114) ---
 # OTLP 메시지의 가변 모델. protobuf-java 생성 클래스의 Builder 를 그대로 쓴다.
-# 상위 README 가 "not intended for production use" 를 달았지만, 대안은 .proto 벤더링뿐이고
-# 우리가 쓰는 것은 생성된 메시지 타입과 그 디스크립터뿐이라 그 경고의 사정거리 밖이다 (ADR 0012).
+# 상위 README 가 "not intended for production use" 를 달았지만, 그 경고는 API 안정성(버전 간
+# 생성 클래스 변경)에 관한 것이다. 우리가 쓰는 것은 생성된 메시지 타입과 그 디스크립터뿐이고
+# 버전은 카탈로그가 고정하므로 사정거리 밖이다. 대안은 .proto 벤더링뿐이다.
 opentelemetry-proto = { module = "io.opentelemetry.proto:opentelemetry-proto", version.ref = "otelProto" }
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
 # OTLP/JSON 코덱이 쓰는 스트리밍 파서. databind 는 쓰지 않는다 — 디스크립터로 직접 순회한다.

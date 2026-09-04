@@ -29,7 +29,10 @@ import java.io.ByteArrayOutputStream
  */
 internal object OtlpResponses {
 
-	/** 상위 `fallbackMsg`. 공백까지 그대로다 — 상태 인코딩 자체가 실패했을 때만 나간다. */
+	/**
+	 * 상위 `fallbackMsg`. 공백까지 그대로다 — 상태 인코딩 자체가 실패했을 때만 나간다.
+	 * main 에서 호출처가 없다 — 상위 표의 전사이고 테스트만 쓴다. [FALLBACK_CONTENT_TYPE] 도 같다.
+	 */
 	val FALLBACK_BODY: ByteArray =
 		"""{"code": 13, "message": "failed to marshal error message"}""".toByteArray(Charsets.UTF_8)
 

@@ -70,7 +70,7 @@ class OtlpRequestDecoderTest {
 	}
 
 	@Test
-	@DisplayName("압축 폭탄을 막는다 — 해제 바이트에 상한이 있다. 상위에는 없는 방어다")
+	@DisplayName("압축 폭탄을 막는다 — 해제 바이트에 상한이 있다. 상위 MaxBytesReader 와 같다")
 	fun capsDecompressedSize() {
 		// 상위는 압축된 본문에만 상한을 걸고 해제 결과는 스트리밍으로 흘려보낸다.
 		// 작은 gzip 이 힙을 다 먹는 경로를 열어 둘 이유가 없어 여기서 막는다.

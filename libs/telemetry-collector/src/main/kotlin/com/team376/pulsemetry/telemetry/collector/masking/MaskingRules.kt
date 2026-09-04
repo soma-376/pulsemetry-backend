@@ -38,9 +38,7 @@ import java.util.regex.Pattern
  *
  * 두 보정을 넣으면 프로브 스물둘이 Go 와 **완전히 일치**한다(`MaskingRulesTest`).
  *
- * 세 번째로 보였던 차이 — U+212A(켈빈 기호)가 섞인 문자열에서 Go 가 7:21, Java 가 5:19 를
- * 보고하는 것 — 은 **차이가 아니다.** Go 는 바이트를, Java 는 UTF-16 단위를 셀 뿐 매치 구간은
- * 같다. 쫓아가지 마라.
+ * 매치 위치의 숫자는 다를 수 있다 — Go 는 바이트, Java 는 UTF-16 오프셋이라 그렇고, 구간은 같다.
  */
 internal object MaskingRules {
 
