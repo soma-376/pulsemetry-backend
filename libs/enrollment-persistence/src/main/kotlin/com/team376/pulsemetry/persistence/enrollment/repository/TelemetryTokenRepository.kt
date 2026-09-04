@@ -16,7 +16,8 @@ interface TelemetryTokenRepository : JpaRepository<TelemetryToken, UUID> {
 
 	/**
 	 * 해당 installation 의 살아있는 telemetry token 을 전부 폐기한다.
-	 * 재발급(PLAN.md §6.3)은 새 토큰을 만들기 전에 이걸 먼저 부른다.
+	 * 재발급(`POST /v1/installations/telemetry-token`, `docs/enrollment-server-spec.md` §4.3)은
+	 * 새 토큰을 만들기 전에 이걸 먼저 부른다.
 	 *
 	 * @return 폐기된 행 수. 이미 폐기된 토큰은 세지 않는다.
 	 */
@@ -42,7 +43,7 @@ interface TelemetryTokenRepository : JpaRepository<TelemetryToken, UUID> {
 	 *
 	 * **네이티브인 이유는 셋이다.**
 	 * 1. enum 컬럼을 JPQL 로 비교하면 Hibernate 가 Java enum 단순명에서 유도한 타입명으로 캐스팅해
-	 *    실제 DB 타입과 어긋나 42704 로 죽는다 (아래 [EnrollmentRepositories] 의 같은 주석).
+	 *    실제 DB 타입과 어긋나 42704 로 죽는다 ([EnrollmentRepositories] 의 같은 주석).
 	 * 2. 엔티티에 연관관계가 없다 — 전부 raw UUID 컬럼이라 객체 그래프 탐색이 성립하지 않는다.
 	 * 3. 이 경로는 텔레메트리 요청마다 돈다. 단건 조회 네 번으로 쪼개면 왕복이 네 배가 된다.
 	 *

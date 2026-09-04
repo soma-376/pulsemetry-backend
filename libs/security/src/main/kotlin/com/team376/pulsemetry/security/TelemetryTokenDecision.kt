@@ -7,7 +7,7 @@ import com.team376.pulsemetry.persistence.enrollment.repository.TelemetryTokenAu
  *
  * **순서가 곧 사양이다.** 이식 원본
  * (`ai-telemetry-pipeline` `apps/auth-proxy/src/auth/credential.repository.ts`)의
- * if 체인을 그대로 옮긴 것이고, 특성화 테스트가 우선순위 쌍까지 고정해 두었다 (PROJ-100, 커밋 `8dbf196`).
+ * if 체인을 그대로 옮긴 것이고, 특성화 테스트가 우선순위 쌍까지 고정해 두었다 (PROJ-100).
  *
  * **극성이 비대칭인 것은 실수가 아니다.**
  * - `installation` 은 **허용 목록**이다 — `active` 가 아니면 전부 거부.

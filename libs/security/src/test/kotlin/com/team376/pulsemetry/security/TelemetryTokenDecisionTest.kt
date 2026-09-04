@@ -13,7 +13,7 @@ import java.util.stream.Stream
  * 판정 체인의 특성화 테스트.
  *
  * 이식 원본의 케이스 표를 그대로 옮긴 것이다 —
- * `ai-telemetry-pipeline` `apps/auth-proxy/tests/auth/credential.repository.test.ts` (커밋 `8dbf196`, PROJ-100).
+ * `ai-telemetry-pipeline` `apps/auth-proxy/tests/auth/credential.repository.test.ts` (PROJ-100).
  * 원본이 언어 중립 fixture 가 아니라 vitest 인라인 표라서 파일로 공유하지 않고 전사했다.
  * auth-proxy 는 폐기 예정이므로 이 표의 두 번째 소비자는 생기지 않는다.
  *
@@ -120,7 +120,7 @@ class TelemetryTokenDecisionTest {
 			),
 			Arguments.of(
 				TelemetryTokenRejectionReason.INSTALLATION_INACTIVE,
-				FakeAuthRow(installationStatus = "revoked", memberStatus = "suspended"),
+				FakeAuthRow(installationStatus = "pending", memberStatus = "suspended"),
 			),
 			Arguments.of(
 				TelemetryTokenRejectionReason.MEMBER_SUSPENDED,

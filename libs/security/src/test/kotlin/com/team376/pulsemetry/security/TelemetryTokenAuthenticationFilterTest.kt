@@ -19,8 +19,7 @@ import java.util.UUID
 /**
  * Bearer 문법과 **단일 401** 의 특성화 테스트.
  *
- * 이식 원본: `ai-telemetry-pipeline` `apps/auth-proxy/tests/auth/auth.middleware.test.ts`
- * (커밋 `8dbf196`, PROJ-100).
+ * 이식 원본: `ai-telemetry-pipeline` `apps/auth-proxy/tests/auth/auth.middleware.test.ts` (PROJ-100).
  */
 class TelemetryTokenAuthenticationFilterTest {
 

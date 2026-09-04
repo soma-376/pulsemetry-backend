@@ -15,7 +15,10 @@ import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.dao.DataAccessResourceFailureException
+import org.springframework.security.core.AuthenticationException
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
 import java.util.UUID
@@ -184,6 +187,21 @@ class TelemetryTokenAuthenticationProviderTest : AbstractSecurityIntegrationTest
 		tenants.findById(tenantId).orElseThrow().status = TenantStatus.terminated
 
 		assertRejects(rawToken, TelemetryTokenRejectionReason.MEMBER_SUSPENDED)
+	}
+
+	@Test
+	@DisplayName("DB 오류는 401 로 접히지 않고 그대로 올라온다 — 장애가 '토큰이 틀렸다'로 보이면 안 된다")
+	fun databaseFailurePropagates() {
+		val broken = Mockito.mock(TelemetryTokenRepository::class.java)
+		Mockito.`when`(broken.findAuthRowByTokenHash(Mockito.anyString()))
+			.thenThrow(DataAccessResourceFailureException("connection refused"))
+		val provider = TelemetryTokenAuthenticationProvider(hasher, broken)
+
+		assertThatThrownBy {
+			provider.authenticate(TelemetryTokenAuthenticationToken.unauthenticated(rawToken))
+		}
+			.isInstanceOf(DataAccessResourceFailureException::class.java)
+			.isNotInstanceOf(AuthenticationException::class.java)
 	}
 
 	private fun assertRejects(token: String, reason: TelemetryTokenRejectionReason) {
