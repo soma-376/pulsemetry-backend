@@ -30,7 +30,7 @@ import java.util.UUID
  * **`POST /v1/enroll` 을 부르지 않는다.** 그 엔드포인트는 `:apps:enrollment-api` 에 있고
  * 앱끼리는 의존하지 않으므로 이 컨텍스트에 올릴 수 없다. 토큰은 발급과 검증이 공유하는
  * [TelemetryTokenHasher] 로 직접 만든다 — 두 앱을 잇는 진짜 앵커는 그 해셔의 고정 벡터
- * 테스트다. 데몬까지 태우는 진짜 E2E 는 수동 절차로 남는다(README 의 로컬 실행 절차).
+ * 테스트다. 데몬까지 태우는 진짜 E2E 는 수동 절차로 남는다(`docs/enrollment-server-spec.md` §10.1).
  *
  * 컴포넌트 스캔에 걸리지 않게 `@TestConfiguration` 이고, 쓰는 테스트가 `@Import` 로 가져간다.
  */

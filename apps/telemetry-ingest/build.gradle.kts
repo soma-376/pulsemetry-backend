@@ -9,10 +9,9 @@ dependencies {
 	// 적재 모듈이 api() 로 보강·변환 모듈을 함께 끌어온다 (ADR 0014).
 	implementation(project(":libs:telemetry-persistence"))
 	implementation(project(":libs:telemetry-collector"))
+	// 두 리포지토리(TelemetryTokenRepository · TeamMembershipRepository)는 :libs:security 와
+	// :libs:telemetry-enricher 가 api() 로 노출한다 — 생성자 인자 타입은 계약이다 (module-map 4절).
 	implementation(project(":libs:security"))
-	// 두 리포지토리(TelemetryTokenRepository · TeamMembershipRepository)를 직접 주입받는다.
-	// :libs:security 와 :libs:telemetry-enricher 가 implementation 으로만 갖고 있어 전이되지 않는다.
-	implementation(project(":libs:enrollment-persistence"))
 
 	implementation(libs.spring.boot.starter.webmvc)
 	// 필터 체인 배선. starter 를 쓰는 것은 :libs: 가 아니라 앱이므로 ADR 0011 위반이 아니다 —

@@ -88,5 +88,12 @@ data class TelemetryIngestProperties(
 		 * 15초에서 자른다. 크게 잡으면 재시도 예산 셋을 기다림으로 태우므로 짧게 둔다.
 		 */
 		val retryAfter: Duration = Duration.ofSeconds(1),
-	)
+	) {
+		init {
+			// 컨트롤러가 상한 + 1 바이트를 Int 로 읽는다. 넘으면 첫 요청에서 500 이 나므로 기동에서 끊는다.
+			require(maxRequestBytes in 1 until Int.MAX_VALUE) {
+				"pulsemetry.telemetry.ingest.max-request-bytes 는 1 이상 ${Int.MAX_VALUE - 1} 이하여야 한다."
+			}
+		}
+	}
 }

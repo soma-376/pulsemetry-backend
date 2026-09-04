@@ -1,7 +1,5 @@
 server:
-  # 구 auth-proxy 가 쓰던 포트를 물려받는다. LocalSeeder 가 시드하는 manifest 의
-  # otlp.endpoint 기본값이 이미 http://localhost:4316 이라 시드도 telemetryctl 도 바꾸지 않는다.
-  # 4318 은 쓰지 않는다 — telemetryctl 로컬 수신기의 기본 포트라 자기참조가 된다 (ADR 0016).
+  # 4316 인 이유와 4318 을 쓰지 않는 이유는 ADR 0016 Decision 에 있다.
   port: ${PULSEMETRY_INGEST_PORT:4316}
 
 spring:

@@ -61,7 +61,7 @@ class OtlpController(
 	 * 압축을 풀기 **전** 바이트에 상한을 건다. 넘으면 `null` 이다.
 	 *
 	 * 수집 모듈의 상한은 압축을 푼 뒤에 걸리므로, 이것이 없으면 거대한 요청이 통째로 힙에
-	 * 올라온다. 값은 구 auth-proxy 의 `MAX_OTLP_BODY_SIZE`(10 MiB)를 물려받았다.
+	 * 올라온다. 값은 `TelemetryIngestProperties.Ingest.maxRequestBytes` 가 정한다.
 	 */
 	private fun readBody(request: HttpServletRequest): ByteArray? {
 		if (request.contentLengthLong > maxRequestBytes) return null

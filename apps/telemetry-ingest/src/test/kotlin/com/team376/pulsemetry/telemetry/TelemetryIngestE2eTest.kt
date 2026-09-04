@@ -47,6 +47,10 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 	fun reset() {
 		data.clear()
 		truncateEnrichedEvents()
+		// 파일 아카이브는 append 전용이라 실행마다 쌓인다. 이전 실행의 내용에 좌우되지 않게 비운다.
+		for (signal in listOf("logs", "traces")) {
+			Files.deleteIfExists(Path.of(archiveDir, "claude_code", "$signal.jsonl"))
+		}
 	}
 
 	@AfterEach
@@ -69,6 +73,20 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		assertThat(row[0]).isEqualTo(seeded.tenantId.toString())
 		assertThat(row[1]).isEqualTo(seeded.installationId.toString())
 		// 보강이 as-of 조인으로 팀을 찾았다는 증거다.
+		assertThat(row[2]).contains(seeded.teamId.toString())
+	}
+
+	@Test
+	@DisplayName("/v1/traces 로 보낸 스팬도 행이 된다 — 티켓이 적은 경로 그대로")
+	fun anAuthenticatedTracePushBecomesAnEnrichedEventRow() {
+		val seeded = data.seed()
+
+		val response = post("/v1/traces", seeded.rawToken, oneLlmRequestSpan())
+
+		assertThat(response.statusCode()).isEqualTo(200)
+		val row = queryRow()
+		assertThat(row[0]).isEqualTo(seeded.tenantId.toString())
+		assertThat(row[1]).isEqualTo(seeded.installationId.toString())
 		assertThat(row[2]).contains(seeded.teamId.toString())
 	}
 
@@ -114,6 +132,14 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 	}
 
 	@Test
+	@DisplayName("OTLP 경로 밖은 기본 닫힘이다 — 새 경로가 인증 없이 열리지 않는다")
+	fun unmappedPathsAreDeniedByDefault() {
+		val request = HttpRequest.newBuilder(URI.create("http://localhost:$port/actuator/health")).GET().build()
+
+		assertThat(http.send(request, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(403)
+	}
+
+	@Test
 	@DisplayName("헬스 경로는 인증을 지나지 않는다")
 	fun healthzIsOpen() {
 		val request = HttpRequest.newBuilder(URI.create("http://localhost:$port/v1/healthz")).GET().build()
@@ -150,6 +176,26 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 			   "attributes":[
 			     {"key":"session.id","value":{"stringValue":"e2e-session"}},
 			     {"key":"prompt_length","value":{"intValue":"42"}}]}]}]}]}
+		""".trimIndent().toByteArray()
+	}
+
+	/** claude_code 스팬 하나. 리소스 속성의 가짜 신원은 [oneUserPrompt] 와 같은 이유로 실어 보낸다. */
+	private fun oneLlmRequestSpan(): ByteArray {
+		val now = Instant.now()
+		val end = now.epochSecond * 1_000_000_000L + now.nano
+		val start = end - 3_000_000_000L
+		return """
+			{"resourceSpans":[{"resource":{"attributes":[
+			  {"key":"service.name","value":{"stringValue":"claude-code"}},
+			  {"key":"tenant.id","value":{"stringValue":"$BOGUS_TENANT"}}]},
+			 "scopeSpans":[{"spans":[{
+			   "traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"2222222222222222",
+			   "name":"claude_code.llm_request","kind":1,
+			   "startTimeUnixNano":"$start","endTimeUnixNano":"$end",
+			   "attributes":[
+			     {"key":"session.id","value":{"stringValue":"e2e-session"}},
+			     {"key":"model","value":{"stringValue":"claude-sonnet-4-5"}},
+			     {"key":"request_id","value":{"stringValue":"req-e2e-0001"}}]}]}]}]}
 		""".trimIndent().toByteArray()
 	}
 

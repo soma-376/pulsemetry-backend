@@ -8,6 +8,7 @@ import com.team376.pulsemetry.security.TelemetryTokenHasher
 import com.team376.pulsemetry.telemetry.collector.Signal
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.core.annotation.Order
 import org.springframework.security.authentication.AuthenticationManager
 import org.springframework.security.authentication.ProviderManager
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
@@ -34,8 +35,10 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter
  *   [TelemetryTokenAuthenticationEntryPoint] 의 상수이고 `WWW-Authenticate` 는 붙지 않는다.
  * - **DB 오류는 401 이 아니라 500 이다.** [TelemetryTokenAuthenticationProvider] 가 예외를
  *   그대로 올린다. 401 로 접으면 장애가 "토큰이 틀렸다"로 보여 데몬의 재발급 루프가 헛돈다.
- * - **체인은 이것 하나다.** [Signal] 의 세 경로만 잡으므로 `/v1/healthz` 는 Spring Security 를
- *   지나지 않는다. 명시적 `SecurityFilterChain` 빈이 있으면 Boot 의 기본 체인은 물러난다.
+ * - **체인은 둘이고 기본은 닫힘이다.** 첫 체인이 [Signal] 의 세 경로를 잡고, 둘째 체인이 나머지
+ *   전부를 잡아 `/v1/healthz` 만 열고 그 밖은 `denyAll` 이다. 명시적 `SecurityFilterChain` 빈이
+ *   있으면 Boot 의 기본 체인은 물러나므로, 둘째 체인이 없으면 새로 얹는 경로가 인증 없이 열린다.
+ *   관리 엔드포인트를 얹을 때는 둘째 체인에 그 경로를 명시한다.
  */
 @Configuration(proxyBeanMethods = false)
 class SecurityConfig {
@@ -71,6 +74,7 @@ class SecurityConfig {
 	 * `Content-Type` 이 바이트 계약이고, 구 auth-proxy 도 보안 헤더를 붙이지 않았다.
 	 */
 	@Bean
+	@Order(1)
 	fun otlpSecurityFilterChain(
 		http: HttpSecurity,
 		authenticationManager: AuthenticationManager,
@@ -90,7 +94,26 @@ class SecurityConfig {
 		.authorizeHttpRequests { it.anyRequest().authenticated() }
 		.build()
 
+	/**
+	 * OTLP 경로 밖의 기본값 — **닫힘.** 헬스 경로만 연다. 매핑되지 않은 경로는 404 가 아니라 403 이다.
+	 * 데몬은 세 경로만 부르므로 처분에 영향이 없다.
+	 */
+	@Bean
+	@Order(2)
+	fun defaultDenyFilterChain(http: HttpSecurity): SecurityFilterChain = http
+		.csrf { it.disable() }
+		.headers { it.disable() }
+		.requestCache { it.disable() }
+		.sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
+		.authorizeHttpRequests {
+			it.requestMatchers(HEALTH_PATH).permitAll()
+			it.anyRequest().denyAll()
+		}
+		.build()
+
 	private companion object {
+		const val HEALTH_PATH = "/v1/healthz"
+
 		/** 경로의 진실원은 수집 모듈이다. 여기서 문자열을 다시 적지 않는다. */
 		val OTLP_PATHS: Array<String> = Signal.entries.map { it.path }.toTypedArray()
 	}

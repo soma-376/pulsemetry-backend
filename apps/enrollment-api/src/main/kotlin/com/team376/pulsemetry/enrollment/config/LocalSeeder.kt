@@ -40,14 +40,15 @@ import java.time.temporal.ChronoUnit
  * 팀을 찾는다. 팀과 소속이 없으면 `enriched_events.team_ids_as_of` 가 언제나 비어서, 배선이
  * 틀린 것인지 데이터가 없는 것인지 로컬에서 구분할 수 없다.
  *
- * `ai-telemetry-pipeline` 의 `sql/rds/seed.sql` 이 이 자리를 대신하고 있었다. **시드의 진실원을
- * 이 파일 하나로 모은다** — SQL 시드는 backend 의 Flyway 보다 먼저 돌아 스키마가 없는 시점에
- * 적용되고, 두 벌이 갈리면 어느 쪽이 사실인지가 실행 순서로 정해진다.
+ * **시드의 진실원은 이 파일 하나다**(허브 `contracts/enrollment-api.md` §4). SQL 시드를 따로 두면
+ * 두 벌이 갈릴 때 어느 쪽이 사실인지가 실행 순서로 정해진다.
  *
- * ## 단계마다 따로 확인한다
+ * ## 항목마다 따로 확인한다
  *
- * 예전에는 tenant 하나만 보고 전부 건너뛰었다. 그러면 **이미 tenant 가 있는 로컬 DB 에는
- * 새 시드가 영원히 들어가지 않는다.** 항목마다 있는지 보고 없는 것만 만든다.
+ * tenant 하나만 보고 전부 건너뛰면 **이미 tenant 가 있는 로컬 DB 에는 새 시드가 영원히 들어가지
+ * 않는다.** 항목마다 있는지 보고 없는 것만 만든다. manifest 는 예외다 — tenant 에 활성 manifest 가
+ * 하나라도 있으면 건너뛰므로, 시드 manifest 의 내용이 바뀌면 기존 로컬 DB 는 볼륨을 새로 만든다
+ * (`docs/enrollment-server-spec.md` §10).
  */
 @Component
 @Profile("local")
@@ -62,9 +63,8 @@ class LocalSeeder(
 	/**
 	 * 시드 manifest 의 `otlp.endpoint`.
 	 *
-	 * 기본값 `:4316` 은 `:apps:telemetry-ingest` 가 로컬에서 듣는 포트다. 구 auth-proxy 가
-	 * 쓰던 포트를 그대로 물려받아, 데몬도 이 시드도 바꾸지 않고 새 앱으로 붙는다.
-	 * `:4318` 은 telemetryctl 로컬 수신기의 기본 포트라 자기참조가 된다 — 쓰지 마라.
+	 * 기본값 `:4316` 은 `:apps:telemetry-ingest` 가 로컬에서 듣는 포트다. 4316 인 이유와 4318 을
+	 * 쓰지 않는 이유는 backend ADR 0016 Decision 에 있다.
 	 */
 	@Value("\${pulsemetry.local-seed.otlp-endpoint:http://localhost:4316}")
 	private val seedOtlpEndpoint: String,

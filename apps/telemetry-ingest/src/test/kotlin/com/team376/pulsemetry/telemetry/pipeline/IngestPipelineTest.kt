@@ -7,8 +7,10 @@ import com.team376.pulsemetry.persistence.telemetry.EnrichedEventsSink
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
 import com.team376.pulsemetry.telemetry.collector.PermanentIngestException
 import com.team376.pulsemetry.telemetry.collector.Signal
+import com.team376.pulsemetry.telemetry.enricher.Enriched
 import com.team376.pulsemetry.telemetry.enricher.Enricher
 import com.team376.pulsemetry.telemetry.enricher.provider.AiAnalysisProvider
+import com.team376.pulsemetry.telemetry.enricher.provider.EnrichmentProvider
 import com.team376.pulsemetry.telemetry.enricher.provider.GithubProvider
 import com.team376.pulsemetry.telemetry.enricher.provider.JiraProvider
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
@@ -20,6 +22,8 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.springframework.dao.DataAccessResourceFailureException
+import org.springframework.dao.InvalidDataAccessResourceUsageException
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.time.Duration
@@ -90,6 +94,40 @@ class IngestPipelineTest {
 	}
 
 	@Test
+	@DisplayName("보강의 스키마 드리프트는 PermanentIngestException 이 된다 — 재시도해도 같다")
+	fun aSchemaDriftInEnrichmentIsPermanent() {
+		val pipeline = pipeline(provider = throwing { InvalidDataAccessResourceUsageException("column gone") })
+		requests.clear()
+
+		assertThatThrownBy { pipeline.consume(Signal.LOGS, oneUserPrompt()) }
+			.isInstanceOf(PermanentIngestException::class.java)
+			.hasMessageContaining("column gone")
+		assertThat(requests).isEmpty()
+	}
+
+	@Test
+	@DisplayName("보강의 자원 실패는 그대로 전파된다 — 연결 계열은 일시 장애라 503 이다")
+	fun aResourceFailureInEnrichmentStaysTransient() {
+		val pipeline = pipeline(provider = throwing { DataAccessResourceFailureException("rds down") })
+
+		assertThatThrownBy { pipeline.consume(Signal.LOGS, oneUserPrompt()) }
+			.isInstanceOf(DataAccessResourceFailureException::class.java)
+	}
+
+	@Test
+	@DisplayName("정규화 실패는 PermanentIngestException 이 된다 — 원본은 아카이브에 있다")
+	fun aNormalizationFailureIsPermanent() {
+		val pipeline = pipeline(normalize = { throw IllegalStateException("unreadable span") })
+		requests.clear()
+
+		assertThatThrownBy { pipeline.consume(Signal.TRACES, oneUserPrompt()) }
+			.isInstanceOf(PermanentIngestException::class.java)
+			.hasMessageContaining("/v1/traces")
+			.hasMessageContaining("unreadable span")
+		assertThat(requests).isEmpty()
+	}
+
+	@Test
 	@DisplayName("정규화되는 이벤트가 없으면 적재하지 않는다 — 아카이브는 이미 남았다")
 	fun anEmptyNormalizationSkipsTheSink() {
 		val pipeline = pipeline()
@@ -102,7 +140,11 @@ class IngestPipelineTest {
 
 	// ------------------------------------------------------------------ 도구
 
-	private fun pipeline(startupAttempts: Int = 1): IngestPipeline {
+	private fun pipeline(
+		startupAttempts: Int = 1,
+		provider: EnrichmentProvider? = null,
+		normalize: ((com.google.protobuf.Message) -> List<com.team376.pulsemetry.telemetry.adapter.model.Normalized>)? = null,
+	): IngestPipeline {
 		val client = ClickHouseHttpClient("http://127.0.0.1:${server.address.port}")
 		val schema = ClickHouseSchema(
 			ClickHouseSchemaMigrator(client),
@@ -110,11 +152,20 @@ class IngestPipelineTest {
 			startupBackoff = Duration.ZERO,
 		)
 		if (startupAttempts > 0) schema.afterPropertiesSet()
-		return IngestPipeline(
-			enricher = Enricher(listOf(GithubProvider(), JiraProvider(), AiAnalysisProvider())),
-			sink = EnrichedEventsSink(client),
-			schema = schema,
-		)
+		val providers = listOfNotNull(provider, GithubProvider(), JiraProvider(), AiAnalysisProvider())
+		val enricher = Enricher(providers)
+		val sink = EnrichedEventsSink(client)
+		return if (normalize == null) {
+			IngestPipeline(enricher = enricher, sink = sink, schema = schema)
+		} else {
+			IngestPipeline(enricher = enricher, sink = sink, schema = schema, normalize = normalize)
+		}
+	}
+
+	/** 보강에서 예외를 던지는 provider. 앱의 예외 → 상태 매핑만 본다. */
+	private fun throwing(exception: () -> RuntimeException): EnrichmentProvider = object : EnrichmentProvider {
+		override val name: String = "throwing"
+		override fun enrich(item: Enriched, ctx: MutableMap<String, Any?>): Map<String, Any?> = throw exception()
 	}
 
 	private fun oneUserPrompt(): ExportLogsServiceRequest {
