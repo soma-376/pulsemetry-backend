@@ -50,16 +50,17 @@ Accepted — 부분 대체: [ADR 0014](0014-단계-모듈-사이에-데이터-�
 - **`source_record_id` 는 protobuf 에서 정규 JSON 을 되살려 계산한다.** `ProtoJson` 이 OTLP/JSON
   모양의 트리를 만들고 `CanonicalJson` 이 이식 대상과 같은 표기로 적는다. 두 벌 다 이 모듈의
   `internal` 이다.
-- **기본값을 명시한 문서는 `source_record_id` 가 갈린다는 것을 받아들인다.** `record_id` 는
-  무사하다 — 아래 Consequences 참고.
+- **기본값을 명시한 문서는 `source_record_id` 가 갈린다는 것을 받아들인다.** optional·oneof 가
+  아닌 스칼라 필드의 명시 기본값은 출력값과 `record_id` 까지 바꿀 수 있다 — 아래 Consequences 참고.
 - **`resourceTraces` 키와 신호 혼합 문서는 지원하지 않는다.** 구조적으로 도달할 수 없으므로
   방어 코드를 두지 않는다. 공유 golden fixture 도 그 모양을 담지 않는다.
 - **단계 모듈끼리 `project()` 의존을 두지 않는다.** 이 모듈은 `SignalConsumer` 를 구현하지 않고
   자체 진입점만 노출한다. 둘을 잇는 배선은 조립 앱이 한다
   ([ADR 0011](0011-라이브러리-모듈은-spring-조립을-앱에-위임한다.md)).
 - **`model/` 의 봉투와 payload 타입은 모듈 경계를 넘는 공개 API 다.** 보강·적재 단계가 그대로
-  받는다. `opentelemetry-proto` 와 `protobuf-java` 는 `api()` 로 노출한다 — 요청 타입이
-  진입점 시그니처에 나타난다([ADR 0008](0008-모듈-경계와-네임스페이스-규칙-확정.md) 규칙 3).
+  받는다. `protobuf-java` 는 `api()` 로 노출한다 — 진입점 시그니처가 `MessageOrBuilder` 다.
+  `opentelemetry-proto` 는 main 시그니처에 나타나지 않으므로 테스트 의존이다
+  ([모듈 지도](../module-map.md) 4절).
 
 ## Alternatives
 
@@ -85,15 +86,19 @@ fixture 전 문서에서 값이 일치하고, 어긋나는 경우가 언제인�
 - `ProtoJson` 이 트리를 만들어 주므로 리더·어댑터는 이식 대상과 같은 모양의 맵을 다룬다.
   코드가 1:1 로 대응해 리뷰가 나란히 읽힌다.
 - 되살린 트리가 원본과 같은지를 fixture 전 문서에 대해 테스트가 확인한다. 규격에서 벗어난 입력이
-  fixture 에 들어오면 그 자리에서 드러난다 — 실제로 이 작업 중 두 건을 그렇게 잡았다.
+  fixture 에 들어오면 그 자리에서 드러난다.
 
 ### Negative
 
 - **기본값을 명시해 보내는 클라이언트의 `source_record_id` 가 구 파이프라인과 갈라진다.**
   `"droppedAttributesCount": 0` 같은 필드는 protobuf 가 떨어뜨려 되살릴 수 없다.
-  **`record_id` 는 무사하다** — ClickHouse ReplacingMergeTree 의 멱등 키는 tenant·제품·세션·순번·
-  시각·타입·판별자로만 만들고 이 해시를 재료로 쓰지 않는다. 잃는 것은 원본 추적성뿐이다.
-  현재 트래픽에 그런 클라이언트가 있는지는 아카이브된 원본으로 확인할 수 있다.
+  **그리고 일부 필드는 출력값과 `record_id` 까지 갈린다.** optional·oneof 가 아닌 스칼라 —
+  `HistogramDataPoint.count` · `Sum.is_monotonic` · `aggregation_temporality` · `timeUnixNano` ·
+  `startTimeUnixNano` — 는 protobuf 가 명시된 기본값과 부재를 구별하지 못하므로, 원본이 `"count":"0"`
+  이라 적어도 이식본은 `null` 로 읽는다(원본 구현은 `0`). `count` 는 메트릭 판별자의 재료이고
+  `timeUnixNano` 는 `timestamp` 의 재료라 그 경우 멱등 키가 달라진다. golden fixture 에는 그런 문서가
+  없어 대조로는 드러나지 않는다. 현재 트래픽에 그런 클라이언트가 있는지는 아카이브된 원본으로
+  확인할 수 있다 — Follow-up 참고.
 - **`CanonicalJson` 한 벌이 다른 언어의 표기를 흉내 내는 코드로 남는다.** 실수 표기와 구분자 공백
   같은 것이 눈에 잘 띄지 않는데 어긋나면 전 이벤트의 해시가 바뀐다. 그래서 기대값을 손으로 적지
   않고 실제 Python 출력으로 고정해 두었다.
@@ -105,7 +110,9 @@ fixture 전 문서에서 값이 일치하고, 어긋나는 경우가 언제인�
 - 조립 앱(PROJ-105)이 `SignalConsumer` 로 두 단계를 잇는다. 그때 이 결정이 실제로 한 줄로
   끝나는지 확인한다.
 - 아카이브된 원본으로 **기본값을 명시해 보내는 클라이언트가 있는지** 확인한다. 있으면
-  `source_record_id` 발산 범위를 재본다.
+  `source_record_id` 발산 범위와, 위 스칼라 필드로 `record_id` 가 갈리는 문서 수를 함께 잰다.
+  후자가 0 이 아니면 `ProtoJson` 이 non-optional 스칼라를 항상 쓰는 대안을 그때 다시 본다 —
+  그 대안은 반대로 기본값을 생략한 문서의 `source_record_id` 를 바꾼다.
 - **완료** — 보강·적재 단계(PROJ-104)가 `model/` 을 그대로 받는다. **경계를 넘는 타입은 실제로
   `model/` 과 `NormalizedJson` 둘뿐이었다** — 해시·정규 JSON·리더·페어링은 전부 `internal` 로 남았다.
   그 간선을 어떻게 둘지는 [ADR 0014](0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md)가 정한다.

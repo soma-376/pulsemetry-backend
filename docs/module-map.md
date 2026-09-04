@@ -15,6 +15,7 @@
 [ADR 0014](adr/0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md) ·
 [ADR 0015](adr/0015-clickhouse-ddl-은-번호-붙은-멱등-파일이고-기동-시-적용한다.md) ·
 [ADR 0016](adr/0016-조립-앱은-인증-체인과-단계-호출을-배선하고-스키마-적용-실패를-견딘다.md) ·
+[ADR 0017](adr/0017-정규화-불변-규칙과-enrichment-json-승격-금지는-이-저장소가-정한다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md) ·
 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)
@@ -74,6 +75,9 @@ HTTP 라우팅과 인증 체인은 `:apps:telemetry-ingest`가 붙인다.
 **입력은 수집 단계가 넘겨주는 protobuf 요청이다**
 ([ADR 0013](adr/0013-정규화-입력은-protobuf-이고-원본-해시는-정규-json-으로-되살린다.md)).
 `model/`의 봉투와 payload 타입은 **모듈 경계를 넘는 공개 API**다 — 보강·적재 단계가 그대로 받는다.
+정규화가 지키는 불변 규칙 다섯(프롬프트 원문 미취급 · billable 합산 · 없으면 `null` · `call_id` 조인 키 ·
+신호 간 조인은 다운스트림)은 [ADR 0017](adr/0017-정규화-불변-규칙과-enrichment-json-승격-금지는-이-저장소가-정한다.md)이
+소유한다.
 **단계 모듈은 이웃의 seam 인터페이스를 구현하지 않지만, 공개된 데이터 타입은 `project()` 간선으로
 직접 받는다**([ADR 0014](adr/0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md)). 수집의
 `SignalConsumer`에 변환을 잇는 배선은 여전히 조립 앱의 몫이다(ADR 0011).
@@ -167,6 +171,11 @@ installation의 배포 상태를 담기 때문이다.
 - `:libs:*`는 `:apps:*`에 의존하지 않는다. `:libs:*` 사이의 의존은 단방향만 둔다.
 - `project()` 간선은 기본 `implementation`이고, `api()`는 그 타입이 소비자의 계약일 때만 쓴다
   (`:libs:enrollment-persistence`가 JPA·JDBC를 `api()`로 노출한 것이 선례다).
+  **판정법: 그 모듈의 public 함수·생성자 시그니처에 나타나는 타입은 계약이다.** 생성자 인자도
+  포함한다 — 소비자가 그 타입 없이는 객체를 만들 수 없다. `:libs:security`·`:libs:telemetry-enricher`가
+  리포지토리를 생성자로 받으므로 `:libs:enrollment-persistence`를 `api()`로 두는 것이 그 예다.
+  반대로 테스트에서만 쓰는 타입은 `testImplementation`이다(`:libs:telemetry-adapter`의
+  `opentelemetry-proto`).
 - **단계 모듈 사이에도 데이터 타입 간선을 둔다**
   ([ADR 0014](adr/0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md)). 방향은 데이터 흐름과 같고
   단방향이다 — `adapter ← enricher ← persistence`. 금지되는 것은 **이웃의 seam 인터페이스를
@@ -197,7 +206,8 @@ libs/
 │                                    ├ masking/    서버 마스킹 — 허브 Masker 노드의 소재
 │                                    └ archive/    마스킹 후 원본의 외부 저장소 적재
 ├── telemetry-adapter/               com.team376.pulsemetry.telemetry.adapter    ← 있다 (1절)
-│                                    공시가 환산 · 재처리 읽기
+│                                    OTLP 읽기 · record_id 생성 · call_id 페어링 · 공시가 환산
+│                                    (재처리 읽기는 아직 없다 — 재처리 리더가 생길 때 이 모듈에 붙는다)
 │                                    ├ model/      공통 스키마
 │                                    └ source/     벤더별 매핑 (claude_code · codex)
 ├── telemetry-enricher/              com.team376.pulsemetry.telemetry.enricher    ← 있다 (1절)

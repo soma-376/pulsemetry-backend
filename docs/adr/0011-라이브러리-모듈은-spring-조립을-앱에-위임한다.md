@@ -27,12 +27,12 @@ ADR 0008 규칙 3 이 이웃한 문제를 이미 적어 두었다 — *"Spring B
   `spring-boot-starter-security` 를 쓰면 `spring-boot-security-autoconfigure` 가 딸려 오고,
   그 자동설정은 모든 요청을 잠그는 기본 `SecurityFilterChain` 을 만든다.
 - `:apps:enrollment-api` 는 **해시 함수 하나 때문에** 이 모듈에 의존한다
-  (`TelemetryTokenHasher` — 발급과 검증이 같은 연산을 써야 한다). 그 의존만으로
-  `/v1/enroll` · `/v1/healthz` · 부트스트랩 스크립트 서빙이 전부 401 이 된다.
-  **이 앱은 인증 계층을 켠 적이 없는데도** 그렇게 된다.
+  (`TelemetryTokenHasher` — 발급과 검증이 같은 연산을 써야 한다). starter 를 썼다면 그 의존만으로
+  `/v1/enroll` · `/v1/healthz` · 부트스트랩 스크립트 서빙이 전부 401 이 됐을 것이다 —
+  **이 앱은 인증 계층을 켠 적이 없는데도.**
 
-결정하지 않으면 이 형태를 세 번째 모듈이 우연히 정하게 된다. `:libs:security` 는 이 저장소의 첫
-`:libs:` 신규 모듈이고, [모듈 지도](../module-map.md) 5 절이 예고한 단계 모듈 넷
+결정하지 않으면 이 형태를 세 번째 모듈이 우연히 정하게 된다. `:libs:security` 는 초기 분할(ADR 0002)
+이후 처음 추가된 `:libs:` 모듈이고, [모듈 지도](../module-map.md) 5 절이 예고한 단계 모듈 넷
 (`telemetry-collector` · `-adapter` · `-enricher` · `-persistence`)과 인증 코어가 그 빌드 스크립트를
 그대로 복제한다.
 

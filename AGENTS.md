@@ -41,19 +41,10 @@ libs/telemetry-persistence/  파이프라인 적재 단계 — ClickHouse 스키
 | 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | 확정 ADR은 아직 없다 |
 | 텔레메트리 파이프라인 이관 | **코드는 끝났다. 배포만 남았다** | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 로컬에서는 다섯 모듈이 한 요청에서 돈다 — 남은 것은 infra 가 이 앱을 배포하고 collector 컨테이너를 내리는 일이다(PROJ-106) |
 
-**파이프라인 전체 병합은 채택됐다(허브 ADR 0004 — ADR-0006은 `Superseded by 허브 ADR 0004`).**
-파이프라인 로직 전체와 ClickHouse 스키마 소유권이 이 레포로 온다. **배포 단위는 하나이고 OTel Collector
-바이너리를 쓰지 않는다** — 수집·마스킹도 이 레포가 구현한다(허브 ADR 0005). 단계는 배포 경계가 아니라
-모듈 경계로 나뉘며, 구성은 `docs/module-map.md`가 담는다.
-**이식은 끝났다.** 인증 계층(`:libs:security`, PROJ-102) · 수집(`:libs:telemetry-collector`,
-PROJ-114) · 변환(`:libs:telemetry-adapter`, PROJ-103) · 보강과 적재
-(`:libs:telemetry-enricher`·`:libs:telemetry-persistence`, PROJ-104)에 이어 조립 앱
-`:apps:telemetry-ingest`(PROJ-105)가 다섯을 잇고, 로컬에서는 한 요청이 OTLP 수신부터
-`enriched_events` 행까지 간다.
-**다만 배포가 아직이라 실제 OTLP 트래픽은 계속 auth-proxy와 collector 컨테이너가 받는다** —
-그 전환은 infra의 몫이다(PROJ-106).
-`../docs/contracts/telemetry-ingest.md`의 검증 주체·신원 전파 서술은 전환이 실제로 끝난 시점에 고친다
-(허브 ADR 0005 Follow-up이 "그전까지 현행 서술이 사실"로 못박았다).
+**파이프라인은 이 레포의 단일 앱이다**(허브 ADR 0004·0005 — 배포 단위 하나, OTel Collector 바이너리 없음).
+모듈 구성은 `docs/module-map.md`가 담는다. **이식은 끝났고 배포만 남았다** — 위 표의 마지막 행이 상태다.
+전환 전까지는 실제 OTLP 트래픽을 auth-proxy와 collector 컨테이너가 받으므로, 허브
+`contracts/telemetry-ingest.md` §1·§3·§4의 현행 서술은 infra가 전환을 끝낸 뒤에 고친다(허브 ADR 0005 Follow-up).
 
 **이 레포가 소유하지 않는 것** — 요청이 오면 올바른 레포를 알린다.
 
@@ -120,7 +111,9 @@ docker compose up -d                              # 로컬 Postgres · ClickHous
   것인지 따진 다음 가져온다. 현행 결함 넷도 일부러 고정돼 있다 — 그 README가 목록을 담는다.
 - **`_ingest.source_record_id`와 `record_id`는 다른 것이다.** 앞은 원본 추적용 해시이고 뒤가
   ClickHouse ReplacingMergeTree의 **멱등 키**다. 뒤의 해시 재료는 Python `str()` 표기라
-  `None`·`True`처럼 적힌다 — Kotlin 기본 표기로 바꾸면 전 이벤트의 키가 바뀐다(ADR-0013).
+  `None`·`True`처럼 적힌다 — Kotlin 기본 표기로 바꾸면 전 이벤트의 키가 바뀐다(`RecordId`·`Stringify` KDoc).
+  기본값을 명시해 보내는 클라이언트는 `source_record_id`가 갈리고, non-optional 스칼라(`count`·
+  `timeUnixNano` 등)의 명시 기본값은 `record_id`까지 갈릴 수 있다(ADR-0013 Negative).
 - **`:libs:` 모듈에 `@Component`·`@Configuration`을 달지 않고 Boot starter도 끌지 않는다**(ADR-0011).
   컴포넌트 스캔 루트가 저장소 전체라, 라이브러리의 빈은 그 라이브러리를 올린 **모든** 앱에서 살아난다.
   starter 하나가 인증을 켠 적 없는 앱의 엔드포인트를 전부 잠글 수 있다. 조립은 앱이 한다.
@@ -153,5 +146,12 @@ docker compose up -d                              # 로컬 Postgres · ClickHous
 - **`:libs:` 는 Boot starter를 끌지 않지만 조립 앱은 켠다**(ADR 0016). ADR 0011의 검사 대상은
   `:apps:enrollment-api`의 클래스패스다. `:apps:telemetry-ingest`의
   `spring-boot-starter-security`는 규칙 위반이 아니라 의도된 선택이다.
-- ADR을 추가하면 `0017`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
+- **정규화 불변 규칙 다섯과 `enrichment_json` 승격 금지의 소유자는 ADR 0017이다.** KDoc은 규칙을
+  반복하지 않고 그 번호를 가리킨다. 규칙을 바꾸려면 ADR 0017을 개정하고 golden을 다시 굽는다.
+- **예외 → 상태 매핑은 `IngestPipeline` KDoc의 표 하나다.** 정규화 실패·보강 영구 오류·ClickHouse 4xx가
+  400, 일시 장애와 분류되지 않은 예외가 503이다. 행을 옮기면 허브 `contracts/telemetry-ingest.md` §8을
+  같은 커밋에서 고친다.
+- **`:apps:telemetry-ingest`의 OTLP 밖 경로는 기본 닫힘이다.** 둘째 `SecurityFilterChain`이 `/v1/healthz`만
+  열고 나머지는 `denyAll`이다. 관리 엔드포인트를 얹으려면 그 체인에 경로를 명시한다.
+- ADR을 추가하면 `0018`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

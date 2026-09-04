@@ -161,7 +161,7 @@ WHERE code_hash = :codeHash
 
 **enroll 성공은 대상 멤버의 `invited → active` 전환 이벤트다.** OTLP 경로의
 auth-proxy(ai-telemetry-pipeline)가 `invited`·`suspended` 멤버의 토큰을 거부하므로,
-이 전환 없이는 발급된 telemetry token 이 전부 401 이 된다. 재발급(§6.3의
+이 전환 없이는 발급된 telemetry token 이 전부 401 이 된다. 재발급(§4.3의
 `POST /v1/installations/telemetry-token`)도 같은 전환을 보정한다 — pit_ 인증이 과거
 enroll 완료의 증명이기 때문이다. 전환은 `invited` 에서만 일어난다. `suspended` 는
 어느 경로도 건드리지 않는다 — 정지 해제는 관리자의 결정이지 설치의 부수효과가 아니다.
@@ -461,9 +461,12 @@ export SPRING_PROFILES_ACTIVE=local        # local 프로파일 시더를 켠다
 적용 주체는 `:apps:enrollment-api` 하나이므로 그쪽을 먼저 띄운다. ClickHouse 스키마는 이 앱이
 기동 시 적용하고, ClickHouse 가 죽어 있어도 앱은 뜬다(ADR 0016).
 
-포트 4316 은 구 auth-proxy 의 자리를 물려받은 것이라 **시드 manifest 의 `otlp.endpoint` 와 이미
-맞는다** — 데몬 설정을 바꿀 필요가 없다. `4318` 은 telemetryctl 로컬 수신기의 기본 포트라 쓰면
-자기참조가 된다.
+포트 4316 은 **시드 manifest 의 `otlp.endpoint` 와 이미 맞는다** — 데몬 설정을 바꿀 필요가 없다
+(포트의 근거는 ADR 0016).
+
+**시드 manifest 는 `signals.logs: true` 다.** 데몬이 logs 를 보내야 claude_code 이벤트가 행이 된다.
+시더는 tenant 에 활성 manifest 가 있으면 건너뛰므로, 이 값이 `false` 이던 시절의 로컬 DB 에서는
+행이 생기지 않는다 — `docker compose down -v` 로 볼륨을 새로 만든다.
 
 ```sh
 # 시드된 초대 코드로 등록하면 installation 과 telemetry token 이 만들어진다.
@@ -476,6 +479,8 @@ curl -s http://localhost:8123 --data-urlencode \
 
 토큰 없이 `POST http://localhost:4316/v1/traces` 를 부르면
 `{"error":"unauthorized","message":"Invalid or expired credential"}` 가 401 로 돌아온다.
+
+이 절차가 **compose 단독 E2E** 다 — 자동화는 PROJ-106 에서 이미지·CI 와 함께 다룬다(ADR 0016 Follow-up).
 
 테스트는 Testcontainers 로 실제 PostgreSQL 을 띄우므로 Docker 데몬이 필요하다.
 H2 등 임베디드 DB 로 대체하지 않는다 — jsonb·부분 유니크 인덱스·스키마 분리를 검증할 수 없다.
