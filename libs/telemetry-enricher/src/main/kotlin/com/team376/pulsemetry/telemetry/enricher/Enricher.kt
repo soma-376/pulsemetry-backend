@@ -12,7 +12,7 @@ import com.team376.pulsemetry.telemetry.enricher.provider.EnrichmentProvider
  * ## 조립
  *
  * 이 모듈은 Spring 스테레오타입을 두지 않는다(ADR 0011). provider 목록은 조립 앱이 정해
- * 생성자로 넘긴다 — 이식 원본의 `pkgutil` 자동 발견이 그 자리를 대신한다.
+ * 생성자로 넘긴다 — 자동 발견은 두지 않는다.
  *
  * ```
  * Enricher(listOf(OrgProvider(teamMemberships), GithubProvider(), JiraProvider(), AiAnalysisProvider()))
@@ -31,7 +31,6 @@ public class Enricher(providers: List<EnrichmentProvider>) {
 
 	init {
 		// 이름이 겹치면 뒤엣것이 앞엣것의 주석을 덮어써 한 provider 의 산출물이 조용히 사라진다.
-		// 이식 원본은 발견 결과를 이름으로 키잡은 맵에 담아 같은 일을 겪었다 — 여기서는 막는다.
 		val duplicates = providers.groupBy { it.name }.filterValues { it.size > 1 }.keys
 		require(duplicates.isEmpty()) { "provider 이름이 겹친다: $duplicates" }
 	}

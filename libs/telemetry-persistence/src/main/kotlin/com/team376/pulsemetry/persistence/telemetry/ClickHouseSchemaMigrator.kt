@@ -42,13 +42,22 @@ public class ClickHouseSchemaMigrator(
 			?: error("$LOCATION$migration 을 찾지 못했다")
 
 	/**
-	 * 세미콜론으로 문장을 나눈다.
+	 * `--` 주석 줄을 벗긴 뒤 세미콜론으로 문장을 나눈다.
 	 *
-	 * ⚠️ **문자열 리터럴 안의 세미콜론을 견디지 못한다.** 이식 원본의 `apply_ddl` 과 같은
-	 * 한계이고, DDL 만 담는 파일이라 지금은 닿지 않는다. 리터럴이 필요해지면 이 분해를 먼저 고친다.
+	 * 주석을 먼저 벗기는 이유는 파일 양식 때문이다 — `V1` 처럼 긴 `--` 헤더가 관례이고, 헤더 문장에
+	 * 세미콜론이 들어가거나 마지막 문장 뒤에 꼬리 주석이 오면 주석만 담긴 조각이 ClickHouse 로 나가
+	 * `Empty query`(400) 가 된다. 그러면 매 기동마다 스키마 적용이 죽는다.
+	 *
+	 * ⚠️ **문자열 리터럴 안의 세미콜론과 `--` 는 견디지 못한다.** DDL 만 담는 파일이라 지금은
+	 * 닿지 않는다. 리터럴이 필요해지면 이 분해를 먼저 고친다.
 	 */
-	private fun statementsOf(sql: String): List<String> =
-		sql.split(';').map { it.trim() }.filter { it.isNotEmpty() }
+	internal fun statementsOf(sql: String): List<String> =
+		sql.lineSequence()
+			.filterNot { it.trimStart().startsWith("--") }
+			.joinToString("\n")
+			.split(';')
+			.map { it.trim() }
+			.filter { it.isNotEmpty() }
 
 	public companion object {
 		/**

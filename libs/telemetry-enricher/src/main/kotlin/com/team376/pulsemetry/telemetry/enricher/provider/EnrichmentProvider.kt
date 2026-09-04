@@ -13,7 +13,7 @@ import com.team376.pulsemetry.telemetry.enricher.Enriched
  *
  * - [enrich] 는 주석 맵을 돌려준다. 아무것도 안 하면 빈 맵이다. **행을 드롭하지 않는다.**
  * - 산출물은 `enrichment_json` 으로만 적재된다. **공통 컬럼으로 승격하지 않는다** —
- *   예외는 `org` 의 `team_ids_as_of` 하나뿐이고, 늘리려면 파이프라인 ADR 0006 을 개정한다.
+ *   예외는 `org` 의 `team_ids_as_of` 하나뿐이고, 늘리려면 ADR 0017 을 개정한다.
  * - 새 provider 는 파일 하나를 더하고 조립 앱의 목록에 넣으면 끝이다. 코어는 안 바뀐다.
  */
 public interface EnrichmentProvider {

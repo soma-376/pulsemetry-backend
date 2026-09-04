@@ -5,6 +5,8 @@ import com.team376.pulsemetry.persistence.enrollment.repository.TeamMembershipRe
 import com.team376.pulsemetry.telemetry.enricher.Enriched
 import com.team376.pulsemetry.telemetry.enricher.EnrichmentUnavailableException
 import org.springframework.dao.DataAccessResourceFailureException
+import org.springframework.dao.RecoverableDataAccessException
+import org.springframework.dao.TransientDataAccessException
 import org.springframework.transaction.CannotCreateTransactionException
 import java.time.Instant
 import java.util.UUID
@@ -14,10 +16,7 @@ import kotlin.math.floor
  * 조직 provider — `installation_id` 를 **이벤트 발생 시각의** 팀 소속으로 해석한다.
  *
  * 유일하게 RDS 를 읽는 provider 이고 `order = 0` 이라 가장 먼저 돈다. whitelist 컬럼
- * [Enriched.teamIdsAsOf] 를 채우는 것도 이 provider 뿐이다(파이프라인 ADR 0006).
- *
- * ⚠️ 구 레포 `enrich.py` 의 docstring("enrichment 는 RDS 에 접속하지 않는다")은 **스테일이다.**
- * 코드가 기준이고, 코드는 접속한다.
+ * [Enriched.teamIdsAsOf] 를 채우는 것도 이 provider 뿐이다(ADR 0017).
  *
  * ## 조회는 이미 있는 것을 쓴다
  *
@@ -47,7 +46,8 @@ public class OrgProvider(
 
 		val memberships = cache(ctx).getOrPut(installationId) { load(installationId) }
 		val at = instantOf(item.timestamp)
-		val teamIds = memberships.filter { it.coversAt(at) }.map { it.teamId.toString() }
+		// 같은 팀에 겹치는 소속 구간이 둘이면 id 가 두 번 나온다 — 동시 소속 제약이 없다(TeamMembership KDoc).
+		val teamIds = memberships.filter { it.coversAt(at) }.map { it.teamId.toString() }.distinct()
 
 		item.teamIdsAsOf = teamIds
 		return mapOf(TEAM_IDS to teamIds)
@@ -70,11 +70,17 @@ public class OrgProvider(
 			teamMemberships.findActiveTeamMembershipsByInstallationId(UUID.fromString(installationId))
 		} catch (exception: DataAccessResourceFailureException) {
 			// 연결 계열만 잡는다. 스키마 드리프트(InvalidDataAccessResourceUsageException)는
-			// 영구 오류라 전파해야 한다 — 이식 원본이 OperationalError 만 잡은 것과 같다.
+			// 영구 오류라 전파해야 한다 — EnrichmentUnavailableException KDoc 참고.
 			throw EnrichmentUnavailableException("rds unreachable: ${exception.message}", exception)
 		} catch (exception: CannotCreateTransactionException) {
 			// 리포지토리 호출이 트랜잭션을 열다 실패하는 경로. 커넥션을 못 얻은 것이므로 위와 같은 사실이다.
 			throw EnrichmentUnavailableException("rds unreachable: ${exception.message}", exception)
+		} catch (exception: TransientDataAccessException) {
+			// 실행 중 끊김 — statement_timeout(QueryTimeoutException)·락 경합·직렬화 실패. 다시 보내면 나을 수 있다.
+			throw EnrichmentUnavailableException("rds transient failure: ${exception.message}", exception)
+		} catch (exception: RecoverableDataAccessException) {
+			// 드라이버가 "커넥션을 새로 잡으면 된다" 고 분류한 실패. 연결 계열과 같은 사실이다.
+			throw EnrichmentUnavailableException("rds transient failure: ${exception.message}", exception)
 		}
 
 	/**

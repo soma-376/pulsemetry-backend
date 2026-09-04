@@ -18,15 +18,8 @@ import java.nio.charset.StandardCharsets
  * 연결 계열과 `5xx · 429 · 408` 은 [TelemetrySinkUnavailableException](일시 장애 → 503),
  * 그 밖의 4xx 는 [TelemetrySinkRejectedException](영구 오류 → 400)이다.
  *
- * ## 이 테스트는 한 번 뒤집혔다
- *
- * 이식 원본과 이 테스트의 초판은 **4xx 까지 전부 일시 장애**로 고정했고, 그 KDoc 이
- * *"고치지 말고 그대로 고정한다"* 라고 적었다. 그 편향은 업스트림 collector 가 5분 예산으로
- * 재시도한다는 전제 위에 있었고, 단일 앱 토폴로지(허브 ADR 0005)가 그 collector 를 걷어내면서
- * 전제가 사라졌다. **허브 ADR 0006 이 그 문장을 대체하는 근거다** — 그 ADR 없이 다시 넓히지 마라.
- *
- * 보강 단계는 처음부터 좁았다 — `OrgProviderErrorClassificationTest` 와 나란히 읽는다.
- * 이제 두 단계가 같은 원칙 위에 선다.
+ * 근거는 허브 ADR 0006 이다. 그 ADR 없이 분류를 넓히지 마라. 보강 단계도 같은 원칙이다 —
+ * `OrgProviderErrorClassificationTest` 와 나란히 읽는다.
  *
  * ClickHouse 없이 돈다. 판정 대상이 상태 코드의 분류이지 ClickHouse 의 동작이 아니다.
  */
@@ -80,7 +73,7 @@ class ClickHouseErrorClassificationTest {
 	}
 
 	@Test
-	@DisplayName("스키마 불일치(400)가 일시 장애로 위장하지 않는다 — 이 테스트가 뒤집힌 자리다")
+	@DisplayName("스키마 불일치(400)가 일시 장애로 위장하지 않는다")
 	fun aSchemaMismatchIsNotTransient() {
 		status = 400
 		body = "Code: 16. DB::Exception: No such column team_ids_as_of"

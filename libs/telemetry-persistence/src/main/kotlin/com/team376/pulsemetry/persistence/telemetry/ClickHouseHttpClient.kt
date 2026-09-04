@@ -32,8 +32,9 @@ public class ClickHouseHttpClient(
 	private val baseUrl: String,
 	private val database: String = DEFAULT_DATABASE,
 	private val timeout: Duration = DEFAULT_TIMEOUT,
+	// ClickHouse 는 리다이렉트를 내지 않는다. 따라가면 POST 본문이 상태별로 다르게 처리된다.
 	private val httpClient: HttpClient =
-		HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NORMAL).build(),
+		HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER).build(),
 ) {
 
 	/**
@@ -44,6 +45,10 @@ public class ClickHouseHttpClient(
 	 * **실패는 둘로 갈린다** — 연결 계열과 `5xx · 429 · 408` 은
 	 * [TelemetrySinkUnavailableException](일시 장애 → 503), 그 밖의 4xx 는
 	 * [TelemetrySinkRejectedException](영구 오류 → 400)이다. 근거는 허브 ADR 0006 이다.
+	 *
+	 * 타임아웃은 응답 **헤더** 도착까지만 잰다(`HttpRequest.timeout` 의 의미). 본문 수신은 재지
+	 * 않으므로 헤더만 보내고 본문을 끄는 서버에는 더 오래 매달릴 수 있다 — DDL·INSERT 응답 본문이
+	 * 짧아 실무 위험은 낮다.
 	 */
 	public fun execute(query: String, body: ByteArray? = null): String {
 		val uri = URI.create(

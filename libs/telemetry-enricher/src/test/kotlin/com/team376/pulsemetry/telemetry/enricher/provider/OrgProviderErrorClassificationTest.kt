@@ -10,7 +10,11 @@ import org.junit.jupiter.api.Test
 import org.mockito.BDDMockito.given
 import org.mockito.Mockito.mock
 import org.springframework.dao.DataAccessResourceFailureException
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.dao.InvalidDataAccessResourceUsageException
+import org.springframework.dao.PessimisticLockingFailureException
+import org.springframework.dao.QueryTimeoutException
+import org.springframework.dao.RecoverableDataAccessException
 import org.springframework.transaction.CannotCreateTransactionException
 import java.time.Instant
 import java.util.UUID
@@ -19,12 +23,9 @@ import java.util.UUID
  * 오류 분류를 좁게 고정한다. **넓히지 마라.**
  *
  * 일시 장애만 [EnrichmentUnavailableException] 이고, 앱이 그것을 503 으로 돌려 데몬이
- * 재전송하게 한다. 스키마 드리프트 같은 **영구 오류를 여기 넣으면 그 오류가 드러나지 않는다** —
- * 이식 원본이 `psycopg.OperationalError` 만 잡고 `ProgrammingError` 는 전파한 이유다.
+ * 재전송하게 한다. 스키마 드리프트 같은 **영구 오류를 여기 넣으면 그 오류가 드러나지 않는다.**
  *
- * 적재 단계도 이제 같은 원칙이다 — 연결 계열과 과부하만 일시 장애이고 그 밖의 4xx 는
- * `TelemetrySinkRejectedException` 이다. 한때 그쪽만 정반대로 넓었고, 허브 ADR 0006 이 그
- * 비대칭을 없앴다.
+ * 적재 단계도 같은 원칙이다(허브 ADR 0006) — `ClickHouseErrorClassificationTest` 와 나란히 읽는다.
  */
 class OrgProviderErrorClassificationTest {
 
@@ -57,12 +58,50 @@ class OrgProviderErrorClassificationTest {
 	}
 
 	@Test
+	@DisplayName("statement_timeout 은 실행 중 끊김이라 일시 장애다")
+	fun queryTimeoutBecomesUnavailable() {
+		val provider = providerThrowing(QueryTimeoutException("canceling statement due to statement timeout"))
+
+		assertThatThrownBy { provider.enrich(item, HashMap()) }
+			.isInstanceOf(EnrichmentUnavailableException::class.java)
+			.hasMessageContaining("rds transient failure")
+	}
+
+	@Test
+	@DisplayName("락 경합도 일시 장애다 — TransientDataAccessException 계열 전부")
+	fun lockContentionBecomesUnavailable() {
+		val provider = providerThrowing(PessimisticLockingFailureException("could not obtain lock"))
+
+		assertThatThrownBy { provider.enrich(item, HashMap()) }
+			.isInstanceOf(EnrichmentUnavailableException::class.java)
+	}
+
+	@Test
+	@DisplayName("드라이버가 복구 가능으로 분류한 실패도 일시 장애다")
+	fun recoverableFailureBecomesUnavailable() {
+		val provider = providerThrowing(RecoverableDataAccessException("connection was closed"))
+
+		assertThatThrownBy { provider.enrich(item, HashMap()) }
+			.isInstanceOf(EnrichmentUnavailableException::class.java)
+	}
+
+	@Test
 	@DisplayName("스키마 드리프트는 영구 오류라 그대로 전파한다")
 	fun schemaDriftPropagates() {
 		val provider = providerThrowing(InvalidDataAccessResourceUsageException("relation does not exist"))
 
 		assertThatThrownBy { provider.enrich(item, HashMap()) }
 			.isInstanceOf(InvalidDataAccessResourceUsageException::class.java)
+	}
+
+	@Test
+	@DisplayName("제약 위반 같은 NonTransient 영구 오류도 그대로 전파한다 — 앱이 400 으로 돌린다")
+	fun otherNonTransientFailuresPropagate() {
+		val provider = providerThrowing(DataIntegrityViolationException("violates check constraint"))
+
+		assertThatThrownBy { provider.enrich(item, HashMap()) }
+			.isInstanceOf(DataIntegrityViolationException::class.java)
+			.isNotInstanceOf(EnrichmentUnavailableException::class.java)
 	}
 
 	@Test

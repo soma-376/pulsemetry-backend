@@ -35,7 +35,7 @@ class EnrichedEventRowTest {
 	}
 
 	@Test
-	@DisplayName("member_id 는 컬럼이 아니다 — raw_json 안에만 남는다 (파이프라인 ADR 0006)")
+	@DisplayName("member_id 는 컬럼이 아니다 — raw_json 안에만 남는다 (ADR 0017)")
 	fun memberIdIsNotPromotedToAColumn() {
 		val row = row(Enriched(TestEvents.log(installationId, at)))
 

@@ -3,16 +3,18 @@ package com.team376.pulsemetry.persistence.telemetry
 import java.math.BigDecimal
 
 /**
- * 적재가 쓰는 JSON 표기. Python `json.dumps(..., ensure_ascii=False)` 와 **바이트가 같다.**
+ * 적재가 쓰는 JSON 표기. Python `json.dumps(..., ensure_ascii=False)` 의 이스케이프·실수 표기를 따른다.
  *
  * ## 규칙이 두 개다. 섞지 마라
  *
  * - [compact] — 키를 **정렬하지 않는다.** 행 하나(JSONEachRow 의 한 줄)가 이것이다.
  *   컬럼 순서는 [EnrichedEventRow.COLUMNS] 의 삽입 순서 그대로다.
  * - [sorted] — 키를 **정렬한다.** `enrichment_json` 컬럼의 값이 이것이다
- *   (`json.dumps(..., sort_keys=True)`).
+ *   (`json.dumps(..., sort_keys=True, separators=(",", ":"))`).
  *
- * 둘 다 구분자에 공백이 없다(`separators=(",", ":")`). 어댑터에도 같은 성격의 인코더가 둘
+ * **바이트 동일성이 계약인 것은 [sorted] 뿐이다** — `enrichment_json` 은 저장되는 값 자체라
+ * 구분자 하나가 달라도 현행과 다른 값이 된다. [compact] 는 JSONEachRow 의 입력이라 파서가 구분자
+ * 공백을 무시하므로 표기가 저장 값에 영향을 주지 않는다. 어댑터에도 같은 성격의 인코더가 둘
  * 있지만 `internal` 이라 쓸 수 없다 — 그쪽 공개 API 는 `model/` 과 `NormalizedJson` 뿐으로
  * 두기로 한 결정(ADR 0013·0014) 때문에 표기 규칙만 여기 다시 세운다.
  */

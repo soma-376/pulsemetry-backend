@@ -12,7 +12,7 @@
 --
 -- 슬림 공통 스키마: 검증 조인 키(installation_id) + 얇은 공통 컬럼 + raw_json(정규화 이벤트
 -- 재직렬화) + enrichment_json(provider 주석). org 승격 컬럼은 team_ids_as_of 하나뿐이다
--- (파이프라인 ADR 0006) — org provider 가 ingest 시점에 enrollment 스키마를 as-of 조인해 채운다.
+-- (ADR 0017) — org provider 가 ingest 시점에 enrollment 스키마를 as-of 조인해 채운다.
 --
 -- 엔진 ReplacingMergeTree ORDER BY event_id → 같은 event_id(= envelope.record_id, 어댑터가
 -- 만드는 결정적 멱등 키) 재적재는 멱등이다. 조회는 FINAL 이 필요하다.

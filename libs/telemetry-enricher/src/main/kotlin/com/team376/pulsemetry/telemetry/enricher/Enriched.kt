@@ -9,7 +9,7 @@ import com.team376.pulsemetry.telemetry.adapter.model.Normalized
  * 그대로 받는다 — 단계 모듈 사이의 데이터 타입 간선을 인정한 ADR 0014 의 대상이다.
  *
  * [teamIdsAsOf] 만 whitelist 컬럼으로 승격되고 나머지 provider 산출물은 [annotations] 에
- * 남아 `enrichment_json` 으로만 적재된다(파이프라인 ADR 0006). 새 provider 의 산출물을
+ * 남아 `enrichment_json` 으로만 적재된다(ADR 0017). 새 provider 의 산출물을
  * 컬럼으로 올리려면 그 ADR 을 개정해야 한다.
  */
 public class Enriched(
@@ -42,9 +42,9 @@ public class Enriched(
 		}
 
 	/**
-	 * ⚠️ **클라이언트가 보낸 리소스 속성에서 온 값이다.** 이름과 달리 인증에서 스탬프된 값이
-	 * 아니다 — 구 파이프라인의 알려진 결함이고, 인증 기반 스탬핑은 조립 앱이 `:libs:security`
-	 * 의 신원을 얹을 때 정리한다.
+	 * 검증된 tenant. 수집 단계의 `IdentityStamp` 가 인증 결과의 tenant·installation 을 리소스
+	 * 속성에 심고(ADR 0016) 어댑터가 그 값을 `Envelope.identity` 에 싣는다 — 클라이언트가 보낸
+	 * 값은 그 자리에서 덮어써진다. 스탬프 없이 정규화된 이벤트(테스트·재처리)에서만 클라이언트 값이다.
 	 */
 	public val tenantId: String?
 		get() = event.envelope.identity.tenantId
@@ -58,9 +58,7 @@ public class Enriched(
 	/**
 	 * 이벤트 시각(epoch 초, 소수부 포함).
 	 *
-	 * 이식 원본은 `float | None` 이었지만 어댑터의 `Envelope.timestamp` 는 non-null 이다 —
-	 * 파싱에 실패해도 `0.0` 이 들어간다(어댑터가 고정한 현행 결함). 그래서 원본의
-	 * `ts is None` 분기는 여기서 도달할 수 없다.
+	 * 어댑터의 `Envelope.timestamp` 는 non-null 이고 파싱 실패 시 `0.0` 이다(어댑터가 고정한 현행 결함).
 	 */
 	public val timestamp: Double
 		get() = event.envelope.timestamp

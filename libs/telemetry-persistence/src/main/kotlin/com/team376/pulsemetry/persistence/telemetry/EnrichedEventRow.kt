@@ -8,7 +8,7 @@ import com.team376.pulsemetry.telemetry.enricher.Enriched
  *
  * ## 화이트리스트가 계약이다
  *
- * [COLUMNS] 의 집합과 순서를 넘지 않는다. 새 컬럼을 늘리려면 파이프라인 ADR 0006 을 개정해야
+ * [COLUMNS] 의 집합과 순서를 넘지 않는다. 새 컬럼을 늘리려면 ADR 0017 을 개정해야
  * 한다 — provider 산출물은 `enrichment_json` 으로만 적재하고, **승격 예외는 `team_ids_as_of`
  * 하나뿐**이라는 것이 그 결정이다. 특히 `member_id` 는 컬럼이 아니다. `raw_json` 안에는 있다.
  *

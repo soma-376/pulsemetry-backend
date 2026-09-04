@@ -13,8 +13,9 @@ dependencies {
 	api(project(":libs:telemetry-adapter"))
 
 	// as-of 조인은 읽기 전용이다. team_memberships 의 쓰기 소유는 관리자 API 그대로다 (ADR 0008 규칙 1).
-	// 리포지토리 타입이 OrgProvider 의 생성자에만 나타나고 이 모듈의 계약에는 없으므로 implementation 이다.
-	implementation(project(":libs:enrollment-persistence"))
+	// api() 다 — OrgProvider 의 public 생성자가 리포지토리를 받는다. 소비자가 그 타입 없이는
+	// 조립할 수 없으므로 계약이다 (module-map 4절).
+	api(project(":libs:enrollment-persistence"))
 
 	// golden fixture 를 읽는 리더가 쓰는 스트리밍 파서. 어댑터와 같은 이유로 databind 는 쓰지 않는다.
 	testFixturesApi(project(":libs:telemetry-adapter"))

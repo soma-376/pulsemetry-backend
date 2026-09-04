@@ -9,7 +9,7 @@ import com.team376.pulsemetry.telemetry.enricher.Enriched
  * 이 셋이 있어야 `enrichment_json` 이 현행 파이프라인과 같은 값이 된다 —
  * `{"ai_analysis":{},"github":{},"jira":{},"org":{...}}`. 빼면 저장되는 값이 달라진다.
  *
- * 실구현이 붙을 때 산출물을 컬럼으로 승격하려면 파이프라인 ADR 0006 을 먼저 개정한다.
+ * 실구현이 붙을 때 산출물을 컬럼으로 승격하려면 ADR 0017 을 먼저 개정한다.
  */
 public class JiraProvider : EnrichmentProvider {
 
