@@ -1,0 +1,54 @@
+server:
+  # 4316 인 이유와 4318 을 쓰지 않는 이유는 ADR 0016 Decision 에 있다.
+  port: ${PULSEMETRY_INGEST_PORT:4316}
+
+spring:
+  application:
+    name: pulsemetry-telemetry-ingest
+
+  datasource:
+    # 로컬 기본값은 docker-compose.yml 의 postgres 서비스를 가리킨다.
+    url: ${PULSEMETRY_DB_URL:jdbc:postgresql://localhost:5432/pulsemetry}
+    username: ${PULSEMETRY_DB_USERNAME:pulsemetry}
+    password: ${PULSEMETRY_DB_PASSWORD:pulsemetry}
+    hikari:
+      # 커넥션 획득 대기의 기본값은 30초다. DB 가 매달리면 그 30초 동안 서블릿 스레드를
+      # 잠식한다 — 3초에서 끊는다. enrollment-api 와 같은 값이다.
+      connection-timeout: 3000
+
+  jpa:
+    hibernate:
+      # 스키마의 진실원은 Flyway 다. 이 앱은 읽기 전용 소비자이고, Hibernate 는 엔티티가
+      # 스키마와 어긋나면 기동을 막는 역할만 한다.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: enrollment
+    open-in-view: false
+
+  flyway:
+    # enrollment 스키마를 마이그레이션하는 주체는 :apps:enrollment-api 하나다 (ADR 0004 · 0016).
+    # spring-boot-starter-flyway 가 :libs:enrollment-persistence 를 타고 런타임 클래스패스에
+    # 오르므로, 끄지 않으면 두 앱이 같은 스키마를 각자 마이그레이션한다.
+    enabled: false
+
+pulsemetry:
+  # telemetry token 해시 키. :apps:enrollment-api 가 발급할 때 쓰는 값과 **같아야** 한다 —
+  # 갈리면 발급된 모든 토큰이 401 이 된다. 기본값이 없다: 비어 있으면 기동이 실패한다.
+  token-hash-secret: ${PULSEMETRY_TOKEN_HASH_SECRET:}
+
+  telemetry:
+    archive:
+      # 배포는 s3, 로컬 dev 와 테스트는 file 이다 (ADR 0012).
+      type: ${PULSEMETRY_ARCHIVE_TYPE:file}
+      dir: ${PULSEMETRY_ARCHIVE_DIR:./archive}
+      bucket: ${PULSEMETRY_ARCHIVE_BUCKET:}
+      base-prefix: ${PULSEMETRY_ARCHIVE_PREFIX:}
+
+    clickhouse:
+      url: ${PULSEMETRY_CLICKHOUSE_URL:http://localhost:8123}
+      database: ${PULSEMETRY_CLICKHOUSE_DATABASE:default}
+
+    ingest:
+      # 503 에 실어 보낼 값. 데몬은 이것을 하한으로 쓰고 15초에서 자른다 (허브 ADR 0006).
+      retry-after: 1s
