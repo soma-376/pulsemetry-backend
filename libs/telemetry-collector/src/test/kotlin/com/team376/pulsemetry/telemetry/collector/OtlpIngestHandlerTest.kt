@@ -4,6 +4,9 @@ import com.google.protobuf.Message
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveWriter
 import com.team376.pulsemetry.telemetry.collector.archive.Product
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
+import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
+import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
+import io.opentelemetry.proto.resource.v1.Resource
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -425,7 +428,59 @@ class OtlpIngestHandlerTest {
 			.contains("developer.installation_id").contains("inst-1")
 	}
 
+	@ParameterizedTest(name = "{0}")
+	@EnumSource(Signal::class)
+	@DisplayName("같은 신원 키가 여러 번 와도 전부 검증값이다 — 하류는 마지막 값을 읽는다")
+	fun duplicateIdentityKeysAreAllOverwritten(signal: Signal) {
+		identity = StampedIdentity(tenantId = "ten-real", installationId = "inst-real")
+		// 가짜 값을 뒤에 둔다. 첫 항목만 덮어쓰면 하류가 읽는 마지막 값이 가짜가 된다.
+		val attributes = """
+			{"key":"tenant.id","value":{"stringValue":"ten-real"}},
+			{"key":"developer.installation_id","value":{"stringValue":"inst-real"}},
+			{"key":"service.name","value":{"stringValue":"claude-code"}},
+			{"key":"tenant.id","value":{"stringValue":"ten-fake"}},
+			{"key":"developer.installation_id","value":{"stringValue":"inst-fake"}}
+		""".trimIndent()
+
+		val response = handler.handle(request(path = signal.path, body = withResourceAttributes(signal, attributes)))
+
+		assertThat(response.status).isEqualTo(200)
+		val archived = archive.written.single().body.toString(Charsets.UTF_8)
+		assertThat(archived).doesNotContain("ten-fake").doesNotContain("inst-fake")
+
+		val resource = firstResource(consumed.single().second)
+		val byKey = resource.attributesList.groupBy({ it.key }, { it.value.stringValue })
+		// 항목 수는 그대로다 — 위치와 개수를 바꾸지 않는다.
+		assertThat(byKey["tenant.id"]).containsExactly("ten-real", "ten-real")
+		assertThat(byKey["developer.installation_id"]).containsExactly("inst-real", "inst-real")
+	}
+
 	// ------------------------------------------------------------------ 도구
+
+	/** 리소스 속성만 다르고 나머지는 레코드 하나인 최소 요청. */
+	private fun withResourceAttributes(signal: Signal, attributes: String): ByteArray = when (signal) {
+		Signal.LOGS -> """
+			{"resourceLogs":[{"resource":{"attributes":[$attributes]},
+			 "scopeLogs":[{"logRecords":[{"body":{"stringValue":"hi"}}]}]}]}
+		"""
+
+		Signal.TRACES -> """
+			{"resourceSpans":[{"resource":{"attributes":[$attributes]},
+			 "scopeSpans":[{"spans":[{"name":"s","traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"2222222222222222"}]}]}]}
+		"""
+
+		Signal.METRICS -> """
+			{"resourceMetrics":[{"resource":{"attributes":[$attributes]},
+			 "scopeMetrics":[{"metrics":[{"name":"m","sum":{"dataPoints":[{"asInt":"1"}]}}]}]}]}
+		"""
+	}.trimIndent().toByteArray()
+
+	private fun firstResource(message: Message): Resource = when (message) {
+		is ExportLogsServiceRequest -> message.getResourceLogs(0).resource
+		is ExportTraceServiceRequest -> message.getResourceSpans(0).resource
+		is ExportMetricsServiceRequest -> message.getResourceMetrics(0).resource
+		else -> error("unexpected ${message.javaClass}")
+	}
 
 	private fun request(
 		method: String = "POST",

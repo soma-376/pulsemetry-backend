@@ -40,12 +40,16 @@ public fun interface IdentitySource {
  * 빠졌을 때 조용하다.**
  *
  * 헤더로 신원을 나르던 경로는 허브 ADR 0005 가 폐기했지만 **승격 자체는 남아야 한다** —
- * 사라진 것은 운반 수단이지 신원이 파이프라인에 들어가는 경로가 아니다
- * (출처: 구 리시버 `_stamp_identity`).
+ * 사라진 것은 운반 수단이지 신원이 파이프라인에 들어가는 경로가 아니다.
  *
  * ## 규칙
  *
  * - **검증된 값이 자기신고를 이긴다.** 클라이언트가 같은 키를 보냈어도 덮어쓴다(신뢰 경계).
+ * - **같은 키가 여러 번 와도 전부 덮어쓴다.** 리소스 속성은 배열이라 중복 키가 합법이고, 변환
+ *   단계는 그 배열을 맵으로 펴며 **마지막 값**을 읽는다. 첫 항목만 덮어쓰면 뒤에 둔 자기신고
+ *   값이 검증값을 이긴다 — 인증된 사용자가 다른 조직으로 데이터를 심는 경로가 된다.
+ *   항목의 위치와 개수는 건드리지 않는다. 원본 추적 해시가 이 배열의 순서로 계산되므로,
+ *   중복이 없는 정상 요청의 해시가 그대로여야 한다.
  * - **빈 값은 건너뛴다.** 없는 신원으로 있는 값을 지우지 않는다.
  * - 요청 안의 **모든** resource 블록에 적용한다.
  */
@@ -75,12 +79,15 @@ internal object IdentityStamper {
 	}
 
 	private fun upsert(resource: Resource.Builder, stamps: Map<String, String>) {
-		val remaining = stamps.toMutableMap()
+		// 키를 "처리 끝" 으로 빼지 않는다 — 같은 키의 모든 항목이 검증값이어야 한다.
+		val seen = HashSet<String>()
 		for (attribute in resource.attributesBuilderList) {
-			val value = remaining.remove(attribute.key) ?: continue
+			val value = stamps[attribute.key] ?: continue
 			attribute.value = stringValue(value)
+			seen += attribute.key
 		}
-		for ((key, value) in remaining) {
+		for ((key, value) in stamps) {
+			if (key in seen) continue
 			resource.addAttributes(
 				KeyValue.newBuilder().setKey(key).setValue(stringValue(value)).build(),
 			)
