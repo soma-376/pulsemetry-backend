@@ -7,9 +7,12 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.mockito.ArgumentMatchers.anyString
+import org.mockito.Mockito.doThrow
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.test.web.server.LocalServerPort
+import org.springframework.dao.DataAccessResourceFailureException
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -116,6 +119,57 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 	}
 
 	@Test
+	@DisplayName("같은 신원 키를 두 번 보내도 뒤의 자기신고가 검증값을 이기지 못한다 — logs")
+	fun duplicateIdentityKeysInLogsCannotSmuggleAnotherTenant() {
+		val seeded = data.seed()
+
+		val response = post("/v1/logs", seeded.rawToken, oneUserPrompt(duplicateIdentity = true))
+
+		assertThat(response.statusCode()).isEqualTo(200)
+		assertIdentityIsTheVerifiedOne(seeded, archivedSignal = "logs")
+	}
+
+	@Test
+	@DisplayName("같은 신원 키를 두 번 보내도 뒤의 자기신고가 검증값을 이기지 못한다 — traces")
+	fun duplicateIdentityKeysInTracesCannotSmuggleAnotherTenant() {
+		val seeded = data.seed()
+
+		val response = post("/v1/traces", seeded.rawToken, oneLlmRequestSpan(duplicateIdentity = true))
+
+		assertThat(response.statusCode()).isEqualTo(200)
+		assertIdentityIsTheVerifiedOne(seeded, archivedSignal = "traces")
+	}
+
+	@Test
+	@DisplayName("인증 조회의 DB 장애는 503 + Retry-After 다 — 401·403 이면 데몬이 멀쩡한 토큰을 버린다")
+	fun anAuthenticationStoreOutageIsRetryable() {
+		val seeded = data.seed()
+		doThrow(DataAccessResourceFailureException("simulated rds outage"))
+			.`when`(telemetryTokens).findAuthRowByTokenHash(anyString())
+
+		val response = post("/v1/logs", seeded.rawToken, oneUserPrompt())
+
+		assertThat(response.statusCode()).isEqualTo(503)
+		assertThat(response.headers().firstValue("Retry-After")).hasValue("1")
+		assertThat(response.headers().firstValue("Content-Type")).hasValue("application/json")
+		// google.rpc.Status — UNAVAILABLE 은 14 다. DB 오류 메시지는 본문에 싣지 않는다.
+		assertThat(response.body()).contains("\"code\":14").doesNotContain("simulated")
+		assertThat(clickHouse("SELECT count() FROM enriched_events").trim()).isEqualTo("0")
+	}
+
+	@Test
+	@DisplayName("필터가 잡지 못한 예외도 403 이 아니라 500 이다 — 기본 닫힘 체인이 오류 디스패치를 막지 않는다")
+	fun anUncaughtFailureIsStillAServerError() {
+		val seeded = data.seed()
+		// RuntimeException 이 아니라 필터의 catch 를 지나쳐 컨테이너까지 간다. 그 경로의 대표다.
+		doThrow(SimulatedContainerError()).`when`(telemetryTokens).findAuthRowByTokenHash(anyString())
+
+		val response = post("/v1/logs", seeded.rawToken, oneUserPrompt())
+
+		assertThat(response.statusCode()).isEqualTo(500)
+	}
+
+	@Test
 	@DisplayName("토큰이 없으면 401 단일 메시지다 — 사유를 알려 주지 않는다")
 	fun aMissingTokenIsTheSingleUnauthorizedBody() {
 		val request = HttpRequest.newBuilder(URI.create("http://localhost:$port/v1/logs"))
@@ -158,18 +212,31 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		return http.send(request, HttpResponse.BodyHandlers.ofString())
 	}
 
+	/** 행과 아카이브 모두 토큰에서 파생된 신원만 담고, 자기신고 값은 어디에도 없다. */
+	private fun assertIdentityIsTheVerifiedOne(seeded: IngestTestData.Seeded, archivedSignal: String) {
+		val row = queryRow()
+		assertThat(row[0]).isEqualTo(seeded.tenantId.toString())
+		assertThat(row[1]).isEqualTo(seeded.installationId.toString())
+		assertThat(row[2]).contains(seeded.teamId.toString())
+
+		val archived = Files.readString(Path.of(archiveDir, "claude_code", "$archivedSignal.jsonl"))
+		assertThat(archived).doesNotContain(BOGUS_TENANT).doesNotContain(BOGUS_INSTALLATION)
+	}
+
 	/**
 	 * claude_code 로그 하나. **리소스 속성에 가짜 신원을 실어 보낸다** — 스탬핑이 그것을
-	 * 덮어쓰는지가 이 테스트의 판정 대상이다.
+	 * 덮어쓰는지가 이 테스트의 판정 대상이다. [duplicateIdentity] 는 같은 키를 **뒤에 한 번 더**
+	 * 싣는다 — 변환 단계가 마지막 값을 읽으므로, 첫 항목만 덮어쓰면 뒤의 것이 이긴다.
 	 */
-	private fun oneUserPrompt(): ByteArray {
+	private fun oneUserPrompt(duplicateIdentity: Boolean = false): ByteArray {
 		val now = Instant.now()
 		val nanos = now.epochSecond * 1_000_000_000L + now.nano
 		return """
 			{"resourceLogs":[{"resource":{"attributes":[
 			  {"key":"service.name","value":{"stringValue":"claude-code"}},
 			  {"key":"tenant.id","value":{"stringValue":"$BOGUS_TENANT"}},
-			  {"key":"developer.installation_id","value":{"stringValue":"bogus-installation"}}]},
+			  {"key":"developer.installation_id","value":{"stringValue":"$BOGUS_INSTALLATION"}}
+			  ${if (duplicateIdentity) ",$TRAILING_BOGUS_IDENTITY" else ""}]},
 			 "scopeLogs":[{"logRecords":[{
 			   "timeUnixNano":"$nanos",
 			   "body":{"stringValue":"claude_code.user_prompt"},
@@ -180,14 +247,15 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 	}
 
 	/** claude_code 스팬 하나. 리소스 속성의 가짜 신원은 [oneUserPrompt] 와 같은 이유로 실어 보낸다. */
-	private fun oneLlmRequestSpan(): ByteArray {
+	private fun oneLlmRequestSpan(duplicateIdentity: Boolean = false): ByteArray {
 		val now = Instant.now()
 		val end = now.epochSecond * 1_000_000_000L + now.nano
 		val start = end - 3_000_000_000L
 		return """
 			{"resourceSpans":[{"resource":{"attributes":[
 			  {"key":"service.name","value":{"stringValue":"claude-code"}},
-			  {"key":"tenant.id","value":{"stringValue":"$BOGUS_TENANT"}}]},
+			  {"key":"tenant.id","value":{"stringValue":"$BOGUS_TENANT"}}
+			  ${if (duplicateIdentity) ",$TRAILING_BOGUS_IDENTITY" else ""}]},
 			 "scopeSpans":[{"spans":[{
 			   "traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"2222222222222222",
 			   "name":"claude_code.llm_request","kind":1,
@@ -216,7 +284,16 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		return response.body()
 	}
 
+	/** 필터의 `catch (RuntimeException)` 을 지나쳐 컨테이너까지 가는 예외의 대역. */
+	private class SimulatedContainerError : Error("simulated uncaught failure")
+
 	private companion object {
 		const val BOGUS_TENANT = "bogus-tenant-self-reported"
+		const val BOGUS_INSTALLATION = "bogus-installation"
+
+		/** 같은 두 키를 한 번 더, 다른 가짜 값으로. 배열의 맨 뒤에 붙는다. */
+		const val TRAILING_BOGUS_IDENTITY =
+			"""{"key":"tenant.id","value":{"stringValue":"$BOGUS_TENANT-2"}},""" +
+				"""{"key":"developer.installation_id","value":{"stringValue":"$BOGUS_INSTALLATION-2"}}"""
 	}
 }

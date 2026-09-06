@@ -8,7 +8,8 @@ import org.springframework.security.core.Authentication
 /**
  * `ptt_` 토큰을 해시해 조회하고 거부 사유를 판정한다.
  *
- * **DB 오류를 삼키지 않는다.** 조회가 실패하면 예외가 그대로 올라가 500 이 된다.
+ * **DB 오류를 삼키지 않는다.** 조회가 실패하면 예외가 그대로 올라가고, 응답은 필터의
+ * [TelemetryTokenUnavailableHandler] 가 앱의 결정대로 쓴다(조립 앱은 503 + `Retry-After`).
  * 401 로 접으면 장애가 "토큰이 틀렸다"로 보여서, 클라이언트가 토큰을 폐기하고 재발급하는
  * 복구 루프(허브 `contracts/telemetry-ingest.md`)를 헛돌게 만든다.
  *

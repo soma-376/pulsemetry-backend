@@ -26,11 +26,16 @@ import org.springframework.web.filter.OncePerRequestFilter
  * `AuthenticationException`(예: Provider 가 등록되지 않았을 때의 `ProviderNotFoundException`)은
  * 배선 실수가 "토큰이 틀렸다"로 보이지 않도록 예외 클래스를 WARN 으로 남긴다.
  *
+ * **조회 장애는 401 이 아니다.** Provider 가 DB 예외를 그대로 올리면 [onUnavailable] 이 응답을 쓴다.
+ * 어떤 상태를 쓸지는 앱이 정한다 — 예외를 컨테이너까지 흘리면 앱의 오류 경로가 무엇을 돌려줄지
+ * 이 필터가 알 수 없다. 기본값은 rethrow 라 배선하지 않은 앱의 동작은 그대로다.
+ *
  * **스테레오타입을 달지 않는다** (ADR 0011).
  */
 class TelemetryTokenAuthenticationFilter(
 	private val authenticationManager: AuthenticationManager,
 	private val entryPoint: AuthenticationEntryPoint,
+	private val onUnavailable: TelemetryTokenUnavailableHandler = TelemetryTokenUnavailableHandler.RETHROW,
 ) : OncePerRequestFilter() {
 
 	private val log = LoggerFactory.getLogger(TelemetryTokenAuthenticationFilter::class.java)
@@ -55,6 +60,10 @@ class TelemetryTokenAuthenticationFilter(
 			SecurityContextHolder.setContext(context)
 		} catch (e: AuthenticationException) {
 			return fail(request, response, e)
+		} catch (e: RuntimeException) {
+			// 토큰 판정이 아니라 조회 자체가 안 됐다. 다음 단계에 닿지 않고, 상태는 앱이 정한다.
+			SecurityContextHolder.clearContext()
+			return onUnavailable.handle(request, response, e)
 		}
 
 		filterChain.doFilter(request, response)

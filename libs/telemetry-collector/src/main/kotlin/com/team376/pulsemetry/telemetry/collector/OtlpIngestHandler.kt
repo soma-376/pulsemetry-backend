@@ -108,6 +108,21 @@ public class OtlpIngestHandler(
 		}
 	}
 
+	/**
+	 * 이 진입점 **앞**에서 난 일시 장애를 OTLP 503 본문으로 만든다 — 인증 조회의 DB 장애가 그 경우다.
+	 *
+	 * 본문 형식(`google.rpc.Status`, 요청과 같은 인코딩)은 이 모듈이 소유하고 인코더는 `internal` 이라,
+	 * 앞단이 같은 바이트를 내려면 여기를 부른다. 모르는 `Content-Type` 은 JSON 으로 쓴다 — 415 판정은
+	 * 인증 뒤의 일이고, 그 전에 죽은 요청에 415 를 낼 수는 없다.
+	 */
+	public fun unavailable(contentType: String?, message: String): OtlpHttpResponse =
+		status(
+			OtlpEncoding.ofContentType(contentType) ?: OtlpEncoding.JSON,
+			503,
+			GrpcCode.UNAVAILABLE,
+			message,
+		)
+
 	private fun mask(signal: Signal, builder: Message.Builder) {
 		when (signal) {
 			Signal.LOGS -> walker.maskLogs(builder as ExportLogsServiceRequest.Builder)

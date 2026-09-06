@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.security
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -127,6 +128,45 @@ class TelemetryTokenAuthenticationFilterTest {
 		assertThat(SecurityContextHolder.getContext().authentication).isNull()
 	}
 
+	// ------------------------------------------------------------------ 조회 장애
+
+	@Test
+	@DisplayName("조회 장애는 기본적으로 그대로 올라간다 — 401 로 접지 않고, 다음 단계에도 닿지 않는다")
+	fun aLookupFailureIsRethrownByDefault() {
+		val manager = RecordingAuthenticationManager(crashWith = IllegalStateException("db down"))
+		val chain = MockFilterChain()
+
+		assertThatThrownBy { invoke(filter(manager), "Bearer ptt_token", chain) }
+			.isInstanceOf(IllegalStateException::class.java)
+			.hasMessage("db down")
+
+		assertThat(chain.request).isNull()
+		assertThat(SecurityContextHolder.getContext().authentication).isNull()
+	}
+
+	@Test
+	@DisplayName("앱이 핸들러를 넘기면 조회 장애의 응답은 그 핸들러가 쓴다")
+	fun aLookupFailureGoesToTheHandlerWhenWired() {
+		val cause = IllegalStateException("db down")
+		val manager = RecordingAuthenticationManager(crashWith = cause)
+		val chain = MockFilterChain()
+		var received: RuntimeException? = null
+		val handler = TelemetryTokenUnavailableHandler { _, response, e ->
+			received = e
+			response.status = 503
+		}
+
+		val response = invoke(
+			TelemetryTokenAuthenticationFilter(manager, TelemetryTokenAuthenticationEntryPoint(), handler),
+			"Bearer ptt_token",
+			chain,
+		)
+
+		assertThat(response.status).isEqualTo(503)
+		assertThat(received).isSameAs(cause)
+		assertThat(chain.request).isNull()
+	}
+
 	private fun filter(manager: AuthenticationManager) =
 		TelemetryTokenAuthenticationFilter(manager, TelemetryTokenAuthenticationEntryPoint())
 
@@ -147,6 +187,8 @@ class TelemetryTokenAuthenticationFilterTest {
 	private class RecordingAuthenticationManager(
 		private val succeedWith: TelemetryTokenPrincipal? = null,
 		private val failWith: TelemetryTokenRejectionReason? = null,
+		/** 토큰 판정이 아니라 조회 자체의 실패 — Provider 가 DB 예외를 그대로 올리는 경우다. */
+		private val crashWith: RuntimeException? = null,
 	) : AuthenticationManager {
 
 		var received: String? = null
@@ -154,6 +196,7 @@ class TelemetryTokenAuthenticationFilterTest {
 
 		override fun authenticate(authentication: Authentication): Authentication {
 			received = authentication.credentials as String
+			crashWith?.let { throw it }
 			failWith?.let { throw TelemetryTokenAuthenticationException(it) }
 			return TelemetryTokenAuthenticationToken.authenticated(succeedWith!!)
 		}

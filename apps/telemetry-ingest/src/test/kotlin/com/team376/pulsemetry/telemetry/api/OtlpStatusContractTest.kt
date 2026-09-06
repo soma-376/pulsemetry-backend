@@ -77,7 +77,7 @@ class OtlpStatusContractTest {
 		}
 		val handler = OtlpIngestHandler(archive = archive, next = next)
 		val properties = TelemetryIngestProperties(tokenHashSecret = "test-token-hash-secret")
-		return MockMvcBuilders.standaloneSetup(OtlpController(handler, properties)).build()
+		return MockMvcBuilders.standaloneSetup(OtlpController(handler, OtlpResponseWriter(properties), properties)).build()
 	}
 
 	private companion object {

@@ -27,11 +27,11 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 class OtlpController(
 	private val handler: OtlpIngestHandler,
+	private val writer: OtlpResponseWriter,
 	properties: TelemetryIngestProperties,
 ) {
 
 	private val maxRequestBytes = properties.telemetry.ingest.maxRequestBytes
-	private val retryAfterSeconds = properties.telemetry.ingest.retryAfter.seconds.toString()
 
 	@RequestMapping(path = ["/v1/logs", "/v1/traces", "/v1/metrics"])
 	fun ingest(request: HttpServletRequest, response: HttpServletResponse) {
@@ -47,14 +47,7 @@ class OtlpController(
 			),
 		)
 
-		response.status = result.status
-		response.setHeader(HttpHeaders.CONTENT_TYPE, result.contentType)
-		// 데몬은 이 값을 하한으로 쓰고 15초에서 자른다. 503 에만 붙인다 (허브 ADR 0006).
-		if (result.status == HttpServletResponse.SC_SERVICE_UNAVAILABLE) {
-			response.setHeader(HttpHeaders.RETRY_AFTER, retryAfterSeconds)
-		}
-		response.setContentLength(result.body.size)
-		response.outputStream.write(result.body)
+		writer.write(response, result)
 	}
 
 	/**

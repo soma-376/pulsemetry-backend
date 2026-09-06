@@ -36,6 +36,7 @@ import org.springframework.dao.NonTransientDataAccessResourceException
  * | `TelemetrySinkRejectedException` — ClickHouse 4xx | 400 | 요청이 거부됐다 |
  * | `EnrichmentUnavailableException` · `TelemetrySinkUnavailableException` | 503 | RDS·ClickHouse 에 닿지 못했다 |
  * | 그 밖의 예외 | 503 | 상태가 실리지 않은 오류의 기본. **기본을 영구 오류로 바꾸지 마라** — 잘못 재시도하는 비용은 데몬의 3회 예산으로 막혀 있지만, 잘못 폐기하는 비용은 되돌릴 수 없다 |
+ * | 인증 조회의 `RuntimeException` — 이 파이프라인 **앞**, 필터 단계 | 503 | RDS 에 닿지 못했다. `SecurityConfig` 가 필터에 넘긴 핸들러가 같은 본문·`Retry-After` 로 쓴다. 401 이면 데몬이 토큰을 폐기한다 |
  */
 class IngestPipeline(
 	private val enricher: Enricher,

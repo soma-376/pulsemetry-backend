@@ -1,10 +1,12 @@
 package com.team376.pulsemetry.telemetry.support
 
+import com.team376.pulsemetry.persistence.enrollment.repository.TelemetryTokenRepository
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
 
@@ -17,10 +19,16 @@ import org.testcontainers.containers.wait.strategy.Wait
  *
  * ClickHouse 는 Spring 이 관리하지 않는다. `@ServiceConnection` 이 없는 저장소라
  * 정적 컨테이너를 직접 띄우고 URL 만 프로퍼티로 넘긴다.
+ *
+ * [telemetryTokens] 의 spy 도 같은 이유로 여기 있다 — 빈 오버라이드는 캐시 키의 일부다. 인증
+ * 조회 장애를 흉내 내는 테스트만 쓰고, 나머지는 실물 그대로 지나간다(테스트마다 원복된다).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(PostgresContainerConfig::class, IngestTestData::class)
 abstract class AbstractIngestIntegrationTest {
+
+	@MockitoSpyBean
+	protected lateinit var telemetryTokens: TelemetryTokenRepository
 
 	companion object {
 		private const val HTTP_PORT: Int = 8123

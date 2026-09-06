@@ -142,7 +142,8 @@ docker compose up -d                              # 로컬 Postgres · ClickHous
   ClickHouse 응답의 4xx는 영구, `5xx`·`429`·`408`은 일시다 — **이 목록을 넓히지 마라.**
 - **신원 스탬핑은 마스킹 뒤·아카이브 앞이다**(ADR 0016). 검증된 `tenant.id`가 `record_id` 해시의
   재료이고 그것이 ReplacingMergeTree의 멱등 키라, 신원 없는 원본을 재처리하면 실시간 경로와
-  **다른 키**가 나와 중복으로 쌓인다. 순서를 뒤집지 마라.
+  **다른 키**가 나와 중복으로 쌓인다. 순서를 뒤집지 마라. 같은 키가 여러 번 와도 **전부** 덮어쓴다 —
+  변환 단계는 마지막 값을 읽으므로 첫 항목만 덮어쓰면 뒤의 자기신고가 이긴다.
 - **`:libs:` 는 Boot starter를 끌지 않지만 조립 앱은 켠다**(ADR 0016). ADR 0011의 검사 대상은
   `:apps:enrollment-api`의 클래스패스다. `:apps:telemetry-ingest`의
   `spring-boot-starter-security`는 규칙 위반이 아니라 의도된 선택이다.
@@ -152,6 +153,10 @@ docker compose up -d                              # 로컬 Postgres · ClickHous
   400, 일시 장애와 분류되지 않은 예외가 503이다. 행을 옮기면 허브 `contracts/telemetry-ingest.md` §8을
   같은 커밋에서 고친다.
 - **`:apps:telemetry-ingest`의 OTLP 밖 경로는 기본 닫힘이다.** 둘째 `SecurityFilterChain`이 `/v1/healthz`만
-  열고 나머지는 `denyAll`이다. 관리 엔드포인트를 얹으려면 그 체인에 경로를 명시한다.
+  열고 나머지는 `denyAll`이다. 관리 엔드포인트를 얹으려면 그 체인에 경로를 명시한다. 예외는 ERROR
+  디스패치 하나다 — 막으면 Boot의 `/error`가 403이 되어 모든 미처리 예외가 "인증 실패"로 보인다.
+- **인증 조회의 DB 장애는 401도 403도 아니다.** 데몬은 그 둘을 같은 칸에 두고 토큰을 폐기·재발급한다.
+  필터에 넘긴 `TelemetryTokenUnavailableHandler`가 503 + `Retry-After`를 쓴다. 예외를 컨테이너까지
+  흘리지 마라.
 - ADR을 추가하면 `0018`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.
