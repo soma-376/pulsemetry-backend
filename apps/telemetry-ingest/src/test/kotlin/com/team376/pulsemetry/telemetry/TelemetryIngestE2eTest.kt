@@ -7,6 +7,8 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.doThrow
 import org.springframework.beans.factory.annotation.Autowired
@@ -185,12 +187,26 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		assertThat(response.headers().firstValue("WWW-Authenticate")).isEmpty
 	}
 
-	@Test
-	@DisplayName("OTLP 경로 밖은 기본 닫힘이다 — 새 경로가 인증 없이 열리지 않는다")
-	fun unmappedPathsAreDeniedByDefault() {
-		val request = HttpRequest.newBuilder(URI.create("http://localhost:$port/actuator/health")).GET().build()
+	@ParameterizedTest
+	@ValueSource(strings = ["/actuator/health", "/v1/unknown", "/error"])
+	@DisplayName("계약 밖 경로는 토큰 유무와 무관하게 404 다 — 인증 복구를 유발하지 않는다")
+	fun unmappedPathsAreDeniedByDefault(path: String) {
+		val seeded = data.seed()
+		for (token in listOf(null, "invalid-token", seeded.rawToken)) {
+			val request = HttpRequest.newBuilder(URI.create("http://localhost:$port$path"))
+				.POST(HttpRequest.BodyPublishers.ofByteArray(oneUserPrompt()))
+			if (token != null) request.header("Authorization", "Bearer $token")
 
-		assertThat(http.send(request, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(403)
+			val response = http.send(request.build(), HttpResponse.BodyHandlers.ofString())
+
+			assertThat(response.statusCode()).isEqualTo(404)
+			assertThat(response.headers().firstValue("Content-Type")).hasValue("text/plain")
+			assertThat(response.body()).isEqualTo("404 not found")
+			assertThat(response.headers().firstValue("WWW-Authenticate")).isEmpty
+			assertThat(response.headers().firstValue("Retry-After")).isEmpty
+		}
+		assertThat(clickHouse("SELECT count() FROM enriched_events").trim()).isEqualTo("0")
+		assertThat(Path.of(archiveDir, "claude_code", "logs.jsonl")).doesNotExist()
 	}
 
 	@Test

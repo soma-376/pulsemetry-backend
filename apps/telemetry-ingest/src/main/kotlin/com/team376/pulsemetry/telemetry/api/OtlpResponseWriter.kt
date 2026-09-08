@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component
 /**
  * 수집 모듈의 [OtlpHttpResponse] 를 서블릿 응답에 그대로 쓴다.
  *
- * 쓰는 자리가 둘이다 — 컨트롤러와, 인증 조회 장애를 503 으로 돌리는 필터 핸들러. `Retry-After` 를
+ * 컨트롤러·인증 조회 장애 핸들러·기본 닫힘 체인이 함께 쓴다. `Retry-After` 를
  * 붙이는 규칙이 한 곳에 있어야 두 503 이 같은 모양이다.
  */
 @Component

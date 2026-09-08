@@ -44,14 +44,14 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter
  *   [TelemetryTokenAuthenticationProvider] 는 예외를 그대로 올리고, 필터에 넘긴
  *   [TelemetryTokenUnavailableHandler] 가 수집 모듈의 503 본문을 [OtlpResponseWriter] 로 쓴다 —
  *   파이프라인의 503 과 같은 모양이다(허브 §8). 예외를 컨테이너까지 흘리면 안 된다: Boot 의 오류
- *   경로 `/error` 는 OTLP 체인 밖이라 둘째 체인이 받고, 그 `denyAll` 에 걸려 500 대신 403 이 된다.
+ *   경로 `/error` 는 OTLP 체인 밖이라 둘째 체인이 받고, 그 `denyAll` 에 걸리면 서버 오류가 경로 거부 응답으로 바뀐다.
  * - **체인은 둘이고 기본은 닫힘이다.** 첫 체인이 [Signal] 의 세 경로를 잡고, 둘째 체인이 나머지
  *   전부를 잡아 `/v1/healthz` 만 열고 그 밖은 `denyAll` 이다. 명시적 `SecurityFilterChain` 빈이
  *   있으면 Boot 의 기본 체인은 물러나므로, 둘째 체인이 없으면 새로 얹는 경로가 인증 없이 열린다.
- *   관리 엔드포인트를 얹을 때는 둘째 체인에 그 경로를 명시한다.
+ *   거부 응답은 허브 계약의 404 이다. 관리 엔드포인트를 얹을 때는 둘째 체인에 그 경로를 명시한다.
  * - **둘째 체인은 ERROR 디스패치만 통과시킨다.** 필터가 잡지 못한 예외가 `/error` 로 갔을 때 Boot 의
  *   500 이 그대로 나가게 하는 이중 방어다. 밖에서 직접 부르는 `/error` 는 REQUEST 디스패치라
- *   여전히 403 이다.
+ *   404 로 거부한다.
  */
 @Configuration(proxyBeanMethods = false)
 class SecurityConfig {
@@ -123,18 +123,26 @@ class SecurityConfig {
 		}
 
 	/**
-	 * OTLP 경로 밖의 기본값 — **닫힘.** 헬스 경로만 연다. 매핑되지 않은 경로는 404 가 아니라 403 이다.
-	 * 데몬은 세 경로만 부르므로 처분에 영향이 없다.
+	 * OTLP 경로 밖의 기본값 — **닫힘.** 헬스 경로만 연다. 거부 응답은 404 이다.
+	 * 403 으로 내면 데몬이 경로 오류를 토큰 오류로 보고 재발급하므로 허브 계약 §8을 따른다.
 	 */
 	@Bean
 	@Order(2)
-	fun defaultDenyFilterChain(http: HttpSecurity): SecurityFilterChain = http
+	fun defaultDenyFilterChain(
+		http: HttpSecurity,
+		handler: OtlpIngestHandler,
+		writer: OtlpResponseWriter,
+	): SecurityFilterChain = http
 		.csrf { it.disable() }
 		.headers { it.disable() }
 		.requestCache { it.disable() }
 		.sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
+		.exceptionHandling {
+			it.authenticationEntryPoint { _, response, _ -> writer.write(response, handler.notFound()) }
+			it.accessDeniedHandler { _, response, _ -> writer.write(response, handler.notFound()) }
+		}
 		.authorizeHttpRequests {
-			// Boot 이 처리되지 않은 예외를 /error 로 되보내는 내부 디스패치. 막으면 500 이 403 이 된다.
+			// 내부 오류 디스패치는 통과시켜 Boot 의 원래 서버 오류 응답을 보존한다.
 			it.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
 			it.requestMatchers(HEALTH_PATH).permitAll()
 			it.anyRequest().denyAll()

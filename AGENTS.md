@@ -154,7 +154,8 @@ docker compose up -d                              # 로컬 Postgres · ClickHous
   같은 커밋에서 고친다.
 - **`:apps:telemetry-ingest`의 OTLP 밖 경로는 기본 닫힘이다.** 둘째 `SecurityFilterChain`이 `/v1/healthz`만
   열고 나머지는 `denyAll`이다. 관리 엔드포인트를 얹으려면 그 체인에 경로를 명시한다. 예외는 ERROR
-  디스패치 하나다 — 막으면 Boot의 `/error`가 403이 되어 모든 미처리 예외가 "인증 실패"로 보인다.
+  디스패치 하나다 — 내부 오류는 원래 서버 오류 응답을 보존한다. 외부의 계약 밖 요청은
+  `denyAll`을 유지하며 `404 text/plain`으로 거부한다(허브 계약 §8).
 - **인증 조회의 DB 장애는 401도 403도 아니다.** 데몬은 그 둘을 같은 칸에 두고 토큰을 폐기·재발급한다.
   필터에 넘긴 `TelemetryTokenUnavailableHandler`가 503 + `Retry-After`를 쓴다. 예외를 컨테이너까지
   흘리지 마라.

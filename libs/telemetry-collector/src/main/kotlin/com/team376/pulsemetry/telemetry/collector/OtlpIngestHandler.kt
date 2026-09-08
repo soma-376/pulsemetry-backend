@@ -196,7 +196,8 @@ public class OtlpIngestHandler(
 			).toByteArray(Charsets.UTF_8),
 	)
 
-	private fun notFound() = OtlpHttpResponse(
+	/** 조립 앱의 기본 닫힘 체인도 같은 경로 거부 응답을 사용한다. */
+	public fun notFound(): OtlpHttpResponse = OtlpHttpResponse(
 		status = 404,
 		contentType = "text/plain",
 		body = "404 not found".toByteArray(Charsets.UTF_8),
