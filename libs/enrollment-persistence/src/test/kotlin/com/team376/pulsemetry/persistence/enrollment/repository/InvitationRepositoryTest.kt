@@ -143,10 +143,10 @@ class InvitationRepositoryTest : AbstractPersistenceIntegrationTest() {
 	}
 
 	@Test
-	@DisplayName("이미 사용된 초대는 폐기되지 않는다 — 0행 (409 invitation_used)")
+	@DisplayName("가입·설치를 모두 마친 초대는 폐기되지 않는다 — 0행 (409 invitation_used)")
 	fun revokeUsedInvitation() {
 		val id = invitations.saveAndFlush(
-			EnrollmentFixtures.invitation(tenantId, memberId, usedAt = Instant.now()),
+			EnrollmentFixtures.invitation(tenantId, memberId, usedAt = Instant.now()).apply { signupUsedAt = Instant.now() },
 		).id
 
 		assertThat(invitations.revoke(id, Instant.now())).isEqualTo(0)

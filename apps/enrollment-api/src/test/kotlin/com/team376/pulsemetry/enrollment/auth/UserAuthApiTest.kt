@@ -104,6 +104,24 @@ class UserAuthApiTest {
         .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(
             mapOf("code" to code, "platform" to "macos")))).build(), HttpResponse.BodyHandlers.ofString())
 
+    @Test fun `설치 후에도 남은 가입 권한을 폐기할 수 있고 가입 후 설치 권한도 폐기한다`() {
+        assertThat(enroll().statusCode()).isEqualTo(201)
+        fun revoke(): Int {
+            val id = jdbc.sql("SELECT id FROM enrollment.invitations").query(UUID::class.java).single()
+            return http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/invitations/$id/revoke"))
+                .header("X-Admin-Token", "test-admin-token").POST(HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString()).statusCode()
+        }
+        assertThat(revoke()).isEqualTo(204)
+        assertThat(signup().statusCode()).isEqualTo(409)
+        assertThat(revoke()).isEqualTo(409)
+        setup()
+        assertThat(signup().statusCode()).isEqualTo(201)
+        assertThat(revoke()).isEqualTo(204)
+        assertThat(enroll().statusCode()).isEqualTo(409)
+        assertThat(login().statusCode()).isEqualTo(200)
+    }
+
     @Test fun `가입 경합에서 정확히 한 요청만 비밀번호를 설정한다`() {
         val gate = CountDownLatch(1)
         Executors.newFixedThreadPool(2).use { pool ->

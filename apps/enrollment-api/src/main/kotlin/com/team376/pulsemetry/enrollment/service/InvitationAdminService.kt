@@ -127,7 +127,7 @@ class InvitationAdminService(
 		}
 
 	/**
-	 * 아직 쓰지도 폐기되지도 않은 초대만 폐기한다.
+	 * 가입·설치 중 미소비 권한이 남은 초대를 폐기한다.
 	 *
 	 * 조건부 UPDATE 의 영향 행 수가 곧 결과다. 0행일 때만 사유를 조회한다 —
 	 * 먼저 조회해서 판단하면 그 사이에 누가 코드를 써 버릴 수 있다.
@@ -143,8 +143,8 @@ class InvitationAdminService(
 			EnrollmentException.invitationNotFound()
 		}
 		throw when {
-			invitation.isUsed() -> EnrollmentException.invitationUsed()
 			invitation.isRevoked() -> EnrollmentException.invitationRevoked()
+			invitation.isUsed() && invitation.signupUsedAt != null -> EnrollmentException.invitationUsed()
 			// 도달할 수 없다. 조건부 UPDATE 가 0행이면 둘 중 하나여야 한다.
 			else -> EnrollmentException.invitationNotFound()
 		}

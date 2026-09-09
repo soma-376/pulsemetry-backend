@@ -394,10 +394,10 @@ class InvitationAdminApiTest {
 	}
 
 	@Test
-	@DisplayName("이미 사용된 초대를 폐기하면 409 invitation_used")
+	@DisplayName("가입·설치 모두 사용된 초대를 폐기하면 409 invitation_used")
 	fun revokeUsedInvitation() {
 		val invitationId = data.invitation(
-			tenantId, ownerId, InvitationCode.generate(), usedAt = Instant.now(),
+			tenantId, ownerId, InvitationCode.generate(), usedAt = Instant.now(), signupUsedAt = Instant.now(),
 		).id
 
 		val response = post("/v1/invitations/$invitationId/revoke", null)
