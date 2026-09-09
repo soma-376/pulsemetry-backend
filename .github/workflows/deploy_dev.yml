@@ -132,6 +132,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout telemetryctl (이미지 계약 원천)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: soma-376/telemetryctl
+          path: telemetryctl
+          persist-credentials: false
+
       # 장기 액세스 키를 쓰지 않는다(인프라 ADR-0024). 신뢰 정책이 develop ref를
       # StringEquals로 고정하므로 이 잡에 environment를 붙이지 않는다.
       - name: Configure AWS credentials (OIDC)
@@ -177,6 +184,8 @@ jobs:
           context: .
           file: Dockerfile
           target: enrollment-api
+          build-contexts: |
+            telemetry-contracts=./telemetryctl/contracts
           platforms: linux/arm64
           provenance: false
           push: true

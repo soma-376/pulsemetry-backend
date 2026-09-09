@@ -41,6 +41,8 @@ object ContractSchemas {
 				mapOf(
 					ENVELOPE_ID to read("enrollment-envelope.schema.json"),
 					MANIFEST_ID to read("enrollment-manifest.schema.json"),
+					BASE_IRI + "user-auth.schema.json" to read("user-auth.schema.json"),
+					BASE_IRI + "manifest-resync.schema.json" to read("manifest-resync.schema.json"),
 				),
 			)
 		}
@@ -61,6 +63,13 @@ object ContractSchemas {
 
 	/** 봉투 안에 실리는 순수 설정 manifest. */
 	fun manifestSchema(): Schema = registry.getSchema(SchemaLocation.of(MANIFEST_ID))
+
+	/** `GET /v1/manifest` 응답 봉투(5키). */
+	fun manifestResyncSchema(): Schema = registry.getSchema(SchemaLocation.of(BASE_IRI + "manifest-resync.schema.json"))
+
+	/** 사용자 AT 의 클레임. */
+	fun userClaimsSchema(): Schema =
+		registry.getSchema(SchemaLocation.of(BASE_IRI + "user-auth.schema.json#/\$defs/access_token_claims"))
 
 	fun validate(schema: Schema, json: String): List<Error> = schema.validate(json, InputFormat.JSON)
 

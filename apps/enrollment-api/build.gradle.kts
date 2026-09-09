@@ -21,7 +21,7 @@ dependencies {
 	// 앱 컨텍스트가 뜨려면 실제 PostgreSQL 이 필요하다 (Flyway 가 기동 시 마이그레이션한다).
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.postgresql)
-	testImplementation(libs.json.schema.validator)
+	implementation(libs.json.schema.validator)
 }
 
 // 실행 산출물은 bootJar 하나다. plain jar 를 만들면 Dockerfile 이 둘 중 하나를 골라내야 한다.
@@ -50,4 +50,17 @@ tasks.withType<Test>().configureEach {
 		"pulsemetry.binaries.dir",
 		layout.buildDirectory.dir("test-binaries").get().asFile.absolutePath,
 	)
+}
+
+// 재동기화는 저장된 정책을 원본 JSON Schema로 검사한다. 소스 복사본 없이 배포 jar에 계약을 포함한다.
+tasks.named<org.gradle.language.jvm.tasks.ProcessResources>("processResources") {
+    doFirst {
+        check(file("$contractsDir/enrollment-manifest.schema.json").isFile) {
+            "PULSEMETRY_CONTRACTS_DIR에 원본 manifest 스키마가 필요하다"
+        }
+    }
+    from(contractsDir) {
+        include("enrollment-manifest.schema.json")
+        into("contracts")
+    }
 }

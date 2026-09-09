@@ -31,7 +31,7 @@
 
 위 흐름의 마지막 단계(설정 병합·백업·daemon 자동 실행 등록)는 클라이언트의 몫이며 서버는 관여하지 않는다.
 
-**범위 밖**: 웹 대시보드 조회 API, 설정 재조회(`GET /v1/manifest`), heartbeat,
+**범위 밖**: 웹 대시보드 조회 API, heartbeat,
 `uninstall`/`repair`, 초대 이메일 발송, 데이터 파이프라인.
 
 ---
@@ -42,6 +42,7 @@
 |---|---|---|---|
 | POST | `/v1/enroll` | 없음 (초대 코드 자체가 자격) | 201 |
 | POST | `/v1/installations/telemetry-token` | `Authorization: Bearer <installation_token>` | 200 |
+| GET | `/v1/manifest` | `Authorization: Bearer <사용자 RT>` | 200 |
 | GET | `/v1/healthz` | 없음 | 200 |
 | POST | `/v1/invitations` | `X-Admin-Token` | 201 |
 | POST | `/v1/invitations/{id}/revoke` | `X-Admin-Token` | 204 |
@@ -551,6 +552,18 @@ type CurrentUser = {
 계약·벤더·manifest·온보딩 완료 여부는 로그인 조건이 아니다(ADR 0033).
 활성 manifest가 없는 세션도 생성하며 `manifest_revision=0`을 쓴다. 일반 RT 갱신은 기존 revision을 유지한다.
 이 값으로 온보딩 상태를 판단하지 않고 §13의 온보딩 조회를 사용한다.
+
+### 11.1 manifest 재동기화
+
+`GET /v1/manifest`는 `Authorization: Bearer <사용자 RT>`를 받고 정책과 토큰의 5키 봉투
+(`manifest`·`access_token`·`refresh_token`·`token_type`·`expires_in`)를 반환한다.
+허브 `contracts/user-auth.md`와 `telemetryctl/contracts/manifest-resync.schema.json`이 계약이다.
+AT와 설치 `pit_`·`ptt_`는 401 `invalid_credentials`다.
+활성 정책과 RT 회전을 한 트랜잭션으로 묶으며 실패 시 전부 롤백한다(ADR 0019).
+활성 manifest가 없거나 저장된 정책이 계약 스키마를 어기면 409 `manifest_not_configured`이고 RT는 소비되지 않는다.
+응답의 새 토큰은 서버 revision 일치만 보장하고 클라이언트 적용 완료의 증거가 아니다.
+GET이 상태를 변경하므로 캐시·프리페치·자동 재시도를 금지한다. 커밋 후 응답 유실은 재로그인으로 복구한다.
+OTLP 인증은 `ptt_`를 유지하며 사용자 AT나 revision 검사를 추가하지 않는다(허브 ADR 0008).
 
 
 ## 12. 조직 관리 API

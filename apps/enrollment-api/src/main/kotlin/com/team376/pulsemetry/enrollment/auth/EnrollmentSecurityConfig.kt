@@ -44,6 +44,7 @@ class EnrollmentSecurityConfig {
             }
             val source = UrlBasedCorsConfigurationSource().apply {
                 registerCorsConfiguration("/v1/auth/**", cors)
+                registerCorsConfiguration("/v1/manifest", cors)
                 registerCorsConfiguration("/api/v1/organizations/**", cors)
             }
             http.cors { it.configurationSource(source) }
@@ -55,7 +56,7 @@ class EnrollmentSecurityConfig {
 }
 
 private class UserAuthRequestFilter(private val auth: UserAuthService) : OncePerRequestFilter() {
-    override fun shouldNotFilter(request: HttpServletRequest) = !request.servletPath.startsWith("/v1/auth/")
+    override fun shouldNotFilter(request: HttpServletRequest) = !request.servletPath.startsWith("/v1/auth/") && request.servletPath != "/v1/manifest"
     override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
         response.setHeader("Cache-Control", "no-store")
         response.setHeader("Pragma", "no-cache")
