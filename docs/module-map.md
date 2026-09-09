@@ -251,3 +251,8 @@ libs/
   연산 호출로 바꾼다.
 - 모듈 간 테스트 지원 코드는 `java-test-fixtures`로 공유한다. 테스트 전용 모듈을 따로 만들지 않는다.
 - `:apps`·`:libs` 디렉터리 자체는 빌드 스크립트를 갖지 않는다. 루트가 `buildFile.exists()`로 건너뛴다.
+
+## 사용자 인증 (PROJ-107)
+
+security.user가 JWT·가입 검증·세션 회전 코어를 제공하고 enrollment.auth가 HTTP·빈을 조립한다.
+SQL과 V5 테이블은 enrollment-persistence 소유다. 기존 모듈 간 단방향 의존을 유지한다.

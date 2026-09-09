@@ -36,7 +36,7 @@ libs/telemetry-persistence/  파이프라인 적재 단계 — ClickHouse 스키
 
 | 항목 | 상태 | 근거 |
 |---|---|---|
-| 사람 계정·로그인 | 미구현 | 이 레포가 **Auth Service**다. Spring Security가 AT·RT를 직접 발급한다(ADR-0007 — Cognito 미사용). `members.cognito_user_sub`는 제거됐고(`V4`) 비밀번호 자리는 `members.password_hash`다 — 담을 곳만 있고 로그인 경로는 아직 없다. 얹힐 자리는 `:libs:security`이고 모듈은 이미 서 있다 |
+| 사람 계정·로그인 | PROJ-107 서버 JSON API 구현. `security.user` 코어·`enrollment.auth` 조립. 키 설정으로 활성화하며 실제 웹·CLI 및 관리자 인가 전환은 별도 |
 | manifest 작성 API | 미구현 (현재 수동 INSERT) | manifest 저장은 이미 이 레포 소유 |
 | 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | 확정 ADR은 아직 없다 |
 | 텔레메트리 파이프라인 이관 | **코드는 끝났다. 배포만 남았다** | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 로컬에서는 다섯 모듈이 한 요청에서 돈다 — 남은 것은 infra 가 이 앱을 배포하고 collector 컨테이너를 내리는 일이다(PROJ-106) |
@@ -159,5 +159,11 @@ docker compose up -d                              # 로컬 Postgres · ClickHous
 - **인증 조회의 DB 장애는 401도 403도 아니다.** 데몬은 그 둘을 같은 칸에 두고 토큰을 폐기·재발급한다.
   필터에 넘긴 `TelemetryTokenUnavailableHandler`가 503 + `Retry-After`를 쓴다. 예외를 컨테이너까지
   흘리지 마라.
-- ADR을 추가하면 `0018`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
+- ADR을 추가하면 `0019`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.
+
+## PROJ-107 사용자 인증
+
+가입·로그인·CLI 코드 교환·RT 회전은 구현됐다. 기본 비활성이며 `docs/user-auth-operations.md`의 키 설정으로 켠다.
+사람 인증 코어는 security.user, HTTP는 enrollment.auth다. 실제 CLI·웹 화면과 관리자 인가 전환(PROJ-109)은 별도다.
+RT 재사용 세션 폐기는 거부 응답과 함께 롤백하면 안 된다. 설치 초대 used_at과 signup_used_at을 합치지 않는다.

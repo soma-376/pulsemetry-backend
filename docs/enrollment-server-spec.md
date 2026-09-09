@@ -29,7 +29,7 @@
 
 위 흐름의 마지막 단계(설정 병합·백업·daemon 자동 실행 등록)는 클라이언트의 몫이며 서버는 관여하지 않는다.
 
-**범위 밖**: 웹 대시보드 API, 사용자 로그인, 설정 재조회(`GET /v1/manifest`), heartbeat,
+**범위 밖**: 웹 대시보드 API와 화면, 설정 재조회(`GET /v1/manifest`), heartbeat,
 `uninstall`/`repair`, 초대 이메일 발송, 데이터 파이프라인.
 
 ---
@@ -38,6 +38,12 @@
 
 | 메서드 | 경로 | 인증 | 성공 |
 |---|---|---|---|
+| POST | `/v1/auth/signup` | 초대 코드·이메일 | 201 |
+| POST | `/v1/auth/login` | tenant·이메일·비밀번호 | 200 |
+| POST | `/v1/auth/cli/authorize` | 로그인 + PKCE challenge | 200 |
+| POST | `/v1/auth/cli/token` | 일회용 code + verifier | 200 |
+| POST | `/v1/auth/refresh` | JSON refresh_token | 200 |
+| POST | `/v1/auth/logout` | JSON refresh_token | 204 |
 | POST | `/v1/enroll` | 없음 (초대 코드 자체가 자격) | 201 |
 | POST | `/v1/installations/telemetry-token` | `Authorization: Bearer <installation_token>` | 200 |
 | GET | `/v1/healthz` | 없음 | 200 |
@@ -487,3 +493,12 @@ H2 등 임베디드 DB 로 대체하지 않는다 — jsonb·부분 유니크 �
 
 V1 마이그레이션이 native enum 채택(ADR 0009)으로 재작성되어 Flyway 체크섬이 바뀌었다.
 이전 버전으로 만들어진 로컬 DB 는 `docker compose down -v` 로 볼륨째 지우고 다시 띄운다.
+
+## 11. 사용자 인증 (PROJ-107)
+
+사용자 가입·로그인 JSON API는 이 앱의 범위다. `/v1/auth/signup`, `/login`, `/cli/authorize`,
+`/cli/token`, `/refresh`, `/logout`은 모두 POST이며 prefix는 `/v1/auth`다.
+계약은 허브 `contracts/user-auth.md`, 원본 스키마는 telemetryctl/contracts/user-auth.schema.json이다.
+기존 enroll 봉투는 정확히 4키다. 사용자 토큰을 그 안에 추가하지 않는다.
+로그인·가입 화면과 실제 CLI 로그인 구현은 범위 밖이며 모의 CLI E2E로 서버만 검증한다.
+키 교체·기본값·롤백은 [사용자 인증 운영](user-auth-operations.md), 구현 결정은 ADR 0018을 따른다.

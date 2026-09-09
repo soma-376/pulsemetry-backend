@@ -5,6 +5,8 @@ plugins {
 }
 
 dependencies {
+	implementation("org.springframework.security:spring-security-oauth2-jose")
+	implementation("org.springframework.security:spring-security-crypto")
 	// 읽기 전용 의존이다. telemetry_tokens 의 쓰기 소유는 enrollment-api 그대로다 (ADR 0008 규칙 1).
 	// api() 다 — Provider 의 생성자와 판정 함수가 영속성 타입(TelemetryTokenRepository · TelemetryTokenAuthRow)을
 	// 받는다. 소비자(조립 앱)가 그 타입 없이는 조립할 수 없으므로 계약이다 (module-map 4절).

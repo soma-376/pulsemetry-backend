@@ -36,6 +36,9 @@ class Invitation(
 	@Column(name = "id", nullable = false)
 	var id: UUID = UUID.randomUUID(),
 
+	@Column(name = "signup_used_at")
+	var signupUsedAt: Instant? = null,
+
 	@Column(name = "used_at")
 	var usedAt: Instant? = null,
 
