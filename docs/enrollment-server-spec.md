@@ -161,7 +161,7 @@ WHERE code_hash = :codeHash
 
 **enroll 성공은 대상 멤버의 `invited → active` 전환 이벤트다.** OTLP 경로의
 auth-proxy(ai-telemetry-pipeline)가 `invited`·`suspended` 멤버의 토큰을 거부하므로,
-이 전환 없이는 발급된 telemetry token 이 전부 401 이 된다. 재발급(§6.3의
+이 전환 없이는 발급된 telemetry token 이 전부 401 이 된다. 재발급(§4.3의
 `POST /v1/installations/telemetry-token`)도 같은 전환을 보정한다 — pit_ 인증이 과거
 enroll 완료의 증명이기 때문이다. 전환은 `invited` 에서만 일어난다. `suspended` 는
 어느 경로도 건드리지 않는다 — 정지 해제는 관리자의 결정이지 설치의 부수효과가 아니다.
@@ -433,19 +433,54 @@ export PULSEMETRY_ADMIN_API_TOKEN=...
 ## 10. 로컬 실행
 
 ```sh
-docker compose up -d                       # PostgreSQL 16 (infra 배포 대상과 같은 메이저)
+docker compose up -d                       # PostgreSQL 16 · ClickHouse
 export PULSEMETRY_ADMIN_API_TOKEN=...      # 없으면 기동 실패한다
-# auth-proxy 와 공유하는 HMAC 키. 로컬은 ai-telemetry-pipeline compose 의 기본값과 맞춘다.
+# 두 앱이 공유하는 HMAC 키. 값이 갈리면 발급된 모든 토큰이 401 이 된다.
 export PULSEMETRY_TOKEN_HASH_SECRET=local-development-secret-change-me
 export SPRING_PROFILES_ACTIVE=local        # local 프로파일 시더를 켠다
-./gradlew :apps:enrollment-api:bootRun
+./gradlew :apps:enrollment-api:bootRun     # 8080 — enrollment · manifest
 ```
 
-`local` 프로파일은 `LocalSeeder` 를 켠다 — tenant 하나, 활성 owner member 하나,
-`is_active = true` 인 manifest v1 을 넣는다. 이게 없으면 §9.1 대로 manifest 를 직접 넣기 전까지
-첫 enroll 이 409 `manifest_not_configured` 로 실패한다.
-시더는 **멱등**하다. 이미 tenant 가 있으면 아무것도 하지 않는다.
-`POST /v1/invitations` 에 넣을 `tenant_id` 와 `created_by_member_id` 는 기동 로그에 찍힌다.
+`local` 프로파일은 `LocalSeeder` 를 켠다 — tenant 하나, 활성 owner member 하나, 팀 하나와 그
+소속(as-of), `is_active = true` 인 manifest v1, 그리고 고정 초대 코드 하나를 넣는다. 이게 없으면
+§9.1 대로 manifest 를 직접 넣기 전까지 첫 enroll 이 409 `manifest_not_configured` 로 실패한다.
+시더는 **멱등**하고 **항목마다 따로 확인한다** — 이미 tenant 가 있는 DB 에도 빠진 항목은 채운다.
+`POST /v1/invitations` 에 넣을 `tenant_id` 와 `created_by_member_id`, 그리고 초대 코드는
+기동 로그에 찍힌다.
+
+**팀 소속은 시드된 owner 에게 걸려 있다.** 다른 이메일로 초대하면 새 member 가 만들어져 소속이
+없고, 그러면 `enriched_events.team_ids_as_of` 가 빈 배열이 된다 — 보강 배선이 틀린 것이 아니다.
+
+### 10.1 파이프라인까지 로컬에서 돌리기
+
+```sh
+./gradlew :apps:telemetry-ingest:bootRun   # 4316 — OTLP 수신부터 ClickHouse 적재까지
+```
+
+`:apps:telemetry-ingest` 는 같은 DB 를 읽지만 **Flyway 를 돌리지 않는다.** enrollment 스키마의
+적용 주체는 `:apps:enrollment-api` 하나이므로 그쪽을 먼저 띄운다. ClickHouse 스키마는 이 앱이
+기동 시 적용하고, ClickHouse 가 죽어 있어도 앱은 뜬다(ADR 0016).
+
+포트 4316 은 **시드 manifest 의 `otlp.endpoint` 와 이미 맞는다** — 데몬 설정을 바꿀 필요가 없다
+(포트의 근거는 ADR 0016).
+
+**시드 manifest 는 `signals.logs: true` 다.** 데몬이 logs 를 보내야 claude_code 이벤트가 행이 된다.
+시더는 tenant 에 활성 manifest 가 있으면 건너뛰므로, 이 값이 `false` 이던 시절의 로컬 DB 에서는
+행이 생기지 않는다 — `docker compose down -v` 로 볼륨을 새로 만든다.
+
+```sh
+# 시드된 초대 코드로 등록하면 installation 과 telemetry token 이 만들어진다.
+pulsemetry enroll --invite E2E0-0000-0001 --server http://localhost:8080
+
+# 적재 확인
+curl -s http://localhost:8123 --data-urlencode \
+  "query=SELECT tenant_id, installation_id, team_ids_as_of FROM enriched_events FINAL LIMIT 5"
+```
+
+토큰 없이 `POST http://localhost:4316/v1/traces` 를 부르면
+`{"error":"unauthorized","message":"Invalid or expired credential"}` 가 401 로 돌아온다.
+
+이 절차가 **compose 단독 E2E** 다 — 자동화는 PROJ-106 에서 이미지·CI 와 함께 다룬다(ADR 0016 Follow-up).
 
 테스트는 Testcontainers 로 실제 PostgreSQL 을 띄우므로 Docker 데몬이 필요하다.
 H2 등 임베디드 DB 로 대체하지 않는다 — jsonb·부분 유니크 인덱스·스키마 분리를 검증할 수 없다.

@@ -1,5 +1,6 @@
-# 로컬 개발용 PostgreSQL. 스키마는 애플리케이션 기동 시 Flyway 가 적용한다.
-# 테스트는 이 컨테이너를 쓰지 않는다 — Testcontainers 가 매번 격리된 인스턴스를 띄운다.
+# 로컬 개발용 저장소 둘. enrollment 스키마는 :apps:enrollment-api 기동 시 Flyway 가,
+# enriched_events 는 :apps:telemetry-ingest 기동 시 ClickHouseSchemaMigrator 가 적용한다(ADR 0015).
+# 테스트는 이 컨테이너들을 쓰지 않는다 — Testcontainers 가 매번 격리된 인스턴스를 띄운다.
 services:
   postgres:
     image: postgres:16-alpine
@@ -21,5 +22,34 @@ services:
       timeout: 3s
       retries: 10
 
+  # 텔레메트리 적재 대상. DDL 은 initdb 마운트가 아니라 앱이 기동 시 멱등 적용한다 —
+  # init 임시 서버가 본 서버의 포트 바인드와 레이스하는 이미지 플레이크를 구 레포가 실측으로
+  # 겪었다(ADR 0015). 태그는 통합 테스트의 컨테이너와 맞춘다.
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: pulsemetry-clickhouse
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      # 없으면 entrypoint 가 default 유저를 루프백 전용으로 잠가 밖에서 오는 요청이 전부 거부된다
+      # (infra ADR-0019).
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      # HTTP 인터페이스. 적재도 확인 질의도 이 포트로 간다 — 네이티브 포트는 쓰지 않는다.
+      - "127.0.0.1:8123:8123"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - pulsemetry-clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   pulsemetry-postgres-data:
+  pulsemetry-clickhouse-data:

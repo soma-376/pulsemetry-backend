@@ -5,6 +5,12 @@ springDependencyManagement = "1.1.7"
 jdk = "25"
 # Spring Boot BOM 이 관리하지 않는다. 계약 테스트에서만 쓴다.
 jsonSchemaValidator = "3.0.6"
+# 아래 셋도 Spring Boot BOM 밖이다 — 텔레메트리 수집 모듈이 처음 끌어온다 (PROJ-114).
+# OTLP 와이어 포맷의 진실원은 상위 opentelemetry-proto 다.
+otelProto = "1.11.0-alpha"
+protobuf = "4.36.1"
+# 아카이브 적재 (ADR 0012). BOM 을 import 해 하위 모듈 버전을 맞춘다.
+awsSdk = "2.40.11"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
@@ -28,6 +34,19 @@ spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-
 spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
 spring-boot-testcontainers = { module = "org.springframework.boot:spring-boot-testcontainers" }
 
+# 인증 계층 (ADR 0007). :libs:security 는 starter 를 쓰지 않는다 —
+# starter 가 딸고 오는 자동설정 모듈은 클래스패스만 보고 발동해서
+# 이 라이브러리를 올린 모든 앱의 엔드포인트를 잠근다 (ADR 0011).
+# 버전은 Boot BOM 이 import 하는 spring-security-bom 이 정한다.
+spring-security-core = { module = "org.springframework.security:spring-security-core" }
+spring-security-web = { module = "org.springframework.security:spring-security-web" }
+# 조립 앱 전용이다. 필터 체인을 세우려면 spring-security-config 가 필요하고, 그 자동설정을
+# 켜는 것이 조립 앱에서는 의도된 선택이다 — 명시적 SecurityFilterChain 빈이 있으면 Boot 의
+# 기본 체인은 물러난다. :libs: 에는 여전히 붙이지 않는다 (ADR 0011 · 0016).
+spring-boot-starter-security = { module = "org.springframework.boot:spring-boot-starter-security" }
+# 서블릿 컨테이너가 런타임에 제공한다. 라이브러리는 compileOnly 로만 쓴다.
+jakarta-servlet-api = { module = "jakarta.servlet:jakarta.servlet-api" }
+
 # 스키마의 진실원은 Flyway SQL 마이그레이션이다 (ADR 0004 / PLAN.md L4).
 # Spring Boot 4 는 자동설정을 모듈로 쪼갰다. flyway-core 만으로는 기동 시 마이그레이션이 돌지 않는다.
 spring-boot-starter-flyway = { module = "org.springframework.boot:spring-boot-starter-flyway" }
@@ -38,7 +57,26 @@ postgresql = { module = "org.postgresql:postgresql" }
 # Testcontainers 2.x 부터 아티팩트 이름에 testcontainers- 접두사가 붙는다.
 testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql" }
 testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter" }
+# 적재 모듈의 sink 테스트는 실제 ClickHouse 로만 돌린다 — ReplacingMergeTree 의 FINAL dedup 이
+# 판정 대상이라 대역으로 대체할 수 없다 (:libs:telemetry-persistence, PROJ-104).
+# 전용 모듈(testcontainers-clickhouse)을 쓰지 않는 이유는 그것이 JdbcDatabaseContainer 라
+# 기동 대기에 ClickHouse JDBC 드라이버를 요구하기 때문이다 — 우리 sink 는 HTTP 로만 말한다.
+testcontainers = { module = "org.testcontainers:testcontainers" }
 
 # 계약 테스트가 telemetryctl/contracts/*.schema.json 을 오라클로 쓴다 (PLAN.md R3).
 # 3.x 는 Jackson 3(tools.jackson) 기반이라 Spring Boot 4.1 과 같은 Jackson 을 쓴다.
 json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "jsonSchemaValidator" }
+
+# --- 텔레메트리 수집 (:libs:telemetry-collector, PROJ-114) ---
+# OTLP 메시지의 가변 모델. protobuf-java 생성 클래스의 Builder 를 그대로 쓴다.
+# 상위 README 가 "not intended for production use" 를 달았지만, 그 경고는 API 안정성(버전 간
+# 생성 클래스 변경)에 관한 것이다. 우리가 쓰는 것은 생성된 메시지 타입과 그 디스크립터뿐이고
+# 버전은 카탈로그가 고정하므로 사정거리 밖이다. 대안은 .proto 벤더링뿐이다.
+opentelemetry-proto = { module = "io.opentelemetry.proto:opentelemetry-proto", version.ref = "otelProto" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
+# OTLP/JSON 코덱이 쓰는 스트리밍 파서. databind 는 쓰지 않는다 — 디스크립터로 직접 순회한다.
+# Boot BOM 이 tools.jackson(Jackson 3) 을 관리하므로 버전을 적지 않는다.
+jackson-core = { module = "tools.jackson.core:jackson-core" }
+# 아카이브 적재 대상 (ADR 0012). BOM 으로 하위 모듈 버전을 맞춘다.
+awssdk-bom = { module = "software.amazon.awssdk:bom", version.ref = "awsSdk" }
+awssdk-s3 = { module = "software.amazon.awssdk:s3" }

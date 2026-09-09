@@ -21,7 +21,8 @@ import java.util.UUID
  * 테스트용 엔티티 빌더. 저장하지 않은 인스턴스를 돌려준다.
  *
  * 해시 자리에는 SHA-256 hex 와 같은 모양(소문자 64자)의 무작위 값을 넣는다.
- * 실제 해시 계산은 P3 의 몫이고 여기서는 유니크 제약과 조회만 다룬다.
+ * 실제 해시 계산은 `:libs:security` 의 `TelemetryTokenHasher` 와 앱의 `Sha256` 이 한다.
+ * 여기서는 유니크 제약과 조회만 다룬다.
  */
 object EnrollmentFixtures {
 

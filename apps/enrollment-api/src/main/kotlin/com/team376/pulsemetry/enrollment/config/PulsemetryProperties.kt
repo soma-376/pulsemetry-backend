@@ -23,7 +23,7 @@ data class PulsemetryProperties(
 	 * telemetry token HMAC-SHA256 키. auth-proxy(ai-telemetry-pipeline)와 **공유하는 값**이다 —
 	 * 그쪽이 같은 키로 Bearer 토큰을 해시해 조회하므로, 값이 다르면 발급한 모든 토큰이 401 이 된다.
 	 * dev 인프라에서는 `DevEdgeStack` 의 `TokenHashSecretArn` 이 가리키는 Secrets Manager 값을 쓴다.
-	 * 비어 있으면 애플리케이션이 뜨지 않는다 ([TelemetryTokenHasher] 가 막는다).
+	 * 비어 있으면 애플리케이션이 뜨지 않는다 (`:libs:security` 의 `TelemetryTokenHasher` 가 막는다).
 	 */
 	val tokenHashSecret: String,
 

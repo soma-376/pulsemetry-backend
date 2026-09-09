@@ -7,7 +7,7 @@ import com.team376.pulsemetry.enrollment.error.EnrollmentException
 import com.team376.pulsemetry.enrollment.secret.InvitationCode
 import com.team376.pulsemetry.enrollment.secret.Sha256
 import com.team376.pulsemetry.enrollment.secret.SecretToken
-import com.team376.pulsemetry.enrollment.secret.TelemetryTokenHasher
+import com.team376.pulsemetry.security.TelemetryTokenHasher
 import com.team376.pulsemetry.persistence.enrollment.entity.Installation
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationCredential
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationManifestAssignment

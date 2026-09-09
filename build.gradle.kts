@@ -17,6 +17,7 @@ version = "0.0.1-SNAPSHOT"
 // 버전 카탈로그 접근자(libs)는 루트 스크립트 스코프에서만 보인다.
 // subprojects 블록의 수신자는 하위 프로젝트라 catalog extension 이 없으므로 여기서 미리 꺼내 둔다.
 val jdkVersion = libs.versions.jdk.get().toInt()
+val protobufVersion = libs.versions.protobuf.get()
 val kotlinReflect = libs.kotlin.reflect
 val kotlinTestJunit5 = libs.kotlin.test.junit5
 val junitPlatformLauncher = libs.junit.platform.launcher
@@ -53,6 +54,14 @@ subprojects {
 	extensions.configure<DependencyManagementExtension> {
 		imports {
 			mavenBom(SpringBootPlugin.BOM_COORDINATES)
+		}
+
+		// Boot BOM 이 protobuf-java 를 관리하는데 그 버전이 opentelemetry-proto 의 생성 코드가
+		// 요구하는 런타임보다 낮다. 그대로 두면 라이브러리는 카탈로그 버전으로 컴파일되고
+		// 애플리케이션은 BOM 버전으로 실행되어, **기동은 되고 첫 OTLP 요청에서 500 이 난다**
+		// (ProtobufRuntimeVersionException). 관리 버전을 카탈로그로 덮어 모든 모듈을 맞춘다.
+		dependencies {
+			dependency("com.google.protobuf:protobuf-java:$protobufVersion")
 		}
 	}
 
