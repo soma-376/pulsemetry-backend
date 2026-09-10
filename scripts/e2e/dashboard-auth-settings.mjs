@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 35개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 35개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -133,7 +133,7 @@ try {
       event_id: randomUUID(), ts: observedAt, tenant_id: tenant, installation_id: installationId,
       signal: 'log', product: 'claude_code', team_ids_as_of: ['00000000-0000-0000-0000-000000000010'],
       enrichment_json: '{}', raw_json: JSON.stringify({ type: 'llm_response',
-        payload: { model: 'claude-e2e', stop_reason: 'end_turn' } }),
+        payload: { model: 'claude-e2e', stop_reason: 'refusal', refusal_category: 'policy' } }),
     }));
     points.push(JSON.stringify({
       event_id: randomUUID(), ts: observedAt, tenant_id: tenant, installation_id: installationId,
@@ -224,6 +224,7 @@ try {
     assert.equal(catalog.items.find(item => item.metric_id === 'subagent_activity').availability, 'partial');
     assert.equal(catalog.items.find(item => item.metric_id === 'hook_blocking').availability, 'partial');
     assert.equal(catalog.items.find(item => item.metric_id === 'hook_executions').availability, 'partial');
+    assert.equal(catalog.items.find(item => item.metric_id === 'refusals').availability, 'partial');
     const expectedMetrics = [...metricFixtures.map(([metric, , value]) => [metric, value*5]),
       ['active_users', 5], ['adoption_rate', 5/(role==='owner' ? 7 : 6)], ['telemetry_coverage', 1], ['automation_ratio', 0], ['integration_depth', 1], ['command_prompt_ratio', 0.5]];
     const queryResult = await page.evaluate(async fixtures => {
@@ -318,9 +319,9 @@ try {
       { value: 0.75, numerator: 15, denominator: 20 });
     assert.equal(mcp.A.points[0].labels.is_plugin, 'True');
     assert.equal(mcp.B.points[0].labels.server_name, 'github');
-    assert.equal(mcp.C.points.length, 2);
+    assert.equal(mcp.C.points.length, 3);
     assert.deepEqual(Object.fromEntries(mcp.C.points.map(p => [p.labels.stop_reason, p.value.value])),
-      { end_turn: 10, '': 10 });
+      { end_turn: 5, refusal: 5, '': 10 });
     assert.ok(mcp.C.points.every(p => p.labels.model === 'claude-e2e'));
     assert.deepEqual(Object.fromEntries(mcp.D.points.map(p => [p.key, p.value.value])),
       { p50: 900, p95: 900, p99: 900 });
@@ -362,6 +363,19 @@ try {
     assert.equal(tools.J.points[0].labels.weekday, String(localObserved.getUTCDay() || 7));
 
     if (role === 'owner') {
+      const refusals = await page.evaluate(async () => {
+        const client = await import('/src/api/client.ts');
+        const { series } = await import('/src/widgets/model.ts');
+        const response = await client.request('/query', { method: 'POST', body: JSON.stringify({
+          from: 'now-1d', to: 'now', queries: [
+            { ref_id: 'A', metric_id: 'refusals', frame_type: 'scalar', group_by: ['category', 'model'] },
+          ],
+        }) });
+        return series(response.results.A);
+      });
+      assert.equal(refusals.state, 'success');
+      assert.deepEqual(Object.fromEntries(refusals.points.map(p => [p.key, p.value.value])), { value: 5 });
+      assert.equal(refusals.points[0].labels.category, 'policy');
       await page.getByRole('cell', { name: 'E2E 별도팀', exact: true }).waitFor();
       await page.getByRole('button', { name: '구성원 조회 · 사유 입력' }).click();
       await page.getByLabel('사유 (10–500자)').fill('정기 계정 점검을 위한 E2E 검증');
@@ -376,7 +390,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 35개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 35개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -389,7 +403,7 @@ try {
       { metric: 'api_error_rate', expected: 1/3 }, { metric: 'usage_heatmap', expected: 10 },
       { metric: 'compactions', expected: 15 }, { metric: 'compaction_reduction', expected: 0.81 },
       { metric: 'mcp_connections', expected: 20 }, { metric: 'mcp_failure_ratio', expected: 0.75 },
-      { metric: 'llm_stop_reasons', end_turn: 10, missing: 10 },
+      { metric: 'llm_stop_reasons', end_turn: 5, refusal: 5, missing: 10 },
       { metric: 'llm_duration_ms', p50: 900, p95: 900, p99: 900 },
       { metric: 'turn_duration_ms', p50: 1500, p90: 1500 },
       { metric: 'llm_ttft_ms', p50: 300, p90: 300 },
@@ -398,7 +412,8 @@ try {
       { metric: 'edit_acceptance_rate', expected: 0.5 },
       { metric: 'subagent_activity', count: 2, ratio: 2/3 },
       { metric: 'hook_blocking', expected: 25 },
-      { metric: 'hook_executions', expected: 10, ratio: 1, sessions: 5 }],
+      { metric: 'hook_executions', expected: 10, ratio: 1, sessions: 5 },
+      { metric: 'refusals', owner: 5 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
