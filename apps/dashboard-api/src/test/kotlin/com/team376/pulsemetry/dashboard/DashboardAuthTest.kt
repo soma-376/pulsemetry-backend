@@ -980,6 +980,53 @@ class DashboardAuthTest {
             assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
         }
     }
+    private fun editPoint(id: UUID, value: Double?, decision: String, source: String,
+        cumulative: Boolean = false, product: String = "claude_code", at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(point(id,0.0,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("product",product)
+        row.put("raw_json",mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.code_edit_tool.decision",
+            "value" to value,"aggregation_temporality" to if (cumulative) 2 else 1,
+            "attrs" to mapOf("decision" to decision,"source" to source,"language" to "kotlin","tool_name" to "Edit")))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `편집 수락률은 사용자 결정의 값 합계를 사용하고 누적 자동 승인 및 다른 제품을 제외한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { id -> listOf(editPoint(id,3.0,"accept","user_temporary"),
+            editPoint(id,2.0,"accept","user_permanent"),editPoint(id,5.0,"reject","user_reject"),
+            editPoint(id,99.0,"abort","user_abort"),editPoint(id,999.0,"accept","config"),
+            editPoint(id,999.0,"accept","hook"),editPoint(id,999.0,"accept","user_unknown"),
+            editPoint(id,999.0,"accept","user_temporary",cumulative=true),
+            editPoint(id,999.0,"accept","user_temporary",product="codex"),
+            editPoint(id,null,"accept","user_temporary")) }
+        seedPoints(rows+rows.first())
+        val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "edit_acceptance_rate",
+            "group_by" to listOf("language","tool_name")))).andExpect(status().isOk)
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.5,25.0,50.0)
+        assertThat(frame["schema"]["fields"][0]["labels"]["language"].asString()).isEqualTo("kotlin")
+        assertThat(frame["schema"]["fields"][0]["labels"]["tool_name"].asString()).isEqualTo("Edit")
+        assertThat(frame["schema"]["meta"]["data_quality"][0].asString()).contains("5개","제외")
+        seedPoints(ids.map { editPoint(it,1.0,"abort","user_abort") })
+        val emptyDenominator = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "edit_acceptance_rate")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+        assertThat(emptyDenominator[0][0].isNull).isTrue()
+        assertThat(emptyDenominator[2][0].asDouble()).isZero()
+        seedPoints(ids.map { editPoint(it,1.0,"accept","config") })
+        val empty = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "edit_acceptance_rate")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"]
+        assertThat(empty.size()).isZero()
+    }
+    @Test fun `편집 수락률은 작은 비교 집단의 수락 거절 합계와 누적 개수를 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { editPoint(it,3.0,"accept","user_temporary") }+
+            ids.take(4).map { editPoint(it,5.0,"reject","user_reject",cumulative=true,at="2026-08-31T12:00:00Z") })
+        val query = queryBody(mapOf("metric_id" to "edit_acceptance_rate"),mapOf("compare" to "previous_period"))
+        val frame = mapper.readTree(queryResult(query).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        assertThat(frame["schema"]["meta"]["data_quality"][0].asString()).contains("제외").doesNotContain("4개")
+        val csv = queryResult(query,accept="text/csv").andExpect(status().isOk).andReturn().response.contentAsString
+        assertThat(csv).doesNotContain("15.0","20.0")
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")

@@ -60,7 +60,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
-    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate")
     private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms", "gate_wait_ms")
     private val sessionMetrics = setOf("prompts_per_session", "read_tool_density")
     private val intervals = linkedMapOf("1h" to "1 HOUR", "6h" to "6 HOUR", "1d" to "1 DAY", "1w" to "1 WEEK", "1M" to "1 MONTH")
@@ -225,7 +225,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val after = "JSONExtract(raw_json,'payload','tokens_after','Nullable(Int64)')"
         val mcp = "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='lifecycle' AND JSONExtractString(raw_json,'payload','kind')='mcp_connection'"
         val blocked = "JSONExtract(raw_json,'payload','blocked_on_user_ms','Nullable(Float64)')"
+        val editDecision = "JSONExtractString(raw_json,'point','attrs','decision')"
         val metric = when (q.metricId) {
+            "edit_acceptance_rate" -> "signal='metric' AND product='claude_code' AND $name='claude_code.code_edit_tool.decision' AND JSONExtractString(raw_json,'point','attrs','source') IN ('user_temporary','user_permanent','user_reject','user_abort')"
             "rubber_stamp_ratio" -> "signal='span' AND JSONExtractString(raw_json,'type')='tool_gate' AND JSONExtractString(raw_json,'payload','decided_by')='user' AND isNotNull($blocked) AND $blocked>=0"
             "llm_stop_reasons" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type') IN ('llm_call','llm_response')"
             "mcp_connections", "mcp_failure_ratio" -> mcp + if (q.params.containsKey("server_scope"))
@@ -247,6 +249,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val cumulative = if (event) "0" else "countIf($metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)"
         val pointValue = "JSONExtract(raw_json,'point','value','Nullable(Float64)')"
         val numerator = when (q.metricId) {
+            "edit_acceptance_rate" -> "sumIf($pointValue,$valid AND $editDecision='accept')"
             "rubber_stamp_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','decision')='accept' AND $blocked<{threshold:UInt32})"
             "compactions", "mcp_connections", "llm_stop_reasons" -> "countIf($valid)"
             "mcp_failure_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','attrs','status')!='connected')"
@@ -265,6 +268,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             else -> "sumIf($pointValue,$valid)"
         }
         val denominator = when (q.metricId) {
+            "edit_acceptance_rate" -> "sumIf($pointValue,$valid AND $editDecision IN ('accept','reject'))"
             "rubber_stamp_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','decision')='accept')"
             "compaction_reduction" -> "sumIf($before,$valid)"
             "tool_failure_rate" -> "countIf($valid AND isNotNull($success))"
@@ -415,7 +419,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private fun dimension(dim: String): String = when (dim) {
         "team" -> "team"
         "product" -> "product"
-        "tool_name", "tool_kind", "action", "error_type", "mcp_server", "decided_by", "stop_reason", "decision" -> "JSONExtractString(raw_json,'payload','$dim')"
+        "language" -> "JSONExtractString(raw_json,'point','attrs','language')"
+        "tool_name" -> "coalesce(nullIf(JSONExtractString(raw_json,'payload','tool_name'),''),JSONExtractString(raw_json,'point','attrs','tool_name'))"
+        "tool_kind", "action", "error_type", "mcp_server", "decided_by", "stop_reason", "decision" -> "JSONExtractString(raw_json,'payload','$dim')"
         "trigger", "server_name", "server_scope", "transport_type", "is_plugin" -> "JSONExtractString(raw_json,'payload','attrs','$dim')"
         "weekday" -> "toString(toDayOfWeek(ts,0,{zone:String}))"
         "status_code" -> "toString(coalesce(JSONExtract(raw_json,'payload','status_code','Nullable(Int64)'),0))"
