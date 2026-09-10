@@ -433,4 +433,5 @@
 - 검증: 실제 DB/ClickHouse의 실행 완료·입력 오류·조회 오류·마스킹·동시 admission·취소와 lease·권한 변경·wait 완료 테스트 9건 및 판정 규칙 테스트 3건을 추가했다. 전체 빌드 933건, 실패·오류·skip 0건.
 - 실제 frontend 클라이언트 E2E는 backend `d59037c` / frontend `52f7cb1`에서 통과했다. owner/admin 실행·폴링·프레임 변환·취소와 admin의 실측 스파이크(ratio=1, 임계 50%)를 검증했고 기존 지표 smoke에도 오류가 없었다.
 - 이후 결과 화면용 findings_count 응답을 추가한 `41faa97`에서 전체 빌드 933건이 다시 통과했다. 결과 화면 렌더 검증도 스크립트에 추가했지만 Docker의 run/ps가 모두 응답하지 않아 실제 화면 E2E는 실행하지 못했다. backend 로그 생성 전의 환경 기동 문제이며 UI 검증 통과로 기록하지 않는다.
-- 마지막 성공 E2E는 `build/e2e/auth-settings/last-success.json`에 보관하고 현재 `result.json`은 blocked 상태다. 스크립트는 후속 실행부터 명령별 60초 제한과 실패 상태 기록을 적용한다. Docker Desktop 재시작은 다른 컨테이너 영향 때문에 사용자 승인을 요청한 상태다.
+- 2026-09-11 사용자 승인으로 Docker Desktop을 재시작한 뒤 backend `cd057dc` / frontend `52f7cb1`에서 E2E를 다시 실행해 통과했다. owner/admin의 S1-3 실행·폴링·취소·결과 화면 판정 표시와 기존 53개 지표·P5·설치·세션 검증에 오류 응답이 없었다. `build/e2e/auth-settings/result.json`은 passed이며 `owner-scenario.png`와 `admin-scenario.png`에 결과 화면을 보관한다.
+- 결과 화면의 판정 영역과 심각도별 개수는 확인했으나 W1.3·W2.5는 결과 미연결 안내가 남아 있다. 모든 위젯의 시각화 완료나 ingest 수용 E2E 통과로 해석하지 않는다. 스크립트는 명령별 60초 제한과 실패 상태 기록을 적용하고 이전 성공 결과는 `last-success.json`에 보관한다.
