@@ -42,3 +42,5 @@ node scripts/e2e/dashboard-auth-settings.mjs
 약정 소진율은 owner의 필터 없는 전사 범위에서만 조회한다. 날짜만 있는 from/to는 요청 시간대 자정으로 해석한다. USD 이외 약정 통화는 422이며 날짜 범위는 기존 366일 제한을 따른다. P5 약정 게이지의 실제 렌더도 smoke에서 확인한다.
 
 설치 목록은 `GET /v1/installations`이며 owner와 `X-Audit-Reason`이 필수다. 사유는 URL 인코딩한 10~500자 문자열로 전달한다. `limit`(1~500), `cursor`, `inactive_days`, `team_id`, `platform`, `status`를 지원한다. 설치 이메일은 도메인만 노출한다. 미관측 설치의 무활동 기간은 생성일부터 계산한다. 요청당 후보 5,000개 초과는 422이므로 필터로 범위를 좁힌다. 기존 frontend 설치 카드는 감사 헤더를 전달하지 않으므로 현재 smoke는 실제 API 클라이언트의 명시적 감사 조회만 검증하며 카드 렌더 검증은 아니다.
+
+세션 상관 조회는 `GET /v1/sessions/{key}/events`이며 owner와 `X-Audit-Reason`이 필수다. `lookup=session_id|request_id|call_id|installation_id`, `from`, `to`, `limit`(1~500), `cursor`를 지원한다. 기본 기간은 최근 7일이다. 다중 세션 일치는 422, 미발견은 404다. 다음 페이지에는 동일한 검색 키·기간 식과 감사 사유를 전달한다. 커서가 상대 기간의 해석 결과를 고정한다. API의 ended_at은 마지막 관측 시각이다. smoke는 실제 opsApi.events 및 eventDetails 변환을 검증하며 SessionSearch 전체 화면 검증은 별도다.

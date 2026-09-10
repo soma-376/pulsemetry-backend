@@ -544,6 +544,31 @@ try {
         i.product_versions.claude_code === 'fixture-product-1' &&
         Date.parse(i.last_event_at) === (observedAt + 1)*1000));
       assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='installations'"), '3');
+      const sessionId = JSON.parse(points[0]).installation_id;
+      const expectedEvents = points.map(JSON.parse).filter(p => JSON.parse(p.raw_json).envelope?.session_id === sessionId)
+        .sort((a,b) => a.ts-b.ts || (JSON.parse(a.raw_json).sequence || 0)-(JSON.parse(b.raw_json).sequence || 0) || a.event_id.localeCompare(b.event_id));
+      const session = await page.evaluate(async (sessionId) => {
+        const { opsApi, eventDetails } = await import('/src/api/operations.ts');
+        const events = [];
+        let cursor = '', pages = 0, summary;
+        do {
+          const response = await opsApi.events(sessionId,
+            new URLSearchParams({ from: 'now-1d', to: 'now', limit: '8', cursor: cursor || '' }),
+            '세션 상관 분석 정기 감사 점검');
+          events.push(...response.items);
+          summary = response.session;
+          cursor = response.next_cursor;
+          pages++;
+          if (pages > 20) throw new Error('세션 페이지가 종료되지 않음');
+        } while (cursor);
+        return { events, summary, pages, details: events.map(eventDetails) };
+      }, sessionId);
+      assert.deepEqual(session.events.map(e => e.event_id), expectedEvents.map(e => e.event_id));
+      assert.equal(session.summary.event_count, expectedEvents.length);
+      assert.equal(session.summary.installation_id, sessionId);
+      assert.ok(session.details.some(d => d.includes('$2.0000') && d.includes('100 tok')));
+      assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='session_events'"), String(session.pages));
+
 
     } else {
       assert.equal(await page.getByRole('cell', { name: 'E2E 별도팀', exact: true }).count(), 0);
@@ -555,6 +580,7 @@ try {
   }
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedInstallations: { count: 5, pages: 3, audited: true, actualFrontendCard: false },
+    verifiedSessionEvents: { actualFrontendClient: true, paginated: true, audited: true, actualSessionSearchUI: false },
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
