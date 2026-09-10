@@ -1063,6 +1063,41 @@ class DashboardAuthTest {
         assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
         assertThat(frame["schema"]["fields"].toList().all { it["config"]["suppressed"].asBoolean() }).isTrue()
     }
+    private fun hookEvent(id: UUID, blocking: String?, signal: String = "span",
+        event: String = "PreToolUse", at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(promptEvent(id,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("signal",signal)
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "hook","payload" to mapOf("kind" to "hook",
+            "attrs" to mapOf("num_blocking" to blocking,"hook_event" to event,"num_hooks" to "99")))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `훅 차단은 문자열 수를 합산하고 누락 비정상 값과 로그를 제외한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(hookEvent(it,"2"),hookEvent(it,"3"),hookEvent(it,null),
+            hookEvent(it,"bad"),hookEvent(it,"-1"),hookEvent(it,"99",signal="log")) }
+        seedPoints(rows+rows.first())
+        val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "hook_blocking","frame_type" to "scalar",
+            "group_by" to listOf("hook_event")))).andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"][0][0].asLong()).isEqualTo(25)
+        assertThat(frame["schema"]["fields"][0]["labels"]["hook_event"].asString()).isEqualTo("PreToolUse")
+        seedPoints(ids.map { hookEvent(it,"0") })
+        val zero = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "hook_blocking","frame_type" to "scalar")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"][0][0]
+        assertThat(zero.isNumber).isTrue()
+        assertThat(zero.asInt()).isZero()
+        seedPoints(ids.map { hookEvent(it,null) })
+        val missing = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "hook_blocking")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"]
+        assertThat(missing.size()).isZero()
+    }
+    @Test fun `훅 차단 비교의 작은 집단은 현재와 이전 값을 모두 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { hookEvent(it,"2") }+ids.take(4).map { hookEvent(it,"3",at="2026-08-31T12:00:00Z") })
+        val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "hook_blocking","frame_type" to "scalar"),
+            mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        assertThat(frame["schema"]["fields"].toList().all { it["config"]["suppressed"].asBoolean() }).isTrue()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
