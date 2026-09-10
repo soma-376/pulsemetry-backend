@@ -60,3 +60,6 @@ node scripts/e2e/dashboard-auth-settings.mjs
 현재 S1-3만 실행 가능하다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
 
 E2E 스크립트는 각 외부 명령을 60초로 제한한다. `result.json`은 최신 시도의 상태이며 이전 성공은 `last-success.json`에 보관한다. S1-3 실행·폴링·취소와 실측 판정은 실제 frontend 클라이언트로 검증했다. 2026-09-11 Docker 재시작 후 backend `cd057dc` / frontend `52f7cb1`에서 owner/admin의 결과 화면 판정 표시까지 통과했다. 스크린샷은 `owner-scenario.png`, `admin-scenario.png`다. W1.3·W2.5의 결과 미연결 안내는 남아 있어 모든 위젯의 시각화 완료를 검증한 것은 아니다.
+
+
+S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 모델별 일 시계열과 팀별 기간 합계 table 프레임을 함께 반환한다. W1.3의 실제 막대그래프와 데이터 표는 owner/admin E2E에서 확인했다. W2.5의 frontend 매핑은 아직 미연결이다.
