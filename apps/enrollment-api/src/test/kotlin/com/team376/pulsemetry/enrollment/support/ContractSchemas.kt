@@ -41,6 +41,7 @@ object ContractSchemas {
 				mapOf(
 					ENVELOPE_ID to read("enrollment-envelope.schema.json"),
 					MANIFEST_ID to read("enrollment-manifest.schema.json"),
+                    BASE_IRI + "user-auth.schema.json" to read("user-auth.schema.json"),
 				),
 			)
 		}
@@ -61,6 +62,8 @@ object ContractSchemas {
 
 	/** 봉투 안에 실리는 순수 설정 manifest. */
 	fun manifestSchema(): Schema = registry.getSchema(SchemaLocation.of(MANIFEST_ID))
+
+    fun userTokensSchema(): Schema = registry.getSchema(SchemaLocation.of(BASE_IRI + "user-auth.schema.json#/\$defs/tokens"))
 
 	fun validate(schema: Schema, json: String): List<Error> = schema.validate(json, InputFormat.JSON)
 

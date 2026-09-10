@@ -42,9 +42,9 @@ interface InvitationRepository : JpaRepository<Invitation, UUID> {
 	): Int
 
 	/**
-	 * 아직 쓰지도 폐기되지도 않은 초대를 폐기한다.
+	 * 가입·설치 중 미소비 권한이 남아 있는 초대를 폐기한다 (허브 ADR 0007).
 	 *
-	 * @return 영향 행 수. 1이면 폐기 성공(204). 0이면 없음(404)/이미 사용(409)/이미 폐기(409) 중 하나다.
+	 * @return 영향 행 수. 1이면 폐기 성공(204). 0이면 없음(404)/양쪽 사용 완료(409)/이미 폐기(409) 중 하나다.
 	 */
 	@Modifying(flushAutomatically = true, clearAutomatically = true)
 	@Query(
@@ -52,7 +52,7 @@ interface InvitationRepository : JpaRepository<Invitation, UUID> {
 		UPDATE Invitation i
 		SET i.revokedAt = :now
 		WHERE i.id = :id
-		  AND i.usedAt IS NULL
+		  AND (i.usedAt IS NULL OR i.signupUsedAt IS NULL)
 		  AND i.revokedAt IS NULL
 		""",
 	)
