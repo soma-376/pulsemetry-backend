@@ -702,6 +702,55 @@ class DashboardAuthTest {
         assertThat(hidden["schema"]["fields"][0]["labels"]["weekday"].asString()).isEqualTo("1")
         assertThat(hidden["schema"]["fields"][0]["labels"]["hour"].asString()).isEqualTo("9")
     }
+    private fun compactionEvent(id: UUID, before: Int?, after: Int?, kind: String = "compaction",
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(promptEvent(id,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "lifecycle","payload" to mapOf("kind" to kind,
+            "tokens_before" to before,"tokens_after" to after,"attrs" to mapOf("trigger" to "auto","success" to false)))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `압축 감소율은 전후 쌍의 합계 비율이며 누락 토큰을 절감으로 간주하지 않는다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(compactionEvent(it,100,90),compactionEvent(it,900,100),
+            compactionEvent(it,1000,null),compactionEvent(it,null,100),compactionEvent(it,100,0,"mcp_connection")) }
+        seedPoints(rows+rows.first())
+        val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "compaction_reduction")))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.81,4050.0,5000.0)
+        assertThat(frame["schema"]["fields"][1]["config"]["unit"].asString()).isEqualTo("token")
+        assertThat(frame["schema"]["meta"]["data_quality"][0].asString()).contains("10개", "제외")
+        val count = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "compactions","frame_type" to "scalar",
+            "group_by" to listOf("trigger")))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(count["schema"]["fields"][0]["labels"]["trigger"].asString()).isEqualTo("auto")
+        assertThat(count["data"]["values"][0][0].asInt()).isEqualTo(20)
+        seedPoints(ids.map { compactionEvent(it,100,null) })
+        val missing = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "compaction_reduction")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(missing["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        assertThat(missing["schema"]["fields"][0]["config"]["suppressed"].asBoolean()).isFalse()
+        seedPoints(ids.map { compactionEvent(it,0,0) })
+        val zero = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "compaction_reduction")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+        assertThat(zero[0][0].isNull).isTrue()
+        assertThat(zero[2][0].isNumber).isTrue()
+        assertThat(zero[2][0].asInt()).isZero()
+        seedPoints(ids.map { compactionEvent(it,100,120) })
+        val growth = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "compaction_reduction")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"][0][0]
+        assertThat(growth.asDouble()).isEqualTo(-0.2)
+    }
+    @Test fun `압축 지표는 작은 비교 집단의 비율과 토큰 수 및 품질 개수를 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { compactionEvent(it,100,20) } +
+            ids.take(4).map { compactionEvent(it,100,null,at="2026-08-31T12:00:00Z") })
+        for (metric in listOf("compactions","compaction_reduction")) {
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar"),
+                mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+            if (metric=="compaction_reduction") assertThat(frame["schema"]["meta"]["data_quality"][0].asString())
+                .contains("제외").doesNotContain("4개")
+        }
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
