@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타 계약을 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 메트릭 5개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -77,17 +77,50 @@ try {
     ('00000000-0000-0000-0000-000000000011','${tenant}','E2E 별도팀');
     INSERT INTO enrollment.team_memberships(team_id,member_id) VALUES
     ('00000000-0000-0000-0000-000000000010','00000000-0000-0000-0000-000000000002');`);
+  // 정규화 완료 형태의 테스트 포인트를 실제 ClickHouse에 적재한다. ingest 경로 검증은 별도다.
+  const metricFixtures = [
+    ['sessions', 'claude_code.session.count', 2],
+    ['active_time', 'claude_code.active_time.total', 120],
+    ['lines_of_code', 'claude_code.lines_of_code.count', 10],
+    ['commits', 'claude_code.commit.count', 1],
+    ['pull_requests', 'claude_code.pull_request.count', 1],
+  ];
+  const points = [];
+  for (let index = 0; index < 5; index++) {
+    const memberId = randomUUID(), installationId = randomUUID(), invitationId = randomUUID();
+    sql(`INSERT INTO enrollment.members(id,tenant_id,email) VALUES ('${memberId}','${tenant}','fixture-${index}@e2e.test');
+      INSERT INTO enrollment.team_memberships(team_id,member_id)
+        VALUES ('00000000-0000-0000-0000-000000000010','${memberId}');
+      INSERT INTO enrollment.invitations(id,tenant_id,target_member_id,created_by_member_id,code_hash,expires_at)
+        VALUES ('${invitationId}','${tenant}','${memberId}','00000000-0000-0000-0000-000000000001','${randomUUID()}',now()+interval '1 day');
+      INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform)
+        VALUES ('${installationId}','${tenant}','${memberId}','${invitationId}','linux');`);
+    for (const [, name, value] of metricFixtures) points.push(JSON.stringify({
+      event_id: randomUUID(), ts: Math.floor(Date.now()/1000)-120,
+      tenant_id: tenant, installation_id: installationId, signal: 'metric', product: 'claude_code',
+      team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
+      raw_json: JSON.stringify({ point: { name, value, aggregation_temporality: 1, attrs: { type: 'user', start_type: 'fresh' } } }),
+    }));
+  }
+  run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], points.join('\n'));
   launch('node', [resolve(frontend, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '15173', '--strictPort'],
     { VITE_API_MODE: 'real', VITE_API_BASE_URL: `${api}/v1` }, frontend, 'frontend');
   await waitFor(async () => (await fetch(ui)).ok);
   browser = await chromium.launch({ headless: true });
   const failures = [];
+  const responseReads = [];
   for (const role of ['owner', 'admin']) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage();
     page.on('pageerror', error => console.error('브라우저 오류:', error.message));
-    page.on('response', response => { if (response.url().startsWith(api) && response.status() >= 400)
-      failures.push({ path: new URL(response.url()).pathname, status: response.status() }); });
+    page.on('response', response => {
+      if (!response.url().startsWith(api)) return;
+      if (response.status() >= 400) failures.push({ path: new URL(response.url()).pathname, status: response.status() });
+      else if (new URL(response.url()).pathname === '/v1/query') responseReads.push(response.json().then(body => {
+        for (const [ref, result] of Object.entries(body.results || {})) if (result.status !== 200)
+          failures.push({ path: '/v1/query', ref, status: result.status, error: result.error?.error });
+      }));
+    });
     await page.goto(`${ui}/settings`);
     await page.getByLabel('이메일', { exact: true }).fill(`${role}@e2e.test`);
     await page.getByLabel('비밀번호', { exact: true }).fill('fixture-password-123');
@@ -109,6 +142,21 @@ try {
     assert.equal(metricIds.length, 53);
     assert.deepEqual(catalog.items.map(item => item.metric_id).sort(), metricIds.sort());
     assert.deepEqual(catalog.items.find(item => item.metric_id === 'refusals').forbidden_group_by, ['team']);
+    const queryResult = await page.evaluate(async fixtures => {
+      const client = await import('/src/api/client.ts');
+      return client.request('/query', { method: 'POST', body: JSON.stringify({
+        from: 'now-1d', to: 'now', compare: 'none',
+        queries: fixtures.map(([metric], index) => ({ ref_id: String.fromCharCode(65+index), metric_id: metric, frame_type: 'scalar' })),
+      }) });
+    }, metricFixtures);
+    for (let index = 0; index < metricFixtures.length; index++) {
+      const result = queryResult.results[String.fromCharCode(65+index)];
+      assert.equal(result.status, 200);
+      assert.equal(result.frames.length, 1);
+      assert.equal(result.frames[0].data.values[0][0], metricFixtures[index][2]*5);
+      assert.equal(result.frames[0].schema.fields[0].config.suppressed, false);
+    }
+
     if (role === 'owner') {
       await page.getByRole('cell', { name: 'E2E 별도팀', exact: true }).waitFor();
       await page.getByRole('button', { name: '구성원 조회 · 사유 입력' }).click();
@@ -121,9 +169,11 @@ try {
       await page.getByText('구성원 이메일 목록은 owner 권한으로 제공됩니다.', { exact: true }).waitFor();
     }
     await page.screenshot({ path: resolve(artifacts, `${role}.png`), fullPage: true });
+    await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 smoke 및 실제 frontend API 클라이언트 지표 카탈로그 계약; 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·메트릭 5개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+    verifiedMetrics: metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
