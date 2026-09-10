@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 44개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 44개 및 owner 전용 지표 2개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -132,7 +132,7 @@ try {
       event_id: randomUUID(), ts: observedAt,
       tenant_id: tenant, installation_id: installationId, signal: 'log', product: 'claude_code',
       team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
-      raw_json: JSON.stringify({ type: 'llm_call', sequence: attempt === 2 ? 100 : 1, envelope: { session_id: installationId },
+      raw_json: JSON.stringify({ type: 'llm_call', sequence: attempt === 2 ? 100 : 1, envelope: { session_id: installationId, identity: { vendor_email: `other-${index}@vendor.test` } },
         payload: { tokens: { input: 100, output: 50, cache_read: 200, cache_create: 100 }, model: 'claude-e2e', attempt, status_code, request_id: 'request-' + attempt, ttft_ms: attempt === 1 ? 100 : null, duration_ms: attempt === 1 ? 100 : 900, stop_reason: attempt === 1 ? 'end_turn' : null, error_type: status_code === 429 ? 'rate_limit' : null } }),
     }));
     points.push(JSON.stringify({
@@ -422,16 +422,20 @@ try {
     assert.equal(tools.J.points[0].labels.weekday, String(localObserved.getUTCDay() || 7));
 
     if (role === 'owner') {
-      const refusals = await page.evaluate(async () => {
+      const ownerResults = await page.evaluate(async () => {
         const client = await import('/src/api/client.ts');
         const { series } = await import('/src/widgets/model.ts');
         const response = await client.request('/query', { method: 'POST', body: JSON.stringify({
           from: 'now-1d', to: 'now', queries: [
             { ref_id: 'A', metric_id: 'refusals', frame_type: 'scalar', group_by: ['category', 'model'] },
+            { ref_id: 'B', metric_id: 'vendor_account_mismatch' },
           ],
-        }) });
-        return series(response.results.A);
+        }) }, '벤더 계정 불일치 정기 E2E 점검');
+        return { refusals: series(response.results.A), mismatch: series(response.results.B) };
       });
+      const refusals = ownerResults.refusals;
+      assert.equal(ownerResults.mismatch.state, 'success');
+      assert.equal(ownerResults.mismatch.points[0].value.value, 5);
       assert.equal(refusals.state, 'success');
       assert.deepEqual(Object.fromEntries(refusals.points.map(p => [p.key, p.value.value])), { value: 5 });
       assert.equal(refusals.points[0].labels.category, 'policy');
@@ -440,7 +444,8 @@ try {
       await page.getByLabel('사유 (10–500자)').fill('정기 계정 점검을 위한 E2E 검증');
       await page.getByRole('button', { name: '사유 기록 후 조회' }).click();
       await page.getByRole('cell', { name: 'owner@e2e.test', exact: true }).waitFor();
-      assert.equal(sql('SELECT count(*) FROM dashboard.audit_log'), '1');
+      assert.equal(sql('SELECT count(*) FROM dashboard.audit_log'), '2');
+      assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='query' AND target='vendor_account_mismatch'"), '1');
     } else {
       assert.equal(await page.getByRole('cell', { name: 'E2E 별도팀', exact: true }).count(), 0);
       await page.getByText('구성원 이메일 목록은 owner 권한으로 제공됩니다.', { exact: true }).waitFor();
@@ -449,7 +454,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 44개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 44개 및 owner 전용 지표 2개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -480,7 +485,8 @@ try {
       { metric: 'session_last_event', expected: 5, last_event: 'api_error' },
       { metric: 'usage_concentration', expected: 0.2, total: 6750 },
       { metric: 'onboarding_ttfu', p50: 3600, p90: 3600 },
-      { metric: 'onboarding_retention', cohort_installations: 5 }],
+      { metric: 'onboarding_retention', cohort_installations: 5 },
+      { metric: 'vendor_account_mismatch', expected: 5, scope: 'owner' }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
