@@ -247,6 +247,30 @@ try {
     assert.equal(catalog.items.find(item => item.metric_id === 'hook_blocking').availability, 'partial');
     assert.equal(catalog.items.find(item => item.metric_id === 'hook_executions').availability, 'partial');
     assert.equal(catalog.items.find(item => item.metric_id === 'refusals').availability, 'partial');
+    const scenarios = await page.evaluate(async () => {
+      const { scenarioApi } = await import('/src/api/scenarios.ts');
+      const { defaults, validateParams } = await import('/src/pages/scenarios/params.ts');
+      const catalog = await scenarioApi.catalog();
+      const details = [];
+      for (const item of catalog.items) details.push(await scenarioApi.detail(item.scenario_id));
+      const spike = details.find(item => item.scenario_id === 'S1-3');
+      const params = defaults(spike.params_schema, {});
+      return { catalog, details, errors: validateParams(spike.params_schema, params),
+        invalid: validateParams(spike.params_schema, { ...params, moving_avg_days: 2 }) };
+    });
+    assert.equal(scenarios.catalog.categories.length, 8);
+    assert.equal(scenarios.details.length, 46);
+    assert.deepEqual(scenarios.errors, []);
+    assert.ok(scenarios.invalid.length > 0);
+    assert.equal(scenarios.details.filter(item => item.availability === 'unavailable').length, 4);
+    for (const detail of scenarios.details) {
+      assert.deepEqual(detail.metrics.map(metric => metric.metric_id), detail.metric_ids);
+      for (const metric of detail.metrics) {
+        const definition = catalog.items.find(item => item.metric_id === metric.metric_id);
+        assert.equal(metric.definition, definition.definition);
+        assert.equal(metric.availability, definition.availability);
+      }
+    }
     const expectedMetrics = [...metricFixtures.map(([metric, , value]) => [metric, value*5]),
       ['active_users', 5], ['adoption_rate', 5/(role==='owner' ? 7 : 6)], ['telemetry_coverage', 1], ['automation_ratio', 0], ['integration_depth', 1], ['command_prompt_ratio', 0.5]];
     const queryResult = await page.evaluate(async fixtures => {
@@ -580,6 +604,7 @@ try {
   }
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedInstallations: { count: 5, pages: 3, audited: true, actualFrontendCard: false },
+    verifiedScenarios: { count: 46, actualFrontendClient: true, parameterFormValidation: true, actualCatalogUI: false, runs: false },
     verifiedSessionEvents: { actualFrontendClient: true, paginated: true, audited: true, actualSessionSearchUI: false },
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },

@@ -48,3 +48,5 @@ node scripts/e2e/dashboard-auth-settings.mjs
 ## 시나리오 정의 조회
 
 `GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼용이며 현재 서버 실행 검증기는 아니다. S1-3 외 판정 규칙은 아직 정의하지 않았고 실행·이력·저장 API는 후속 작업이다.
+
+동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 시나리오 화면 렌더·실행 결과 검증은 포함하지 않는다.
