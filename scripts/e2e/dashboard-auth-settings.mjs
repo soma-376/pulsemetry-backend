@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 28개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 29개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -120,7 +120,7 @@ try {
       tenant_id: tenant, installation_id: installationId, signal: 'log', product: 'claude_code',
       team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
       raw_json: JSON.stringify({ type: 'llm_call', envelope: { session_id: installationId },
-        payload: { model: 'claude-e2e', attempt, status_code, duration_ms: attempt === 1 ? 100 : 900, stop_reason: attempt === 1 ? 'end_turn' : null, error_type: status_code === 429 ? 'rate_limit' : null } }),
+        payload: { model: 'claude-e2e', attempt, status_code, request_id: 'request-' + attempt, ttft_ms: attempt === 1 ? 100 : null, duration_ms: attempt === 1 ? 100 : 900, stop_reason: attempt === 1 ? 'end_turn' : null, error_type: status_code === 429 ? 'rate_limit' : null } }),
     }));
     points.push(JSON.stringify({
       event_id: randomUUID(), ts: observedAt, tenant_id: tenant, installation_id: installationId,
@@ -133,6 +133,12 @@ try {
       signal: 'span', product: 'claude_code', team_ids_as_of: ['00000000-0000-0000-0000-000000000010'],
       enrichment_json: '{}', raw_json: JSON.stringify({ type: 'turn',
         payload: { kind: 'turn', attrs: { duration_ms: '1500' } } }),
+    }));
+    for (const [request_id, ttft_ms] of [['request-1', 9999], ['span-only', 300]]) points.push(JSON.stringify({
+      event_id: randomUUID(), ts: observedAt, tenant_id: tenant, installation_id: installationId,
+      signal: 'span', product: 'claude_code', team_ids_as_of: ['00000000-0000-0000-0000-000000000010'],
+      enrichment_json: '{}', raw_json: JSON.stringify({ type: 'llm_request',
+        payload: { model: 'claude-e2e', request_id, ttft_ms } }),
     }));
     for (const [decided_by, decision] of [['config', 'reject'], ['hook', 'accept'], ['user', 'abort'], [null, null]]) points.push(JSON.stringify({
       event_id: randomUUID(), ts: observedAt,
@@ -273,6 +279,7 @@ try {
           { ref_id: 'C', metric_id: 'llm_stop_reasons', group_by: ['model', 'stop_reason'] },
           { ref_id: 'D', metric_id: 'llm_duration_ms', group_by: ['model'] },
           { ref_id: 'E', metric_id: 'turn_duration_ms', group_by: ['product'] },
+          { ref_id: 'F', metric_id: 'llm_ttft_ms', group_by: ['product', 'model'] },
         ],
       }) });
       return Object.fromEntries(Object.entries(response.results).map(([ref, result]) => [ref, series(result)]));
@@ -291,6 +298,8 @@ try {
       { p50: 900, p95: 900, p99: 900 });
     assert.deepEqual(Object.fromEntries(mcp.E.points.map(p => [p.key, p.value.value])),
       { p50: 1500, p90: 1500 });
+    assert.deepEqual(Object.fromEntries(mcp.F.points.map(p => [p.key, p.value.value])),
+      { p50: 300, p90: 300 });
     const localObserved = new Date((observedAt + 9*3600)*1000);
     assert.equal(tools.J.points[0].labels.hour, String(localObserved.getUTCHours()));
     assert.equal(tools.J.points[0].labels.weekday, String(localObserved.getUTCDay() || 7));
@@ -310,7 +319,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 28개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 29개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -325,7 +334,8 @@ try {
       { metric: 'mcp_connections', expected: 20 }, { metric: 'mcp_failure_ratio', expected: 0.75 },
       { metric: 'llm_stop_reasons', end_turn: 10, missing: 10 },
       { metric: 'llm_duration_ms', p50: 900, p95: 900, p99: 900 },
-      { metric: 'turn_duration_ms', p50: 1500, p90: 1500 }],
+      { metric: 'turn_duration_ms', p50: 1500, p90: 1500 },
+      { metric: 'llm_ttft_ms', p50: 300, p90: 300 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
