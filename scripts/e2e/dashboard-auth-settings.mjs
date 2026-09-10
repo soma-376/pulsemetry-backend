@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 17개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 19개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -121,6 +121,13 @@ try {
       raw_json: JSON.stringify({ type: 'llm_call', envelope: { session_id: installationId },
         payload: { model: 'claude-e2e', attempt, status_code } }),
     }));
+    for (const [decided_by, decision] of [['config', 'reject'], ['hook', 'accept'], ['user', 'abort'], [null, null]]) points.push(JSON.stringify({
+      event_id: randomUUID(), ts: Math.floor(Date.now()/1000)-120,
+      tenant_id: tenant, installation_id: installationId, signal: 'log', product: 'claude_code',
+      team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
+      raw_json: JSON.stringify({ type: 'tool_decision', envelope: { session_id: installationId },
+        payload: { tool_name: 'Bash', decided_by, decision } }),
+    }));
   }
   run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], points.join('\n'));
   launch('node', [resolve(frontend, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '15173', '--strictPort'],
@@ -204,6 +211,8 @@ try {
           { ref_id: 'D', metric_id: 'tool_calls', frame_type: 'scalar', params: { success: false } },
           { ref_id: 'E', metric_id: 'api_retry_attempts', group_by: ['team', 'model'] },
           { ref_id: 'F', metric_id: 'rate_limit_events', frame_type: 'scalar', group_by: ['team', 'product'] },
+          { ref_id: 'G', metric_id: 'auto_approval_ratio', group_by: ['team', 'tool_name'] },
+          { ref_id: 'H', metric_id: 'tool_rejections', frame_type: 'scalar', group_by: ['team', 'tool_name'] },
         ],
       }) });
       return Object.fromEntries(Object.entries(response.results).map(([ref, result]) => [ref, series(result)]));
@@ -216,6 +225,8 @@ try {
     assert.deepEqual(toolValues('D'), { value: 5 });
     assert.deepEqual(toolValues('E'), { value: 1/3, numerator: 5, denominator: 15 });
     assert.deepEqual(toolValues('F'), { value: 5 });
+    assert.deepEqual(toolValues('G'), { value: 0.5, numerator: 10, denominator: 20 });
+    assert.deepEqual(toolValues('H'), { value: 5 });
 
     if (role === 'owner') {
       await page.getByRole('cell', { name: 'E2E 별도팀', exact: true }).waitFor();
@@ -232,7 +243,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 17개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 19개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -240,7 +251,8 @@ try {
       { metric: 'prompts_per_session', p50: 2, p90: 2, buckets: [0, 5, 0, 0, 0] },
       { metric: 'tool_calls', expected: 15, failedOnly: 5 }, { metric: 'tool_failure_rate', expected: 0.5 },
       { metric: 'read_tool_density', p50: 3, p90: 3 },
-      { metric: 'api_retry_attempts', expected: 1/3 }, { metric: 'rate_limit_events', expected: 5 }],
+      { metric: 'api_retry_attempts', expected: 1/3 }, { metric: 'rate_limit_events', expected: 5 },
+      { metric: 'auto_approval_ratio', expected: 0.5 }, { metric: 'tool_rejections', expected: 5 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
