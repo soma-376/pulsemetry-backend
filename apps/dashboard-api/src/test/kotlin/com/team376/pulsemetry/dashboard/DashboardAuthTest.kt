@@ -275,6 +275,10 @@ class DashboardAuthTest {
         queryResult(queryBody(extra=mapOf("filters" to mapOf("team_ids" to listOf(other)))),admin).andExpect(status().isForbidden)
         queryResult(queryBody(extra=mapOf("filters" to mapOf("member_ids" to listOf(member)))),admin).andExpect(status().isForbidden)
         queryResult(request,admin).andExpect(status().isOk)
+        val adoption = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "adoption_rate",
+            "group_by" to listOf("team"))),admin).andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(adoption["results"]["A"]["frames"].size()).isEqualTo(1)
+        assertThat(adoption["results"]["A"]["frames"][0]["data"]["values"][0][0].asDouble()).isEqualTo(5.0/6.0)
     }
     @Test fun `활성 시간 원천이 있으면 이벤트만 보낸 구성원으로 보호 인원을 늘리지 않는다`() {
         val ids = installations(5)
@@ -319,6 +323,50 @@ class DashboardAuthTest {
         val unfinished = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost")))
             .andExpect(status().isOk).andReturn().response.contentAsString)
         assertThat(unfinished["results"]["A"]["status"].asInt()).isEqualTo(501)
+    }
+    @Test fun `도입 지표는 사람 중복을 제거하고 비율 분모와 기본 scalar를 보존한다`() {
+        val ids = installations(5)
+        val duplicate = UUID.randomUUID()
+        jdbc.sql("""INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform)
+            SELECT :copy,tenant_id,member_id,invitation_id,platform FROM enrollment.installations WHERE id=:id""")
+            .param("copy",duplicate).param("id",ids[0]).update()
+        seedPoints((ids+duplicate).map { point(it,2.0) })
+        fun frame(metric: String) = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric)))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        val active = frame("active_users")
+        assertThat(active["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+        assertThat(active["data"]["values"][1][1].isNull).isTrue()
+        val adoption = frame("adoption_rate")
+        assertThat(adoption["schema"]["frame_type"].asString()).isEqualTo("scalar")
+        assertThat(adoption["data"]["values"][0][0].asDouble()).isEqualTo(5.0/6.0)
+        assertThat(adoption["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+        assertThat(adoption["data"]["values"][2][0].asDouble()).isEqualTo(6.0)
+        val coverage = frame("telemetry_coverage")
+        assertThat(coverage["data"]["values"][0][0].asDouble()).isEqualTo(1.0)
+        assertThat(coverage["data"]["values"][1][0].asDouble()).isEqualTo(6.0)
+        jdbc.sql("UPDATE enrollment.installations SET status='revoked' WHERE tenant_id=:tenant")
+            .param("tenant",tenant).update()
+        val zero = frame("telemetry_coverage")
+        assertThat(zero["data"]["values"][0][0].isNull).isTrue()
+        assertThat(zero["data"]["values"][2][0].asDouble()).isEqualTo(0.0)
+    }
+    @Test fun `활성 시간은 개인 합계로 판정하며 소규모 비율의 분모도 숨긴다`() {
+        val ids = installations(5)
+        fun activity(id: UUID, value: Double): String {
+            val row = mapper.readTree(point(id,value)) as tools.jackson.databind.node.ObjectNode
+            row.put("raw_json",mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.active_time.total",
+                "value" to value,"aggregation_temporality" to 1,"attrs" to mapOf("type" to "user")))))
+            return mapper.writeValueAsString(row)
+        }
+        seedPoints(ids.map { activity(it,10.0) } + activity(ids[0],-10.0))
+        for (metric in listOf("active_users","adoption_rate","telemetry_coverage")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar")))
+                .andExpect(status().isOk).andReturn().response.contentAsString)
+            assertThat(result["coverage"]["ratio"].isNull).isTrue()
+            val frame = result["results"]["A"]["frames"][0]
+            assertThat(frame["schema"]["meta"]["active_user_definition"].asString()).isEqualTo("active_time_user")
+            assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        }
     }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic

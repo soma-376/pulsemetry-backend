@@ -59,9 +59,10 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private val pointMetrics = mapOf("sessions" to "claude_code.session.count",
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
+    private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
     private val intervals = linkedMapOf("1h" to "1 HOUR", "6h" to "6 HOUR", "1d" to "1 DAY", "1w" to "1 WEEK", "1M" to "1 MONTH")
     private val utc = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC)
-    private data class Scope(val parameters: Map<String, String>, val members: Int, val teamNames: Map<String, String>)
+    private data class Scope(val parameters: Map<String, String>, val members: Int, val teamNames: Map<String, String>, val teamMembers: Map<String, Int>, val installations: Int)
     private data class Rows(val data: List<JsonNode>, val sql: String)
 
     @PostMapping("/query")
@@ -109,7 +110,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if (q.metricId !in pointMetrics || q.frameType == "distribution") {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics) || q.frameType == "distribution") {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 require(q.params.isEmpty())
@@ -154,7 +155,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private fun scope(user: UserIdentity, f: DashboardQueryFilters): Scope {
         val teams = access.teams(user, f.teamIds)
         val unrestricted = user.role == "owner" && f.teamIds.isEmpty()
-        val rows = jdbc.sql("""SELECT i.id,m.id AS member_id,m.status::text FROM enrollment.installations i
+        val rows = jdbc.sql("""SELECT i.id,m.id AS member_id,i.status::text AS installation_status FROM enrollment.installations i
             JOIN enrollment.members m ON m.id=i.member_id AND m.tenant_id=i.tenant_id WHERE i.tenant_id=:tenant LIMIT 5001""")
             .param("tenant", user.tenantId).query().listOfRows()
         if (rows.size > 5000) throw DashboardReadException("query_too_wide", 422)
@@ -164,13 +165,21 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 AND tm.left_at IS NULL AND tm.team_id IN (:teams)))""")
             .param("tenant", user.tenantId).param("all", unrestricted)
             .param("teams", teams.ifEmpty { setOf(UUID(0, 0)) }).query(UUID::class.java).list()
-            .count { f.memberIds.isEmpty() || it in f.memberIds }
+            .filter { f.memberIds.isEmpty() || it in f.memberIds }
         val names = jdbc.sql("SELECT id,name FROM enrollment.teams WHERE tenant_id=:tenant")
             .param("tenant", user.tenantId).query().listOfRows().associate { it["id"].toString() to it["name"].toString() }
+        val memberships = jdbc.sql("""SELECT tm.team_id,tm.member_id FROM enrollment.team_memberships tm
+            JOIN enrollment.teams t ON t.id=tm.team_id WHERE t.tenant_id=:tenant AND t.status='active' AND tm.left_at IS NULL""")
+            .param("tenant", user.tenantId).query().listOfRows()
+        val teamMembers = memberships.filter { it["member_id"] in members }.groupBy { it["team_id"].toString() }
+            .mapValues { (_, rows) -> rows.map { it["member_id"] }.distinct().size }
+        val scopedMemberIds = if (unrestricted) selected.map { it["member_id"] }.toSet() else
+            memberships.filter { it["team_id"] in teams }.map { it["member_id"] }.toSet()
+        val installationCount = selected.count { it["installation_status"]=="active" && it["member_id"] in scopedMemberIds }
         val map = selected.joinToString(",", "{", "}") { "'${it["id"]}':'${it["member_id"]}'" }
         return Scope(mapOf("tenant" to user.tenantId.toString(), "teams" to array(teams.map { it.toString() }),
             "unrestricted" to if (unrestricted) "1" else "0", "products" to array(f.products), "models" to array(f.models),
-            "members" to map, "personal" to if (f.memberIds.isNotEmpty()) "1" else "0"), members, names)
+            "members" to map, "personal" to if (f.memberIds.isNotEmpty()) "1" else "0"), members.size, names, teamMembers, installationCount)
     }
     private fun boundary(at: Instant) = utc.format(if (at.nano == 0) at else at.plusSeconds(1).minusNanos(at.nano.toLong()))
     private val activePoint = """signal='metric' AND product='claude_code'
@@ -181,7 +190,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private val person = "{members:Map(String,String)}[installation_id]"
     private val known = "mapContains({members:Map(String,String)},installation_id)"
     private val people = """if(countIf($activePoint)>0,
-        uniqExactIf($person,$known AND $activePoint AND JSONExtractFloat(raw_json,'point','value')>0),
+        arrayCount(value -> value>0,tupleElement(sumMapIf([$person],[JSONExtractFloat(raw_json,'point','value')],$known AND $activePoint),2)),
         uniqExactIf($person,$known))"""
     private val base = """FROM enriched_events FINAL WHERE tenant_id={tenant:String}
         AND ts>={from:DateTime} AND ts<{to:DateTime}
@@ -191,7 +200,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
-        val frameType = q.frameType ?: "timeseries"
+        if (q.metricId in populationMetrics) return readPopulation(q, scope, from, to, zone, interval, deadline)
+        val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
         val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
         val groupNames = q.groupBy.indices.map { "g$it" }
         val bucket = if (frameType == "timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
@@ -210,6 +220,45 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > q.limit)
             throw DashboardReadException("query_too_wide", 422)
         return Rows(rows, sql)
+    }
+    private fun readPopulation(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
+        zone: String, interval: String, deadline: Long): Rows {
+        val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
+        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val groups = q.groupBy.indices.map { "g$it" }
+        val suffix = if (groups.isEmpty()) "" else ","+groups.joinToString(",")
+        val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
+        // 설치 여러 개를 같은 사람으로 합친 뒤 활성 시간 합계로 활성 여부를 판정한다.
+        val sql = """SELECT bucket$suffix, sum(observations) AS points, sum(cumulative_points) AS cumulative,
+            sum(active_points)>0 AS active_time_definition,
+            if(sum(active_points)>0,countIf(member_known AND active_value>0),countIf(member_known)) AS people,
+            sum(installations) AS observed_installations
+            FROM (SELECT $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
+                $person AS member_key, $known AS member_known, count() AS observations,
+                countIf($activePoint) AS active_points,
+                countIf(signal='metric' AND product='claude_code'
+                    AND JSONExtractString(raw_json,'point','name')='claude_code.active_time.total'
+                    AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2) AS cumulative_points,
+                sumIf(JSONExtract(raw_json,'point','value','Nullable(Float64)'),$activePoint) AS active_value,
+                uniqExactIf(installation_id,installation_id!='') AS installations
+                FROM (SELECT * $base)
+                ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
+                GROUP BY bucket$suffix,member_key,member_known)
+            GROUP BY bucket$suffix ORDER BY bucket$suffix"""
+        val params = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone)
+        val rows = mapper.readTree(reader.query(sql,params,remaining(deadline)))["data"].toList().map { row ->
+            val node = row as tools.jackson.databind.node.ObjectNode
+            val numerator = if (q.metricId=="telemetry_coverage") row["observed_installations"].asDouble() else row["people"].asDouble()
+            val denominator = if (q.metricId=="telemetry_coverage") scope.installations else
+                q.groupBy.indexOf("team").takeIf { it>=0 }?.let { scope.teamMembers[row["g$it"].asString()] ?: 0 } ?: scope.members
+            if (q.metricId=="active_users") node.put("value",numerator) else {
+                node.put("numerator",numerator)
+                node.put("denominator",denominator)
+                if (denominator==0) node.putNull("value") else node.put("value",numerator/denominator)
+            }
+            node
+        }
+        return Rows(rows,sql)
     }
     private fun dimension(dim: String): String = when (dim) {
         "team" -> "team"
@@ -238,19 +287,25 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 fields += mapOf("name" to "time", "type" to "time")
                 values += ticks.map { it.toEpochMilli() }
             }
-            fun add(name: String, series: List<JsonNode>, seriesTicks: List<Instant>?) {
+            fun add(name: String, series: List<JsonNode>, seriesTicks: List<Instant>?, column: String = "value") {
                 fields += mapOf("name" to name, "type" to "number", "labels" to labels,
-                    "config" to mapOf("unit" to definition.unit, "suppressed" to suppressed,
+                    "config" to mapOf("unit" to if (column=="value") definition.unit else "count", "suppressed" to suppressed,
                         "group_size" to if (suppressed) null else series.minOfOrNull { it["people"].asLong() }))
                 val byTime = series.associateBy { it["bucket"].asLong() }
                 val aligned = if (timeseries) ticks.indices.map { index -> seriesTicks?.getOrNull(index)?.let { byTime[it.toEpochMilli()] } }
                     else listOf(series.firstOrNull())
                 values += aligned.map { row -> row?.let {
-                    if (suppressed || it["points"].asLong()==0L || it["value"].isNull) null else it["value"].asDouble()
+                    if (suppressed || it["points"].asLong()==0L || it[column].isNull) null else it[column].asDouble()
                 } }
             }
             add("value", rows, ticks)
             if (previous != null) add("value_compare", prior, previousTicks)
+            if (q.metricId in setOf("adoption_rate", "telemetry_coverage")) {
+                for (column in listOf("numerator", "denominator")) {
+                    add(column,rows,ticks,column)
+                    if (previous!=null) add("${column}_compare",prior,previousTicks,column)
+                }
+            }
             val cumulative = (rows+prior).sumOf { it["cumulative"].asLong() }
             mapOf("schema" to mapOf("ref_id" to q.refId, "metric_id" to q.metricId,
                 "frame_type" to frameType, "fields" to fields,
