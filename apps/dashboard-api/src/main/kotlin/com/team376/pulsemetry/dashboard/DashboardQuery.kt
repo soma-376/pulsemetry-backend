@@ -115,7 +115,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users","tokens","session_last_event","vendor_account_mismatch")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId!="usage_concentration") || (q.metricId=="onboarding_retention" && q.frameType=="timeseries")) {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users","tokens","session_last_event","vendor_account_mismatch","cost")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId!="usage_concentration") || (q.metricId=="onboarding_retention" && q.frameType=="timeseries")) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
@@ -123,6 +123,10 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                     q.params.values.all { it.isString && it.asString().length in 1..100 })
                 else if (q.metricId=="rubber_stamp_ratio") require(q.params.keys.all { it=="threshold_ms" } &&
                     q.params.values.all { it.isIntegralNumber && it.canConvertToInt() && it.asInt() in 0..3600000 })
+                else if (q.metricId=="cost") {
+                    require(q.params.isEmpty())
+                    require(q.source=="metrics" || q.groupBy.none { it in setOf("agent_name","skill_name","plugin_name","speed") })
+                }
                 else if (q.metricId=="tokens") {
                     require(q.params.keys.all { it=="types" })
                     q.params["types"]?.let { types ->
@@ -139,10 +143,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 val ticks = if (timeseries) buckets(time, from, to, interval) else emptyList()
                 if (ticks.size > body.maxDataPoints) throw DashboardReadException("query_too_wide", 422)
                 val scope = scopes.getValue(q.filters?.merge(body.filters) ?: body.filters)
+                val calculation = q.copy(priceBasis=q.priceBasis ?: body.priceBasis)
                 try {
-                    val current = read(q, scope, from, to, zone, interval, deadline)
-                    val previous = comparison?.let { read(q, scope, it.first, it.second, zone, interval, deadline) }
-                    results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else if (q.metricId=="onboarding_retention") q.copy(groupBy=q.groupBy+listOf("cohort_index","week_index")) else q, definition, current, previous, interval, ticks, comparison?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
+                    val current = read(calculation, scope, from, to, zone, interval, deadline)
+                    val previous = comparison?.let { read(calculation, scope, it.first, it.second, zone, interval, deadline) }
+                    results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else if (q.metricId=="onboarding_retention") q.copy(groupBy=q.groupBy+listOf("cohort_index","week_index")) else calculation, definition, current, previous, interval, ticks, comparison?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
                         tick.minus(Duration.between(from,to)) else tick.atZone(time.zone).minusWeeks(1).toInstant(), interval) } }, scope.teamNames))
                 } catch (e: DashboardReadException) { results[q.refId] = error(id, e.status, e.code) }
             }
@@ -221,6 +226,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
+        if (q.metricId=="cost") return readCost(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="vendor_account_mismatch") return readMismatch(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="onboarding_retention") return readRetention(q,scope,from,to,zone,deadline)
         if (q.metricId=="onboarding_ttfu") return readOnboarding(q,scope,from,to,zone,interval,deadline)
@@ -343,6 +349,74 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > groupLimit(q))
             throw DashboardReadException("query_too_wide", 422)
         return Rows(rows, sql)
+    }
+    private fun discounts(scope: Scope): String {
+        val zone = jdbc.sql("SELECT timezone FROM enrollment.tenants WHERE id=:tenant")
+            .param("tenant",UUID.fromString(scope.parameters.getValue("tenant"))).query(String::class.java).single()
+        val rows = jdbc.sql("""SELECT DISTINCT c.id,d.id AS discount_id,cm.member_id,c.vendor::text,d.model_pattern,d.discount_rate,
+            ceil(extract(epoch FROM greatest(cm.assigned_at,c.starts_at::timestamp AT TIME ZONE :zone,
+                d.effective_from::timestamp AT TIME ZONE :zone)))::bigint AS valid_from,
+            ceil(extract(epoch FROM least(coalesce(cm.released_at,'infinity'::timestamptz),
+                coalesce(c.terminated_at,'infinity'::timestamptz),
+                coalesce(c.ends_at+1,DATE '9999-12-31')::timestamp AT TIME ZONE :zone,
+                coalesce(d.effective_to+1,DATE '9999-12-31')::timestamp AT TIME ZONE :zone)))::bigint AS valid_to
+            FROM enrollment.contracts c JOIN enrollment.contract_token_discounts d ON d.contract_id=c.id
+            JOIN enrollment.contract_memberships cm ON cm.contract_id=c.id
+            JOIN enrollment.members m ON m.id=cm.member_id AND m.tenant_id=c.tenant_id
+            WHERE c.tenant_id=:tenant AND c.contract_type='token_discount' AND c.status!='draft' AND d.token_type='all'
+            LIMIT 5001""").param("tenant",UUID.fromString(scope.parameters.getValue("tenant"))).param("zone",zone)
+            .query().listOfRows()
+        if (rows.size>5000) throw DashboardReadException("query_too_wide",422)
+        return rows.joinToString(",","[","]") { row ->
+            "(${quoted(row["member_id"].toString())},${quoted(row["vendor"].toString())},${row["valid_from"]},${row["valid_to"]},"+
+                "${quoted(row["model_pattern"]?.toString() ?: "")},${row["discount_rate"]},${quoted(row["id"].toString())},${quoted(row["discount_id"].toString())})"
+        }
+    }
+    private fun readCost(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
+        zone: String, interval: String, deadline: Long): Rows {
+        val metrics = q.source=="metrics"
+        val contract = q.priceBasis=="contract"
+        val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
+        val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
+        val dimensions = q.groupBy.mapIndexed { index, dim ->
+            val expression = when (dim) {
+                "query_source" -> if (metrics) "JSONExtractString(raw_json,'point','attrs','query_source')" else "JSONExtractString(raw_json,'payload','source')"
+                "agent_name","skill_name","plugin_name" -> "JSONExtractString(raw_json,'point','attrs','${dim.substringBefore('_')}.name')"
+                "mcp_server" -> if (metrics) "JSONExtractString(raw_json,'point','attrs','mcp_server.name')" else dimension(dim)
+                "speed" -> "JSONExtractString(raw_json,'point','attrs','speed')"
+                "effort" -> if (metrics) "JSONExtractString(raw_json,'point','attrs','effort')" else "JSONExtractString(raw_json,'payload','reasoning_effort')"
+                else -> dimension(dim)
+            }
+            "$expression AS g$index"
+        }
+        val groups = (listOf("bucket")+q.groupBy.indices.map { "g$it" }).joinToString(",")
+        val source = if (metrics) "signal='metric' AND product='claude_code' AND JSONExtractString(raw_json,'point','name')='claude_code.cost.usage'"
+            else "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='llm_call'"
+        val observed = if (metrics) "$source AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2" else source
+        val value = if (metrics) "JSONExtract(raw_json,'point','value','Nullable(Float64)')" else "JSONExtract(raw_json,'payload','cost_usd','Nullable(Float64)')"
+        val valid = "$observed AND isNotNull(raw_cost) AND raw_cost>=0"
+        val matched = "arrayFilter(d -> d.1=$person AND d.2=multiIf(product='claude_code','anthropic',product='codex','openai','') AND toInt64(toUnixTimestamp(ts))>=d.3 AND toInt64(toUnixTimestamp(ts))<d.4 AND position(${dimension("model")},d.5)>0,{discounts:Array(Tuple(String,String,Int64,Int64,String,Float64,String,String))})"
+        val input = "SELECT *,$value AS raw_cost,${if (contract) matched else "[]"} AS matched $base"
+        val factor = if (contract) "if(empty(matched),1.0,matched[1].6)" else "1.0"
+        val sql = """SELECT $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
+            $people AS people,countIf($activePoint)>0 AS active_time_definition,
+            countIf($observed) AS points,
+            ${if (metrics) "countIf($source AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)" else "0"} AS cumulative,
+            sumOrNullIf(raw_cost*$factor,$valid) AS value,
+            countIf($valid AND length(matched)>1) AS conflicts,
+            countIf($valid AND (NOT isFinite($factor) OR $factor<0)) AS invalid_rates,
+            countIf($valid AND JSONExtractString(raw_json,'payload','cost_source')='reported') AS reported,
+            countIf($valid AND JSONExtractString(raw_json,'payload','cost_source')='estimated') AS estimated
+            FROM ($input)
+            ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
+            GROUP BY $groups ORDER BY $groups"""
+        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone,
+            "discounts" to if (contract) discounts(scope) else "[]")
+        val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
+            .filter { it["points"].asLong()>0 || it["cumulative"].asLong()>0 }
+        if (rows.any { it["conflicts"].asLong()>0 }) throw DashboardReadException("contract_overlap",422)
+        if (rows.any { it["invalid_rates"].asLong()>0 }) throw DashboardReadException("invalid_contract_rate",422)
+        return Rows(rows,sql)
     }
     private fun readMismatch(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, interval: String, deadline: Long): Rows {
@@ -814,6 +888,12 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 "전후 토큰 쌍이 없는 압축 이벤트 ${incompleteCompactions}개를 감소율에서 제외"
             if (q.metricId=="subagent_activity") quality += "도구 호출에서 관측된 agent_id 수와 호출 비율; 완료·성공 여부는 판정하지 않음"
             if (q.metricId=="abandoned_session_ratio") quality += "조회 기간 내 로그 세션과 관측 산출만 판정; 세션 종료를 보장하지 않으며 미관측 산출이 있을 수 있음"
+            if (q.metricId=="cost") {
+                quality += "원천: ${q.source ?: "events"}; 가격 기준: ${q.priceBasis ?: "list"}; 누락·음수 비용 제외, 청구액 아님"
+                if (q.priceBasis=="contract") quality += "현재 계약 정보의 배정·유효 기간과 제품 벤더·모델 부분 문자열 일치, all 배율만 적용; 일치 없음은 1배"
+                if (q.source!="metrics") quality += if (suppressed) "reported·estimated 관측 비용 포함" else
+                    "reported ${(rows+prior).sumOf { it["reported"].asLong() }}개, estimated ${(rows+prior).sumOf { it["estimated"].asLong() }}개 관측 비용"
+            }
             if (q.metricId=="vendor_account_mismatch") quality += "설치별 마지막 비어 있지 않은 로그·스팬 이메일과 현재 등록 이메일을 대소문자 구분 없이 비교; 시계열은 버킷별 판정, 동률은 sequence·event_id 순서; 주소는 반환하지 않음"
             if (q.metricId=="onboarding_retention") {
                 quality += "필터·권한 범위의 보존된 첫 사용 주 코호트; 월요일 기준 설치 잔존율, 소집단은 구성원 수; 비교는 상대 코호트 주·경과 주차 정렬"

@@ -323,7 +323,7 @@ class DashboardAuthTest {
             "from" to "2026-01-01T00:00:00Z"))).andExpect(status().isOk)
         val absent = mapper.readTree(queryResult(queryBody()).andExpect(status().isOk).andReturn().response.contentAsString)
         assertThat(absent["results"]["A"]["frames"].size()).isZero()
-        val unfinished = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost")))
+        val unfinished = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost_anomaly")))
             .andExpect(status().isOk).andReturn().response.contentAsString)
         assertThat(unfinished["results"]["A"]["status"].asInt()).isEqualTo(501)
     }
@@ -1616,6 +1616,80 @@ class DashboardAuthTest {
         val result = mapper.readTree(mismatchQuery(request).andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]
         assertThat(result["status"].asInt()).isEqualTo(200)
         assertThat(result["frames"].size()).isZero()
+    }
+    private fun costEvent(id: UUID, cost: Double?, at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(llmEvent(id,1,200,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "llm_call","payload" to mapOf(
+            "model" to "claude-test","cost_usd" to cost,"cost_source" to "reported"))))
+        return mapper.writeValueAsString(row)
+    }
+    private fun costPoint(id: UUID, value: Double, cumulative: Boolean = false): String {
+        val row = mapper.readTree(point(id,value,cumulative=cumulative)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.cost.usage",
+            "value" to value,"aggregation_temporality" to if (cumulative) 2 else 1,
+            "attrs" to mapOf("model" to "claude-test","agent.name" to "worker")))))
+        return mapper.writeValueAsString(row)
+    }
+    private fun discountContract(): UUID {
+        val id = UUID.randomUUID()
+        jdbc.sql("""INSERT INTO enrollment.contracts(id,tenant_id,vendor,contract_type,name,contracted_at,starts_at,ends_at)
+            VALUES (:id,:tenant,'anthropic','token_discount','테스트 할인','2026-08-01','2026-09-01','2026-09-02')""")
+            .param("id",id).param("tenant",tenant).update()
+        jdbc.sql("""INSERT INTO enrollment.contract_token_discounts(contract_id,model_pattern,discount_rate,effective_from,effective_to)
+            VALUES (:id,'claude',0.5,'2026-09-01','2026-09-02')""").param("id",id).update()
+        jdbc.sql("""INSERT INTO enrollment.contract_memberships(contract_id,member_id,assigned_at,released_at)
+            SELECT :id,id,'2026-09-01T12:00:00Z','2026-09-02T12:00:00Z' FROM enrollment.members WHERE tenant_id=:tenant""")
+            .param("id",id).param("tenant",tenant).update()
+        return id
+    }
+    @Test fun `비용은 이벤트와 메트릭을 분리하고 누락 음수 누적을 제외한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(costEvent(it,10.0),costEvent(it,null),costEvent(it,-1.0),
+            costPoint(it,2.0),costPoint(it,100.0,true)) }
+        seedPoints(rows+rows.first())
+        fun result(q: Map<String,Any>) = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost","frame_type" to "scalar")+q))
+            .andReturn().response.contentAsString)["results"]["A"]
+        val events = result(emptyMap())
+        assertThat(events["status"].asInt()).isEqualTo(200)
+        assertThat(events["frames"][0]["data"]["values"][0][0].asDouble()).isEqualTo(50.0)
+        val metrics = result(mapOf("source" to "metrics","group_by" to listOf("agent_name")))
+        assertThat(metrics["frames"][0]["data"]["values"][0][0].asDouble()).isEqualTo(10.0)
+        assertThat(metrics["frames"][0]["schema"]["fields"][0]["labels"]["agent_name"].asString()).isEqualTo("worker")
+        queryResult(queryBody(mapOf("metric_id" to "cost","group_by" to listOf("agent_name")))).andExpect(status().isBadRequest)
+        seedPoints(ids.map { costEvent(it,null) })
+        assertThat(result(emptyMap())["frames"][0]["data"]["values"][0][0].isNull).isTrue()
+        seedPoints(ids.map { costEvent(it,0.0) })
+        assertThat(result(emptyMap())["frames"][0]["data"]["values"][0][0].asDouble()).isZero()
+    }
+    @Test fun `계약 비용은 배정 기간과 가격 우선순위를 지키고 중복 적용을 거부한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(costEvent(it,10.0),costEvent(it,20.0,at="2026-09-02T12:00:00Z")) })
+        val contract = discountContract()
+        jdbc.sql("""INSERT INTO enrollment.contract_token_discounts(contract_id,model_pattern,token_type,discount_rate,effective_from)
+            VALUES (:id,'claude','input',0.1,'2026-09-01')""").param("id",contract).update()
+        val q = mapOf("metric_id" to "cost","frame_type" to "scalar")
+        fun result(query: Map<String,Any>, basis: String) = mapper.readTree(queryResult(queryBody(query,mapOf("price_basis" to basis)))
+            .andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result(q,"contract")["frames"][0]["data"]["values"][0][0].asDouble()).isEqualTo(125.0)
+        assertThat(result(q+mapOf("price_basis" to "list"),"contract")["frames"][0]["data"]["values"][0][0].asDouble()).isEqualTo(150.0)
+        assertThat(result(q+mapOf("price_basis" to "contract"),"list")["frames"][0]["data"]["values"][0][0].asDouble()).isEqualTo(125.0)
+        jdbc.sql("UPDATE enrollment.contracts SET ends_at='2026-08-31' WHERE id=:id").param("id",contract).update()
+        assertThat(result(q,"contract")["frames"][0]["data"]["values"][0][0].asDouble()).isEqualTo(150.0)
+        jdbc.sql("UPDATE enrollment.contracts SET ends_at='2026-09-02' WHERE id=:id").param("id",contract).update()
+        discountContract()
+        val overlap = result(q,"contract")
+        assertThat(overlap["status"].asInt()).isEqualTo(422)
+        assertThat(overlap["error"]["error"].asString()).isEqualTo("contract_overlap")
+    }
+    @Test fun `비용 비교 소집단은 금액과 원천 개수를 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { costEvent(it,98765.0) }+ids.take(4).map { costEvent(it,98765.0,at="2026-08-31T12:00:00Z") })
+        val request = queryBody(mapOf("metric_id" to "cost","frame_type" to "scalar"),mapOf("compare" to "previous_period"))
+        val response = queryResult(request).andReturn().response.contentAsString
+        val frame = mapper.readTree(response)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        assertThat(frame["schema"]["meta"]["data_quality"].toString()).contains("reported·estimated").doesNotContain("9개")
+        assertThat(queryResult(request,accept="text/csv").andReturn().response.contentAsString).doesNotContain("493825","395060")
     }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
