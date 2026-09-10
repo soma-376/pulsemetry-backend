@@ -60,7 +60,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
-    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts")
     private val sessionMetrics = setOf("prompts_per_session", "read_tool_density")
     private val intervals = linkedMapOf("1h" to "1 HOUR", "6h" to "6 HOUR", "1d" to "1 DAY", "1w" to "1 WEEK", "1M" to "1 MONTH")
     private val utc = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC)
@@ -112,7 +112,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId!="tool_calls") || (q.frameType == "distribution" && q.metricId !in sessionMetrics)) {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in setOf("tool_calls","rate_limit_events")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics)) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
@@ -213,7 +213,10 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val attrType = "JSONExtractString(raw_json,'point','attrs','type')"
         val success = "JSONExtract(raw_json,'payload','success','Nullable(Bool)')"
         val tool = "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='tool_call'"
+        val llm = "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='llm_call'"
+        val attempt = "JSONExtract(raw_json,'payload','attempt','Nullable(Int64)')"
         val metric = when (q.metricId) {
+            "api_retry_attempts", "rate_limit_events" -> llm
             "tool_calls" -> tool + if (q.params.containsKey("success")) " AND $success={success:Bool}" else ""
             "tool_failure_rate" -> tool
             "automation_ratio" -> "signal='metric' AND product='claude_code' AND $name='claude_code.active_time.total' AND $attrType IN ('user','cli')"
@@ -221,12 +224,14 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             "command_prompt_ratio" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='user_prompt' AND JSONExtractString(raw_json,'envelope','session_id') NOT IN ('','(unknown)')"
             else -> "signal='metric' AND product='claude_code' AND $name={metric:String}"
         }
-        val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate")
+        val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate","api_retry_attempts","rate_limit_events")
         val valid = if (event) metric else "$metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2 AND isNotNull(JSONExtract(raw_json,'point','value','Nullable(Float64)'))"
         val observed = if (q.metricId=="tool_calls") tool else valid
         val cumulative = if (event) "0" else "countIf($metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)"
         val pointValue = "JSONExtract(raw_json,'point','value','Nullable(Float64)')"
         val numerator = when (q.metricId) {
+            "api_retry_attempts" -> "countIf($valid AND $attempt>=2)"
+            "rate_limit_events" -> "countIf($valid AND JSONExtract(raw_json,'payload','status_code','Nullable(Int64)')=429)"
             "tool_calls" -> "countIf($valid)"
             "tool_failure_rate" -> "countIf($valid AND $success=false)"
             "automation_ratio" -> "sumIf($pointValue,$valid AND $attrType='cli')"
@@ -246,7 +251,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val sql = """SELECT $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
             $people AS people, countIf($activePoint)>0 AS active_time_definition,
             countIf($observed) AS points, $cumulative AS cumulative,
-            $result
+            $result,
+            ${if (q.metricId=="api_retry_attempts") "countIf($llm AND isNull($attempt))" else "0"} AS unknown_attempts
             FROM (SELECT * $base)
             ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
             GROUP BY bucket${if (groupNames.isEmpty()) "" else ","+groupNames.joinToString(",")}
@@ -338,7 +344,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "team" -> "team"
         "product" -> "product"
         "tool_name", "tool_kind", "action", "error_type", "mcp_server" -> "JSONExtractString(raw_json,'payload','$dim')"
-        "start_type", "type", "model" -> "JSONExtractString(raw_json,'point','attrs','$dim')"
+        "hour" -> "toString(toHour(ts,{zone:String}))"
+        "model" -> "coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))"
+        "start_type", "type" -> "JSONExtractString(raw_json,'point','attrs','$dim')"
         else -> throw IllegalArgumentException("group_by_not_allowed")
     }
     private fun frames(q: DashboardQueryItem, definition: DashboardMetricDefinition, current: Rows, previous: Rows?,
@@ -389,13 +397,18 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 }
             }
             val cumulative = (rows+prior).sumOf { it["cumulative"].asLong() }
+            val unknownAttempts = (rows+prior).sumOf { it["unknown_attempts"]?.asLong() ?: 0 }
+            val quality = mutableListOf<String>()
+            if (cumulative>0) quality += if (suppressed) "누적 temporality 포인트 제외" else "누적 temporality 포인트 ${cumulative}개 제외"
+            if (q.metricId=="api_retry_attempts" && unknownAttempts>0) quality += if (suppressed)
+                "attempt 누락 호출이 분모에 포함됨; 재시도 여부 미판정" else "attempt 누락 호출 ${unknownAttempts}개가 분모에 포함됨; 재시도 여부 미판정"
             val summary = mapOf("schema" to mapOf("ref_id" to q.refId, "metric_id" to q.metricId,
                 "frame_type" to frameType, "fields" to fields,
                 "meta" to mapOf("definition" to definition.definition, "caveat" to definition.caveat,
                     "resolved_interval" to interval, "source_columns" to definition.sourceColumns,
                     "active_user_definition" to if ((rows+prior).all { it["active_time_definition"].asInt()==1 }) "active_time_user" else "any_event",
                     "executed_sql" to current.sql, "suppressed_groups" to if (suppressed) listOf(group.joinToString("/").ifEmpty { "all" }) else emptyList(),
-                    "data_quality" to if (cumulative>0) listOf(if (suppressed) "누적 temporality 포인트 제외" else "누적 temporality 포인트 ${cumulative}개 제외") else emptyList())),
+                    "data_quality" to quality)),
                 "data" to mapOf("values" to values))
             if (frameType=="distribution" && q.metricId=="prompts_per_session") {
                 val histogramFields = mutableListOf<Map<String,Any?>>(mapOf("name" to "bucket", "type" to "string"),

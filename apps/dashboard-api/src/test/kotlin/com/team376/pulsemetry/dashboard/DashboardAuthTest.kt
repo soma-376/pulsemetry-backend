@@ -29,6 +29,7 @@ class DashboardAuthTest {
     @Autowired lateinit var mvc: MockMvc
     @Autowired lateinit var jdbc: JdbcClient
     @Autowired lateinit var mapper: ObjectMapper
+    @Autowired lateinit var clock: java.time.Clock
     private lateinit var member: UUID
     @BeforeEach fun setup() {
         jdbc.sql("TRUNCATE enrollment.tenants CASCADE").update()
@@ -114,7 +115,9 @@ class DashboardAuthTest {
     }
     @Test fun `세션 만료와 tenant 상태 변경은 즉시 적용된다`() {
         val token = token()
-        jdbc.sql("UPDATE enrollment.user_sessions SET created_at=now()-interval '9 hours', expires_at=now()-interval '1 second'").update()
+        val expired = clock.instant().minusSeconds(1).atOffset(java.time.ZoneOffset.UTC)
+        jdbc.sql("UPDATE enrollment.user_sessions SET created_at=:created, expires_at=:expired")
+            .param("created",expired.minusHours(8)).param("expired",expired).update()
         mvc.perform(get("/v1/me").header("Authorization", "Bearer $token")).andExpect(status().isUnauthorized)
         val fresh = token()
         jdbc.sql("UPDATE enrollment.tenants SET status='suspended'").update()
@@ -548,6 +551,53 @@ class DashboardAuthTest {
             val hidden = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar"),
                 mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
             assertThat(hidden["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        }
+    }
+    private fun llmEvent(id: UUID, attempt: Int?, status: Int?, model: String = "claude-test",
+        product: String = "claude_code", type: String = "llm_call", at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(promptEvent(id,product=product,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to type,
+            "envelope" to mapOf("session_id" to "session"),"payload" to mapOf("attempt" to attempt,"status_code" to status,"model" to model))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `재시도는 호출 비율과 누락 품질을 제공하고 모델 및 현지 시간 차원을 적용한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(llmEvent(it,1,200),llmEvent(it,2,429),llmEvent(it,null,null),
+            llmEvent(it,9,429,type="llm_request"),llmEvent(it,3,429,"codex-test","codex")) }
+        seedPoints(rows + rows.first())
+        val frames = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "api_retry_attempts","group_by" to listOf("model"))))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        assertThat(frames).hasSize(2)
+        val claude = frames.single { it["schema"]["fields"][0]["labels"]["model"].asString()=="claude-test" }
+        assertThat(claude["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(1.0/3,5.0,15.0)
+        assertThat(claude["schema"]["meta"]["data_quality"][0].asString()).contains("5개", "미판정")
+        val codex = frames.single { it["schema"]["fields"][0]["labels"]["model"].asString()=="codex-test" }
+        assertThat(codex["data"]["values"][0][0].asDouble()).isEqualTo(1.0)
+        val limits = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "rate_limit_events","group_by" to listOf("hour")),
+            mapOf("tz" to "Asia/Seoul","filters" to mapOf("products" to listOf("claude_code")))))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(limits["schema"]["fields"][1]["labels"]["hour"].asString()).isEqualTo("21")
+        assertThat(limits["data"]["values"][1][0].asInt()).isEqualTo(5)
+        assertThat(limits["data"]["values"][1][1].isNull).isTrue()
+        seedPoints(ids.map { llmEvent(it,null,null) })
+        for (metric in listOf("api_retry_attempts","rate_limit_events")) {
+            val value = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar")))
+                .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"][0][0]
+            assertThat(value.isNumber).isTrue()
+            assertThat(value.asInt()).isZero()
+        }
+    }
+    @Test fun `재시도와 요청 제한은 작은 비교 집단의 값과 품질 인원 수를 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { llmEvent(it,2,429) } + ids.take(4).map { llmEvent(it,null,429,at="2026-08-31T12:00:00Z") })
+        for (metric in listOf("api_retry_attempts","rate_limit_events")) {
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar"),
+                mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+            if (metric=="api_retry_attempts") {
+                val quality = frame["schema"]["meta"]["data_quality"][0].asString()
+                assertThat(quality).contains("미판정").doesNotContain("4개")
+            }
         }
     }
     companion object {
