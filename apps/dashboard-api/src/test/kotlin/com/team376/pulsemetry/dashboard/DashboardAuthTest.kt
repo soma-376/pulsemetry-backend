@@ -1983,4 +1983,97 @@ class DashboardAuthTest {
         queryResult(request).andExpect(status().isForbidden)
     }
 
+    private fun installationList(params: String = "", reason: String? = "설치 운영 상태 정기 점검") = mvc.perform(
+        get("/v1/installations$params").header("Authorization","Bearer ${token()}").apply {
+            if (reason!=null) header("X-Audit-Reason",java.net.URLEncoder.encode(reason,java.nio.charset.StandardCharsets.UTF_8))
+        })
+    private fun versionEvent(id: UUID, at: java.time.Instant, product: String, version: String): String {
+        val row = mapper.readTree(point(id,1.0,at=at.toString())) as tools.jackson.databind.node.ObjectNode
+        row.put("product",product)
+        row.put("raw_json",mapper.writeValueAsString(mapOf("envelope" to mapOf("client" to mapOf("version" to version)))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `설치 목록은 실제 마지막 이벤트와 제품 버전을 결합하고 키셋으로 페이지를 나눈다`() {
+        val ids = installations(3).sortedBy { it.toString() }
+        val now = clock.instant().minusSeconds(60)
+        val rows = listOf(versionEvent(ids[0],now.minusSeconds(10),"claude_code","1"),
+            versionEvent(ids[0],now,"claude_code","2"),versionEvent(ids[0],now.minusSeconds(5),"codex","3"),
+            versionEvent(ids[0],now.plusSeconds(3600),"codex","future"))
+        seedPoints(rows+rows[1])
+        jdbc.sql("UPDATE enrollment.installations SET hostname='fixture-host',client_version='ctl-1' WHERE id=:id").param("id",ids[0]).update()
+        val first = mapper.readTree(installationList("?limit=2&cursor=").andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(first["items"].toList().map { it["installation_id"].asString() }).containsExactly(ids[0].toString(),ids[1].toString())
+        val item = first["items"][0]
+        assertThat(item["last_event_at"].asString()).isEqualTo(java.time.Instant.ofEpochSecond(now.epochSecond).toString())
+        assertThat(item["product_versions"]["claude_code"].asString()).isEqualTo("2")
+        assertThat(item["product_versions"]["codex"].asString()).isEqualTo("3")
+        assertThat(item["hostname"].asString()).isEqualTo("fixture-host")
+        assertThat(item["member_email_masked"].asString()).startsWith("***@")
+        assertThat(first["items"][1]["last_event_at"].isNull).isTrue()
+        val second = mapper.readTree(installationList("?limit=2&cursor="+first["next_cursor"].asString()).andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(second["items"].toList().map { it["installation_id"].asString() }).containsExactly(ids[2].toString())
+        assertThat(second["next_cursor"].isNull).isTrue()
+        assertThat(second["total"].isNull).isTrue()
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='installations'").query(Long::class.java).single()).isEqualTo(2)
+    }
+    @Test fun `무활동은 마지막 이벤트와 미관측 설치의 생성일을 기준으로 필터링한다`() {
+        val ids = installations(3)
+        val now = clock.instant()
+        jdbc.sql("UPDATE enrollment.installations SET created_at=now()-interval '100 days',last_seen_at=now(),status='revoked' WHERE id=:id")
+            .param("id",ids[0]).update()
+        seedPoints(listOf(versionEvent(ids[2],now.minusSeconds(86400),"claude_code","1")))
+        val result = mapper.readTree(installationList("?inactive_days=30&platform=linux&status=revoked&limit=1")
+            .andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(result["items"].size()).isEqualTo(1)
+        assertThat(result["items"][0]["installation_id"].asString()).isEqualTo(ids[0].toString())
+        assertThat(result["items"][0]["last_seen_at"].isNull).isFalse()
+        assertThat(result["items"][0]["last_event_at"].isNull).isTrue()
+        assertThat(result["next_cursor"].isNull).isTrue()
+    }
+    @Test fun `설치 조회는 owner 감사와 요청 범위를 확인한다`() {
+        installations(1)
+        seedPoints(emptyList())
+        installationList(reason=null).andExpect(status().isForbidden)
+        for (params in listOf("?limit=0","?limit=501","?inactive_days=0","?platform=darwin","?status=deleted","?cursor=bad"))
+            installationList(params).andExpect(status().isBadRequest)
+        installationList("?team_id="+UUID.randomUUID()).andExpect(status().isForbidden)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        installationList().andExpect(status().isForbidden)
+    }
+
+    @Test fun `설치 목록의 팀 필터는 현재 소속을 사용하고 다른 조직 설치는 제외한다`() {
+        val ids = installations(3)
+        val team = UUID.randomUUID()
+        val other = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,'설치 팀')").param("id",team).param("tenant",tenant).update()
+        jdbc.sql("""INSERT INTO enrollment.team_memberships(team_id,member_id)
+            SELECT :team,member_id FROM enrollment.installations WHERE id=:id""").param("team",team).param("id",ids[0]).update()
+        jdbc.sql("INSERT INTO enrollment.tenants(id,name) VALUES (:id,'외부 조직')").param("id",other).update()
+        jdbc.sql("UPDATE enrollment.installations SET tenant_id=:other WHERE id=:id").param("other",other).param("id",ids[2]).update()
+        seedPoints(emptyList())
+        val all = mapper.readTree(installationList().andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(all["items"].toList().map { it["installation_id"].asString() }).containsExactlyInAnyOrder(ids[0].toString(),ids[1].toString())
+        val scoped = mapper.readTree(installationList("?team_id=$team").andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(scoped["items"].size()).isEqualTo(1)
+        assertThat(scoped["items"][0]["team_ids"][0].asString()).isEqualTo(team.toString())
+        jdbc.sql("UPDATE enrollment.team_memberships SET left_at=now() WHERE team_id=:team").param("team",team).update()
+        assertThat(mapper.readTree(installationList("?team_id=$team").andReturn().response.contentAsString)["items"].size()).isZero()
+    }
+    @Test fun `설치 감사 저장에 실패하면 식별자를 반환하지 않는다`() {
+        installations(1)
+        seedPoints(emptyList())
+        jdbc.sql("""CREATE FUNCTION dashboard.test_reject_install_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN RAISE EXCEPTION 'audit unavailable'; END $$""").update()
+        jdbc.sql("""CREATE TRIGGER reject_install_audit BEFORE INSERT ON dashboard.audit_log
+            FOR EACH ROW WHEN (NEW.action='installations') EXECUTE FUNCTION dashboard.test_reject_install_audit()""").update()
+        try {
+            val result = installationList().andExpect(status().isServiceUnavailable).andReturn().response
+            assertThat(result.getHeader("Retry-After")).isEqualTo("2")
+            assertThat(result.contentAsString).doesNotContain("installation_id","member_email_masked")
+        } finally {
+            jdbc.sql("DROP TRIGGER reject_install_audit ON dashboard.audit_log").update()
+            jdbc.sql("DROP FUNCTION dashboard.test_reject_install_audit()").update()
+        }
+    }
+
 }
