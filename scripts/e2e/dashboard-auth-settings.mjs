@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 42개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 43개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -94,8 +94,8 @@ try {
         VALUES ('00000000-0000-0000-0000-000000000010','${memberId}');
       INSERT INTO enrollment.invitations(id,tenant_id,target_member_id,created_by_member_id,code_hash,expires_at)
         VALUES ('${invitationId}','${tenant}','${memberId}','00000000-0000-0000-0000-000000000001','${randomUUID()}',now()+interval '1 day');
-      INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform)
-        VALUES ('${installationId}','${tenant}','${memberId}','${invitationId}','linux');`);
+      INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform,created_at)
+        VALUES ('${installationId}','${tenant}','${memberId}','${invitationId}','linux',to_timestamp(${observedAt}-3600));`);
     for (const [, name, value] of metricFixtures) points.push(JSON.stringify({
       event_id: randomUUID(), ts: observedAt,
       tenant_id: tenant, installation_id: installationId, signal: 'metric', product: 'claude_code',
@@ -365,9 +365,10 @@ try {
           { ref_id: 'G', metric_id: 'abandoned_session_ratio', group_by: ['team'] },
           { ref_id: 'H', metric_id: 'session_last_event', group_by: ['team'] },
           { ref_id: 'I', metric_id: 'usage_concentration', group_by: ['team'] },
+          { ref_id: 'J', metric_id: 'onboarding_ttfu', group_by: ['team', 'platform'] },
         ],
       }) });
-      return { hooks: series(response.results.A), models: series(response.results.B), cache: series(response.results.C), io: series(response.results.D), tokens: series(response.results.E), metricTokens: series(response.results.F), abandoned: series(response.results.G), last: series(response.results.H), concentration: series(response.results.I) };
+      return { hooks: series(response.results.A), models: series(response.results.B), cache: series(response.results.C), io: series(response.results.D), tokens: series(response.results.E), metricTokens: series(response.results.F), abandoned: series(response.results.G), last: series(response.results.H), concentration: series(response.results.I), onboarding: series(response.results.J) };
     });
     for (const key of ['cache', 'io']) assert.equal(hookResults[key].state, 'success');
     assert.deepEqual(Object.fromEntries(hookResults.cache.points.map(p => [p.key, p.value.value])),
@@ -394,6 +395,11 @@ try {
     assert.equal(concentration.find(p => p.key === 'denominator').value.value, 6750);
     assert.deepEqual(concentration.filter(p => p.key === 'lorenz_cumulative').map(p => p.value.value), [0, 1350, 2700, 4050, 5400, 6750]);
     assert.deepEqual(concentration.filter(p => p.key === 'population_share').map(p => p.value.value), [0, 0.2, 0.4, 0.6, 0.8, 1]);
+    assert.equal(hookResults.onboarding.state, 'success');
+    assert.equal(hookResults.onboarding.points.find(p => p.key === 'p50').value.value, 3600);
+    assert.equal(hookResults.onboarding.points.find(p => p.key === 'p90').value.value, 3600);
+    assert.deepEqual(hookResults.onboarding.points.filter(p => !['p50', 'p90'].includes(p.key)).map(p => p.value.value), [0, 5, 0, 0, 0]);
+    assert.ok(hookResults.onboarding.points.every(p => p.labels.platform === 'linux'));
     const hookExecutions = hookResults.hooks;
     assert.equal(hookResults.models.state, 'success');
     assert.deepEqual(Object.fromEntries(hookResults.models.points.map(p => [p.key, p.value.value])), { value: 5 });
@@ -434,7 +440,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 42개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 43개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -463,7 +469,8 @@ try {
       { metric: 'tokens', events: 6750, selectedMetrics: 250 },
       { metric: 'abandoned_session_ratio', expected: 0, sessions: 5 },
       { metric: 'session_last_event', expected: 5, last_event: 'api_error' },
-      { metric: 'usage_concentration', expected: 0.2, total: 6750 }],
+      { metric: 'usage_concentration', expected: 0.2, total: 6750 },
+      { metric: 'onboarding_ttfu', p50: 3600, p90: 3600 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
