@@ -839,6 +839,50 @@ class DashboardAuthTest {
             .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
         assertThat(hidden["data"]["values"].toList().drop(1).all { values -> values.toList().all { it.isNull } }).isTrue()
     }
+    private fun durationEvent(id: UUID, duration: Int?, turn: Boolean = false, error: String? = null,
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(llmEvent(id,1,200,at=at)) as tools.jackson.databind.node.ObjectNode
+        if (turn) row.put("signal","span")
+        val payload = if (turn) mapOf("kind" to "turn","attrs" to mapOf("duration_ms" to duration?.toString()))
+            else mapOf("model" to "claude-test","duration_ms" to duration,"error_type" to error)
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to if (turn) "turn" else "llm_call","payload" to payload)))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `소요 시간은 정확 백분위수와 밀리초 단위를 반환하며 누락 음수 오류를 제외한다`() {
+        val ids = installations(5)
+        for (turn in listOf(false,true)) {
+            val rows = ids.flatMap { id -> (0..19).map { durationEvent(id,it*100,turn) } +
+                listOf(durationEvent(id,null,turn),durationEvent(id,-100,turn)) }
+            seedPoints(rows+rows.first()+if (turn) emptyList() else ids.map { durationEvent(it,99999,error="failed") })
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to
+                if (turn) "turn_duration_ms" else "llm_duration_ms","group_by" to listOf("product"))))
+                .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"].toList().map { it[0].asDouble() })
+                .containsExactlyElementsOf(if (turn) listOf(1000.0,1800.0) else listOf(1000.0,1900.0,1900.0))
+            assertThat(frame["schema"]["fields"].toList().all { it["config"]["unit"].asString()=="ms" }).isTrue()
+            seedPoints(ids.map { durationEvent(it,null,turn) })
+            val empty = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to
+                if (turn) "turn_duration_ms" else "llm_duration_ms"))).andReturn().response.contentAsString)
+            assertThat(empty["results"]["A"]["frames"].size()).isZero()
+        }
+    }
+    @Test fun `소요 시간 비교의 작은 집단은 모든 백분위수를 숨긴다`() {
+        val ids = installations(5)
+        for (turn in listOf(false,true)) {
+            seedPoints(ids.map { durationEvent(it,0,turn) })
+            val metric = if (turn) "turn_duration_ms" else "llm_duration_ms"
+            val query = mapOf("metric_id" to metric,"frame_type" to "timeseries","interval" to "1d")
+            val frame = mapper.readTree(queryResult(queryBody(query)).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"][1][0].isNumber).isTrue()
+            assertThat(frame["data"]["values"][1][0].asInt()).isZero()
+            assertThat(frame["data"]["values"][1][1].isNull).isTrue()
+            seedPoints(ids.map { durationEvent(it,0,turn) }+
+                ids.take(4).map { durationEvent(it,200,turn,at="2026-08-31T12:00:00Z") })
+            val hidden = mapper.readTree(queryResult(queryBody(query,mapOf("compare" to "previous_period")))
+                .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(hidden["data"]["values"].toList().drop(1).all { it.toList().all { v -> v.isNull } }).isTrue()
+        }
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
