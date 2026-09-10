@@ -61,7 +61,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
     private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio")
-    private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms")
+    private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms")
     private val sessionMetrics = setOf("prompts_per_session", "read_tool_density")
     private val intervals = linkedMapOf("1h" to "1 HOUR", "6h" to "6 HOUR", "1d" to "1 DAY", "1w" to "1 WEEK", "1M" to "1 MONTH")
     private val utc = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC)
@@ -297,10 +297,17 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val groupSql = groups.joinToString(",")
         val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
         val turn = q.metricId=="turn_duration_ms"
+        val ttft = q.metricId=="llm_ttft_ms"
         // 턴 attrs는 정규화 문자열이고 LLM payload는 숫자다. 누락을 0으로 바꾸지 않는다.
         val value = if (turn) "toFloat64OrNull(JSONExtractString(raw_json,'payload','attrs','duration_ms'))"
-            else "JSONExtract(raw_json,'payload','duration_ms','Nullable(Float64)')"
-        val source = if (turn) "signal='span' AND JSONExtractString(raw_json,'type')='turn'"
+            else "JSONExtract(raw_json,'payload','${if (ttft) "ttft_ms" else "duration_ms"}','Nullable(Float64)')"
+        val logValid = "signal='log' AND JSONExtractString(raw_json,'type')='llm_call' AND JSONExtractString(raw_json,'payload','error_type')='' AND isNotNull($value) AND $value>=0"
+        // 시간 버킷을 나누기 전에 소스를 선택하므로 같은 요청의 로그와 스팬이 버킷 경계에서 중복되지 않는다.
+        val requestKey = "if(JSONExtractString(raw_json,'payload','request_id')!='',concat('request:',JSONExtractString(raw_json,'payload','request_id')),concat('session:',toJSONString(tuple(JSONExtractString(raw_json,'envelope','session_id'),${dimension("model")}))))"
+        val input = if (ttft) "SELECT *, countIf($logValid) OVER (PARTITION BY installation_id,product,$requestKey) AS preferred_logs $base"
+            else "SELECT * $base"
+        val source = if (ttft) "(($logValid) OR (preferred_logs=0 AND signal='span' AND JSONExtractString(raw_json,'type')='llm_request' AND JSONExtractString(raw_json,'payload','error_type')=''))"
+            else if (turn) "signal='span' AND JSONExtractString(raw_json,'type')='turn'"
             else "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='llm_call' AND JSONExtractString(raw_json,'payload','error_type')=''"
         val valid = "$source AND isNotNull($value) AND $value>=0"
         val sql = """SELECT $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
@@ -308,7 +315,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             countIf($valid) AS points, 0 AS cumulative,
             quantileExactIf(0.5)($value,$valid) AS p50, quantileExactIf(0.9)($value,$valid) AS p90,
             quantileExactIf(0.95)($value,$valid) AS p95, quantileExactIf(0.99)($value,$valid) AS p99,
-            p50 AS value FROM (SELECT * $base) GROUP BY $groupSql ORDER BY $groupSql"""
+            p50 AS value FROM ($input) GROUP BY $groupSql ORDER BY $groupSql"""
         val parameters = scope.parameters + mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
         val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
             .filter { it["points"].asLong()>0 }
@@ -459,6 +466,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             val quality = mutableListOf<String>()
             if (incompleteCompactions>0) quality += if (suppressed) "전후 토큰 쌍이 없는 압축 이벤트를 감소율에서 제외" else
                 "전후 토큰 쌍이 없는 압축 이벤트 ${incompleteCompactions}개를 감소율에서 제외"
+            if (q.metricId=="llm_ttft_ms") quality += "조회 기간 내 설치·제품·요청별 유효 로그 우선, 없으면 스팬; 요청 ID 누락은 세션·모델별 소스 선택"
             if (q.metricId=="llm_stop_reasons") quality += "llm_call·llm_response 관측 이벤트 수; 사유 누락은 빈 라벨"
             if (q.metricId=="api_error_rate") quality += "호출 시도 단위 오류율이며 최종 재시도 실패율이 아님"
             if (cumulative>0) quality += if (suppressed) "누적 temporality 포인트 제외" else "누적 temporality 포인트 ${cumulative}개 제외"

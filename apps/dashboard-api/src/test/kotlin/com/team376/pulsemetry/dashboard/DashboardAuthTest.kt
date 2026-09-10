@@ -883,6 +883,57 @@ class DashboardAuthTest {
             assertThat(hidden["data"]["values"].toList().drop(1).all { it.toList().all { v -> v.isNull } }).isTrue()
         }
     }
+    private fun ttftEvent(id: UUID, value: Int?, request: String?, span: Boolean = false,
+        product: String = "claude_code", error: String? = null, at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(llmEvent(id,1,200,product=product,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("signal",if (span) "span" else "log")
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to if (span) "llm_request" else "llm_call",
+            "envelope" to mapOf("session_id" to "session"),
+            "payload" to mapOf("model" to "test","request_id" to request,"ttft_ms" to value,"error_type" to error))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `첫 토큰 지연은 요청별 유효 로그를 우선하고 스팬으로 대체한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(ttftEvent(it,100,"a"),ttftEvent(it,9999,"a",true),
+            ttftEvent(it,null,"b"),ttftEvent(it,200,"b",true),
+            ttftEvent(it,-1,"c"),ttftEvent(it,300,"c",true),
+            ttftEvent(it,9000,"d",error="failed"),ttftEvent(it,400,"d",true),
+            ttftEvent(it,0,"e"),ttftEvent(it,9000,"e",true),
+            ttftEvent(it,500,null),ttftEvent(it,9999,null,true),
+            ttftEvent(it,700,"a",true,product="codex")) }
+        seedPoints(rows+rows.first())
+        val frames = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "llm_ttft_ms",
+            "group_by" to listOf("product")))).andExpect(status().isOk).andReturn().response.contentAsString)
+            .get("results").get("A").get("frames").toList()
+        val claude = frames.single { it["schema"]["fields"][0]["labels"]["product"].asString()=="claude_code" }
+        assertThat(claude["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(300.0,500.0)
+        val codex = frames.single { it["schema"]["fields"][0]["labels"]["product"].asString()=="codex" }
+        assertThat(codex["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(700.0,700.0)
+        assertThat(claude["schema"]["fields"][0]["config"]["unit"].asString()).isEqualTo("ms")
+        // 동일 요청 ID여도 다른 설치의 로그가 스팬을 제거하지 않는다.
+        seedPoints(ids.mapIndexed { index, id -> ttftEvent(id,if (index==0) 100 else 900,"shared",span=index!=0) })
+        val separated = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "llm_ttft_ms")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(separated["data"]["values"][0][0].asDouble()).isEqualTo(900.0)
+        seedPoints(ids.map { ttftEvent(it,null,null,true) })
+        val empty = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "llm_ttft_ms")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"]
+        assertThat(empty.size()).isZero()
+    }
+    @Test fun `첫 토큰 소스 선택은 버킷 경계 중복을 막고 비교 집단을 숨긴다`() {
+        val ids = installations(5)
+        val current = ids.flatMap { listOf(ttftEvent(it,100,"same",at="2026-09-02T01:00:00Z"),
+            ttftEvent(it,900,"same",true)) }
+        seedPoints(current)
+        val query = mapOf("metric_id" to "llm_ttft_ms","frame_type" to "timeseries","interval" to "1d")
+        val frame = mapper.readTree(queryResult(queryBody(query)).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"][1][0].isNull).isTrue()
+        assertThat(frame["data"]["values"][1][1].asInt()).isEqualTo(100)
+        seedPoints(current+ids.take(4).map { ttftEvent(it,200,"same",true,at="2026-08-31T12:00:00Z") })
+        val hidden = mapper.readTree(queryResult(queryBody(query,mapOf("compare" to "previous_period")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(hidden["data"]["values"].toList().drop(1).all { it.toList().all { v -> v.isNull } }).isTrue()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
