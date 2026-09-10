@@ -2,6 +2,7 @@ package com.team376.pulsemetry.dashboard
 
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -29,6 +30,7 @@ class DashboardAuthTest {
     @Autowired lateinit var mvc: MockMvc
     @Autowired lateinit var jdbc: JdbcClient
     @Autowired lateinit var mapper: ObjectMapper
+    @Autowired lateinit var scenarioInputs: DashboardScenarioInputs
     @Autowired lateinit var clock: java.time.Clock
     private lateinit var member: UUID
     @BeforeEach fun setup() {
@@ -2236,6 +2238,53 @@ class DashboardAuthTest {
         assertThat(unavailable["metrics"].size()).isZero()
         assertThat(unavailable["unavailable_reason"].asString()).contains("원문")
         mvc.perform(get("/v1/scenarios").header("Authorization", bearer)).andExpect(status().isOk)
+    }
+
+    private fun prepareScenario(id: String = "S1-3", json: String = """{"params":{}}""", role: String = "owner", reason: String? = null) =
+        scenarioInputs.prepare(id, mapper.readTree(json), com.team376.pulsemetry.security.user.UserIdentity(
+            member, tenant, role, UUID.randomUUID(), null, "web"), "Asia/Seoul", clock.instant(), reason)
+
+    @Test fun `실행 입력은 현재 팀 범위를 고정하고 빈 admin 범위를 전사로 확대하지 않는다`() {
+        val mine = UUID.randomUUID()
+        val other = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:mine,:tenant,'내 팀'),(:other,:tenant,'다른 팀')")
+            .param("mine", mine).param("other", other).param("tenant", tenant).update()
+        jdbc.sql("INSERT INTO enrollment.team_memberships(team_id,member_id) VALUES (:team,:member)")
+            .param("team", mine).param("member", member).update()
+        val prepared = prepareScenario(role = "admin")
+        assertThat(prepared.teamIds).containsExactly(mine)
+        assertThat(prepared.organizationScope).isFalse()
+        assertThat(prepareScenario().organizationScope).isTrue()
+        assertThatThrownBy { prepareScenario(json = """{"params":{"team_ids":["$other"]}}""", role = "admin") }
+            .hasMessage("forbidden")
+        assertThatThrownBy { prepareScenario("S1-1", """{"params":{"budget_by_team":{"$other":{"usd":10}}}}""", "admin") }
+            .hasMessage("forbidden")
+        jdbc.sql("UPDATE enrollment.team_memberships SET left_at=now() WHERE member_id=:id").param("id",member).update()
+        assertThat(prepareScenario(role = "admin").teamIds).isEmpty()
+        assertThat(prepareScenario(role = "admin").organizationScope).isFalse()
+        // 팀 필터가 없는 시나리오도 같은 범위를 전달한다.
+        assertThat(prepareScenario("S3-4", role = "admin").teamIds).isEmpty()
+    }
+
+    @Test fun `P3와 거부 지표 실행 준비는 owner 감사 기록을 요구한다`() {
+        assertThatThrownBy { prepareScenario("S1-7", role = "admin", reason = "audit reason for scenario") }.hasMessage("forbidden")
+        assertThatThrownBy { prepareScenario("S1-7") }.hasMessage("audit_reason_required")
+        assertThatThrownBy { prepareScenario("S6-1", role = "admin") }.hasMessage("forbidden")
+        prepareScenario("S1-7", reason = "audit reason for scenario")
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S1-7'")
+            .query(Long::class.java).single()).isEqualTo(1)
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.scenario_runs").query(Long::class.java).single()).isZero()
+    }
+
+    @Test fun `불가 시나리오와 다른 tenant 팀은 실행 준비에서 거부한다`() {
+        assertThatThrownBy { prepareScenario("S5-1") }.hasMessage("scenario_unavailable")
+        assertThatThrownBy { prepareScenario("S9-1") }.hasMessage("not_found")
+        val otherTenant = UUID.randomUUID()
+        val team = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.tenants(id,name) VALUES (:id,'다른 조직')").param("id",otherTenant).update()
+        jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,'다른 조직 팀')")
+            .param("id",team).param("tenant",otherTenant).update()
+        assertThatThrownBy { prepareScenario(json = """{"params":{"team_ids":["$team"]}}""") }.hasMessage("forbidden")
     }
 
 }
