@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 50개 및 owner 전용 지표 2개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 50개 및 owner 전용 지표 3개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -87,10 +87,15 @@ try {
   ];
   const observedAt = Math.floor(Date.now()/1000)-120;
   const costContract = randomUUID();
+  const termContract = randomUUID();
   sql(`INSERT INTO enrollment.contracts(id,tenant_id,vendor,contract_type,name,contracted_at,starts_at)
     VALUES ('${costContract}','${tenant}','anthropic','token_discount','E2E 할인','2020-01-01','2020-01-01');
     INSERT INTO enrollment.contract_token_discounts(contract_id,model_pattern,discount_rate,effective_from)
-    VALUES ('${costContract}','claude-e2e',0.5,'2020-01-01');`);
+    VALUES ('${costContract}','claude-e2e',0.5,'2020-01-01');
+    INSERT INTO enrollment.contracts(id,tenant_id,vendor,contract_type,name,contracted_at,starts_at)
+    VALUES ('${termContract}','${tenant}','anthropic','term_commitment','E2E 약정',CURRENT_DATE,CURRENT_DATE);
+    INSERT INTO enrollment.contract_term_commitments(contract_id,commitment_months,commitment_amount)
+    VALUES ('${termContract}',12,1000);`);
   const points = [];
   for (let index = 0; index < 5; index++) {
     const memberId = randomUUID(), installationId = randomUUID(), invitationId = randomUUID();
@@ -101,7 +106,9 @@ try {
         VALUES ('${invitationId}','${tenant}','${memberId}','00000000-0000-0000-0000-000000000001','${randomUUID()}',now()+interval '1 day');
       INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform,created_at)
         VALUES ('${installationId}','${tenant}','${memberId}','${invitationId}','linux',to_timestamp(${observedAt}-3600));
-      INSERT INTO enrollment.contract_memberships(contract_id,member_id,assigned_at) VALUES ('${costContract}','${memberId}',to_timestamp(${observedAt}-3600));`);
+      INSERT INTO enrollment.contract_memberships(contract_id,member_id,assigned_at) VALUES ('${costContract}','${memberId}',to_timestamp(${observedAt}-3600));
+      INSERT INTO enrollment.contract_memberships(contract_id,member_id,assigned_at)
+      VALUES ('${termContract}','${memberId}',to_timestamp(${observedAt}-3600));`);
     points.push(JSON.stringify({ event_id: randomUUID(), ts: observedAt, tenant_id: tenant, installation_id: installationId,
       signal: 'metric', product: 'claude_code', team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
       raw_json: JSON.stringify({ point: { name: 'claude_code.cost.usage', value: 1, aggregation_temporality: 1, attrs: { model: 'claude-e2e', 'agent.name': 'worker', query_source: index < 2 ? 'subagent' : 'main' } } }) }));
@@ -483,17 +490,23 @@ try {
     assert.equal(tools.J.points[0].labels.weekday, String(localObserved.getUTCDay() || 7));
 
     if (role === 'owner') {
-      const ownerResults = await page.evaluate(async () => {
+      const ownerResults = await page.evaluate(async (termContract) => {
         const client = await import('/src/api/client.ts');
         const { series } = await import('/src/widgets/model.ts');
         const response = await client.request('/query', { method: 'POST', body: JSON.stringify({
           from: 'now-1d', to: 'now', queries: [
             { ref_id: 'A', metric_id: 'refusals', frame_type: 'scalar', group_by: ['category', 'model'] },
             { ref_id: 'B', metric_id: 'vendor_account_mismatch' },
+            { ref_id: 'C', metric_id: 'contract_commitment_burn', params: { contract_id: termContract } },
           ],
         }) }, '벤더 계정 불일치 정기 E2E 점검');
-        return { refusals: series(response.results.A), mismatch: series(response.results.B) };
-      });
+        return { refusals: series(response.results.A), mismatch: series(response.results.B), burn: series(response.results.C) };
+      }, termContract);
+      assert.equal(ownerResults.burn.state, 'success');
+      assert.deepEqual(Object.fromEntries(ownerResults.burn.points.map(p => [p.key, p.value.value])),
+        { burn_ratio: 0.015, cost_usd: 15, commitment_amount: 1000 });
+      await page.getByText('약정 소진률', { exact: true }).scrollIntoViewIfNeeded();
+      await page.getByText('1.5%', { exact: true }).waitFor();
       const refusals = ownerResults.refusals;
       assert.equal(ownerResults.mismatch.state, 'success');
       assert.equal(ownerResults.mismatch.points[0].value.value, 5);
@@ -515,7 +528,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 2개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -553,7 +566,8 @@ try {
       { metric: 'cost_per_active_user', list: 6, contract: 3 },
       { metric: 'cost_per_user_hour', list: 180, contract: 90 },
       { metric: 'model_unit_price', list: 30/6750, contract: 15/6750 },
-      { metric: 'cost_anomaly', expected: 1, actual: 30, baseline: 15 }],
+      { metric: 'cost_anomaly', expected: 1, actual: 30, baseline: 15 },
+      { metric: 'contract_commitment_burn', expected: 0.015, costUsd: 15, commitmentAmount: 1000 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
