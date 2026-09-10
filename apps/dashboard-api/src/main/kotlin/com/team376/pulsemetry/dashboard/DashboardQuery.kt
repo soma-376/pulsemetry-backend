@@ -60,7 +60,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
-    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio", "cost_per_active_user", "cost_per_user_hour", "model_unit_price")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio", "cost_per_active_user", "cost_per_user_hour", "model_unit_price", "cost_anomaly")
     private val tokenTypes = listOf("input","output","cache_read","cache_create")
     private val tokenRatios = setOf("cache_read_ratio","input_output_ratio")
     private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms", "gate_wait_ms", "onboarding_ttfu")
@@ -123,6 +123,13 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                     q.params.values.all { it.isString && it.asString().length in 1..100 })
                 else if (q.metricId=="rubber_stamp_ratio") require(q.params.keys.all { it=="threshold_ms" } &&
                     q.params.values.all { it.isIntegralNumber && it.canConvertToInt() && it.asInt() in 0..3600000 })
+                else if (q.metricId=="cost_anomaly") {
+                    require(q.params.keys.all { it in setOf("moving_avg_days","window_days") } &&
+                        q.params.values.all { it.isIntegralNumber && it.canConvertToInt() && it.asInt() in 1..90 })
+                    require(q.params["moving_avg_days"]==null || q.params["window_days"]==null ||
+                        q.params.getValue("moving_avg_days").asInt()==q.params.getValue("window_days").asInt())
+                    require(q.interval==null || q.interval=="1d")
+                }
                 else if (q.metricId=="cost") {
                     require(q.params.isEmpty())
                     require(q.source=="metrics" || q.groupBy.none { it in setOf("agent_name","skill_name","plugin_name","speed") })
@@ -137,7 +144,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 }
                 else require(q.params.isEmpty())
                 val timeseries = (q.frameType ?: definition.defaultFrameType) == "timeseries"
-                val interval = q.interval ?: if (!timeseries) "1d" else
+                val interval = q.interval ?: if (q.metricId=="cost_anomaly") "1d" else if (!timeseries) "1d" else
                     intervals.keys.firstOrNull { buckets(time, from, to, it).size <= body.maxDataPoints }
                         ?: throw DashboardReadException("query_too_wide", 422)
                 val ticks = if (timeseries) buckets(time, from, to, interval) else emptyList()
@@ -226,6 +233,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
+        if (q.metricId=="cost_anomaly") return readAnomaly(q,scope,from,to,zone,deadline)
         if (q.metricId in setOf("cost","subagent_cost_ratio","cost_per_active_user","cost_per_user_hour","model_unit_price")) return readCost(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="vendor_account_mismatch") return readMismatch(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="onboarding_retention") return readRetention(q,scope,from,to,zone,deadline)
@@ -371,6 +379,39 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             "(${quoted(row["member_id"].toString())},${quoted(row["vendor"].toString())},${row["valid_from"]},${row["valid_to"]},"+
                 "${quoted(row["model_pattern"]?.toString() ?: "")},${row["discount_rate"]},${quoted(row["id"].toString())},${quoted(row["discount_id"].toString())})"
         }
+    }
+    /** 누락일은 0원으로 추정하지 않는다. 기준일 각각의 개인정보 보호 조건도 결과에 전파한다. */
+    private fun readAnomaly(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
+        zone: String, deadline: Long): Rows {
+        val days = (q.params["moving_avg_days"] ?: q.params["window_days"])?.asInt() ?: 7
+        val timezone = ZoneId.of(zone)
+        val start = from.atZone(timezone).toLocalDate().atStartOfDay(timezone)
+        val daily = readCost(q.copy(metricId="cost",frameType="timeseries",
+            source=if ("agent_name" in q.groupBy) "metrics" else "events"),scope,
+            start.minusDays(days.toLong()).toInstant(),to,zone,"1d",deadline)
+        val groups = daily.data.groupBy { row -> q.groupBy.indices.map { row["g$it"].asString() } }
+        if (groups.size>groupLimit(q)) throw DashboardReadException("query_too_wide",422)
+        val result = groups.values.flatMap { rows ->
+            val byDay = rows.associateBy { Instant.ofEpochMilli(it["bucket"].asLong()).atZone(timezone).toLocalDate() }
+            val selected = rows.filter { it["bucket"].asLong()>=start.toInstant().toEpochMilli() }
+            val output = if (q.frameType=="timeseries") selected else selected.takeLast(1)
+            output.map { row ->
+                val date = Instant.ofEpochMilli(row["bucket"].asLong()).atZone(timezone).toLocalDate()
+                val prior = (1..days).map { byDay[date.minusDays(it.toLong())] }
+                val node = row.deepCopy() as tools.jackson.databind.node.ObjectNode
+                val observed = listOf(row)+prior.filterNotNull()
+                node.put("people",observed.minOf { it["people"].asLong() })
+                node.put("active_time_definition",if (observed.any { it["active_time_definition"].asInt()>0 }) 1 else 0)
+                node.put("cumulative",observed.sumOf { it["cumulative"].asLong() })
+                val baseline = if (prior.any { it==null || it["value"].isNull }) null else prior.sumOf { it!!["value"].asDouble() }/days
+                node.set("numerator",row["value"])
+                if (baseline==null) node.putNull("denominator") else node.put("denominator",baseline)
+                if (baseline==null || baseline==0.0 || row["value"].isNull) node.putNull("value")
+                else node.put("value",row["value"].asDouble()/baseline-1)
+                node
+            }
+        }
+        return Rows(result,daily.sql)
     }
     private fun readCost(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, interval: String, deadline: Long): Rows {
@@ -864,7 +905,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             }
             fun add(name: String, series: List<JsonNode>, seriesTicks: List<Instant>?, column: String = "value") {
                 fields += mapOf("name" to name, "type" to "number", "labels" to labels,
-                    "config" to mapOf("unit" to if (q.metricId in setOf("subagent_activity","hook_executions") && column=="ratio") "ratio" else if (q.metricId in setOf("cost_per_active_user","cost_per_user_hour","model_unit_price") && column=="numerator") "USD" else if (q.metricId=="model_unit_price" && column=="denominator") "token" else if (q.metricId=="cost_per_user_hour" && column=="denominator") "h" else if (q.metricId=="subagent_cost_ratio" && column!="value") "USD" else if (column=="value" || q.metricId in durationMetrics) definition.unit else if (q.metricId=="automation_ratio") "s" else if (q.metricId in setOf("compaction_reduction","usage_concentration") || q.metricId in tokenRatios) "token" else "count", "suppressed" to suppressed,
+                    "config" to mapOf("unit" to if (q.metricId in setOf("subagent_activity","hook_executions") && column=="ratio") "ratio" else if (q.metricId in setOf("cost_per_active_user","cost_per_user_hour","model_unit_price") && column=="numerator") "USD" else if (q.metricId=="model_unit_price" && column=="denominator") "token" else if (q.metricId=="cost_per_user_hour" && column=="denominator") "h" else if (q.metricId in setOf("subagent_cost_ratio","cost_anomaly") && column!="value") "USD" else if (column=="value" || q.metricId in durationMetrics) definition.unit else if (q.metricId=="automation_ratio") "s" else if (q.metricId in setOf("compaction_reduction","usage_concentration") || q.metricId in tokenRatios) "token" else "count", "suppressed" to suppressed,
                         "group_size" to if (suppressed) null else (rows+prior).minOfOrNull { it["people"].asLong() }))
                 val byTime = series.associateBy { it["bucket"].asLong() }
                 val aligned = if (timeseries) ticks.indices.map { index -> seriesTicks?.getOrNull(index)?.let { byTime[it.toEpochMilli()] } }
@@ -910,6 +951,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 if (q.metricId=="cost" && q.source!="metrics") quality += if (suppressed) "reported·estimated 관측 비용 포함" else
                     "reported ${(rows+prior).sumOf { it["reported"].asLong() }}개, estimated ${(rows+prior).sumOf { it["estimated"].asLong() }}개 관측 비용"
             }
+            if (q.metricId=="cost_anomaly") quality += "일별 비용 / 직전 ${(q.params["moving_avg_days"] ?: q.params["window_days"])?.asInt() ?: 7}개 달력일 평균 - 1; 원천: ${if ("agent_name" in q.groupBy) "metrics" else "events"}; 가격 기준: ${q.priceBasis}; 기준일 누락·평균 0은 null, 기준일 소집단도 마스킹; 시작일은 자정부터, 마지막 날은 조회 종료까지, 단일값·표는 마지막 관측일; 청구액 아님"
             if (q.metricId=="vendor_account_mismatch") quality += "설치별 마지막 비어 있지 않은 로그·스팬 이메일과 현재 등록 이메일을 대소문자 구분 없이 비교; 시계열은 버킷별 판정, 동률은 sequence·event_id 순서; 주소는 반환하지 않음"
             if (q.metricId=="onboarding_retention") {
                 quality += "필터·권한 범위의 보존된 첫 사용 주 코호트; 월요일 기준 설치 잔존율, 소집단은 구성원 수; 비교는 상대 코호트 주·경과 주차 정렬"

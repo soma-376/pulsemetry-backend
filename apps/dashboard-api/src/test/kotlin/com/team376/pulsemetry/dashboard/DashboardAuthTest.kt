@@ -323,7 +323,7 @@ class DashboardAuthTest {
             "from" to "2026-01-01T00:00:00Z"))).andExpect(status().isOk)
         val absent = mapper.readTree(queryResult(queryBody()).andExpect(status().isOk).andReturn().response.contentAsString)
         assertThat(absent["results"]["A"]["frames"].size()).isZero()
-        val unfinished = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost_anomaly")))
+        val unfinished = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "contract_commitment_burn")))
             .andExpect(status().isOk).andReturn().response.contentAsString)
         assertThat(unfinished["results"]["A"]["status"].asInt()).isEqualTo(501)
     }
@@ -1840,4 +1840,66 @@ class DashboardAuthTest {
             r.add("pulsemetry.dashboard.public-key-files.test") { publicFile }
         }
     }
+    @Test fun `비용 이상은 직전 달력일 평균과 할인 비용을 사용하고 별칭을 검증한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(costEvent(it,30.0),
+            costEvent(it,10.0,at="2026-08-31T12:00:00Z"),costEvent(it,20.0,at="2026-08-30T12:00:00Z")) })
+        fun frame(params: Map<String,Int>, basis: String = "list") = mapper.readTree(queryResult(queryBody(
+            mapOf("metric_id" to "cost_anomaly","params" to params),mapOf("price_basis" to basis)))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        val result = frame(mapOf("moving_avg_days" to 2))
+        assertThat(result["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(1.0,150.0,75.0)
+        assertThat(frame(mapOf("window_days" to 2))["data"]).isEqualTo(result["data"])
+        discountContract()
+        // 이 계약은 9월 1일부터 적용되므로 기준 기간은 정가다.
+        assertThat(frame(mapOf("window_days" to 2),"contract")["data"]["values"].toList().map { it[0].asDouble() })
+            .containsExactly(0.0,75.0,75.0)
+        for (params in listOf(mapOf("moving_avg_days" to 0),mapOf("window_days" to 91),
+            mapOf("moving_avg_days" to 2,"window_days" to 3))) {
+            queryResult(queryBody(mapOf("metric_id" to "cost_anomaly","params" to params))).andExpect(status().isBadRequest)
+        }
+    }
+    @Test fun `비용 이상은 누락일과 영 평균을 null로 두고 기준 소집단도 숨긴다`() {
+        val ids = installations(5)
+        fun frame(days: Int) = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost_anomaly",
+            "params" to mapOf("moving_avg_days" to days)))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        seedPoints(ids.flatMap { listOf(costEvent(it,30.0),costEvent(it,0.0,at="2026-08-31T12:00:00Z")) })
+        assertThat(frame(1)["data"]["values"][0][0].isNull).isTrue()
+        assertThat(frame(1)["data"]["values"][2][0].asDouble()).isZero()
+        assertThat(frame(2)["data"]["values"][2][0].isNull).isTrue()
+        seedPoints(ids.map { costEvent(it,30.0) }+ids.take(4).map { costEvent(it,10.0,at="2026-08-31T12:00:00Z") })
+        assertThat(frame(1)["data"]["values"].toList().all { it[0].isNull }).isTrue()
+    }
+
+    @Test fun `비용 이상 시계열은 날짜와 비교 기준 집단 마스킹을 함께 적용한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(costEvent(it,30.0),costEvent(it,10.0,at="2026-08-31T12:00:00Z")) }+
+            ids.take(4).map { costEvent(it,10.0,at="2026-08-30T12:00:00Z") })
+        val request = queryBody(mapOf("metric_id" to "cost_anomaly","frame_type" to "timeseries",
+            "group_by" to listOf("query_source"),"params" to mapOf("moving_avg_days" to 1)),mapOf("compare" to "previous_period"))
+        val frame = mapper.readTree(queryResult(request).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["schema"]["fields"][1]["config"]["suppressed"].asBoolean()).isTrue()
+        assertThat(frame["data"]["values"].toList().drop(1).all { it.toList().all { value -> value.isNull } }).isTrue()
+        queryResult(queryBody(mapOf("metric_id" to "cost_anomaly","interval" to "1h"))).andExpect(status().isBadRequest)
+    }
+
+    @Test fun `에이전트 비용 이상은 시간대의 달력일과 비누적 메트릭만 사용한다`() {
+        val ids = installations(5)
+        fun metric(id: UUID, value: Double, at: String, cumulative: Boolean = false): String {
+            val row = mapper.readTree(costPoint(id,value,cumulative)) as tools.jackson.databind.node.ObjectNode
+            row.put("ts",java.time.Instant.parse(at).epochSecond)
+            return mapper.writeValueAsString(row)
+        }
+        seedPoints(ids.flatMap { listOf(metric(it,2.0,"2026-09-01T16:00:00Z"),
+            metric(it,1.0,"2026-08-31T16:00:00Z"),metric(it,999.0,"2026-09-01T16:00:00Z",true),
+            metric(it,-100.0,"2026-09-01T16:00:00Z")) })
+        val request = queryBody(mapOf("metric_id" to "cost_anomaly","group_by" to listOf("agent_name"),
+            "frame_type" to "timeseries","params" to mapOf("moving_avg_days" to 1)),
+            mapOf("from" to "2026-09-01T15:00:00Z","to" to "2026-09-02T15:00:00Z","tz" to "Asia/Seoul"))
+        val frame = mapper.readTree(queryResult(request).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"][0][0].asLong()).isEqualTo(java.time.Instant.parse("2026-09-01T15:00:00Z").toEpochMilli())
+        assertThat(frame["data"]["values"].toList().drop(1).map { it[0].asDouble() }).containsExactly(1.0,10.0,5.0)
+        assertThat(frame["schema"]["fields"][1]["labels"]["agent_name"].asString()).isEqualTo("worker")
+    }
+
 }
