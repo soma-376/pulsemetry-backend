@@ -26,4 +26,12 @@ class DashboardTimeTest {
         for (bad in listOf("now+1d", "now-1y", "now-7d;SELECT", "yesterday"))
             assertThatThrownBy { time.resolve(bad) }.isInstanceOf(Exception::class.java)
     }
+    @Test fun `계약 날짜는 요청 시간대 자정으로 해석하고 잘못된 날짜를 거부한다`() {
+        val time = DashboardTime(Instant.parse("2026-03-09T12:00:00Z"),ZoneId.of("America/New_York"))
+        assertThat(time.resolve("2026-03-08")).isEqualTo(Instant.parse("2026-03-08T05:00:00Z"))
+        assertThat(time.resolve("2026-03-09")).isEqualTo(Instant.parse("2026-03-09T04:00:00Z"))
+        for (bad in listOf("2026-02-30","2026-13-01","2026-9-01"))
+            assertThatThrownBy { time.resolve(bad) }.isInstanceOf(Exception::class.java)
+    }
+
 }

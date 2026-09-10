@@ -6,6 +6,7 @@ import java.time.temporal.TemporalAdjusters
 /** 하나의 요청은 동일한 now를 캡처한다. 월·일 경계는 tenant의 지역 시간으로 해석한다. */
 class DashboardTime(val now: Instant, val zone: ZoneId) {
     fun resolve(raw: String): Instant {
+        if (raw.matches(Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}"))) return LocalDate.parse(raw).atStartOfDay(zone).toInstant()
         if (!raw.startsWith("now")) return Instant.parse(raw)
         val match = Regex("now(?:-([0-9]{1,6})([smhdwM]))?(?:/([dwM]))?").matchEntire(raw)
             ?: throw IllegalArgumentException("invalid_time")
