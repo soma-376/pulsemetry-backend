@@ -11,7 +11,7 @@ import java.util.UUID
 class UserAuthException(val code: String, val status: Int = 401, val retryAfter: Long? = null) : RuntimeException(code)
 
 class UserTokens(val accessToken: String, val refreshToken: String, val expiresIn: Long)
-data class UserIdentity(val memberId: UUID, val tenantId: UUID, val role: String, val sessionId: UUID, val revision: Int)
+data class UserIdentity(val memberId: UUID, val tenantId: UUID, val role: String, val sessionId: UUID, val revision: Int?, val sessionKind: String = "cli")
 
 internal object UserSecrets {
     private val random = SecureRandom()

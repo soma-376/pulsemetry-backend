@@ -30,9 +30,11 @@ class UserJwt(
     private val privateKey: RSAPrivateKey,
     private val publicKeys: Map<String, RSAPublicKey>,
     private val clock: Clock,
+    val sessionKind: String = "cli",
 ) {
-    val lifetime: Duration = Duration.ofMinutes(5)
+    val lifetime: Duration = if (sessionKind == "web") Duration.ofHours(8) else Duration.ofMinutes(5)
     init {
+        require(sessionKind in setOf("cli", "web"))
         require(issuer.isNotBlank() && audience.isNotBlank() && activeKid.isNotBlank())
         require(privateKey.modulus.bitLength() >= 2048)
         require(publicKeys.values.all { it.modulus.bitLength() >= 2048 })
@@ -40,10 +42,12 @@ class UserJwt(
     }
 
     fun issue(identity: UserIdentity): String {
+        require(identity.sessionKind == sessionKind)
+        require((sessionKind == "web") == (identity.revision == null))
         val now = clock.instant()
         val claims = JWTClaimsSet.Builder().issuer(issuer).audience(audience).subject(identity.memberId.toString())
             .claim("tenant_id", identity.tenantId.toString()).claim("role", identity.role)
-            .claim("sid", identity.sessionId.toString()).claim("manifest_revision", identity.revision)
+            .claim("session_kind", sessionKind).claim("sid", identity.sessionId.toString()).claim("manifest_revision", identity.revision)
             .issueTime(Date.from(now)).expirationTime(Date.from(now.plus(lifetime))).jwtID(UUID.randomUUID().toString()).build()
         return SignedJWT(JWSHeader.Builder(JWSAlgorithm.RS256).keyID(activeKid).type(JOSEObjectType.JWT).build(), claims)
             .also { it.sign(RSASSASigner(privateKey)) }.serialize()
@@ -64,10 +68,13 @@ class UserJwt(
             if (c.issuer != issuer || c.audience != listOf(audience) || c.jwtid.isNullOrBlank() ||
                 !expires.isAfter(now.minusSeconds(30)) || issued.isAfter(now.plusSeconds(30)) ||
                 expires <= issued || expires > issued.plus(lifetime) || c.notBeforeTime?.toInstant()?.isAfter(now.plusSeconds(30)) == true) invalid()
+            val kind = c.getStringClaim("session_kind") ?: "cli"
+            val revision = c.getIntegerClaim("manifest_revision")
+            if (kind != sessionKind || (kind == "web") != (revision == null)) invalid()
             val role = c.getStringClaim("role")
             if (role !in setOf("owner", "admin", "member")) invalid()
             return UserIdentity(UUID.fromString(c.subject ?: invalid()), UUID.fromString(c.getStringClaim("tenant_id") ?: invalid()), role,
-                UUID.fromString(c.getStringClaim("sid") ?: invalid()), c.getIntegerClaim("manifest_revision") ?: invalid())
+                UUID.fromString(c.getStringClaim("sid") ?: invalid()), revision, kind)
         } catch (_: ParseException) { invalid() }
         catch (_: IllegalArgumentException) { invalid() }
         catch (_: JOSEException) { invalid() }

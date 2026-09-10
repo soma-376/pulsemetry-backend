@@ -64,6 +64,18 @@ class UserJwtTest {
         assertThatThrownBy { after.verify(raw) }.isInstanceOf(UserAuthException::class.java)
         assertThatThrownBy { jwt(keys=mapOf("old" to fresh.public as RSAPublicKey)) }.isInstanceOf(IllegalArgumentException::class.java)
     }
+    @Test fun `웹 토큰은 manifest 없이 8시간이고 CLI와 교차 사용되지 않는다`() {
+        fun web(at: Instant = now) = UserJwt("https://auth.test", "pulsemetry-dashboard", "old",
+            old.private as RSAPrivateKey, mapOf("old" to old.public as RSAPublicKey), Clock.fixed(at, ZoneOffset.UTC), "web")
+        val person = identity.copy(role = "owner", revision = null, sessionKind = "web")
+        val token = web().issue(person)
+        assertThat(web().lifetime.seconds).isEqualTo(28800)
+        assertThat(web(now.plusSeconds(28799)).verify(token)).isEqualTo(person)
+        assertThatThrownBy { web(now.plusSeconds(28830)).verify(token) }.isInstanceOf(UserAuthException::class.java)
+        assertThatThrownBy { jwt().verify(token) }.isInstanceOf(UserAuthException::class.java)
+        assertThatThrownBy { web().verify(jwt().issue(identity)) }.isInstanceOf(UserAuthException::class.java)
+        assertThatThrownBy { web().issue(identity) }.isInstanceOf(IllegalArgumentException::class.java)
+    }
     private fun sign(claims:JWTClaimsSet,algorithm:JWSAlgorithm=JWSAlgorithm.RS256,kid:String="old",key:KeyPair=old) =
         SignedJWT(JWSHeader.Builder(algorithm).keyID(kid).type(JOSEObjectType.JWT).build(),claims)
             .also { it.sign(RSASSASigner(key.private as RSAPrivateKey)) }.serialize()

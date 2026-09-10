@@ -41,9 +41,9 @@ class UserAuthRepository(private val jdbc: JdbcClient) {
     """).param("id", tenant).query(Int::class.javaObjectType).optional().orElse(null)
 
     fun createSession(s: AuthSession) {
-        jdbc.sql("""INSERT INTO enrollment.user_sessions(id,member_id,manifest_revision,created_at,expires_at)
-            VALUES (:id,:member,:revision,:now,:expires)""")
-            .param("id", s.id).param("member", s.memberId).param("revision", s.revision)
+        jdbc.sql("""INSERT INTO enrollment.user_sessions(id,member_id,manifest_revision,created_at,expires_at,session_kind)
+            VALUES (:id,:member,:revision,:now,:expires,:kind)""")
+            .param("id", s.id).param("member", s.memberId).param("revision", s.revision, java.sql.Types.INTEGER).param("kind", s.kind)
             .param("now", Timestamp.from(s.createdAt)).param("expires", Timestamp.from(s.expiresAt)).update()
     }
 
@@ -51,8 +51,8 @@ class UserAuthRepository(private val jdbc: JdbcClient) {
         SELECT * FROM enrollment.user_sessions WHERE id=:id ${if (lock) "FOR UPDATE" else ""}
     """).param("id", id).query { r, _ -> AuthSession(
         r.getObject("id", UUID::class.java), r.getObject("member_id", UUID::class.java),
-        r.getInt("manifest_revision"), r.getTimestamp("created_at").toInstant(),
-        r.getTimestamp("expires_at").toInstant(), r.getTimestamp("revoked_at")?.toInstant(),
+        r.getObject("manifest_revision", Int::class.javaObjectType), r.getTimestamp("created_at").toInstant(),
+        r.getTimestamp("expires_at").toInstant(), r.getTimestamp("revoked_at")?.toInstant(), r.getString("session_kind"),
     ) }.optional().orElse(null)
 
     fun refresh(hash: String): RefreshRecord? = jdbc.sql("""
@@ -121,8 +121,8 @@ data class AuthMember(val id: UUID, val tenantId: UUID, val email: String, val r
 }
 data class SignupInvitation(val id: UUID, val tenantId: UUID, val memberId: UUID, val expiresAt: Instant,
     val revokedAt: Instant?, val signupUsedAt: Instant?)
-data class AuthSession(val id: UUID, val memberId: UUID, val revision: Int, val createdAt: Instant,
-    val expiresAt: Instant, val revokedAt: Instant? = null)
+data class AuthSession(val id: UUID, val memberId: UUID, val revision: Int?, val createdAt: Instant,
+    val expiresAt: Instant, val revokedAt: Instant? = null, val kind: String = "cli")
 data class RefreshRecord(val sessionId: UUID, val usedAt: Instant?)
 data class AuthorizationCode(val memberId: UUID, val redirectUri: String, val challenge: String,
     val expiresAt: Instant, val usedAt: Instant?)

@@ -45,6 +45,15 @@ class UserAuthService(
         newSession(member)
     }
 
+    /** 웹 로그인은 같은 비밀번호·잠금 코어를 사용하고 manifest/RT에는 의존하지 않는다. */
+    fun loginWeb(tenant: UUID, email: String, password: String): String = authenticated(tenant, email, password) { member ->
+        if (jwt.sessionKind != "web" || member.role !in setOf("owner", "admin")) throw UserAuthException("forbidden", 403)
+        val now = clock.instant()
+        val session = AuthSession(UUID.randomUUID(), member.id, null, now, now.plus(jwt.lifetime), kind = "web")
+        repository.createSession(session)
+        jwt.issue(UserIdentity(member.id, member.tenantId, member.role, session.id, null, "web"))
+    }
+
     fun authorize(tenant: UUID, email: String, password: String, redirect: String, state: String,
         challenge: String, method: String): String {
         validateRedirect(redirect)
@@ -86,7 +95,7 @@ class UserAuthService(
                 repository.revokeSession(session.id, now)
                 return@execute Outcome<T>(error = UserAuthException("invalid_credentials"))
             }
-            if (session.revokedAt != null || session.expiresAt <= now) invalid()
+            if (session.kind != "cli" || session.revokedAt != null || session.expiresAt <= now) invalid()
             val member = repository.member(session.memberId, true)?.takeIf { it.active() } ?: invalid()
             repository.consumeRefresh(hash, now)
             Outcome(value = operation(member, session))
@@ -107,7 +116,7 @@ class UserAuthService(
         val identity = jwt.verify(token)
         val session = repository.session(identity.sessionId) ?: invalid()
         val member = repository.member(identity.memberId)?.takeIf { it.active() } ?: invalid()
-        if (session.revokedAt != null || session.expiresAt <= clock.instant() || session.memberId != member.id ||
+        if (session.kind != identity.sessionKind || session.revision != identity.revision || session.revokedAt != null || session.expiresAt <= clock.instant() || session.memberId != member.id ||
             member.tenantId != identity.tenantId || member.role != identity.role) invalid()
         return identity
     }
