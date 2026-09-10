@@ -2175,4 +2175,67 @@ class DashboardAuthTest {
         }
     }
 
+    @Test fun `시나리오 카탈로그는 명세의 46개 식별자와 지표 정의를 보존한다`() {
+        val bearer = "Bearer ${token()}"
+        val catalog = mapper.readTree(mvc.perform(get("/v1/scenarios").header("Authorization", bearer))
+            .andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(catalog["categories"].size()).isEqualTo(8)
+        val ids = catalog["items"].toList().map { it["scenario_id"].asString() }
+        val expected = listOf(7, 3, 5, 8, 7, 5, 4, 7).flatMapIndexed { index, count ->
+            (1..count).map { "S${index + 1}-$it" }
+        }
+        assertThat(ids).containsExactlyElementsOf(expected)
+        val metricDefinitions = mapper.readTree(mvc.perform(get("/v1/meta/metrics").header("Authorization", bearer))
+            .andReturn().response.contentAsString)["items"].associateBy { it["metric_id"].asString() }
+        for (summary in catalog["items"]) {
+            assertThat(summary.has("params_schema")).isFalse()
+            val detail = mapper.readTree(mvc.perform(get("/v1/scenarios/${summary["scenario_id"].asString()}")
+                .header("Authorization", bearer)).andExpect(status().isOk).andReturn().response.contentAsString)
+            assertThat(detail["metric_ids"].toList().map { it.asString() }).containsExactlyElementsOf(detail["metrics"].toList().map { it["metric_id"].asString() })
+            for (metric in detail["metrics"]) {
+                val definition = metricDefinitions.getValue(metric["metric_id"].asString())
+                for (key in listOf("indicator_id", "availability", "definition", "caveat"))
+                    assertThat(metric[key]).isEqualTo(definition[key])
+            }
+            assertThat(detail["params_schema"]["required"]).isEqualTo(detail["required_params"])
+            for (key in detail["required_params"]) assertThat(detail["params_schema"]["properties"].has(key.asString())).isTrue()
+        }
+        // 상세 응답 가공이 공유 카탈로그 객체를 변형하지 않는다.
+        assertThat(mapper.readTree(mvc.perform(get("/v1/scenarios").header("Authorization", bearer))
+            .andReturn().response.contentAsString)).isEqualTo(catalog)
+    }
+
+    @Test fun `시나리오 필터는 교집합 검색과 잘못된 입력을 구분한다`() {
+        val bearer = "Bearer ${token()}"
+        fun search(vararg params: Pair<String, String>) = mapper.readTree(mvc.perform(get("/v1/scenarios")
+            .header("Authorization", bearer).also { request -> params.forEach { request.param(it.first, it.second) } })
+            .andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(search("category" to "cost")["items"].size()).isEqualTo(7)
+        assertThat(search("availability" to "unavailable")["items"].size()).isEqualTo(4)
+        assertThat(search("category" to "cost", "target_page" to "P1", "q" to "스파이크")["items"].single()["scenario_id"].asString()).isEqualTo("S1-3")
+        assertThat(search("q" to "무한 루프")["items"].size()).isEqualTo(1)
+        assertThat(search("q" to "없는검색어")["items"].size()).isZero()
+        assertThat(search("q" to "없는검색어")["categories"].size()).isEqualTo(8)
+        for ((key, value) in listOf("category" to "unknown", "availability" to "unknown", "target_page" to "P9", "q" to "a".repeat(501)))
+            mvc.perform(get("/v1/scenarios").param(key, value).header("Authorization", bearer)).andExpect(status().isBadRequest)
+        mvc.perform(get("/v1/scenarios/S9-1").header("Authorization", bearer)).andExpect(status().isNotFound)
+    }
+
+    @Test fun `시나리오 정의만 admin에게 공개하며 비인증 조회는 거부한다`() {
+        mvc.perform(get("/v1/scenarios")).andExpect(status().isUnauthorized)
+        mvc.perform(get("/v1/scenarios/S1-3")).andExpect(status().isUnauthorized)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id", member).update()
+        val bearer = "Bearer ${token()}"
+        val detail = mapper.readTree(mvc.perform(get("/v1/scenarios/S1-3").header("Authorization", bearer))
+            .andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(detail["findings_rules"].size()).isEqualTo(3)
+        assertThat(detail["params_schema"]["properties"]["moving_avg_days"]["minimum"].asInt()).isEqualTo(3)
+        val unavailable = mapper.readTree(mvc.perform(get("/v1/scenarios/S5-1").header("Authorization", bearer))
+            .andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(unavailable["availability"].asString()).isEqualTo("unavailable")
+        assertThat(unavailable["metrics"].size()).isZero()
+        assertThat(unavailable["unavailable_reason"].asString()).contains("원문")
+        mvc.perform(get("/v1/scenarios").header("Authorization", bearer)).andExpect(status().isOk)
+    }
+
 }
