@@ -19,17 +19,18 @@
 | META-TEAMS, META-MEMBERS | 현재 팀 범위; 개인 이메일 목록은 owner + 감사 사유 |
 | META-CONTRACTS, META-MANIFESTS | 읽기 API; 인원·배포 집계에 관리자 팀 범위 적용 |
 | QRY | 부분 구현: sessions·active_time·lines_of_code·commits·pull_requests·active_users·adoption_rate·telemetry_coverage·automation_ratio·integration_depth·command_prompt_ratio·prompts_per_session·tool_calls·tool_failure_rate·read_tool_density·api_retry_attempts·rate_limit_events·auto_approval_ratio·tool_rejections·api_error_rate·usage_heatmap·compactions·compaction_reduction, 시계열/표/단일값·비교·CSV·감사·마스킹 |
+| INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, 독립 Flyway 이력; 감사 INSERT 구현 |
 | ClickHouse 조회 클라이언트 | 명명 파라미터, 읽기 설정, 30초 전체 응답 제한, 결과 크기 제한 |
 | 시간 해석 | 상대식·월·DST·주 시작 및 비교 기간, 단위 테스트 |
 
-실행·리포트 테이블이 존재한다고 해당 API가 구현된 것은 아니다. 현재 명세의 9개 operation이 구현됐고 QRY는 부분 구현이다. 53개 지표 정의 중 합계 5개와 활성 사용자·도입률·커버리지 3개 및 자동화·개발 연동·명령 프롬프트 비율 3개와 프롬프트 분포 1개 및 도구 호출 관련 3개와 API 재시도·429 지표 2개 및 도구 결정 지표 2개 및 API 오류율·히트맵 2개와 압축 지표 2개 및 MCP 연결 지표 2개 및 LLM 종료 사유 1개 및 소요 시간 2개 및 첫 토큰 지연 1개 및 승인 대기·즉시 승인 2개 및 편집 수락률 1개 및 서브에이전트 활동 1개 및 훅 차단 수 1개 및 훅 실행 1개 및 모델 거부 1개 및 모델 사용자 1개 및 토큰 비율 2개 및 토큰 사용량 1개 및 무산출 세션 1개 및 마지막 이벤트 1개 및 사용 집중도 1개 및 첫 사용 시간 1개 및 잔존율 1개 및 벤더 불일치 1개 및 비용 1개 및 서브에이전트 비용 비율 1개 및 사용자·시간당 비용 2개 및 모델 단가 1개, 비용 이상 1개 및 약정 소진율 1개를 더해 총 53개 집계가 연결되었다.
+실행·리포트 테이블이 존재한다고 해당 API가 구현된 것은 아니다. 현재 명세의 10개 operation이 구현됐고 QRY는 부분 구현이다. 53개 지표 정의 중 합계 5개와 활성 사용자·도입률·커버리지 3개 및 자동화·개발 연동·명령 프롬프트 비율 3개와 프롬프트 분포 1개 및 도구 호출 관련 3개와 API 재시도·429 지표 2개 및 도구 결정 지표 2개 및 API 오류율·히트맵 2개와 압축 지표 2개 및 MCP 연결 지표 2개 및 LLM 종료 사유 1개 및 소요 시간 2개 및 첫 토큰 지연 1개 및 승인 대기·즉시 승인 2개 및 편집 수락률 1개 및 서브에이전트 활동 1개 및 훅 차단 수 1개 및 훅 실행 1개 및 모델 거부 1개 및 모델 사용자 1개 및 토큰 비율 2개 및 토큰 사용량 1개 및 무산출 세션 1개 및 마지막 이벤트 1개 및 사용 집중도 1개 및 첫 사용 시간 1개 및 잔존율 1개 및 벤더 불일치 1개 및 비용 1개 및 서브에이전트 비용 비율 1개 및 사용자·시간당 비용 2개 및 모델 단가 1개, 비용 이상 1개 및 약정 소진율 1개를 더해 총 53개 집계가 연결되었다.
 
 ## 검증
 
-- 기존 security/enrollment 테스트 및 전체 `./gradlew build` 통과: 현재 테스트 결과 899건, 실패·오류·skip 0건.
+- 기존 security/enrollment 테스트 및 전체 `./gradlew build` 통과: 현재 테스트 결과 904건, 실패·오류·skip 0건.
 - META-METRICS: OpenAPI의 53개 MetricId와 차원 집합 일치, 원천 RDB 컬럼 실재, owner/admin 접근·비인증 거부 검증.
 - QRY: 실제 ClickHouse에서 FINAL 중복 제거·delta 합산·비교 빈 버킷·초 미만 범위 경계·팀 필터 병합·owner 감사·여러 설치의 사람 중복 제거·값/비교값/CSV/커버리지 마스킹을 검증했다.
 - 웹 로그인·권한 변경·폐기·만료·잠금·CLI 격리 및 감사 사유 테스트.
@@ -42,7 +43,7 @@
 
 1. QRY 보완: 53개 지표의 기본 계산은 연결했다. 미지원 frame 형식과 상위 N의 `__other__`, W3.3 주소 테이블 등 남은 명세를 보완한다.
 2. 계약 기반 파생 지표 검토: 약정 소진율도 연결했다. 현재 366일 조회 제한보다 긴 계약의 전체 기간 조회는 후속 보완 대상이다.
-3. INSTALL-LIST, SESSION-EVENTS: owner·감사, 키셋 페이지네이션, 설치 상태와 실제 이벤트 조합.
+3. SESSION-EVENTS: owner·감사, 키셋 페이지네이션과 실제 이벤트 조합. INSTALL-LIST는 구현했으며 기존 frontend 카드의 감사 사유 전달은 지원되지 않는다.
 4. 46개 시나리오: 카탈로그·파라미터 검증·조회 시 가용성·실측 기반 findings.
 5. 실행 워커와 이력: tenant별 queued+running 3개 제한, lease, 취소 및 종료 상태 경쟁 제어.
 6. 저장 리포트: 접근 범위 재검증, fixed/relative, active·linked 삭제 409.
@@ -50,7 +51,7 @@
 
 ## 알려진 한계
 
-- QRY의 일부 distribution 형식, 설치·세션·시나리오·실행·저장 API는 미구현이다. 지표 결과나 가용성을 임의로 만들어 반환하지 않는다.
+- QRY의 일부 distribution 형식, 세션·시나리오·실행·저장 API는 미구현이다. 지표 결과나 가용성을 임의로 만들어 반환하지 않는다.
 - telemetry_coverage 계산은 연결되었다. 약정 소진율도 owner 전사 범위에서 연결했다. 모든 frame 형식과 전체 수용 조건을 충족한 것은 아니다.
 - 전체 계획 완료나 운영 배포 가능 상태로 판정하지 않는다.
 
@@ -147,7 +148,7 @@
 - MCP lifecycle 이벤트의 연결 수와 status≠connected 비율을 연결했다. disconnected·상태 누락도 명세 Q15에 따라 실패 분자에 포함한다. 활성 연결의 현재 개수를 뜻하지 않는다.
 - 연결 수는 server_scope 문자열 파라미터(1~100자)를 바인딩하며 서버명·범위·전송 방식·is_plugin 차원을 지원한다. is_plugin은 정규화 문자열 True/False를 그대로 보존한다.
 - 실제 ClickHouse에서 FINAL 중복 제거, 다른 lifecycle 제외, 상태별 분모·분자, 필터 바인딩·잘못된 파라미터 거부, 전부 connected인 0 비율 및 비교 집단 마스킹을 검증했다.
-- 실제 frontend owner/admin 클라이언트와 위젯 변환에서 연결 20건, 실패 15/20=0.75 및 서버 속성 라벨을 검증했다. 전체 테스트 899건 통과, 연동 지표 53개이며 ingest 경로 검증은 남아 있다.
+- 실제 frontend owner/admin 클라이언트와 위젯 변환에서 연결 20건, 실패 15/20=0.75 및 서버 속성 라벨을 검증했다. 전체 테스트 904건 통과, 연동 지표 53개이며 ingest 경로 검증은 남아 있다.
 
 
 ## LLM 종료 사유 (S6-3)
@@ -155,7 +156,7 @@
 - llm_call·llm_response의 stop_reason별 관측 이벤트 수를 연결했다. 모델과 종료 사유 차원을 지원하며 사유가 누락되면 빈 라벨로 보존한다. group_by가 없으면 전체 이벤트 수를 반환한다.
 - FINAL로 동일 이벤트의 재적재를 제거하며 llm_request는 제외한다. 서로 다른 호출·응답 이벤트를 동일 호출로 추정해 병합하지 않으며 이 의미를 품질 캡션으로 표시한다.
 - 실제 ClickHouse에서 사유별 집계, 다른 이벤트 제외, 중복 제거, 미관측 구간 null, 작은 비교 집단 마스킹을 검증했다.
-- 실제 frontend owner/admin의 API 클라이언트와 위젯 변환에서 end_turn 5건·refusal 5건·사유 누락 10건 및 모델 라벨을 확인했다. 전체 테스트 899건과 총 53개 지표 연동 검증이 통과했다. ingest 경로와 전체 수용 검증은 남아 있다.
+- 실제 frontend owner/admin의 API 클라이언트와 위젯 변환에서 end_turn 5건·refusal 5건·사유 누락 10건 및 모델 라벨을 확인했다. 전체 테스트 904건과 총 53개 지표 연동 검증이 통과했다. ingest 경로와 전체 수용 검증은 남아 있다.
 
 
 ## 턴·LLM 소요 시간 (F-3)
@@ -163,7 +164,7 @@
 - turn_duration_ms는 span turn의 문자열 attrs.duration_ms로 정확 p50/p90을, llm_duration_ms는 error_type이 없는 llm_call의 숫자 duration_ms로 정확 p50/p95/p99를 계산한다.
 - 누락·음수는 제외하고 0ms는 포함한다. 유효 값이 없으면 빈 프레임이며 시계열 미관측 구간은 null이다. 기본 distribution은 백분위수 프레임 하나로 반환하고 단위는 ms다.
 - 실제 ClickHouse에서 중복 제거, 오류 호출 제외, 정확 백분위수, 누락·음수·0ms와 비교 집단 마스킹을 검증했다.
-- 실제 frontend owner/admin API·위젯 변환에서 LLM p50/p95/p99=900ms, 턴 p50/p90=1500ms를 확인했다. 전체 테스트 899건과 지표 53개 연동 검증 통과. 첫 토큰 지연은 아래 후속 작업으로 연결했고 전체 ingest E2E는 아직 남아 있다.
+- 실제 frontend owner/admin API·위젯 변환에서 LLM p50/p95/p99=900ms, 턴 p50/p90=1500ms를 확인했다. 전체 테스트 904건과 지표 53개 연동 검증 통과. 첫 토큰 지연은 아래 후속 작업으로 연결했고 전체 ingest E2E는 아직 남아 있다.
 
 
 ## 첫 토큰 지연 (F-3)
@@ -190,7 +191,7 @@
 - abort 결정은 수락·거절 분모에 포함하지 않는다. 분모 0은 null이며 누락 값과 누적 temporality=2는 기존 메트릭 조회 규칙대로 제외한다.
 - 언어는 point.attrs.language, 도구는 payload.tool_name 우선·point.attrs.tool_name 대체로 조회한다. FINAL 중복 제거와 현재 권한·팀 및 비교·CSV 마스킹을 공통 적용한다.
 - 실제 ClickHouse에서 값 합계 기반 비율, 사용자 출처, 자동 승인·Codex·누적 제외, 언어·도구 차원, 분모 0과 작은 비교 집단의 품질 개수 마스킹을 검증했다.
-- 실제 frontend owner/admin에서 사용자 수락 25 / 수락·거절 50 = 0.5 및 kotlin/Edit 라벨을 확인했다. 전체 테스트 899건과 총 53개 지표 연동 검증 통과. 전체 ingest E2E는 별도로 남아 있다.
+- 실제 frontend owner/admin에서 사용자 수락 25 / 수락·거절 50 = 0.5 및 kotlin/Edit 라벨을 확인했다. 전체 테스트 904건과 총 53개 지표 연동 검증 통과. 전체 ingest E2E는 별도로 남아 있다.
 
 
 ## 서브에이전트 활동 (E-5)
@@ -199,7 +200,7 @@
 - Q14대로 agent_id 문자열 자체의 고유 수를 계산한다. 같은 ID가 여러 설치에서 관측돼도 한 식별자로 센다. 식별자의 전역 유일성이나 완료·성공 여부를 추정하지 않는다. 카탈로그 partial과 한계 설명을 유지한다.
 - 동일 이벤트 재적재는 FINAL로 제거한다. ID 누락·빈 문자열 호출도 분모에는 포함하고 parent_agent_id를 agent_id 대신 쓰지 않는다. 도구 호출이 없으면 빈 프레임이다.
 - 실제 ClickHouse에서 반복 ID·중복 이벤트, 다른 이벤트 제외, 누락·빈 ID, 비교 집단의 고유 수·비율·분자·분모 마스킹을 검증했다.
-- 실제 frontend owner/admin의 팀별 위젯 변환에서 식별자 2개와 호출 비율 10/15=2/3을 확인했다. 전체 테스트 899건과 총 53개 지표 연동 검증 통과. 전체 ingest E2E는 별도로 남아 있다.
+- 실제 frontend owner/admin의 팀별 위젯 변환에서 식별자 2개와 호출 비율 10/15=2/3을 확인했다. 전체 테스트 904건과 총 53개 지표 연동 검증 통과. 전체 ingest E2E는 별도로 남아 있다.
 
 
 ## 훅 차단 수 (G-1)
@@ -217,7 +218,7 @@
 - 세션은 설치·제품·session_id 조합으로 구분한다. 비어 있거나 (unknown)인 세션은 분자·분모에서 제외하되 해당 훅은 실행 수에 포함한다. 분모 0이면 비율 null이다.
 - hook_event별로 나누더라도 같은 시간 버킷의 전체 관측 세션을 분모로 사용한다. 전체 범위·팀·제품·모델·개인 필터가 적용된 뒤 계산하며, 비교 기간과 n<5 마스킹도 공통 적용한다.
 - 실제 ClickHouse에서 실행과 세션 중복의 차이, 훅 없는 세션의 분모 포함, 설치·제품 간 동일 ID 분리, 누락 세션, 분모 0과 비교 마스킹을 검증했다.
-- 실제 frontend owner/admin에서 실행 10회·훅 세션 5개·전체 세션 5개·비율 1을 확인했다. 카탈로그 partial을 유지하며 전체 테스트 899건 및 총 53개 지표 연동 검증이 통과했다. 전체 ingest E2E는 별도로 남아 있다.
+- 실제 frontend owner/admin에서 실행 10회·훅 세션 5개·전체 세션 5개·비율 1을 확인했다. 카탈로그 partial을 유지하며 전체 테스트 904건 및 총 53개 지표 연동 검증이 통과했다. 전체 ingest E2E는 별도로 남아 있다.
 
 
 ## 모델 거부 (G-2)
@@ -226,7 +227,7 @@
 - 기존 owner 전용 인가와 team 분해 금지를 유지한다. admin 조회는 403, owner의 team 분해 요청은 400이며 조회 실행 전에 거부한다.
 - 동일 이벤트 재적재는 FINAL로 제거하지만 서로 다른 홉 이벤트를 동일 거부로 추정해 합치지 않는다. server_fallback_hop 부재의 한계와 partial 상태를 유지한다.
 - 실제 ClickHouse에서 응답 유형·종료 사유 필터, 중복 제거, 분류 누락, 권한·차원 제한과 비교 집단 마스킹을 검증했다.
-- 실제 frontend owner에서 policy 거부 5건을 확인했다. 공통 49개는 owner/admin 양쪽에서, 비용 이상 1개는 admin에서, 모델 거부·벤더 불일치·약정 소진율 3개는 owner에서 검증해 총 53개다. 전체 테스트 899건 통과. 전체 ingest E2E는 별도로 남아 있다.
+- 실제 frontend owner에서 policy 거부 5건을 확인했다. 공통 49개는 owner/admin 양쪽에서, 비용 이상 1개는 admin에서, 모델 거부·벤더 불일치·약정 소진율 3개는 owner에서 검증해 총 53개다. 전체 테스트 904건 통과. 전체 ingest E2E는 별도로 남아 있다.
 
 
 ## 모델 사용자 (E-1)
@@ -234,7 +235,7 @@
 - model_users는 모델이 관측된 이벤트의 설치를 구성원에 연결해 고유 사람 수를 계산한다. 여러 설치의 동일 구성원과 여러 모델을 사용하는 구성원은 해당 집계 그룹 내 한 번만 센다. 알 수 없는 설치는 사용자 수에서 제외한다.
 - 모델은 payload.model 우선·point.attrs.model 대체다. 모델이 비어 있는 관측은 제외하며 누적 메트릭 포인트는 사용자 수에 포함하지 않는다. 누적 포인트만 있으면 값 null과 제외 설명을 반환한다.
 - 실제 ClickHouse에서 설치 중복, 미연결 설치, 로그·메트릭 모델, 누적 제외, 모델 필터 및 비교 집단 마스킹을 검증했다.
-- 실제 frontend owner/admin에서 claude-e2e의 사용자 5명을 확인했다. 공통 49개와 admin 비용 이상 1개 및 owner 전용 3개로 총 53개 지표 연동 검증 및 전체 테스트 899건이 통과했다. 이번 frontend 검증 HEAD는 52f7cb10017c6ba6120f51f2e158ff329d14bff0이다. 전체 ingest E2E는 별도로 남아 있다.
+- 실제 frontend owner/admin에서 claude-e2e의 사용자 5명을 확인했다. 공통 49개와 admin 비용 이상 1개 및 owner 전용 3개로 총 53개 지표 연동 검증 및 전체 테스트 904건이 통과했다. 이번 frontend 검증 HEAD는 52f7cb10017c6ba6120f51f2e158ff329d14bff0이다. 전체 ingest E2E는 별도로 남아 있다.
 
 
 ## 캐시·입출력 토큰 비율 (C-2, S1-5)
@@ -243,7 +244,7 @@
 - 각 비율에 필요한 값이 모두 존재하고 음수가 아닌 호출만 합산한다. 누락 값을 0으로 추정하지 않기 위한 처리이며 응답 품질 설명에 명시한다. 완전한 호출이 없으면 비율·분자·분모가 null이고, 유효한 0 분모는 숫자 0과 비율 null이다.
 - 값의 단위는 ratio, 분자·분모는 token이다. 팀·모델 차원과 현재 권한·필터·비교 마스킹을 적용한다. 이벤트 원천만 연결했으며 두 비율의 메트릭 원천 확장은 후속 작업이다. tokens의 메트릭 집계는 아래 후속 작업에서 연결했다. source 지정은 현 계약대로 cost/tokens에만 허용한다.
 - 실제 ClickHouse에서 합계 비율, 누락·음수 제외, 중복 제거, 분모 0과 비교 집단 마스킹을 검증했다.
-- 실제 frontend owner/admin에서 캐시 3000/6000=0.5, 입출력 1500/750=2를 확인했다. 공통 49개와 admin 비용 이상 1개 및 owner 전용 3개로 총 53개 지표 및 전체 테스트 899건 통과. 전체 ingest E2E는 별도로 남아 있다.
+- 실제 frontend owner/admin에서 캐시 3000/6000=0.5, 입출력 1500/750=2를 확인했다. 공통 49개와 admin 비용 이상 1개 및 owner 전용 3개로 총 53개 지표 및 전체 테스트 904건 통과. 전체 ingest E2E는 별도로 남아 있다.
 
 
 ## 토큰 사용량 (C-2)
@@ -252,7 +253,7 @@
 - types 파라미터는 input/output/cache_read/cache_create의 중복 없는 배열이다. 생략·빈 배열은 네 종류 전체다. 메트릭 cacheRead/cacheCreation은 API의 cache_read/cache_create로 변환한다. reasoning·total_reported 등을 추가 합산하지 않는다.
 - 종류·팀·제품·모델·query_source 차원을 지원한다. agent_name은 메트릭에서만 허용하고 이벤트 요청이면 400이다. 관측된 비음수 값만 합산하며 전부 누락이면 null, 유효한 0은 숫자 0이다. 누적 메트릭은 제외 설명과 함께 합산에서 제외한다.
 - 실제 ClickHouse에서 두 원천 분리, 종류 선택·정규화, 잘못된 파라미터 거부, 귀속 차원, 누락·0 및 비교 집단 마스킹을 검증했다.
-- 실제 frontend owner/admin에서 이벤트 토큰 input=1500/output=750/cache_read=3000/cache_create=1500, 메트릭의 output+cache_read=250 및 worker 귀속을 확인했다. 공통 49개와 admin 비용 이상 1개 및 owner 전용 3개로 총 53개 지표 및 전체 테스트 899건 통과. 전체 ingest E2E는 별도로 남아 있다.
+- 실제 frontend owner/admin에서 이벤트 토큰 input=1500/output=750/cache_read=3000/cache_create=1500, 메트릭의 output+cache_read=250 및 worker 귀속을 확인했다. 공통 49개와 admin 비용 이상 1개 및 owner 전용 3개로 총 53개 지표 및 전체 테스트 904건 통과. 전체 ingest E2E는 별도로 남아 있다.
 
 
 ## 무산출 세션 비율 (S4-2)
@@ -354,7 +355,7 @@
 - scalar/table은 마지막 관측일을, timeseries는 1d 버킷을 반환한다. 다른 interval은 400, distribution은 501이다. 이벤트 비용을 사용하고 agent_name 그룹이 있으면 메트릭 비용을 사용한다. 두 원천을 합치지 않으며 계약 배율·누락·음수·누적 포인트 처리는 기존 비용 경로를 재사용한다.
 - 현재일과 모든 기준일 및 비교 기간의 소집단 조건을 전파해 값·분자·분모를 함께 마스킹한다. 기준 기간의 작은 집단도 비용 비율로 노출하지 않는다.
 - 실제 ClickHouse 테스트에서 150/75−1=1, 현재일만 할인한 75/75−1=0, 별칭·범위 오류, 누락일·0 평균, 비교 기준 소집단, Asia/Seoul 자정 경계 및 에이전트 비누적 원천을 검증했다. 실제 frontend admin 클라이언트와 위젯 변환에서는 30/15−1=1을 검증한다.
-- 전체 빌드 테스트 899건과 frontend 연동 지표 53개가 통과했다. 정규화 fixture를 직접 적재한 검증이며 실제 ingest와 전체 시나리오 E2E는 남아 있다. 약정 소진율은 아래 후속 작업으로 연결했다.
+- 전체 빌드 테스트 904건과 frontend 연동 지표 53개가 통과했다. 정규화 fixture를 직접 적재한 검증이며 실제 ingest와 전체 시나리오 E2E는 남아 있다. 약정 소진율은 아래 후속 작업으로 연결했다.
 
 
 ## 계약 약정 소진율 (H-2)
@@ -365,4 +366,16 @@
 - frontend 호환 필드는 burn_ratio(ratio), cost_usd(USD), commitment_amount(USD)다. scalar/table은 조회 기간 합계, timeseries는 버킷별 비용/전체 약정액이다. 누적 소진율은 계약 시작부터 scalar로 조회한다. 현재·비교 소집단이면 약정액도 숨긴다.
 - 실제 frontend의 계약 starts_at 날짜 입력을 위해 YYYY-MM-DD를 요청 시간대 자정으로 해석한다. DST 전환 전후 자정과 잘못된 날짜 거부를 단위 테스트로 검증했다. 기존 366일 조회 제한은 유지하므로 더 긴 계약 전체 기간은 후속 보완이 필요하다.
 - 실제 PostgreSQL·ClickHouse에서 배정·해제·해지 경계, 벤더·원천 제외, 할인 비용 25/1000, FINAL 중복 제거, 누락·0·음수 약정액, 비USD 통화, owner 인가, tenant 격리, 비교·CSV 마스킹을 검증했다.
-- 전체 빌드 899건, 실제 frontend 연동 지표 53개와 P5 약정 게이지 1.5%(15/1000)를 검증했다. 53개 지표의 기본 계산 경로가 연결됐지만, 설치·세션·46개 시나리오·실행·저장 API 및 ingest부터의 전체 E2E는 미완료다.
+- 전체 빌드 904건, 실제 frontend 연동 지표 53개와 P5 약정 게이지 1.5%(15/1000)를 검증했다. 53개 지표의 기본 계산 경로가 연결됐지만, 세션·46개 시나리오·실행·저장 API 및 ingest부터의 전체 E2E는 미완료다.
+
+
+## 설치 목록 (INSTALL-LIST)
+
+- GET /v1/installations는 ADR 0019에 따라 owner와 10~500자 감사 사유를 요구한다. 감사 INSERT가 실패하면 503 + Retry-After로 종료하고 설치 정보를 반환하지 않는다. admin 및 감사 사유 없는 요청은 403이다.
+- 현재 팀 소속, platform(windows/macos/linux), status(active/revoked), inactive_days(1 이상)를 지원한다. 설치 UUID 오름차순 키셋으로 limit 1~500(기본 50)을 적용하고 빈 cursor는 첫 페이지로 해석한다. total은 계산하지 않아 null이다.
+- PostgreSQL의 설치·구성원·현재 팀 정보를 읽고, 같은 tenant·설치의 ClickHouse FINAL 관측을 결합한다. 미래 이벤트는 제외한다. last_seen_at은 RDB 값, last_event_at은 제품 전체 마지막 이벤트다. product_versions는 제품별 마지막 이벤트의 envelope.client.version이며 마지막 이벤트에 버전이 없으면 해당 키를 생략한다. 같은 시각은 event_id로 결정한다.
+- 무활동은 마지막 이벤트가 기준일 이하인 설치를 선택한다. 이벤트 미관측 설치는 생성일이 기준일 이하인 경우만 포함한다. 최근 생성된 설치를 즉시 장기 무활동으로 분류하지 않으며, last_seen_at으로 이벤트 관측을 대체하지 않는다. 이메일은 감사 후에도 ***@도메인 형식으로만 반환한다.
+- 무활동 필터를 페이지 절단 전에 적용한다. 요청당 RDB 후보는 5,000개로 제한하고 초과 시 422 query_too_wide를 반환한다. 30초 조회 예산과 기존 ClickHouse 응답 크기 제한을 사용한다. 페이지 사이의 동시 변경을 고정하는 스냅샷은 제공하지 않는다.
+- 실제 DB에서 제품 버전·마지막 시각·FINAL 중복 제거·미래 이벤트 제외·미관측·키셋 페이지·무활동·현재 팀·tenant 격리·감사 저장 실패 차단을 검증했다. 전체 테스트 904건이 통과했다.
+- 실제 frontend 클라이언트로 감사 사유를 전달해 설치 5개를 2/2/1의 3페이지로 조회하고 중복 없는 ID, 제품 버전, 마지막 이벤트와 감사 로그 3건을 확인했다. 기존 53개 지표와 P5 게이지 연동도 통과했다.
+- 기존 frontend opsApi.installations/설치 카드는 감사 사유를 전달하지 않아 403이 된다. frontend를 수정하지 않는 확정 범위와 ADR의 감사 요구를 유지했으며, 설치 카드 전체 UI 검증으로 표시하지 않는다. 다음 구현 대상은 SESSION-EVENTS다.

@@ -520,6 +520,31 @@ try {
       await page.getByRole('cell', { name: 'owner@e2e.test', exact: true }).waitFor();
       assert.equal(sql('SELECT count(*) FROM dashboard.audit_log'), '2');
       assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='query' AND target='vendor_account_mismatch'"), '1');
+      const installationVersions = [...new Map(points.map(JSON.parse).map(p => [p.installation_id, p])).values()]
+        .map(p => JSON.stringify({ ...p, event_id: randomUUID(), ts: observedAt + 1, signal: 'metric',
+          raw_json: JSON.stringify({ envelope: { client: { version: 'fixture-product-1' } } }) }));
+      run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], installationVersions.join('\n'));
+      const installations = await page.evaluate(async () => {
+        const client = await import('/src/api/client.ts');
+        const items = [];
+        let cursor = '';
+        for (let page = 0; page < 3; page++) {
+          const response = await client.request('/installations?limit=2&cursor=' + encodeURIComponent(cursor),
+            {}, '설치 목록 연동 정기 감사 점검');
+          items.push(...response.items);
+          cursor = response.next_cursor;
+          if (!cursor) break;
+        }
+        return { items, cursor };
+      });
+      assert.equal(installations.items.length, 5);
+      assert.equal(new Set(installations.items.map(i => i.installation_id)).size, 5);
+      assert.equal(installations.cursor, null);
+      assert.ok(installations.items.every(i => i.member_email_masked === '***@e2e.test' &&
+        i.product_versions.claude_code === 'fixture-product-1' &&
+        Date.parse(i.last_event_at) === (observedAt + 1)*1000));
+      assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='installations'"), '3');
+
     } else {
       assert.equal(await page.getByRole('cell', { name: 'E2E 별도팀', exact: true }).count(), 0);
       await page.getByText('구성원 이메일 목록은 owner 권한으로 제공됩니다.', { exact: true }).waitFor();
@@ -529,6 +554,7 @@ try {
     await context.close();
   }
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+    verifiedInstallations: { count: 5, pages: 3, audited: true, actualFrontendCard: false },
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
