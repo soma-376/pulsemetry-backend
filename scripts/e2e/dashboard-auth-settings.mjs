@@ -642,6 +642,10 @@ try {
     await page.getByLabel('시나리오 판정', { exact: true }).waitFor();
     await page.getByRole('heading', { name: '재시도 요청 비율이 5% 이상입니다', exact: true }).waitFor();
     if (role === 'admin') await page.getByRole('heading', { name: '일 비용이 이동평균 대비 임계를 초과했습니다', exact: true }).waitFor();
+    const teamCostWidget = page.locator('[data-result-widget="W1.3"][data-result-metric="cost"]');
+    await teamCostWidget.getByText('팀별 비용', { exact: true }).waitFor();
+    await teamCostWidget.locator('summary').click();
+    assert.ok((await teamCostWidget.innerText()).includes('$30.00'));
     await page.screenshot({ path: resolve(artifacts, `${role}-scenario.png`), fullPage: true });
 
     await page.screenshot({ path: resolve(artifacts, `${role}.png`), fullPage: true });

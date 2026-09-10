@@ -76,7 +76,7 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
         return mapOf("run_id" to row.id,"scenario_id" to row.scenario,
         "status" to row.status,"params" to mapper.readTree(row.params),"resolved_from" to row.from.toString(),"resolved_to" to row.to.toString(),
         "created_at" to row.created.toString(),"finished_at" to row.finished?.toString(),"created_by" to mapOf("member_id" to row.creator),
-        "progress" to mapOf("step" to row.step,"total" to 3,"label" to when(row.status) { "queued" -> "대기"; "running" -> "지표 조회"; else -> "종료" }),
+        "progress" to mapOf("step" to row.step,"total" to 4,"label" to when(row.status) { "queued" -> "대기"; "running" -> "지표 조회"; else -> "종료" }),
         "result" to result,"findings_count" to counts,"error" to row.error?.let { mapper.readTree(it) })
     }
 
@@ -105,12 +105,24 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
                 if (result["status"].asInt()!=200) throw UserAuthException(result.path("error").path("error").asString("query_failed"),result["status"].asInt())
                 frames[metric] = result
             }
-            actor(row)
+            val findings = DashboardSpikeFindings.evaluate(frames,params["spike_threshold_pct"].asDouble())
             if (!runs.progress(row,3)) return
+            val teamCostRequest = DashboardQueryRequest(row.from.toString(),row.to.toString(),execution["tz"].asString(),
+                filters=DashboardQueryFilters(teamIds=if(execution["organization_scope"].asBoolean()) emptySet() else teamIds),
+                priceBasis=execution["price_basis"].asString(),maxDataPoints=1000,
+                queries=listOf(DashboardQueryItem("A","cost",groupBy=listOf("team"),frameType="table",limit=100)))
+            val teamCost = mapper.valueToTree<JsonNode>(query.query(actor(row),teamCostRequest,null,"application/json").body)["results"]["A"]
+            if (teamCost["status"].asInt()!=200) throw UserAuthException(teamCost.path("error").path("error").asString("query_failed"),teamCost["status"].asInt())
+            // 판정은 모델별 일 시계열로 끝내고, 팀별 기간 합계는 화면용 프레임에만 합친다.
+            val cost = frames.getValue("cost").deepCopy() as tools.jackson.databind.node.ObjectNode
+            (cost["frames"] as tools.jackson.databind.node.ArrayNode).addAll(teamCost["frames"] as tools.jackson.databind.node.ArrayNode)
+            frames["cost"] = cost
+            actor(row)
+            if (!runs.progress(row,4)) return
             val result = mapOf("target_page" to "P1","highlight_widgets" to listOf("W1.2","W1.3","W2.5"),
                 "applied_filters" to mapOf("from" to row.from.toString(),"to" to row.to.toString(),"tz" to execution["tz"].asString(),
                     "price_basis" to execution["price_basis"].asString(),"filters" to mapOf("team_ids" to if(execution["organization_scope"].asBoolean()) emptySet() else teamIds)),
-                "frames" to frames,"findings" to DashboardSpikeFindings.evaluate(frames,params["spike_threshold_pct"].asDouble()))
+                "frames" to frames,"findings" to findings)
             runs.finish(row,mapper.writeValueAsString(result),null)
         } catch (e: Exception) {
             val code = when(e) {

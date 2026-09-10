@@ -1621,8 +1621,9 @@ class DashboardAuthTest {
         assertThat(result["status"].asInt()).isEqualTo(200)
         assertThat(result["frames"].size()).isZero()
     }
-    private fun costEvent(id: UUID, cost: Double?, at: String = "2026-09-01T12:00:00Z"): String {
+    private fun costEvent(id: UUID, cost: Double?, at: String = "2026-09-01T12:00:00Z", team: UUID? = null): String {
         val row = mapper.readTree(llmEvent(id,1,200,at=at)) as tools.jackson.databind.node.ObjectNode
+        if (team != null) row.putArray("team_ids_as_of").add(team.toString())
         row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "llm_call","payload" to mapOf(
             "model" to "claude-test","cost_usd" to cost,"cost_source" to "reported"))))
         return mapper.writeValueAsString(row)
@@ -2297,8 +2298,10 @@ class DashboardAuthTest {
         .header("Authorization", "Bearer $bearer")).andExpect(status().isOk).andReturn().response.contentAsString)
 
     @Test fun `실제 비용 시나리오는 큐 워커 결과 조회까지 연결된다`() {
-        val ids = installations(5)
-        seedPoints(ids.flatMap { id -> listOf(costEvent(id,40.0)) + listOf("2026-08-29","2026-08-30","2026-08-31").map { costEvent(id,10.0,"${it}T12:00:00Z") } })
+        val team = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,'실행 팀')").param("id",team).param("tenant",tenant).update()
+        val ids = installations(5,team)
+        seedPoints(ids.flatMap { id -> listOf(costEvent(id,40.0,team=team)) + listOf("2026-08-29","2026-08-30","2026-08-31").map { costEvent(id,10.0,"${it}T12:00:00Z") } })
         val bearer = token()
         val response = startRun(bearer).andExpect(status().isAccepted).andReturn().response
         val queued = mapper.readTree(response.contentAsString)
@@ -2309,21 +2312,29 @@ class DashboardAuthTest {
         scenarioRuns.runOne()
         val completed = readRun(id,bearer)
         assertThat(completed["status"].asString()).isEqualTo("succeeded")
-        assertThat(completed["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(completed["progress"]["step"].asInt()).isEqualTo(4)
         assertThat(completed["findings_count"]["anomaly"].asInt()).isEqualTo(1)
         assertThat(completed["result"]["frames"]["cost"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(200.0)
+        val teamFrames = completed["result"]["frames"]["cost"]["frames"].toList().filter { it["schema"]["frame_type"].asString()=="table" }
+        assertThat(teamFrames).isNotEmpty()
+        assertThat(teamFrames.sumOf { it["data"]["values"][0][0].asDouble() }).isEqualTo(200.0)
         val finding = completed["result"]["findings"].first { it["rule_id"].asString()=="spike_day" }
         assertThat(finding["evidence"]["ratio"].asDouble()).isEqualTo(3.0)
         mvc.perform(post("/v1/scenario-runs/$id/cancel").header("Authorization","Bearer $bearer")).andExpect(status().isConflict)
     }
 
     @Test fun `마스킹된 비용 시나리오는 수치 판정 근거를 만들지 않는다`() {
-        val ids = installations(4)
-        seedPoints(ids.flatMap { id -> listOf(costEvent(id,40.0)) + listOf("2026-08-29","2026-08-30","2026-08-31").map { costEvent(id,10.0,"${it}T12:00:00Z") } })
+        val team = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,'실행 팀')").param("id",team).param("tenant",tenant).update()
+        val ids = installations(4,team)
+        seedPoints(ids.flatMap { id -> listOf(costEvent(id,40.0,team=team)) + listOf("2026-08-29","2026-08-30","2026-08-31").map { costEvent(id,10.0,"${it}T12:00:00Z") } })
         val bearer = token()
         val id = mapper.readTree(startRun(bearer).andReturn().response.contentAsString)["run_id"].asString()
         scenarioRuns.runOne()
         val result = readRun(id,bearer)["result"]
+        val tables = result["frames"]["cost"]["frames"].toList().filter { it["schema"]["frame_type"].asString()=="table" }
+        assertThat(tables).hasSize(1)
+        assertThat(tables[0]["data"]["values"][0][0].isNull).isTrue()
         assertThat(result["findings"].size()).isZero()
         assertThat(result["frames"]["cost"]["frames"][0]["data"]["values"][1][0].isNull).isTrue()
     }
