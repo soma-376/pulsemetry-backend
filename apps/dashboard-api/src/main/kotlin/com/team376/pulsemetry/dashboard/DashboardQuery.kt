@@ -115,7 +115,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users","tokens")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics)) {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users","tokens","session_last_event")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics)) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
@@ -142,7 +142,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 try {
                     val current = read(q, scope, from, to, zone, interval, deadline)
                     val previous = comparison?.let { read(q, scope, it.first, it.second, zone, interval, deadline) }
-                    results[q.refId] = mapOf("status" to 200, "frames" to frames(q, definition, current, previous, interval, ticks, comparison?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
+                    results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else q, definition, current, previous, interval, ticks, comparison?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
                         tick.minus(Duration.between(from,to)) else tick.atZone(time.zone).minusWeeks(1).toInstant(), interval) } }, scope.teamNames))
                 } catch (e: DashboardReadException) { results[q.refId] = error(id, e.status, e.code) }
             }
@@ -218,6 +218,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
+        if (q.metricId=="session_last_event") return readLastEvent(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="abandoned_session_ratio") return readAbandoned(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="tokens") return readTokens(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="hook_executions") return readHookExecutions(q,scope,from,to,zone,interval,deadline)
@@ -335,6 +336,40 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > groupLimit(q))
             throw DashboardReadException("query_too_wide", 422)
         return Rows(rows, sql)
+    }
+    private fun readLastEvent(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
+        zone: String, interval: String, deadline: Long): Rows {
+        val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
+        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val suffix = if (dimensions.isEmpty()) "" else ","+q.groupBy.indices.joinToString(",") { "g$it" }
+        val category = "g${q.groupBy.size}"
+        val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
+        // 마지막 유형과 오류를 같은 행에서 고른다. 시각·sequence 동률만 event_id로 안정화한다.
+        val sql = """WITH observed AS (
+            SELECT *${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
+                JSONExtractString(raw_json,'envelope','session_id') AS session_id
+            FROM (SELECT * $base)
+            ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
+        ), privacy AS (
+            SELECT $bucket AS bucket$suffix, $people AS people,
+                countIf($activePoint)>0 AS active_time_definition FROM observed GROUP BY bucket$suffix
+        ), sessions AS (
+            SELECT installation_id,product,session_id$suffix, max(ts) AS last_ts,
+                argMax(tuple(JSONExtractString(raw_json,'type'),JSONExtractString(raw_json,'payload','error_type')),
+                    tuple(ts,JSONExtractInt(raw_json,'sequence'),event_id)) AS last_event
+            FROM observed WHERE signal='log' AND session_id NOT IN ('','(unknown)')
+            GROUP BY installation_id,product,session_id$suffix
+        ), stats AS (
+            SELECT ${bucket.replace("ts", "last_ts")} AS bucket$suffix,
+                if(tupleElement(last_event,2)!='','api_error',tupleElement(last_event,1)) AS $category,
+                count() AS points, count() AS value, 0 AS cumulative,
+                uniqExactIf($person,$known) AS category_people
+            FROM sessions GROUP BY bucket$suffix,$category
+        ) SELECT stats.*,least(privacy.people,stats.category_people) AS people,privacy.active_time_definition
+            FROM stats INNER JOIN privacy USING (bucket$suffix) ORDER BY bucket$suffix,$category"""
+        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
+        val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
+        return Rows(rows,sql)
     }
     private fun readAbandoned(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, interval: String, deadline: Long): Rows {
@@ -638,6 +673,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 "전후 토큰 쌍이 없는 압축 이벤트 ${incompleteCompactions}개를 감소율에서 제외"
             if (q.metricId=="subagent_activity") quality += "도구 호출에서 관측된 agent_id 수와 호출 비율; 완료·성공 여부는 판정하지 않음"
             if (q.metricId=="abandoned_session_ratio") quality += "조회 기간 내 로그 세션과 관측 산출만 판정; 세션 종료를 보장하지 않으며 미관측 산출이 있을 수 있음"
+            if (q.metricId=="session_last_event") quality += "Q25 로그의 마지막 관측 유형; 오류는 api_error, 긴 대기·실제 종료는 미판정; 시각·sequence 동률은 event_id 순서"
             if (q.metricId=="tokens") quality += "원천: ${q.source ?: "events"}; 관측된 토큰 값만 합산하며 누락·음수는 제외"
             if (q.metricId in tokenRatios) quality += "llm_call 이벤트 원천; 필요한 토큰 값이 모두 있는 호출의 합계 비율, 누락·음수 호출 제외"
             if (q.metricId=="llm_ttft_ms") quality += "조회 기간 내 설치·제품·요청별 유효 로그 우선, 없으면 스팬; 요청 ID 누락은 세션·모델별 소스 선택"

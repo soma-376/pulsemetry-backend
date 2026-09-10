@@ -1347,6 +1347,43 @@ class DashboardAuthTest {
             .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
         assertThat(hidden["data"]["values"].toList().drop(1).all { it.toList().all { v -> v.isNull } }).isTrue()
     }
+    private fun lastEvent(id: UUID, session: String, type: String, sequence: Int, error: String = "",
+        at: String = "2026-09-01T12:00:00Z", signal: String = "log", product: String = "claude_code"): String {
+        val row = mapper.readTree(promptEvent(id,session=session,at=at,product=product)) as tools.jackson.databind.node.ObjectNode
+        row.put("signal",signal)
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to type,"sequence" to sequence,
+            "envelope" to mapOf("session_id" to session),"payload" to mapOf("error_type" to error))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `마지막 로그는 시각과 순번으로 유형과 오류를 함께 고르고 제품을 분리한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { id -> listOf(lastEvent(id,"s","llm_call",1,error="old"),
+            lastEvent(id,"s","user_prompt",2),lastEvent(id,"s","ignored",99,signal="span"),
+            lastEvent(id,"e","llm_call",1,error="failed"),lastEvent(id,"s","llm_call",1,product="codex"),
+            lastEvent(id,"(unknown)","ignored",1),lastEvent(id,"","ignored",1)) }
+        seedPoints(rows+rows.first())
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "session_last_event")))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        assertThat(result["frames"].toList().associate { it["schema"]["fields"][0]["labels"]["last_event"].asString() to
+            it["data"]["values"][0][0].asInt() }).containsExactlyInAnyOrderEntriesOf(mapOf("user_prompt" to 5,"api_error" to 5,"llm_call" to 5))
+    }
+    @Test fun `마지막 로그는 마지막 날짜에만 배치하고 비교 소집단을 숨긴다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(lastEvent(it,"s","user_prompt",99),
+            lastEvent(it,"s","llm_call",1,at="2026-09-02T12:00:00Z")) }
+        seedPoints(rows)
+        val q = mapOf("metric_id" to "session_last_event","frame_type" to "timeseries","interval" to "1d")
+        val result = mapper.readTree(queryResult(queryBody(q)).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val frame = result["frames"][0]
+        assertThat(frame["data"]["values"][1][0].isNull).isTrue()
+        assertThat(frame["data"]["values"][1][1].asInt()).isEqualTo(5)
+        seedPoints(rows+ids.take(4).map { lastEvent(it,"s","llm_call",1,at="2026-08-31T12:00:00Z") })
+        val hidden = mapper.readTree(queryResult(queryBody(q,mapOf("compare" to "previous_period")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(hidden["data"]["values"].toList().drop(1).all { it.toList().all { v -> v.isNull } }).isTrue()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
