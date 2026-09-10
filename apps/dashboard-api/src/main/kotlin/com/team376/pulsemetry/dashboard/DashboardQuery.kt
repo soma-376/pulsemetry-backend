@@ -115,7 +115,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users","tokens","session_last_event")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId!="usage_concentration") || (q.metricId=="onboarding_retention" && q.frameType=="timeseries")) {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users","tokens","session_last_event","vendor_account_mismatch")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId!="usage_concentration") || (q.metricId=="onboarding_retention" && q.frameType=="timeseries")) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
@@ -173,7 +173,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private fun scope(user: UserIdentity, f: DashboardQueryFilters): Scope {
         val teams = access.teams(user, f.teamIds)
         val unrestricted = user.role == "owner" && f.teamIds.isEmpty()
-        val rows = jdbc.sql("""SELECT i.id,m.id AS member_id,i.status::text AS installation_status, i.platform::text AS platform, floor(extract(epoch FROM i.created_at))::bigint AS created_epoch FROM enrollment.installations i
+        val rows = jdbc.sql("""SELECT i.id,m.id AS member_id,m.email AS registered_email, i.status::text AS installation_status, i.platform::text AS platform, floor(extract(epoch FROM i.created_at))::bigint AS created_epoch FROM enrollment.installations i
             JOIN enrollment.members m ON m.id=i.member_id AND m.tenant_id=i.tenant_id WHERE i.tenant_id=:tenant LIMIT 5001""")
             .param("tenant", user.tenantId).query().listOfRows()
         if (rows.size > 5000) throw DashboardReadException("query_too_wide", 422)
@@ -197,6 +197,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val map = selected.joinToString(",", "{", "}") { "'${it["id"]}':'${it["member_id"]}'" }
         return Scope(mapOf("tenant" to user.tenantId.toString(), "teams" to array(teams.map { it.toString() }),
             "unrestricted" to if (unrestricted) "1" else "0", "products" to array(f.products), "models" to array(f.models),
+            "emails" to selected.joinToString(",","{","}") { "${quoted(it["id"].toString())}:${quoted(it["registered_email"].toString())}" },
             "created" to selected.joinToString(",","{","}") { "'${it["id"]}':${it["created_epoch"]}" },
             "platforms" to selected.joinToString(",","{","}") { "'${it["id"]}':'${it["platform"]}'" },
             "members" to map, "personal" to if (f.memberIds.isNotEmpty()) "1" else "0"), members.size, names, teamMembers, installationCount)
@@ -220,6 +221,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
+        if (q.metricId=="vendor_account_mismatch") return readMismatch(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="onboarding_retention") return readRetention(q,scope,from,to,zone,deadline)
         if (q.metricId=="onboarding_ttfu") return readOnboarding(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="usage_concentration") return readConcentration(q,scope,from,to,zone,interval,deadline)
@@ -341,6 +343,31 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > groupLimit(q))
             throw DashboardReadException("query_too_wide", 422)
         return Rows(rows, sql)
+    }
+    private fun readMismatch(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
+        zone: String, interval: String, deadline: Long): Rows {
+        val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
+        val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
+        val sql = """WITH observed AS (
+            SELECT *,$bucket AS bucket,JSONExtractString(raw_json,'envelope','identity','vendor_email') AS vendor_email
+            FROM (SELECT * $base)
+        ), privacy AS (
+            SELECT bucket,$people AS people,countIf($activePoint)>0 AS active_time_definition
+            FROM observed GROUP BY bucket
+        ), latest AS (
+            SELECT bucket,installation_id,argMax(vendor_email,
+                tuple(ts,JSONExtractInt(raw_json,'sequence'),event_id)) AS latest_email
+            FROM observed WHERE signal IN ('log','span') AND vendor_email!='' AND $known
+                AND {emails:Map(String,String)}[installation_id]!=''
+            GROUP BY bucket,installation_id
+        ), stats AS (
+            SELECT bucket,count() AS points,0 AS cumulative,uniqExact($person) AS observed_people,
+                countIf(lowerUTF8(latest_email)!=lowerUTF8({emails:Map(String,String)}[installation_id])) AS value
+            FROM latest GROUP BY bucket
+        ) SELECT stats.*,least(privacy.people,stats.observed_people) AS people,privacy.active_time_definition
+            FROM stats INNER JOIN privacy USING (bucket) ORDER BY bucket"""
+        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
+        return Rows(mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList(),sql)
     }
     private fun readRetention(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, deadline: Long): Rows {
@@ -787,6 +814,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 "전후 토큰 쌍이 없는 압축 이벤트 ${incompleteCompactions}개를 감소율에서 제외"
             if (q.metricId=="subagent_activity") quality += "도구 호출에서 관측된 agent_id 수와 호출 비율; 완료·성공 여부는 판정하지 않음"
             if (q.metricId=="abandoned_session_ratio") quality += "조회 기간 내 로그 세션과 관측 산출만 판정; 세션 종료를 보장하지 않으며 미관측 산출이 있을 수 있음"
+            if (q.metricId=="vendor_account_mismatch") quality += "설치별 마지막 비어 있지 않은 로그·스팬 이메일과 현재 등록 이메일을 대소문자 구분 없이 비교; 시계열은 버킷별 판정, 동률은 sequence·event_id 순서; 주소는 반환하지 않음"
             if (q.metricId=="onboarding_retention") {
                 quality += "필터·권한 범위의 보존된 첫 사용 주 코호트; 월요일 기준 설치 잔존율, 소집단은 구성원 수; 비교는 상대 코호트 주·경과 주차 정렬"
                 if ((rows+prior).any { !it["complete"].asBoolean() }) quality += "아직 관측이 끝나지 않은 주차는 비율·재사용 수 미판정; 코호트 크기는 유지"
@@ -882,7 +910,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return result
     }
     private fun remaining(deadline: Long) = Duration.ofNanos(deadline-System.nanoTime())
-    private fun array(values: Collection<String>) = values.joinToString(",", "[", "]") { "'"+it.replace("\\", "\\\\").replace("'", "\\'")+"'" }
+    private fun quoted(value: String) = "'"+value.replace("\\", "\\\\").replace("'", "\\'")+"'"
+    private fun array(values: Collection<String>) = values.joinToString(",", "[", "]", transform = ::quoted)
     private fun error(id: String, status: Int, code: String) = mapOf("status" to status, "frames" to emptyList<Any>(),
         "error" to mapOf("error" to code, "message" to code, "request_id" to id))
     private fun csv(value: String): String {

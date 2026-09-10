@@ -1561,6 +1561,62 @@ class DashboardAuthTest {
             assertThat(frame["schema"]["fields"][0]["labels"]["cohort_week_compare"].asString()).isEqualTo("2026-08-03")
         }
     }
+    private fun vendorEvent(id: UUID, email: String, sequence: Int = 1, signal: String = "log",
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(promptEvent(id,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("signal",signal)
+        row.put("raw_json",mapper.writeValueAsString(mapOf("sequence" to sequence,
+            "envelope" to mapOf("identity" to mapOf("vendor_email" to email)))))
+        return mapper.writeValueAsString(row)
+    }
+    private fun mismatchQuery(body: String, accept: String = "application/json") = mvc.perform(post("/v1/query")
+        .header("Authorization","Bearer ${token()}").header("X-Audit-Reason","벤더 계정 불일치 정기 점검 사유")
+        .header("Accept",accept).contentType("application/json").content(body))
+    @Test fun `벤더 불일치는 마지막 비어 있지 않은 이벤트 주소를 비교하고 식별자는 반환하지 않는다`() {
+        val ids = installations(5)
+        val rows = ids.flatMapIndexed { index,id ->
+            val email = "o'neal-$id@example.test"
+            jdbc.sql("UPDATE enrollment.members SET email=:email WHERE id=(SELECT member_id FROM enrollment.installations WHERE id=:id)")
+                .param("email",email).param("id",id).update()
+            listOf(vendorEvent(id,"old@vendor.test"),vendorEvent(id,email.uppercase(),2),vendorEvent(id,"",99),
+                vendorEvent(id,"ignored@vendor.test",100,signal="metric"))+
+                if (index<2) listOf(vendorEvent(id,"new@vendor.test",3,signal="span")) else emptyList()
+        }+vendorEvent(UUID.randomUUID(),"unknown@vendor.test")
+        seedPoints(rows+rows.first())
+        val response = mismatchQuery(queryBody(mapOf("metric_id" to "vendor_account_mismatch")))
+            .andExpect(status().isOk).andReturn().response.contentAsString
+        val result = mapper.readTree(response)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        assertThat(result["frames"][0]["data"]["values"][0][0].asInt()).isEqualTo(2)
+        assertThat(response).doesNotContain("@example.test","@vendor.test",ids.first().toString())
+        assertThat(jdbc.sql("SELECT target FROM dashboard.audit_log WHERE action='query'").query(String::class.java).single())
+            .isEqualTo("vendor_account_mismatch")
+    }
+    @Test fun `벤더 불일치 비교 소집단은 시계열과 CSV를 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { vendorEvent(it,"different@vendor.test") }+
+            ids.take(4).map { vendorEvent(it,"different@vendor.test",at="2026-08-31T12:00:00Z") })
+        val request = queryBody(mapOf("metric_id" to "vendor_account_mismatch","frame_type" to "timeseries"),
+            mapOf("compare" to "previous_period"))
+        val result = mapper.readTree(mismatchQuery(request).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val frame = result["frames"][0]
+        assertThat(frame["data"]["values"].toList().drop(1).all { it.toList().all { v -> v.isNull } }).isTrue()
+        assertThat(frame["schema"]["fields"][1]["config"]["suppressed"].asBoolean()).isTrue()
+        assertThat(mismatchQuery(request,"text/csv").andReturn().response.contentAsString).doesNotContain("different@vendor.test")
+    }
+    @Test fun `벤더 불일치는 소유자 감사 사유를 요구하고 빈 관측은 빈 결과다`() {
+        seedPoints(emptyList())
+        val request = queryBody(mapOf("metric_id" to "vendor_account_mismatch"))
+        queryResult(request).andExpect(status().isForbidden)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        mismatchQuery(request).andExpect(status().isForbidden)
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log").query(Long::class.java).single()).isZero()
+        jdbc.sql("UPDATE enrollment.members SET role='owner' WHERE id=:id").param("id",member).update()
+        val result = mapper.readTree(mismatchQuery(request).andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        assertThat(result["frames"].size()).isZero()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
