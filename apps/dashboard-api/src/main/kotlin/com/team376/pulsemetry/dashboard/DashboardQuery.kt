@@ -113,7 +113,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics)) {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics)) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
@@ -230,6 +230,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val blocking = "toInt64OrNull(JSONExtractString(raw_json,'payload','attrs','num_blocking'))"
         val agentId = "JSONExtractString(raw_json,'payload','agent_id')"
         val metric = when (q.metricId) {
+            "model_users" -> "signal IN ('log','span','metric') AND ${dimension("model")}!=''"
             "refusals" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='llm_response' AND JSONExtractString(raw_json,'payload','stop_reason')='refusal'"
             "hook_blocking" -> "signal='span' AND JSONExtractString(raw_json,'type')='hook'"
             "subagent_activity" -> tool
@@ -250,11 +251,12 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             else -> "signal='metric' AND product='claude_code' AND $name={metric:String}"
         }
         val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate","api_retry_attempts","rate_limit_events","auto_approval_ratio","tool_rejections","api_error_rate","usage_heatmap","compactions","compaction_reduction","mcp_connections","mcp_failure_ratio","llm_stop_reasons","rubber_stamp_ratio","subagent_activity","hook_blocking","refusals")
-        val valid = if (q.metricId=="hook_blocking") "$metric AND isNotNull($blocking) AND $blocking>=0" else if (q.metricId=="compaction_reduction") "$metric AND isNotNull($before) AND isNotNull($after)" else if (event) metric else "$metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2 AND isNotNull(JSONExtract(raw_json,'point','value','Nullable(Float64)'))"
+        val valid = if (q.metricId=="model_users") "$metric AND (signal!='metric' OR JSONExtractInt(raw_json,'point','aggregation_temporality')!=2)" else if (q.metricId=="hook_blocking") "$metric AND isNotNull($blocking) AND $blocking>=0" else if (q.metricId=="compaction_reduction") "$metric AND isNotNull($before) AND isNotNull($after)" else if (event) metric else "$metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2 AND isNotNull(JSONExtract(raw_json,'point','value','Nullable(Float64)'))"
         val observed = if (q.metricId=="tool_calls") tool else if (q.metricId=="compaction_reduction") metric else valid
         val cumulative = if (event) "0" else "countIf($metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)"
         val pointValue = "JSONExtract(raw_json,'point','value','Nullable(Float64)')"
         val numerator = when (q.metricId) {
+            "model_users" -> "uniqExactIf($person,$valid AND $known)"
             "refusals" -> "countIf($valid)"
             "hook_blocking" -> "sumIf($blocking,$valid)"
             "edit_acceptance_rate" -> "sumIf($pointValue,$valid AND $editDecision='accept')"

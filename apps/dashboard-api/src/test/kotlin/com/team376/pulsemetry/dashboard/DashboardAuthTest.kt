@@ -1175,6 +1175,47 @@ class DashboardAuthTest {
             .andReturn().response.contentAsString)["results"]["A"]["frames"]
         assertThat(empty.size()).isZero()
     }
+    private fun modelPoint(id: UUID, model: String, cumulative: Boolean = false): String {
+        val row = mapper.readTree(point(id,1.0,cumulative=cumulative)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.token.usage",
+            "value" to 1,"aggregation_temporality" to if (cumulative) 2 else 1,"attrs" to mapOf("model" to model)))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `모델 사용자는 설치가 아닌 사람을 중복 제거하고 로그 및 메트릭 모델을 사용한다`() {
+        val ids = installations(5)
+        val extra = UUID.randomUUID()
+        jdbc.sql("""INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform)
+            SELECT :extra,tenant_id,member_id,invitation_id,platform FROM enrollment.installations WHERE id=:id""")
+            .param("extra",extra).param("id",ids.first()).update()
+        val rows = ids.flatMap { listOf(llmEvent(it,1,200,model="a"),modelPoint(it,"b"),
+            modelPoint(it,"b",true),llmEvent(it,1,200,model="")) }+
+            listOf(llmEvent(extra,1,200,model="a"),llmEvent(UUID.randomUUID(),1,200,model="a"))
+        seedPoints(rows+rows.first())
+        val frames = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "model_users","group_by" to listOf("model"))))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        assertThat(frames.associate { it["schema"]["fields"][0]["labels"]["model"].asString() to
+            it["data"]["values"][0][0].asInt() }).containsExactlyInAnyOrderEntriesOf(mapOf("a" to 5,"b" to 5))
+        val combined = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "model_users")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"][0][0]
+        assertThat(combined.asInt()).isEqualTo(5)
+        val b = frames.single { it["schema"]["fields"][0]["labels"]["model"].asString()=="b" }
+        assertThat(b["schema"]["meta"]["data_quality"][0].asString()).contains("5개","제외")
+        seedPoints(ids.map { modelPoint(it,"b",true) })
+        val cumulative = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "model_users","group_by" to listOf("model"))))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(cumulative["data"]["values"][0][0].isNull).isTrue()
+    }
+    @Test fun `모델 사용자 비교는 작은 집단을 숨기고 모델 필터를 적용한다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { llmEvent(it,1,200,model="a") }+
+            ids.take(4).map { llmEvent(it,1,200,model="a",at="2026-08-31T12:00:00Z") })
+        val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "model_users","group_by" to listOf("model")),
+            mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        val filtered = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "model_users"),
+            mapOf("filters" to mapOf("models" to listOf("missing"))))).andReturn().response.contentAsString)["results"]["A"]["frames"]
+        assertThat(filtered.size()).isZero()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
