@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 44개 및 owner 전용 지표 2개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 45개 및 owner 전용 지표 2개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -86,6 +86,11 @@ try {
     ['pull_requests', 'claude_code.pull_request.count', 1],
   ];
   const observedAt = Math.floor(Date.now()/1000)-120;
+  const costContract = randomUUID();
+  sql(`INSERT INTO enrollment.contracts(id,tenant_id,vendor,contract_type,name,contracted_at,starts_at)
+    VALUES ('${costContract}','${tenant}','anthropic','token_discount','E2E 할인','2020-01-01','2020-01-01');
+    INSERT INTO enrollment.contract_token_discounts(contract_id,model_pattern,discount_rate,effective_from)
+    VALUES ('${costContract}','claude-e2e',0.5,'2020-01-01');`);
   const points = [];
   for (let index = 0; index < 5; index++) {
     const memberId = randomUUID(), installationId = randomUUID(), invitationId = randomUUID();
@@ -95,7 +100,11 @@ try {
       INSERT INTO enrollment.invitations(id,tenant_id,target_member_id,created_by_member_id,code_hash,expires_at)
         VALUES ('${invitationId}','${tenant}','${memberId}','00000000-0000-0000-0000-000000000001','${randomUUID()}',now()+interval '1 day');
       INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform,created_at)
-        VALUES ('${installationId}','${tenant}','${memberId}','${invitationId}','linux',to_timestamp(${observedAt}-3600));`);
+        VALUES ('${installationId}','${tenant}','${memberId}','${invitationId}','linux',to_timestamp(${observedAt}-3600));
+      INSERT INTO enrollment.contract_memberships(contract_id,member_id,assigned_at) VALUES ('${costContract}','${memberId}',to_timestamp(${observedAt}-3600));`);
+    points.push(JSON.stringify({ event_id: randomUUID(), ts: observedAt, tenant_id: tenant, installation_id: installationId,
+      signal: 'metric', product: 'claude_code', team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
+      raw_json: JSON.stringify({ point: { name: 'claude_code.cost.usage', value: 1, aggregation_temporality: 1, attrs: { model: 'claude-e2e', 'agent.name': 'worker' } } }) }));
     for (const [, name, value] of metricFixtures) points.push(JSON.stringify({
       event_id: randomUUID(), ts: observedAt,
       tenant_id: tenant, installation_id: installationId, signal: 'metric', product: 'claude_code',
@@ -133,7 +142,7 @@ try {
       tenant_id: tenant, installation_id: installationId, signal: 'log', product: 'claude_code',
       team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
       raw_json: JSON.stringify({ type: 'llm_call', sequence: attempt === 2 ? 100 : 1, envelope: { session_id: installationId, identity: { vendor_email: `other-${index}@vendor.test` } },
-        payload: { tokens: { input: 100, output: 50, cache_read: 200, cache_create: 100 }, model: 'claude-e2e', attempt, status_code, request_id: 'request-' + attempt, ttft_ms: attempt === 1 ? 100 : null, duration_ms: attempt === 1 ? 100 : 900, stop_reason: attempt === 1 ? 'end_turn' : null, error_type: status_code === 429 ? 'rate_limit' : null } }),
+        payload: { cost_usd: 2, cost_source: 'reported', tokens: { input: 100, output: 50, cache_read: 200, cache_create: 100 }, model: 'claude-e2e', attempt, status_code, request_id: 'request-' + attempt, ttft_ms: attempt === 1 ? 100 : null, duration_ms: attempt === 1 ? 100 : 900, stop_reason: attempt === 1 ? 'end_turn' : null, error_type: status_code === 429 ? 'rate_limit' : null } }),
     }));
     points.push(JSON.stringify({
       event_id: randomUUID(), ts: observedAt, tenant_id: tenant, installation_id: installationId,
@@ -367,9 +376,10 @@ try {
           { ref_id: 'I', metric_id: 'usage_concentration', group_by: ['team'] },
           { ref_id: 'J', metric_id: 'onboarding_ttfu', group_by: ['team', 'platform'] },
           { ref_id: 'K', metric_id: 'onboarding_retention', group_by: ['team'] },
+          { ref_id: 'L', metric_id: 'cost', frame_type: 'scalar', group_by: ['team'] },
         ],
       }) });
-      return { hooks: series(response.results.A), models: series(response.results.B), cache: series(response.results.C), io: series(response.results.D), tokens: series(response.results.E), metricTokens: series(response.results.F), abandoned: series(response.results.G), last: series(response.results.H), concentration: series(response.results.I), onboarding: series(response.results.J), retention: series(response.results.K), retentionTo: response.resolved_to };
+      return { hooks: series(response.results.A), models: series(response.results.B), cache: series(response.results.C), io: series(response.results.D), tokens: series(response.results.E), metricTokens: series(response.results.F), abandoned: series(response.results.G), last: series(response.results.H), concentration: series(response.results.I), onboarding: series(response.results.J), retention: series(response.results.K), retentionTo: response.resolved_to, cost: series(response.results.L) };
     });
     for (const key of ['cache', 'io']) assert.equal(hookResults[key].state, 'success');
     assert.deepEqual(Object.fromEntries(hookResults.cache.points.map(p => [p.key, p.value.value])),
@@ -409,6 +419,23 @@ try {
       const end = Date.parse(p.labels.cohort_week + 'T00:00:00Z') + (week + 1)*7*86400000;
       assert.equal(p.value.value, end <= Date.parse(hookResults.retentionTo) ? (week === 0 ? 1 : 0) : null);
     }
+    assert.equal(hookResults.cost.state, 'success');
+    assert.equal(hookResults.cost.points[0].value.value, 30);
+    const priced = await page.evaluate(async () => {
+      const client = await import('/src/api/client.ts');
+      const { series } = await import('/src/widgets/model.ts');
+      const response = await client.request('/query', { method: 'POST', body: JSON.stringify({
+        from: 'now-1d', to: 'now', price_basis: 'contract', queries: [
+          { ref_id: 'A', metric_id: 'cost', frame_type: 'scalar' },
+          { ref_id: 'B', metric_id: 'cost', source: 'metrics', frame_type: 'scalar', group_by: ['agent_name'] },
+          { ref_id: 'C', metric_id: 'cost', source: 'metrics', price_basis: 'list', frame_type: 'scalar' },
+        ],
+      }) });
+      return ['A', 'B', 'C'].map(ref => series(response.results[ref]));
+    });
+    assert.ok(priced.every(result => result.state === 'success'));
+    assert.deepEqual(priced.map(result => result.points[0].value.value), [15, 2.5, 5]);
+    assert.equal(priced[1].points[0].labels.agent_name, 'worker');
     const hookExecutions = hookResults.hooks;
     assert.equal(hookResults.models.state, 'success');
     assert.deepEqual(Object.fromEntries(hookResults.models.points.map(p => [p.key, p.value.value])), { value: 5 });
@@ -454,7 +481,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 44개 및 owner 전용 지표 2개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 45개 및 owner 전용 지표 2개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -486,7 +513,8 @@ try {
       { metric: 'usage_concentration', expected: 0.2, total: 6750 },
       { metric: 'onboarding_ttfu', p50: 3600, p90: 3600 },
       { metric: 'onboarding_retention', cohort_installations: 5 },
-      { metric: 'vendor_account_mismatch', expected: 5, scope: 'owner' }],
+      { metric: 'vendor_account_mismatch', expected: 5, scope: 'owner' },
+      { metric: 'cost', eventsList: 30, eventsContract: 15, metricsList: 5, metricsContract: 2.5 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
