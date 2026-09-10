@@ -1776,6 +1776,46 @@ class DashboardAuthTest {
             assertThat(result(metric,true)["data"]["values"].toList().all { it[0].isNull }).isTrue()
         }
     }
+    private fun pricedTokens(id: UUID, cost: Double?, input: Int?, output: Int = 0, read: Int = 0, create: Int = 0,
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(costEvent(id,cost,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "llm_call","payload" to mapOf(
+            "model" to "claude-test","cost_usd" to cost,"tokens" to mapOf("input" to input,"output" to output,
+                "cache_read" to read,"cache_create" to create)))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `모델 단가는 완전한 호출의 비용과 네 토큰 합계로 계산하고 계약을 적용한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(pricedTokens(it,9.0,100,50,200,100),pricedTokens(it,1.0,1000),
+            pricedTokens(it,999.0,null),pricedTokens(it,null,99999),pricedTokens(it,999.0,-1),costPoint(it,999.0)) }
+        seedPoints(rows+rows.first())
+        fun result(basis: String) = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "model_unit_price","group_by" to listOf("model")),
+            mapOf("price_basis" to basis))).andReturn().response.contentAsString)["results"]["A"]
+        val list = result("list")
+        assertThat(list["status"].asInt()).isEqualTo(200)
+        val frame = list["frames"][0]
+        assertThat(frame["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(50.0/7250,50.0,7250.0)
+        assertThat(frame["schema"]["fields"][0]["labels"]["model"].asString()).isEqualTo("claude-test")
+        assertThat(frame["schema"]["fields"][2]["config"]["unit"].asString()).isEqualTo("token")
+        discountContract()
+        assertThat(result("contract")["frames"][0]["data"]["values"].toList().map { it[0].asDouble() })
+            .containsExactly(25.0/7250,25.0,7250.0)
+    }
+    @Test fun `모델 단가는 토큰 누락과 영 분모를 구분하고 비교 집단을 숨긴다`() {
+        val ids = installations(5)
+        fun result(compare: Boolean = false) = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "model_unit_price"),
+            if (compare) mapOf("compare" to "previous_period") else emptyMap()))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        seedPoints(ids.map { pricedTokens(it,1.0,null) })
+        assertThat(result()["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        seedPoints(ids.map { pricedTokens(it,1.0,0) })
+        val zero = result()
+        assertThat(zero["data"]["values"][0][0].isNull).isTrue()
+        assertThat(zero["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+        assertThat(zero["data"]["values"][2][0].asDouble()).isZero()
+        seedPoints(ids.map { pricedTokens(it,1.0,100) }+ids.take(4).map { pricedTokens(it,1.0,100,at="2026-08-31T12:00:00Z") })
+        assertThat(result(true)["data"]["values"].toList().all { it[0].isNull }).isTrue()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
