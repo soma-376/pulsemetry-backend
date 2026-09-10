@@ -2076,4 +2076,103 @@ class DashboardAuthTest {
         }
     }
 
+    private fun sessionEvent(id: UUID, sequence: Int, signal: String = "log", session: String = "session-test",
+        at: String = "2026-09-01T12:00:00Z", product: String = "claude_code"): String {
+        val row = mapper.readTree(point(id,1.0,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("signal",signal).put("product",product)
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "llm_call","sequence" to sequence,"call_id" to "call-test",
+            "span_id" to "span-test","parent_id" to "parent-test","turn_id" to "turn-test",
+            "envelope" to mapOf("session_id" to session,"client" to mapOf("version" to "test-1"),
+                "_ingest" to mapOf("call_id_inferred" to true),"identity" to mapOf("vendor_email" to "hidden@vendor.test")),
+            "payload" to if (signal=="metric") null else mapOf("request_id" to "request-test","cost_usd" to 2,"tokens" to mapOf("input" to 10)),
+            "point" to mapOf("name" to "claude_code.cost.usage","value" to 1))))
+        return mapper.writeValueAsString(row)
+    }
+    private fun sessionQuery(id: String = "session-test", params: String = "", reason: String? = "세션 오류 원인 정기 감사 점검") = mvc.perform(
+        get("/v1/sessions/{id}/events",id).queryParam("from","2026-09-01T00:00:00Z").queryParam("to","2026-09-02T00:00:00Z")
+            .apply { if (params.isNotEmpty()) for (pair in params.split('&')) queryParam(pair.substringBefore('='),pair.substringAfter('=')) }
+            .header("Authorization","Bearer ${token()}").apply {
+                if (reason!=null) header("X-Audit-Reason",java.net.URLEncoder.encode(reason,java.nio.charset.StandardCharsets.UTF_8))
+            })
+    @Test fun `세션 조회는 신호를 결합하고 동시각 순서와 페이지 메타를 보존한다`() {
+        val id = installations(1).single()
+        val rows = listOf(sessionEvent(id,3,"metric"),sessionEvent(id,1),sessionEvent(id,2,"span"))
+        seedPoints(rows+rows[0])
+        val first = mapper.readTree(sessionQuery(params="limit=2").andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(first["items"].toList().map { it["sequence"].asInt() }).containsExactly(1,2)
+        assertThat(first["session"]["event_count"].asInt()).isEqualTo(3)
+        assertThat(first["session"]["installation_id"].asString()).isEqualTo(id.toString())
+        assertThat(first["items"][0]["call_id_inferred"].asBoolean()).isTrue()
+        assertThat(first.toString()).doesNotContain("hidden@vendor.test","raw_json")
+        val second = mapper.readTree(sessionQuery(params="limit=2&cursor="+first["next_cursor"].asString()).andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(second["session"]).isEqualTo(first["session"])
+        assertThat(second["items"][0]["type"].asString()).isEqualTo("claude_code.cost.usage")
+        assertThat(second["items"][0]["payload"]["value"].asInt()).isEqualTo(1)
+        assertThat(second["next_cursor"].isNull).isTrue()
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='session_events'").query(Long::class.java).single()).isEqualTo(2)
+        sessionQuery(id="other",params="cursor="+first["next_cursor"].asString()).andExpect(status().isBadRequest)
+    }
+    @Test fun `요청 도구 설치 검색은 세션 전체로 확장하되 중복 세션을 합치지 않는다`() {
+        val ids = installations(2)
+        seedPoints(listOf(sessionEvent(ids[0],1),sessionEvent(ids[0],2,"metric")))
+        for ((kind,key) in listOf("request_id" to "request-test","call_id" to "call-test","installation_id" to ids[0].toString())) {
+            val result = mapper.readTree(sessionQuery(key,"lookup=$kind").andExpect(status().isOk).andReturn().response.contentAsString)
+            assertThat(result["items"].size()).isEqualTo(2)
+            assertThat(result["session"]["session_id"].asString()).isEqualTo("session-test")
+        }
+        seedPoints(listOf(sessionEvent(ids[0],1),sessionEvent(ids[1],1)))
+        sessionQuery().andExpect(status().`is`(422))
+        seedPoints(listOf(sessionEvent(ids[0],1),sessionEvent(ids[0],2,session="other")))
+        sessionQuery(ids[0].toString(),"lookup=installation_id").andExpect(status().`is`(422))
+    }
+    @Test fun `세션 조회는 기간 조직 owner 감사 경계를 지킨다`() {
+        val id = installations(1).single()
+        val foreign = mapper.readTree(sessionEvent(id,1)) as tools.jackson.databind.node.ObjectNode
+        foreign.put("tenant_id",UUID.randomUUID().toString())
+        seedPoints(listOf(mapper.writeValueAsString(foreign),sessionEvent(id,2,at="2026-08-31T23:59:59Z")))
+        sessionQuery().andExpect(status().isNotFound)
+        sessionQuery(reason=null).andExpect(status().isForbidden)
+        sessionQuery(params="lookup=unknown").andExpect(status().isBadRequest)
+        sessionQuery(params="limit=501").andExpect(status().isBadRequest)
+        sessionQuery(params="cursor=bad").andExpect(status().isBadRequest)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        sessionQuery().andExpect(status().isForbidden)
+    }
+
+    @Test fun `세션 커서는 상대 기간을 고정하고 같은 순번을 event id로 나눈다`() {
+        val id = installations(1).single()
+        val at = clock.instant().minusSeconds(60).toString()
+        val rows = List(3) { sessionEvent(id,1,at=at) }
+        seedPoints(rows)
+        val expected = rows.map { mapper.readTree(it)["event_id"].asString() }.sorted()
+        fun request(cursor: String = "") = mvc.perform(get("/v1/sessions/session-test/events")
+            .queryParam("limit","1").queryParam("cursor",cursor)
+            .header("Authorization","Bearer ${token()}").header("X-Audit-Reason","session pagination audit"))
+            .andExpect(status().isOk).andReturn().response.contentAsString.let(mapper::readTree)
+        val first = request()
+        val second = request(first["next_cursor"].asString())
+        val third = request(second["next_cursor"].asString())
+        assertThat(listOf(first,second,third).map { it["items"][0]["event_id"].asString() }).isEqualTo(expected)
+        fun bounds(page: tools.jackson.databind.JsonNode) = mapper.readTree(Base64.getUrlDecoder().decode(page["next_cursor"].asString()))
+            .toList().slice(1..2)
+        assertThat(bounds(second)).isEqualTo(bounds(first))
+        assertThat(third["next_cursor"].isNull).isTrue()
+    }
+    @Test fun `세션 감사 저장 실패는 이벤트 반환 전에 차단한다`() {
+        val id = installations(1).single()
+        seedPoints(listOf(sessionEvent(id,1)))
+        jdbc.sql("""CREATE FUNCTION dashboard.test_reject_session_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN RAISE EXCEPTION 'audit unavailable'; END $$""").update()
+        jdbc.sql("""CREATE TRIGGER reject_session_audit BEFORE INSERT ON dashboard.audit_log
+            FOR EACH ROW WHEN (NEW.action='session_events') EXECUTE FUNCTION dashboard.test_reject_session_audit()""").update()
+        try {
+            val result = sessionQuery().andExpect(status().isServiceUnavailable).andReturn().response
+            assertThat(result.getHeader("Retry-After")).isEqualTo("2")
+            assertThat(result.contentAsString).doesNotContain("event_id","payload")
+        } finally {
+            jdbc.sql("DROP TRIGGER reject_session_audit ON dashboard.audit_log").update()
+            jdbc.sql("DROP FUNCTION dashboard.test_reject_session_audit()").update()
+        }
+    }
+
 }
