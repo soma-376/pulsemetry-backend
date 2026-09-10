@@ -1,4 +1,4 @@
-CREATE SCHEMA dashboard;
+CREATE SCHEMA IF NOT EXISTS dashboard;
 CREATE TYPE dashboard.run_status AS ENUM ('queued','running','succeeded','failed','cancelled');
 CREATE TYPE dashboard.time_mode AS ENUM ('fixed','relative');
 CREATE TABLE dashboard.scenario_runs (

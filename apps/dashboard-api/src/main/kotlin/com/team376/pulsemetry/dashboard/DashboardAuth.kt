@@ -67,7 +67,7 @@ class DashboardAuth {
         http.csrf { it.disable() }.cors { it.configurationSource(cors) }
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .requestCache { it.disable() }.formLogin { it.disable() }.httpBasic { it.disable() }
-            .authorizeHttpRequests { it.requestMatchers("/v1/auth/login", "/v1/healthz").permitAll().anyRequest().authenticated() }
+            .authorizeHttpRequests { it.dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ERROR).permitAll().requestMatchers("/v1/auth/login", "/v1/healthz").permitAll().anyRequest().authenticated() }
             .exceptionHandling {
                 it.authenticationEntryPoint { _, res, _ -> error(res, mapper, 401, "invalid_credentials") }
                 it.accessDeniedHandler { _, res, _ -> error(res, mapper, 403, "forbidden") }

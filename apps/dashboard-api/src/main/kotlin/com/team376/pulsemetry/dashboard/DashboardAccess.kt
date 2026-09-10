@@ -13,6 +13,12 @@ import java.util.UUID
 
 @Configuration(proxyBeanMethods = false)
 class DashboardPersistenceConfig {
+    @Bean
+    @org.springframework.context.annotation.DependsOn("flywayInitializer")
+    fun dashboardMigrations(dataSource: javax.sql.DataSource) = org.springframework.beans.factory.InitializingBean {
+        org.flywaydb.core.Flyway.configure().dataSource(dataSource).locations("classpath:db/dashboard")
+            .schemas("dashboard").defaultSchema("dashboard").load().migrate()
+    }
     @Bean fun dashboardRepository(jdbc: JdbcClient) = DashboardRepository(jdbc)
 }
 

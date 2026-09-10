@@ -14,7 +14,7 @@ spring:
     hibernate:
       ddl-auto: none
   flyway:
-    locations: classpath:db/migration,classpath:db/dashboard
+    locations: classpath:db/migration
     schemas: enrollment
     default-schema: enrollment
     baseline-on-migrate: true

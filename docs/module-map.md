@@ -262,3 +262,8 @@ SQL과 V5 테이블은 enrollment-persistence 소유다. 기존 모듈 간 단�
 `:apps:dashboard-api`는 `com.team376.pulsemetry.dashboard` 패키지에서 웹 로그인·관리자 조회를 제공한다(8081).
 인증은 `:libs:security`, 조직 조회는 `:libs:enrollment-persistence`에 의존한다. 앱 간 의존은 없다.
 웹 세션은 ADR 0019에 따라 CLI와 분리한다.
+
+`:libs:dashboard-persistence`는 `com.team376.pulsemetry.persistence.dashboard`에서 실행·저장 리포트·감사 테이블을 소유한다.
+마이그레이션은 `db/dashboard`에 있으며 `dashboard.flyway_schema_history`에 독립 이력을 둔다.
+enrollment 마이그레이션 완료 후 dashboard 앱이 이를 적용한다.
+ClickHouse 조회는 `:libs:telemetry-persistence`의 조회 전용 클라이언트로 수행한다. 라이브러리가 빈이나 스키마 적용을 자동 실행하지 않는다.

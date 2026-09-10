@@ -28,7 +28,9 @@ class DashboardMeta(private val jdbc: JdbcClient, private val access: DashboardA
     @GetMapping("/members") fun members(@AuthenticationPrincipal user: UserIdentity,
         @RequestParam(name = "team_id", required = false) team: UUID?,
         @RequestParam(required = false) status: String?, @RequestParam(defaultValue = "100") limit: Int,
-        @RequestParam(required = false) cursor: String?): Map<String, Any?> {
+        @RequestParam(required = false) cursor: String?,
+        @RequestHeader(name = "X-Audit-Reason", required = false) reason: String?): Map<String, Any?> {
+        access.personal(user, reason, "members.read", "members")
         require(limit in 1..500 && (status == null || status in setOf("active", "invited", "suspended")))
         if (team != null) access.teams(user, setOf(team))
         val after = cursor?.let { decodeCursor(it) } ?: UUID(0,0)

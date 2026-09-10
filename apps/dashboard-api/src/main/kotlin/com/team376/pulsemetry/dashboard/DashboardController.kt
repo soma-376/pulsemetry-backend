@@ -39,8 +39,16 @@ class DashboardController(private val auth: UserAuthService, private val p: Dash
 
 @RestControllerAdvice
 class DashboardErrors {
+    @ExceptionHandler(com.team376.pulsemetry.persistence.telemetry.DashboardReadException::class)
+    fun telemetry(e: com.team376.pulsemetry.persistence.telemetry.DashboardReadException) = response(e.status, e.code)
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException::class)
+    fun missing(e: Exception) = response(404, "not_found")
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException::class)
+    fun method(e: Exception) = response(405, "method_not_allowed")
+    @ExceptionHandler(Exception::class)
+    fun unexpected(e: Exception) = response(500, "internal_error")
     @ExceptionHandler(UserAuthException::class) fun auth(e: UserAuthException) = response(e.status, e.code, e.retryAfter)
-    @ExceptionHandler(DataAccessException::class) fun unavailable(e: DataAccessException) = response(503, "service_unavailable", 2)
+    @ExceptionHandler(DataAccessException::class, org.springframework.transaction.TransactionException::class) fun unavailable(e: Exception) = response(503, "service_unavailable", 2)
     @ExceptionHandler(HttpMessageNotReadableException::class, IllegalArgumentException::class)
     fun invalid(e: Exception) = response(400, "invalid_request")
     private fun response(status: Int, code: String, retry: Long? = null): ResponseEntity<Map<String, String>> {
