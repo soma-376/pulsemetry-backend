@@ -1027,6 +1027,42 @@ class DashboardAuthTest {
         val csv = queryResult(query,accept="text/csv").andExpect(status().isOk).andReturn().response.contentAsString
         assertThat(csv).doesNotContain("15.0","20.0")
     }
+    private fun agentEvent(id: UUID, agent: String?, type: String = "tool_call",
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(promptEvent(id,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to type,"payload" to mapOf(
+            "agent_id" to agent,"parent_agent_id" to "parent","tool_name" to "Read"))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `서브에이전트 활동은 식별자 고유 수와 도구 호출 비율을 각각 계산한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(agentEvent(it,"a"),agentEvent(it,"a"),agentEvent(it,"b"),
+            agentEvent(it,null),agentEvent(it,"ignored","llm_call")) }
+        seedPoints(rows+rows.first())
+        val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "subagent_activity","frame_type" to "scalar")))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(2.0,0.75,15.0,20.0)
+        assertThat(frame["schema"]["fields"][0]["config"]["unit"].asString()).isEqualTo("count")
+        assertThat(frame["schema"]["fields"][1]["config"]["unit"].asString()).isEqualTo("ratio")
+        assertThat(frame["schema"]["meta"]["data_quality"][0].asString()).contains("판정하지 않음")
+        seedPoints(ids.flatMap { listOf(agentEvent(it,null),agentEvent(it,"")) })
+        val zero = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "subagent_activity","frame_type" to "scalar")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+        assertThat(zero.toList().map { it[0].asDouble() }).containsExactly(0.0,0.0,0.0,10.0)
+        seedPoints(ids.map { agentEvent(it,"ignored","llm_call") })
+        val empty = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "subagent_activity")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"]
+        assertThat(empty.size()).isZero()
+    }
+    @Test fun `서브에이전트 활동 비교의 작은 집단은 수 비율 분자 분모 모두 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { agentEvent(it,"a") }+ids.take(4).map { agentEvent(it,"b",at="2026-08-31T12:00:00Z") })
+        val query = queryBody(mapOf("metric_id" to "subagent_activity","frame_type" to "scalar"),mapOf("compare" to "previous_period"))
+        val frame = mapper.readTree(queryResult(query).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["schema"]["fields"].size()).isEqualTo(8)
+        assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        assertThat(frame["schema"]["fields"].toList().all { it["config"]["suppressed"].asBoolean() }).isTrue()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
