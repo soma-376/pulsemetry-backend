@@ -1216,6 +1216,50 @@ class DashboardAuthTest {
             mapOf("filters" to mapOf("models" to listOf("missing"))))).andReturn().response.contentAsString)["results"]["A"]["frames"]
         assertThat(filtered.size()).isZero()
     }
+    private fun tokenEvent(id: UUID, input: Int?, output: Int?, read: Int?, create: Int?,
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(llmEvent(id,1,200,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "llm_call","payload" to mapOf("model" to "test",
+            "tokens" to mapOf("input" to input,"output" to output,"cache_read" to read,"cache_create" to create)))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `토큰 비율은 완전한 호출의 합계를 사용하며 누락을 영으로 추정하지 않는다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(tokenEvent(it,100,50,200,100),tokenEvent(it,900,450,0,600),
+            tokenEvent(it,null,900,9999,100),tokenEvent(it,-1,100,100,100)) }
+        seedPoints(rows+rows.first())
+        for ((metric,expected) in mapOf("cache_read_ratio" to listOf(200.0/1900,1000.0,9500.0),
+            "input_output_ratio" to listOf(2.0,5000.0,2500.0))) {
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"group_by" to listOf("model"))))
+                .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"].toList().map { it[0].asDouble() }).containsExactlyElementsOf(expected)
+            assertThat(frame["schema"]["fields"][1]["config"]["unit"].asString()).isEqualTo("token")
+        }
+        seedPoints(ids.map { tokenEvent(it,null,100,null,null) })
+        for (metric in listOf("cache_read_ratio","input_output_ratio")) {
+            val missing = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric)))
+                .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+            assertThat(missing.toList().all { it[0].isNull }).isTrue()
+        }
+        seedPoints(ids.map { tokenEvent(it,0,0,0,0) })
+        for (metric in listOf("cache_read_ratio","input_output_ratio")) {
+            val zero = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric)))
+                .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+            assertThat(zero[0][0].isNull).isTrue()
+            assertThat(zero[2][0].isNumber).isTrue()
+            assertThat(zero[2][0].asDouble()).isZero()
+        }
+    }
+    @Test fun `토큰 비율 비교의 작은 집단은 비율과 토큰 합계를 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { tokenEvent(it,100,50,200,100) }+
+            ids.take(4).map { tokenEvent(it,100,50,200,100,at="2026-08-31T12:00:00Z") })
+        for (metric in listOf("cache_read_ratio","input_output_ratio")) {
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric),
+                mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        }
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")

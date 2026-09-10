@@ -60,7 +60,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
-    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio")
+    private val tokenRatios = setOf("cache_read_ratio","input_output_ratio")
     private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms", "gate_wait_ms")
     private val sessionMetrics = setOf("prompts_per_session", "read_tool_density")
     private val intervals = linkedMapOf("1h" to "1 HOUR", "6h" to "6 HOUR", "1d" to "1 DAY", "1w" to "1 WEEK", "1M" to "1 MONTH")
@@ -229,7 +230,15 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val editDecision = "JSONExtractString(raw_json,'point','attrs','decision')"
         val blocking = "toInt64OrNull(JSONExtractString(raw_json,'payload','attrs','num_blocking'))"
         val agentId = "JSONExtractString(raw_json,'payload','agent_id')"
+        fun tokenValue(type: String) = "JSONExtract(raw_json,'payload','tokens','$type','Nullable(Float64)')"
+        val inputTokens = tokenValue("input")
+        val outputTokens = tokenValue("output")
+        val cacheRead = tokenValue("cache_read")
+        val cacheCreate = tokenValue("cache_create")
+        val requiredTokens = if (q.metricId=="cache_read_ratio") listOf(inputTokens,cacheRead,cacheCreate) else listOf(inputTokens,outputTokens)
+        val completeTokens = requiredTokens.joinToString(" AND ") { "isNotNull($it) AND $it>=0" }
         val metric = when (q.metricId) {
+            "cache_read_ratio", "input_output_ratio" -> llm
             "model_users" -> "signal IN ('log','span','metric') AND ${dimension("model")}!=''"
             "refusals" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='llm_response' AND JSONExtractString(raw_json,'payload','stop_reason')='refusal'"
             "hook_blocking" -> "signal='span' AND JSONExtractString(raw_json,'type')='hook'"
@@ -251,11 +260,13 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             else -> "signal='metric' AND product='claude_code' AND $name={metric:String}"
         }
         val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate","api_retry_attempts","rate_limit_events","auto_approval_ratio","tool_rejections","api_error_rate","usage_heatmap","compactions","compaction_reduction","mcp_connections","mcp_failure_ratio","llm_stop_reasons","rubber_stamp_ratio","subagent_activity","hook_blocking","refusals")
-        val valid = if (q.metricId=="model_users") "$metric AND (signal!='metric' OR JSONExtractInt(raw_json,'point','aggregation_temporality')!=2)" else if (q.metricId=="hook_blocking") "$metric AND isNotNull($blocking) AND $blocking>=0" else if (q.metricId=="compaction_reduction") "$metric AND isNotNull($before) AND isNotNull($after)" else if (event) metric else "$metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2 AND isNotNull(JSONExtract(raw_json,'point','value','Nullable(Float64)'))"
-        val observed = if (q.metricId=="tool_calls") tool else if (q.metricId=="compaction_reduction") metric else valid
-        val cumulative = if (event) "0" else "countIf($metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)"
+        val valid = if (q.metricId in tokenRatios) "$metric AND $completeTokens" else if (q.metricId=="model_users") "$metric AND (signal!='metric' OR JSONExtractInt(raw_json,'point','aggregation_temporality')!=2)" else if (q.metricId=="hook_blocking") "$metric AND isNotNull($blocking) AND $blocking>=0" else if (q.metricId=="compaction_reduction") "$metric AND isNotNull($before) AND isNotNull($after)" else if (event) metric else "$metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2 AND isNotNull(JSONExtract(raw_json,'point','value','Nullable(Float64)'))"
+        val observed = if (q.metricId in tokenRatios) metric else if (q.metricId=="tool_calls") tool else if (q.metricId=="compaction_reduction") metric else valid
+        val cumulative = if (event || q.metricId in tokenRatios) "0" else "countIf($metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)"
         val pointValue = "JSONExtract(raw_json,'point','value','Nullable(Float64)')"
         val numerator = when (q.metricId) {
+            "cache_read_ratio" -> "sumIf($cacheRead,$valid)"
+            "input_output_ratio" -> "sumIf($inputTokens,$valid)"
             "model_users" -> "uniqExactIf($person,$valid AND $known)"
             "refusals" -> "countIf($valid)"
             "hook_blocking" -> "sumIf($blocking,$valid)"
@@ -278,6 +289,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             else -> "sumIf($pointValue,$valid)"
         }
         val denominator = when (q.metricId) {
+            "cache_read_ratio" -> "sumIf($inputTokens+$cacheRead+$cacheCreate,$valid)"
+            "input_output_ratio" -> "sumIf($outputTokens,$valid)"
             "edit_acceptance_rate" -> "sumIf($pointValue,$valid AND $editDecision IN ('accept','reject'))"
             "rubber_stamp_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','decision')='accept')"
             "compaction_reduction" -> "sumIf($before,$valid)"
@@ -288,7 +301,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         }
         val result = if (q.metricId=="subagent_activity")
             "uniqExactIf($agentId,$valid AND $agentId!='') AS value, countIf($valid AND $agentId!='') AS numerator, countIf($valid) AS denominator, numerator/nullIf(denominator,0) AS ratio"
-            else if (q.metricId=="compaction_reduction")
+            else if (q.metricId=="compaction_reduction" || q.metricId in tokenRatios)
             "if(countIf($valid)=0,NULL,$numerator) AS numerator, if(countIf($valid)=0,NULL,$denominator) AS denominator, numerator/nullIf(denominator,0) AS value"
             else if (q.metricId in ratioMetrics)
             "coalesce($numerator,0) AS numerator, coalesce($denominator,0) AS denominator, numerator/nullIf(denominator,0) AS value"
@@ -497,7 +510,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             }
             fun add(name: String, series: List<JsonNode>, seriesTicks: List<Instant>?, column: String = "value") {
                 fields += mapOf("name" to name, "type" to "number", "labels" to labels,
-                    "config" to mapOf("unit" to if (q.metricId in setOf("subagent_activity","hook_executions") && column=="ratio") "ratio" else if (column=="value" || q.metricId in durationMetrics) definition.unit else if (q.metricId=="automation_ratio") "s" else if (q.metricId=="compaction_reduction") "token" else "count", "suppressed" to suppressed,
+                    "config" to mapOf("unit" to if (q.metricId in setOf("subagent_activity","hook_executions") && column=="ratio") "ratio" else if (column=="value" || q.metricId in durationMetrics) definition.unit else if (q.metricId=="automation_ratio") "s" else if (q.metricId=="compaction_reduction" || q.metricId in tokenRatios) "token" else "count", "suppressed" to suppressed,
                         "group_size" to if (suppressed) null else (rows+prior).minOfOrNull { it["people"].asLong() }))
                 val byTime = series.associateBy { it["bucket"].asLong() }
                 val aligned = if (timeseries) ticks.indices.map { index -> seriesTicks?.getOrNull(index)?.let { byTime[it.toEpochMilli()] } }
@@ -532,6 +545,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             if (incompleteCompactions>0) quality += if (suppressed) "전후 토큰 쌍이 없는 압축 이벤트를 감소율에서 제외" else
                 "전후 토큰 쌍이 없는 압축 이벤트 ${incompleteCompactions}개를 감소율에서 제외"
             if (q.metricId=="subagent_activity") quality += "도구 호출에서 관측된 agent_id 수와 호출 비율; 완료·성공 여부는 판정하지 않음"
+            if (q.metricId in tokenRatios) quality += "llm_call 이벤트 원천; 필요한 토큰 값이 모두 있는 호출의 합계 비율, 누락·음수 호출 제외"
             if (q.metricId=="llm_ttft_ms") quality += "조회 기간 내 설치·제품·요청별 유효 로그 우선, 없으면 스팬; 요청 ID 누락은 세션·모델별 소스 선택"
             if (q.metricId=="llm_stop_reasons") quality += "llm_call·llm_response 관측 이벤트 수; 사유 누락은 빈 라벨"
             if (q.metricId=="api_error_rate") quality += "호출 시도 단위 오류율이며 최종 재시도 실패율이 아님"
