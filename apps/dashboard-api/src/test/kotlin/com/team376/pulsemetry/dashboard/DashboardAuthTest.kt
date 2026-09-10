@@ -425,6 +425,71 @@ class DashboardAuthTest {
             assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
         }
     }
+    private fun promptEvent(id: UUID, session: String = "shared-session", product: String = "claude_code",
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(point(id,0.0,at)) as tools.jackson.databind.node.ObjectNode
+        row.put("signal","log").put("product",product)
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "user_prompt",
+            "envelope" to mapOf("session_id" to session),"payload" to emptyMap<String,String>())))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `프롬프트 분포는 설치와 제품별 세션을 구분하고 버킷과 정확 분위수를 반환한다`() {
+        val ids = installations(5)
+        val rows = ids.zip(listOf(1,2,4,8,16)).flatMap { (id,count) -> (1..count).map { promptEvent(id) } }
+        seedPoints(rows + rows.first() + (1..3).map { promptEvent(ids[0],product="codex") } +
+            (1..20).map { promptEvent(ids[0],session="(unknown)") } + promptEvent(ids[0],session=""))
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "prompts_per_session")))
+            .andExpect(status().isOk).andReturn().response.contentAsString)
+        val frames = result["results"]["A"]["frames"].toList()
+        assertThat(frames).hasSize(2)
+        assertThat(frames.all { it["schema"]["frame_type"].asString()=="distribution" }).isTrue()
+        val histogram = frames.single { it["schema"]["fields"][0]["name"].asString()=="bucket" }
+        assertThat(histogram["data"]["values"][0].toList().map { it.asString() }).containsExactly("1","2–3","4–7","8–15","16+")
+        assertThat(histogram["data"]["values"][1].toList().map { it.asInt() }).containsExactly(1,2,1,1,1)
+        val summary = frames.single { it["schema"]["fields"][0]["name"].asString()=="p50" }
+        assertThat(summary["data"]["values"].toList().map { it[0].asInt() }).containsExactly(4,16)
+        val series = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "prompts_per_session","frame_type" to "timeseries")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(series["schema"]["fields"].toList().map { it["name"].asString() }).containsExactly("time","p50","p90")
+        assertThat(series["data"]["values"][1][0].asInt()).isEqualTo(4)
+        assertThat(series["data"]["values"][1][1].isNull).isTrue()
+        val compared = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "prompts_per_session"),
+            mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        compared.forEach { frame -> frame["schema"]["fields"].toList().forEachIndexed { index,field ->
+            if (field["name"].asString().endsWith("_compare")) {
+                assertThat(field["config"]["group_size"].asInt()).isEqualTo(5)
+                assertThat(field["config"]["suppressed"].asBoolean()).isFalse()
+                assertThat(frame["data"]["values"][index].toList().all { it.isNull }).isTrue()
+            }
+        } }
+        val filtered = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "prompts_per_session",
+            "filters" to mapOf("products" to listOf("codex")))))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        filtered.forEach { frame -> frame["schema"]["fields"].toList().forEachIndexed { index,field ->
+            if (field["type"].asString()=="number") assertThat(frame["data"]["values"][index].toList().all { it.isNull }).isTrue()
+        } }
+    }
+    @Test fun `분포의 비교 구간이 작으면 분위수와 모든 히스토그램 빈도 및 CSV를 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { promptEvent(it) } + ids.take(4).map { promptEvent(it,at="2026-08-31T12:00:00Z") })
+        val body = queryBody(mapOf("metric_id" to "prompts_per_session"),mapOf("compare" to "previous_period"))
+        val frames = mapper.readTree(queryResult(body).andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        assertThat(frames).hasSize(2)
+        frames.forEach { frame -> frame["schema"]["fields"].toList().forEachIndexed { index,field ->
+            if (field["type"].asString()=="number") {
+                assertThat(field["config"]["suppressed"].asBoolean()).isTrue()
+                assertThat(field["config"]["group_size"].isNull).isTrue()
+                assertThat(frame["data"]["values"][index].toList().all { it.isNull }).isTrue()
+            }
+        } }
+        val csv = queryResult(body,accept="text/csv").andExpect(status().isOk).andReturn().response.contentAsString
+        assertThat(csv.lines().filter { it.contains("\"count") || it.contains("\"p50") || it.contains("\"p90") }
+            .all { it.endsWith(",\"\"") }).isTrue()
+        seedPoints(emptyList())
+        val empty = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "prompts_per_session")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"]
+        assertThat(empty.toList()).isEmpty()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")

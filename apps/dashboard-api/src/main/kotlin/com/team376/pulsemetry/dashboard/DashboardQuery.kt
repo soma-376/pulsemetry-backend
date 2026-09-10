@@ -111,7 +111,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics) || q.frameType == "distribution") {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId!="prompts_per_session") || (q.frameType == "distribution" && q.metricId!="prompts_per_session")) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 require(q.params.isEmpty())
@@ -201,6 +201,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
+        if (q.metricId=="prompts_per_session") return readPrompts(q, scope, from, to, zone, interval, deadline)
         if (q.metricId in populationMetrics) return readPopulation(q, scope, from, to, zone, interval, deadline)
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
         val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
@@ -245,6 +246,41 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > q.limit)
             throw DashboardReadException("query_too_wide", 422)
         return Rows(rows, sql)
+    }
+    private fun readPrompts(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
+        zone: String, interval: String, deadline: Long): Rows {
+        val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
+        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val groups = listOf("bucket") + q.groupBy.indices.map { "g$it" }
+        val groupSql = groups.joinToString(",")
+        val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
+        // 설치·제품별 세션 이름 공간을 분리하고, 프롬프트가 관측된 기간 내 세션만 센다.
+        val sql = """WITH observed AS (
+            SELECT *, $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")}
+            FROM (SELECT * $base)
+            ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
+        ), privacy AS (
+            SELECT $groupSql, $people AS people, countIf($activePoint)>0 AS active_time_definition
+            FROM observed GROUP BY $groupSql
+        ), sessions AS (
+            SELECT $groupSql, installation_id, product, JSONExtractString(raw_json,'envelope','session_id') AS session_id,
+                count() AS prompts FROM observed
+            WHERE signal IN ('log','span') AND JSONExtractString(raw_json,'type')='user_prompt'
+                AND session_id NOT IN ('','(unknown)')
+            GROUP BY $groupSql,installation_id,product,session_id
+        ), stats AS (
+            SELECT $groupSql, count() AS points, quantileExact(0.5)(prompts) AS p50, quantileExact(0.9)(prompts) AS p90,
+                countIf(prompts=1) AS b1, countIf(prompts BETWEEN 2 AND 3) AS b2,
+                countIf(prompts BETWEEN 4 AND 7) AS b3, countIf(prompts BETWEEN 8 AND 15) AS b4,
+                countIf(prompts>=16) AS b5
+            FROM sessions GROUP BY $groupSql
+        ) SELECT stats.*, privacy.people, privacy.active_time_definition, 0 AS cumulative, p50 AS value
+            FROM stats INNER JOIN privacy USING ($groupSql) ORDER BY $groupSql"""
+        val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone)
+        val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
+        if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size>q.limit)
+            throw DashboardReadException("query_too_wide",422)
+        return Rows(rows,sql)
     }
     private fun readPopulation(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, interval: String, deadline: Long): Rows {
@@ -299,7 +335,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val keys = (groups.keys + comparisons.keys).distinct()
         if (keys.size > q.limit) throw DashboardReadException("query_too_wide", 422)
         val frameType = q.frameType ?: definition.defaultFrameType
-        val frames = keys.map { group ->
+        val frames = keys.flatMap { group ->
             val rows = groups[group].orEmpty()
             val prior = comparisons[group].orEmpty()
             val labels = q.groupBy.zip(group).toMap().toMutableMap()
@@ -315,7 +351,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             fun add(name: String, series: List<JsonNode>, seriesTicks: List<Instant>?, column: String = "value") {
                 fields += mapOf("name" to name, "type" to "number", "labels" to labels,
                     "config" to mapOf("unit" to if (column=="value") definition.unit else if (q.metricId=="automation_ratio") "s" else "count", "suppressed" to suppressed,
-                        "group_size" to if (suppressed) null else series.minOfOrNull { it["people"].asLong() }))
+                        "group_size" to if (suppressed) null else (rows+prior).minOfOrNull { it["people"].asLong() }))
                 val byTime = series.associateBy { it["bucket"].asLong() }
                 val aligned = if (timeseries) ticks.indices.map { index -> seriesTicks?.getOrNull(index)?.let { byTime[it.toEpochMilli()] } }
                     else listOf(series.firstOrNull())
@@ -323,8 +359,15 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                     if (suppressed || it["points"].asLong()==0L || it[column].isNull) null else it[column].asDouble()
                 } }
             }
-            add("value", rows, ticks)
-            if (previous != null) add("value_compare", prior, previousTicks)
+            if (q.metricId=="prompts_per_session") {
+                for (column in listOf("p50","p90")) {
+                    add(column,rows,ticks,column)
+                    if (previous!=null) add("${column}_compare",prior,previousTicks,column)
+                }
+            } else {
+                add("value", rows, ticks)
+                if (previous != null) add("value_compare", prior, previousTicks)
+            }
             if (q.metricId in ratioMetrics || q.metricId in setOf("adoption_rate", "telemetry_coverage")) {
                 for (column in listOf("numerator", "denominator")) {
                     add(column,rows,ticks,column)
@@ -332,7 +375,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 }
             }
             val cumulative = (rows+prior).sumOf { it["cumulative"].asLong() }
-            mapOf("schema" to mapOf("ref_id" to q.refId, "metric_id" to q.metricId,
+            val summary = mapOf("schema" to mapOf("ref_id" to q.refId, "metric_id" to q.metricId,
                 "frame_type" to frameType, "fields" to fields,
                 "meta" to mapOf("definition" to definition.definition, "caveat" to definition.caveat,
                     "resolved_interval" to interval, "source_columns" to definition.sourceColumns,
@@ -340,12 +383,25 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                     "executed_sql" to current.sql, "suppressed_groups" to if (suppressed) listOf(group.joinToString("/").ifEmpty { "all" }) else emptyList(),
                     "data_quality" to if (cumulative>0) listOf(if (suppressed) "누적 temporality 포인트 제외" else "누적 temporality 포인트 ${cumulative}개 제외") else emptyList())),
                 "data" to mapOf("values" to values))
+            if (frameType=="distribution") {
+                val histogramFields = mutableListOf<Map<String,Any?>>(mapOf("name" to "bucket", "type" to "string"),
+                    fields.first()+mapOf("name" to "count"))
+                fun counts(row: JsonNode?): List<Any?> = (1..5).map { if (suppressed) null else row?.get("b$it")?.asLong() }
+                val histogramValues = mutableListOf<List<Any?>>(listOf("1","2–3","4–7","8–15","16+"),counts(rows.firstOrNull()))
+                if (previous!=null) {
+                    histogramFields += fields[1]+mapOf("name" to "count_compare")
+                    histogramValues += counts(prior.firstOrNull())
+                }
+                val histogram = mapOf("schema" to ((summary.getValue("schema") as Map<*,*>) + mapOf("fields" to histogramFields)),
+                    "data" to mapOf("values" to histogramValues))
+                listOf(histogram,summary)
+            } else listOf(summary)
         }
         // 마스킹된 실제 값으로 정렬하지 않는다. 순서도 값에 대한 단서가 될 수 있다.
         return frames.sortedWith(compareBy<Map<String, Any>> { frame ->
             if (q.order == "label_asc") 0.0 else {
                 val node = mapper.valueToTree<JsonNode>(frame)
-                val index = if (frameType == "timeseries") 1 else 0
+                val index = node["schema"]["fields"].toList().indexOfFirst { it["type"].asString()=="number" }
                 val numbers = node["data"]["values"][index].toList().filter { !it.isNull }
                 if (numbers.isEmpty()) Double.POSITIVE_INFINITY else numbers.sumOf { it.asDouble() } * if (q.order=="value_desc") -1 else 1
             }
