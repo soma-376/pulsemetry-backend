@@ -37,7 +37,7 @@ data class DashboardQueryItem(
     @get:JsonProperty("metric_id") val metricId: String,
     @get:JsonProperty("group_by") val groupBy: List<String> = emptyList(),
     @get:JsonProperty("frame_type") val frameType: String? = null,
-    val interval: String? = null, val source: String? = null, val limit: Int = 100,
+    val interval: String? = null, val source: String? = null, val limit: Int? = null,
     val order: String = "value_desc", val filters: DashboardQueryFilterOverride? = null,
     @get:JsonProperty("price_basis") val priceBasis: String? = null,
     val params: Map<String, JsonNode> = emptyMap(),
@@ -60,7 +60,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
-    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate")
     private val sessionMetrics = setOf("prompts_per_session", "read_tool_density")
     private val intervals = linkedMapOf("1h" to "1 HOUR", "6h" to "6 HOUR", "1d" to "1 DAY", "1w" to "1 WEEK", "1M" to "1 MONTH")
     private val utc = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC)
@@ -85,7 +85,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val comparison = time.compare(from, to, body.compare)
         // 권한·감사는 전체 요청에 선행한다. 쿼리 오류로 감춰서 다른 결과를 반환하지 않는다.
         body.queries.forEach { q ->
-            require(q.refId.matches(Regex("[A-Z]")) && q.limit in 1..100)
+            require(q.refId.matches(Regex("[A-Z]")) && (q.limit==null || q.limit in 1..100))
             require(q.groupBy.size <= 2 && q.groupBy.distinct().size == q.groupBy.size)
             val definition = catalog.find(q.metricId) ?: throw IllegalArgumentException("invalid_metric")
             if (!definition.allowedGroupBy.containsAll(q.groupBy)) throw UserAuthException("group_by_not_allowed", 400)
@@ -112,7 +112,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics)) {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics)) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
@@ -216,8 +216,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val llm = "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='llm_call'"
         val attempt = "JSONExtract(raw_json,'payload','attempt','Nullable(Int64)')"
         val metric = when (q.metricId) {
+            "usage_heatmap" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='user_prompt'"
             "auto_approval_ratio", "tool_rejections" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='tool_decision'"
-            "api_retry_attempts", "rate_limit_events" -> llm
+            "api_retry_attempts", "rate_limit_events", "api_error_rate" -> llm
             "tool_calls" -> tool + if (q.params.containsKey("success")) " AND $success={success:Bool}" else ""
             "tool_failure_rate" -> tool
             "automation_ratio" -> "signal='metric' AND product='claude_code' AND $name='claude_code.active_time.total' AND $attrType IN ('user','cli')"
@@ -225,12 +226,14 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             "command_prompt_ratio" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='user_prompt' AND JSONExtractString(raw_json,'envelope','session_id') NOT IN ('','(unknown)')"
             else -> "signal='metric' AND product='claude_code' AND $name={metric:String}"
         }
-        val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate","api_retry_attempts","rate_limit_events","auto_approval_ratio","tool_rejections")
+        val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate","api_retry_attempts","rate_limit_events","auto_approval_ratio","tool_rejections","api_error_rate","usage_heatmap")
         val valid = if (event) metric else "$metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2 AND isNotNull(JSONExtract(raw_json,'point','value','Nullable(Float64)'))"
         val observed = if (q.metricId=="tool_calls") tool else valid
         val cumulative = if (event) "0" else "countIf($metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)"
         val pointValue = "JSONExtract(raw_json,'point','value','Nullable(Float64)')"
         val numerator = when (q.metricId) {
+            "api_error_rate" -> "countIf($valid AND JSONExtractString(raw_json,'payload','error_type')!='')"
+            "usage_heatmap" -> "countIf($valid)"
             "auto_approval_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','decided_by') IN ('config','hook'))"
             "tool_rejections" -> "countIf($valid AND JSONExtractString(raw_json,'payload','decision')='reject')"
             "api_retry_attempts" -> "countIf($valid AND $attempt>=2)"
@@ -263,7 +266,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone, "metric" to pointMetrics[q.metricId].orEmpty(),
             "success" to if (q.params["success"]?.asBoolean()==true) "1" else "0")
         val rows = mapper.readTree(reader.query(sql, parameters, remaining(deadline)))["data"].toList().filter { it["points"].asLong()>0 || it["cumulative"].asLong()>0 }
-        if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > q.limit)
+        if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > groupLimit(q))
             throw DashboardReadException("query_too_wide", 422)
         return Rows(rows, sql)
     }
@@ -300,7 +303,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             FROM stats INNER JOIN privacy USING ($groupSql) ORDER BY $groupSql"""
         val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone, "event_type" to eventType)
         val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
-        if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size>q.limit)
+        if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size>groupLimit(q))
             throw DashboardReadException("query_too_wide",422)
         return Rows(rows,sql)
     }
@@ -343,10 +346,14 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         }
         return Rows(rows,sql)
     }
+    private fun groupLimit(q: DashboardQueryItem): Int = q.limit ?: if (q.metricId=="usage_heatmap" &&
+        q.groupBy.toSet()==setOf("weekday","hour")) 168 else 100
     private fun dimension(dim: String): String = when (dim) {
         "team" -> "team"
         "product" -> "product"
         "tool_name", "tool_kind", "action", "error_type", "mcp_server", "decided_by" -> "JSONExtractString(raw_json,'payload','$dim')"
+        "weekday" -> "toString(toDayOfWeek(ts,0,{zone:String}))"
+        "status_code" -> "toString(coalesce(JSONExtract(raw_json,'payload','status_code','Nullable(Int64)'),0))"
         "hour" -> "toString(toHour(ts,{zone:String}))"
         "model" -> "coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))"
         "start_type", "type" -> "JSONExtractString(raw_json,'point','attrs','$dim')"
@@ -358,7 +365,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val groups = current.data.groupBy(::key)
         val comparisons = previous?.data?.groupBy(::key).orEmpty()
         val keys = (groups.keys + comparisons.keys).distinct()
-        if (keys.size > q.limit) throw DashboardReadException("query_too_wide", 422)
+        if (keys.size > groupLimit(q)) throw DashboardReadException("query_too_wide", 422)
         val frameType = q.frameType ?: definition.defaultFrameType
         val frames = keys.flatMap { group ->
             val rows = groups[group].orEmpty()
@@ -402,6 +409,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             val cumulative = (rows+prior).sumOf { it["cumulative"].asLong() }
             val unknownAttempts = (rows+prior).sumOf { it["unknown_attempts"]?.asLong() ?: 0 }
             val quality = mutableListOf<String>()
+            if (q.metricId=="api_error_rate") quality += "호출 시도 단위 오류율이며 최종 재시도 실패율이 아님"
             if (cumulative>0) quality += if (suppressed) "누적 temporality 포인트 제외" else "누적 temporality 포인트 ${cumulative}개 제외"
             if (q.metricId=="api_retry_attempts" && unknownAttempts>0) quality += if (suppressed)
                 "attempt 누락 호출이 분모에 포함됨; 재시도 여부 미판정" else "attempt 누락 호출 ${unknownAttempts}개가 분모에 포함됨; 재시도 여부 미판정"

@@ -652,6 +652,56 @@ class DashboardAuthTest {
             .andReturn().response.contentAsString)["results"]["A"]["frames"]
         assertThat(empty.toList()).isEmpty()
     }
+    @Test fun `API 오류율은 error_type으로 판정하고 상태 코드 누락과 비교 집단을 구분한다`() {
+        val ids = installations(5)
+        fun event(id: UUID, error: String?, status: Int?, at: String = "2026-09-01T12:00:00Z"): String {
+            val row = mapper.readTree(llmEvent(id,1,status,at=at)) as tools.jackson.databind.node.ObjectNode
+            row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "llm_call",
+                "payload" to mapOf("error_type" to error,"status_code" to status,"model" to "claude-test"))))
+            return mapper.writeValueAsString(row)
+        }
+        val rows = ids.flatMap { listOf(event(it,"timeout",null),event(it,null,500),event(it,"",200)) }
+        seedPoints(rows+rows.first())
+        val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "api_error_rate")))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(1.0/3,5.0,15.0)
+        assertThat(frame["schema"]["meta"]["data_quality"][0].asString()).contains("시도 단위")
+        val groups = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "api_error_rate",
+            "group_by" to listOf("status_code")))).andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        assertThat(groups).hasSize(3)
+        val missing = groups.single { it["schema"]["fields"][0]["labels"]["status_code"].asString()=="0" }
+        assertThat(missing["data"]["values"][0][0].asDouble()).isEqualTo(1.0)
+        val serverError = groups.single { it["schema"]["fields"][0]["labels"]["status_code"].asString()=="500" }
+        assertThat(serverError["data"]["values"][0][0].asDouble()).isZero()
+        seedPoints(rows+ids.take(4).map { event(it,"timeout",null,"2026-08-31T12:00:00Z") })
+        val hidden = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "api_error_rate"),
+            mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(hidden["data"]["values"].toList().all { it[0].isNull }).isTrue()
+    }
+    @Test fun `히트맵은 현지 요일과 시간의 전체 168칸을 지원하고 제한과 셀 마스킹을 적용한다`() {
+        val ids = installations(5)
+        val start = java.time.Instant.parse("2026-08-31T00:00:00Z")
+        val rows = (0..167).flatMap { hour -> ids.map { promptEvent(it,at=start.plusSeconds(hour*3600L).toString()) } }
+        seedPoints(rows+rows.first())
+        val range = mapOf("from" to start.toString(),"to" to start.plusSeconds(168*3600L).toString(),"tz" to "Asia/Seoul")
+        val query = mapOf("metric_id" to "usage_heatmap","group_by" to listOf("weekday","hour"))
+        val frames = mapper.readTree(queryResult(queryBody(query,range)).andExpect(status().isOk)
+            .andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        assertThat(frames).hasSize(168)
+        assertThat(frames.all { it["data"]["values"][0][0].asInt()==5 }).isTrue()
+        val labels = frames.map { it["schema"]["fields"][0]["labels"] }
+        assertThat(labels.map { it["weekday"].asString() }.toSet()).hasSize(7)
+        assertThat(labels.map { it["hour"].asString() }.toSet()).hasSize(24)
+        val limited = mapper.readTree(queryResult(queryBody(query+mapOf("limit" to 100),range))
+            .andReturn().response.contentAsString)["results"]["A"]["status"]
+        assertThat(limited.asInt()).isEqualTo(422)
+        queryResult(queryBody(query+mapOf("limit" to 169),range)).andExpect(status().isBadRequest)
+        seedPoints(rows.drop(1))
+        val masked = mapper.readTree(queryResult(queryBody(query,range)).andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        val hidden = masked.single { it["data"]["values"][0][0].isNull }
+        assertThat(hidden["schema"]["fields"][0]["labels"]["weekday"].asString()).isEqualTo("1")
+        assertThat(hidden["schema"]["fields"][0]["labels"]["hour"].asString()).isEqualTo("9")
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
