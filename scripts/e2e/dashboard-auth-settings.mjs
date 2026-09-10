@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 12개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 15개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -107,6 +107,13 @@ try {
       team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
       raw_json: JSON.stringify({ type: 'user_prompt', envelope: { session_id: installationId }, payload: { command_name } }),
     }));
+    for (const success of [true, false, null]) points.push(JSON.stringify({
+      event_id: randomUUID(), ts: Math.floor(Date.now()/1000)-120,
+      tenant_id: tenant, installation_id: installationId, signal: 'log', product: 'claude_code',
+      team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
+      raw_json: JSON.stringify({ type: 'tool_call', envelope: { session_id: installationId },
+        payload: { tool_name: 'Read', tool_kind: 'function', action: 'read', success } }),
+    }));
   }
   run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], points.join('\n'));
   launch('node', [resolve(frontend, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '15173', '--strictPort'],
@@ -179,6 +186,26 @@ try {
     assert.deepEqual(Object.fromEntries(distribution.points.map(point => [point.key, point.value.value])),
       { '1': 0, '2–3': 5, '4–7': 0, '8–15': 0, '16+': 0, p50: 2, p90: 2 });
 
+    const tools = await page.evaluate(async () => {
+      const client = await import('/src/api/client.ts');
+      const { series } = await import('/src/widgets/model.ts');
+      const response = await client.request('/query', { method: 'POST', body: JSON.stringify({
+        from: 'now-1d', to: 'now', compare: 'none', queries: [
+          { ref_id: 'A', metric_id: 'tool_calls', frame_type: 'scalar', group_by: ['team', 'tool_name'] },
+          { ref_id: 'B', metric_id: 'tool_failure_rate', group_by: ['team', 'tool_name'] },
+          { ref_id: 'C', metric_id: 'read_tool_density', group_by: ['team'] },
+          { ref_id: 'D', metric_id: 'tool_calls', frame_type: 'scalar', params: { success: false } },
+        ],
+      }) });
+      return Object.fromEntries(Object.entries(response.results).map(([ref, result]) => [ref, series(result)]));
+    });
+    for (const result of Object.values(tools)) assert.equal(result.state, 'success');
+    const toolValues = ref => Object.fromEntries(tools[ref].points.map(point => [point.key, point.value.value]));
+    assert.deepEqual(toolValues('A'), { value: 15 });
+    assert.deepEqual(toolValues('B'), { value: 0.5, numerator: 5, denominator: 10 });
+    assert.deepEqual(toolValues('C'), { p50: 3, p90: 3 });
+    assert.deepEqual(toolValues('D'), { value: 5 });
+
     if (role === 'owner') {
       await page.getByRole('cell', { name: 'E2E 별도팀', exact: true }).waitFor();
       await page.getByRole('button', { name: '구성원 조회 · 사유 입력' }).click();
@@ -194,12 +221,14 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 12개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 15개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
       { metric: 'integration_depth', expected: 1 }, { metric: 'command_prompt_ratio', expected: 0.5 },
-      { metric: 'prompts_per_session', p50: 2, p90: 2, buckets: [0, 5, 0, 0, 0] }],
+      { metric: 'prompts_per_session', p50: 2, p90: 2, buckets: [0, 5, 0, 0, 0] },
+      { metric: 'tool_calls', expected: 15, failedOnly: 5 }, { metric: 'tool_failure_rate', expected: 0.5 },
+      { metric: 'read_tool_density', p50: 3, p90: 3 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
