@@ -1,0 +1,1459 @@
+openapi: 3.1.0
+info:
+  title: Pulsemetry Dashboard API
+  version: 0.1.0
+  summary: 사내 AI 도구 사용 지표 관리자 대시보드 API (ClickHouse enriched_events + RDB enrollment)
+  description: |
+    Pulsemetry 관리자 대시보드가 호출하는 API. 설계 근거와 응답 필드 ↔ ClickHouse/RDB 컬럼 매핑,
+    참조 SQL은 `pulsemetry_api_overview.md`에 있다. 위젯 ↔ 엔드포인트 대응은
+    `pulsemetry_claude_design_prompt.md` 부록 추적표를 따른다.
+
+    ## 설계 원칙 (Grafana 분석에서 차용)
+    - 위젯 하나 = `POST /v1/query` 요청 하나. 여러 시리즈는 `queries[]`에 `ref_id`로 묶는다 (Grafana `/api/ds/query`의 refId 묶음).
+    - 시간 범위는 `from`/`to`에 ISO-8601 또는 상대식(`now-7d`, `now/d`)을 담고 **서버가 해석**한다. 응답은 해석된 절대값을 돌려준다.
+    - 응답은 열 지향 DataFrame(`schema.fields[]` + `data.values[][]`)이고 group-by 키는 행이 아니라 필드 `labels`에 붙는다.
+    - `meta.executed_sql`은 실제 실행된 ClickHouse SQL(디버깅 출발점, owner/admin 전용).
+    - 비율 지표는 분모를 응답에 동봉하고 분모 0이면 값이 `null`이다 (Grafana 체크리스트 "비율 쿼리는 분모를 방어한다").
+    - 알림·어노테이션 API는 차용하지 않는다. 시나리오 임계 판정은 실행 결과 `findings[]`로만 표현한다.
+
+    ## 데이터 소스
+    - ClickHouse `enriched_events` (ReplacingMergeTree, 조회 시 FINAL). 지표 값은 `raw_json`에서 `JSONExtract*`로 읽는다.
+    - PostgreSQL `enrollment` 스키마: members, teams, team_memberships, installations, contracts, contract_token_discounts, contract_term_commitments, contract_memberships, manifests.
+    - 시나리오 실행 이력·저장 리포트는 신규 RDB 테이블 `dashboard.scenario_runs`, `dashboard.saved_reports` (부록 A 참조, 가정 A6).
+
+    ## 프라이버시 규칙 (API가 강제)
+    - `member_ids` 필터와 `GET /v1/sessions/{session_id}/events`는 role ∈ {owner, admin} 이면서 `X-Audit-Reason` 헤더가 있을 때만 허용. 감사 로그 기록.
+    - 그룹(팀·버킷)의 활성 사용자 수 < 5 이면 값이 `null`, 필드 `config.suppressed=true`, `meta.suppressed_groups[]`에 표시.
+    - 안전 거부(`refusals`)는 `group_by=team` 불허 (400 `group_by_not_allowed`).
+  contact:
+    name: Pulsemetry team376
+servers:
+  - url: https://{host}/v1
+    variables:
+      host:
+        default: pulsemetry.internal
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+  - name: query
+    description: 대시보드 지표 조회 (위젯 단위)
+  - name: scenario
+    description: 시나리오 런처 — 카탈로그·실행·이력·저장
+  - name: meta
+    description: 필터 옵션·카탈로그·RDB 조회
+  - name: ops
+    description: 운영/보안 화면 전용 (감사 로그)
+
+paths:
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: AUTH-LOGIN
+      security: []
+      summary: 관리자 로그인 (이메일 + 비밀번호 → Bearer 토큰)
+      description: |
+        `enrollment.members.email` + `password_hash`(Spring Security PasswordEncoder, ADR 0007) 검증.
+        role ∈ {owner, admin} 이고 status='active' 인 구성원만 로그인 가능. **가정 A4**: 토큰 형식·만료는 Spring Security 구성에 따름.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string, const: Bearer }
+                  expires_in: { type: integer, description: 초 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me:
+    get:
+      tags: [auth]
+      operationId: ME
+      summary: 로그인 사용자·테넌트·역할·접근 가능 팀
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  member_id: { type: string, format: uuid, description: enrollment.members.id }
+                  email: { type: string, description: enrollment.members.email }
+                  display_name: { type: string, description: enrollment.members.display_name }
+                  role: { $ref: '#/components/schemas/MemberRole' }
+                  tenant:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid, description: enrollment.tenants.id }
+                      name: { type: string, description: enrollment.tenants.name }
+                      timezone: { type: string, description: "enrollment.tenants.timezone (기본 Asia/Seoul)" }
+                  accessible_team_ids:
+                    type: array
+                    items: { type: string, format: uuid }
+                    description: role=admin 이면 team_memberships(left_at IS NULL) 기준 자기 팀, owner 면 전체
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /query:
+    post:
+      tags: [query]
+      operationId: QRY
+      summary: 지표 조회 — 위젯 하나가 한 번 호출, 여러 지표는 queries[]로 묶음
+      description: |
+        Grafana `POST /api/ds/query` 차용. 요청 본문의 `queries[]` 각 항목이 `ref_id`를 가지고,
+        응답 `results`의 키가 그 `ref_id`다. 시간 범위·전역 필터는 본문 최상위(공통) 또는 쿼리별로 덮어쓸 수 있다.
+
+        `Accept: text/csv` 이면 첫 번째 쿼리의 프레임을 CSV로 내려준다(내보내기).
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
+        - $ref: '#/components/parameters/XAuditReason'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryRequest' }
+            examples:
+              overview_cost_trend:
+                summary: W1.2 비용 추세 (공시+계약, 비교 기간)
+                value:
+                  from: now-7d
+                  to: now
+                  tz: Asia/Seoul
+                  compare: previous_period
+                  filters: { team_ids: [], products: [claude_code], models: [] }
+                  price_basis: list
+                  queries:
+                    - ref_id: A
+                      metric_id: cost
+                      interval: 1d
+                    - ref_id: B
+                      metric_id: cost
+                      interval: 1d
+                      price_basis: contract
+              team_friction:
+                summary: W2.7 권한 대기 시간 p50/p90 (결정별)
+                value:
+                  from: '2026-08-31T00:00:00+09:00'
+                  to: '2026-09-07T00:00:00+09:00'
+                  filters: { team_ids: ['1c9b1c2e-6a0e-4a0b-9d1a-0a6e5c1f0001'] }
+                  queries:
+                    - ref_id: A
+                      metric_id: gate_wait_ms
+                      group_by: [decision]
+                      frame_type: distribution
+      responses:
+        '200':
+          description: 쿼리별 결과. 개별 쿼리 실패는 해당 `results[ref_id].status`와 `error`로 표시(전체 200).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueryResponse' }
+              examples:
+                overview_cost_trend:
+                  value:
+                    request_id: 7f3c1a0e-5d2b-4a3e-9d0c-1b2f3e4d5c6a
+                    resolved_from: '2026-08-31T00:00:00+09:00'
+                    resolved_to: '2026-09-07T00:00:00+09:00'
+                    coverage: { active_installations: 128, active_members: 154, ratio: 0.831, last_ingested_at: '2026-09-07T09:41:12Z' }
+                    results:
+                      A:
+                        status: 200
+                        frames:
+                          - schema:
+                              ref_id: A
+                              metric_id: cost
+                              frame_type: timeseries
+                              fields:
+                                - { name: time, type: time, config: { interval_ms: 86400000 } }
+                                - { name: cost_usd, type: number, labels: { price_basis: list, product: claude_code }, config: { unit: USD, display_name: "비용(공시)" } }
+                                - { name: cost_usd_compare, type: number, labels: { price_basis: list, period: previous }, config: { unit: USD, display_name: "이전 기간" } }
+                              meta:
+                                resolved_interval: 1d
+                                definition: "sum(llm_call.cost_usd) where cost_source in (reported, estimated); 청구액 아님"
+                                source_columns: ["enriched_events.ts", "raw_json.payload.cost_usd", "raw_json.payload.cost_source", "enriched_events.product"]
+                                executed_sql: "SELECT toStartOfInterval(ts, INTERVAL 1 day, 'Asia/Seoul') AS t, sum(JSONExtractFloat(raw_json,'payload','cost_usd')) ... "
+                                suppressed_groups: []
+                            data:
+                              values:
+                                - [1756566000000, 1756652400000, 1756738800000, 1756825200000, 1756911600000, 1756998000000, 1757084400000]
+                                - [412.18, 398.05, 1830.77, 455.90, 431.02, 88.10, 62.44]
+                                - [380.11, 402.77, 395.20, 410.66, 421.09, 90.21, 70.03]
+                      B:
+                        status: 200
+                        frames: []
+            text/csv:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/QueryTooWide' }
+        '504': { $ref: '#/components/responses/QueryTimeout' }
+
+  /meta/metrics:
+    get:
+      tags: [meta]
+      operationId: META-METRICS
+      summary: 지표 카탈로그 — metric_id별 정의·허용 group_by·원천 컬럼·가용성
+      description: 프론트가 위젯 정의 툴팁(ⓘ)과 group_by 옵션을 이 응답으로 그린다. 서버 쪽 SQL 템플릿의 진실원.
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/MetricDefinition' }
+
+  /meta/filters:
+    get:
+      tags: [meta]
+      operationId: META-FILTERS
+      summary: 전역 필터 옵션 일괄 조회 (팀·제품·모델·기간 프리셋)
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  teams: { type: array, items: { $ref: '#/components/schemas/TeamOption' } }
+                  products:
+                    type: array
+                    items: { type: string, enum: [claude_code, codex] }
+                    description: "SELECT DISTINCT product FROM enriched_events (기간 내)"
+                  models:
+                    type: array
+                    items: { $ref: '#/components/schemas/ModelOption' }
+                  time_presets:
+                    type: array
+                    items: { type: string, examples: ['now-24h', 'now-7d', 'now-28d', 'now-90d'] }
+                  price_bases: { type: array, items: { $ref: '#/components/schemas/PriceBasis' } }
+
+  /meta/teams:
+    get:
+      tags: [meta]
+      operationId: META-TEAMS
+      summary: 팀 목록 (enrollment.teams + 현재 인원)
+      parameters:
+        - name: include_archived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/TeamOption' } }
+
+  /meta/members:
+    get:
+      tags: [meta]
+      operationId: META-MEMBERS
+      summary: 구성원 목록 (enrollment.members + 설치 수) — P5 설정·P3 필터용
+      parameters:
+        - $ref: '#/components/parameters/XAuditReason'
+        - name: team_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/MemberStatus' }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            member_id: { type: string, format: uuid, description: members.id }
+                            email: { type: string, description: members.email }
+                            display_name: { type: [string, 'null'], description: members.display_name }
+                            role: { $ref: '#/components/schemas/MemberRole' }
+                            status: { $ref: '#/components/schemas/MemberStatus' }
+                            team_ids: { type: array, items: { type: string, format: uuid }, description: team_memberships where left_at IS NULL }
+                            installation_count: { type: integer, description: "count(installations) where status='active'" }
+                            last_seen_at: { type: [string, 'null'], format: date-time, description: max(installations.last_seen_at) }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /meta/models:
+    get:
+      tags: [meta]
+      operationId: META-MODELS
+      summary: 기간 내 관측된 모델 목록
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ModelOption' } }
+
+  /meta/contracts:
+    get:
+      tags: [meta]
+      operationId: META-CONTRACTS
+      summary: 계약·토큰 할인·약정 (P5 설정, 계약 단가 환산 근거)
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        contract_id: { type: string, format: uuid, description: contracts.id }
+                        vendor: { type: string, enum: [anthropic, openai, google], description: contracts.vendor }
+                        contract_type: { type: string, enum: [term_commitment, token_discount], description: contracts.contract_type }
+                        name: { type: string, description: contracts.name }
+                        contract_no: { type: [string, 'null'], description: contracts.contract_no }
+                        starts_at: { type: string, format: date, description: contracts.starts_at }
+                        ends_at: { type: [string, 'null'], format: date, description: contracts.ends_at }
+                        status: { type: string, enum: [draft, active, expired, terminated], description: contracts.status }
+                        member_count: { type: integer, description: "count(contract_memberships) where released_at IS NULL" }
+                        term_commitment:
+                          type: [object, 'null']
+                          properties:
+                            commitment_months: { type: integer, description: contract_term_commitments.commitment_months }
+                            commitment_amount: { type: [number, 'null'], description: contract_term_commitments.commitment_amount }
+                            currency: { type: string, description: contract_term_commitments.currency }
+                            auto_renew: { type: boolean, description: contract_term_commitments.auto_renew }
+                        token_discounts:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              model_pattern: { type: [string, 'null'], description: "contract_token_discounts.model_pattern (부분 문자열 매칭, 가정 A5)" }
+                              token_type: { type: string, enum: [input, output, cache_read, cache_create, all], description: contract_token_discounts.token_type }
+                              discount_rate: { type: number, description: "contract_token_discounts.discount_rate — 정가에 곱하는 배율" }
+                              effective_from: { type: string, format: date, description: contract_token_discounts.effective_from }
+                              effective_to: { type: [string, 'null'], format: date, description: contract_token_discounts.effective_to }
+
+  /meta/manifests:
+    get:
+      tags: [meta]
+      operationId: META-MANIFESTS
+      summary: 수집 정책(manifest) 배포 상태 (P5 설정, P3 컴플라이언스)
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active:
+                    type: [object, 'null']
+                    properties:
+                      manifest_id: { type: string, format: uuid, description: manifests.id }
+                      version: { type: integer, description: manifests.version }
+                      activated_at: { type: [string, 'null'], format: date-time, description: manifests.activated_at }
+                      signals:
+                        type: object
+                        description: manifests.manifest(jsonb).signals — logs/metrics/traces 활성 여부
+                        additionalProperties: { type: boolean }
+                      applied_installations: { type: integer, description: "count(installation_manifest_assignments) where applied_at IS NOT NULL" }
+                      assigned_installations: { type: integer, description: count(installation_manifest_assignments) }
+                  history:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        version: { type: integer }
+                        created_at: { type: string, format: date-time }
+                        is_active: { type: boolean }
+
+  /installations:
+    get:
+      tags: [ops]
+      operationId: INSTALL-LIST
+      summary: 설치 목록 — 커버리지·무활동 시트 (P3 컴플라이언스 표, S1-7)
+      parameters:
+        - $ref: '#/components/parameters/XAuditReason'
+        - name: inactive_days
+          in: query
+          description: 이 일수 이상 이벤트가 없는 설치만 (30/60/90)
+          schema: { type: integer, minimum: 1 }
+        - name: team_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: platform
+          in: query
+          schema: { type: string, enum: [windows, macos, linux] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, revoked] }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            installation_id: { type: string, format: uuid, description: installations.id }
+                            member_email_masked: { type: string, description: "members.email (X-Audit-Reason 없으면 도메인만)" }
+                            team_ids: { type: array, items: { type: string, format: uuid } }
+                            hostname: { type: [string, 'null'], description: installations.hostname }
+                            platform: { type: string, description: installations.platform }
+                            client_version: { type: [string, 'null'], description: installations.client_version }
+                            status: { type: string, description: installations.status }
+                            created_at: { type: string, format: date-time, description: installations.created_at }
+                            last_seen_at: { type: [string, 'null'], format: date-time, description: installations.last_seen_at }
+                            last_event_at: { type: [string, 'null'], format: date-time, description: "max(enriched_events.ts) where installation_id" }
+                            product_versions:
+                              type: object
+                              additionalProperties: { type: string }
+                              description: "argMax(raw_json.envelope.client.version, ts) by product"
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /sessions/{session_id}/events:
+    get:
+      tags: [ops]
+      operationId: SESSION-EVENTS
+      summary: 세션 상관 조회 (감사 로그 필수) — P3 세션 조회
+      description: |
+        `raw_json.envelope.session_id` 로 세션 전체 이벤트를 시간순으로 돌려준다. **개인 활동 재구성에 해당**하므로
+        role ∈ {owner, admin} + `X-Audit-Reason` 필수, 조회자·사유·session_id를 감사 로그에 기록한다.
+        `request_id`, `tool_use_id`(call_id), `installation_id` 로도 검색하려면 `lookup` 파라미터를 쓴다.
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/XAuditReasonRequired'
+        - name: lookup
+          in: query
+          description: session_id 대신 다른 키로 세션을 찾을 때
+          schema: { type: string, enum: [session_id, request_id, call_id, installation_id], default: session_id }
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      session:
+                        type: object
+                        properties:
+                          session_id: { type: string, description: raw_json.envelope.session_id }
+                          product: { type: string, description: enriched_events.product }
+                          client_version: { type: [string, 'null'], description: raw_json.envelope.client.version }
+                          installation_id: { type: string, description: enriched_events.installation_id }
+                          team_ids: { type: array, items: { type: string }, description: "enriched_events.team_ids_as_of (첫 이벤트 기준)" }
+                          started_at: { type: string, format: date-time, description: min(ts) }
+                          ended_at: { type: string, format: date-time, description: max(ts) }
+                          event_count: { type: integer }
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/SessionEvent' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /scenarios:
+    get:
+      tags: [scenario]
+      operationId: SCN-LIST
+      summary: 시나리오 카탈로그 (46개, 가용성 포함)
+      description: |
+        시나리오 문서의 8 카테고리 46개 전부를 싣는다. `availability=unavailable`(어댑터가 드롭하는 이벤트·원문·외부 데이터 의존)이면
+        UI가 카드를 "준비 중"으로 비활성화하고, 실행 요청은 409를 받는다. 검증 기준 "모든 시나리오가 UI·API에 반영"을 이 응답이 만족한다.
+      parameters:
+        - name: category
+          in: query
+          schema: { $ref: '#/components/schemas/ScenarioCategory' }
+        - name: availability
+          in: query
+          schema: { $ref: '#/components/schemas/Availability' }
+        - name: target_page
+          in: query
+          schema: { $ref: '#/components/schemas/PageId' }
+        - name: q
+          in: query
+          description: 제목·상황 텍스트 검색
+          schema: { type: string }
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  categories:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { $ref: '#/components/schemas/ScenarioCategory' }
+                        title: { type: string }
+                        question: { type: string, description: 카테고리 핵심 질문 }
+                        persona: { type: string }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ScenarioSummary' }
+              examples:
+                sample:
+                  value:
+                    categories:
+                      - { id: cost, title: "비용·토큰·예산 최적화", question: "돈(토큰)을 제대로 배분·소비하고 있는가?", persona: "FinOps, IT 관리자" }
+                    items:
+                      - scenario_id: S1-3
+                        category: cost
+                        title: 비용 스파이크·폭주 감지
+                        situation: 어느 날 일일 비용이 평소의 5배. 자동화 에이전트가 무한 루프였다.
+                        featured: true
+                        availability: available
+                        target_page: P1
+                        highlight_widgets: [W1.2, W1.3, W2.5]
+                        required_params: [from, to, spike_threshold_pct]
+                        metric_ids: [cost, cost_anomaly, api_retry_attempts]
+                      - scenario_id: S5-1
+                        category: security
+                        title: 프롬프트 내 민감정보(PII·시크릿) 유출
+                        situation: 직원이 프롬프트에 API 키·고객 정보를 그대로 붙여넣는다.
+                        featured: true
+                        availability: unavailable
+                        unavailable_reason: 프롬프트 원문은 정책상 미취급(ADR 0017 규칙 1). 대리 지표 hook_blocking만 가능.
+                        target_page: P3
+                        highlight_widgets: []
+                        required_params: []
+                        metric_ids: []
+
+  /scenarios/{scenario_id}:
+    get:
+      tags: [scenario]
+      operationId: SCN-GET
+      summary: 시나리오 상세 — 파라미터 스키마·지표·판정 규칙
+      parameters:
+        - $ref: '#/components/parameters/ScenarioId'
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioDetail' }
+              examples:
+                s1_3:
+                  value:
+                    scenario_id: S1-3
+                    category: cost
+                    title: 비용 스파이크·폭주 감지
+                    situation: 어느 날 일일 비용이 평소의 5배. 알고 보니 자동화 에이전트가 무한 루프.
+                    availability: available
+                    target_page: P1
+                    highlight_widgets: [W1.2, W1.3, W2.5]
+                    metric_ids: [cost, cost_anomaly, api_retry_attempts]
+                    metrics:
+                      - { metric_id: cost_anomaly, indicator_id: C-1, availability: available, definition: "일별 비용 ÷ 직전 N일 이동평균 − 1", caveat: "청구액 아님" }
+                    params_schema:
+                      type: object
+                      required: [from, to]
+                      properties:
+                        from: { type: string, default: now-28d }
+                        to: { type: string, default: now }
+                        team_ids: { type: array, items: { type: string } }
+                        moving_avg_days: { type: integer, default: 7, minimum: 3, maximum: 28 }
+                        spike_threshold_pct: { type: integer, default: 200, description: 이동평균 대비 초과 % }
+                    findings_rules:
+                      - { rule_id: spike_day, severity: anomaly, when: "cost_anomaly.value >= spike_threshold_pct/100", message: "{date} 비용이 이동평균 대비 +{pct}%" }
+                      - { rule_id: top_mover, severity: warning, when: "group_share_change >= 0.3", message: "{group} 비중이 {delta}pt 급변" }
+                      - { rule_id: retry_cost, severity: info, when: "api_retry_attempts.ratio >= 0.05", message: "재시도 요청 비율 {ratio}%" }
+                    actions:
+                      - 자동화/에이전트 트래픽은 사람 트래픽과 예산을 분리
+                      - 일일 지출 상한 + 폭주 시 담당자 알림
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /scenarios/{scenario_id}/runs:
+    post:
+      tags: [scenario]
+      operationId: SCN-RUN
+      summary: 시나리오 실행 (비동기) — 202 + run_id
+      description: |
+        실행은 **비동기**다. 서버는 `params_schema` 검증 후 큐에 넣고 202를 돌려준다. 클라이언트는 `GET /scenario-runs/{run_id}`를
+        `Retry-After`(초) 간격으로 폴링한다. 한 실행은 `metric_ids`에 해당하는 `POST /query`와 같은 SQL 템플릿을 순차 실행하고
+        `findings_rules`를 적용한다. 결과는 `dashboard.scenario_runs`에 저장되어 공유 링크(`/runs/{run_id}`)로 재열람된다.
+        (동기 실행이 필요하면 `?wait=true`로 최대 20초까지 기다린 뒤 완료 시 200, 미완료 시 202.)
+      parameters:
+        - $ref: '#/components/parameters/ScenarioId'
+        - $ref: '#/components/parameters/XRequestId'
+        - name: wait
+          in: query
+          schema: { type: boolean, default: false }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [params]
+              properties:
+                params:
+                  type: object
+                  description: SCN-GET의 params_schema를 따르는 값. 기간은 상대식 허용.
+                  additionalProperties: true
+                price_basis: { $ref: '#/components/schemas/PriceBasis' }
+                tz: { type: string, description: 기본 테넌트 timezone }
+            examples:
+              s1_3:
+                value:
+                  params: { from: now-28d, to: now, team_ids: [], moving_avg_days: 7, spike_threshold_pct: 200 }
+                  price_basis: list
+      responses:
+        '202':
+          description: 큐에 들어감
+          headers:
+            Location: { schema: { type: string }, description: "/v1/scenario-runs/{run_id}" }
+            Retry-After: { schema: { type: integer }, description: "권장 폴링 간격(초)" }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioRun' }
+        '200':
+          description: wait=true 이고 20초 안에 완료됨
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioRun' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: availability=unavailable 인 시나리오
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: scenario_unavailable, message: "이 시나리오는 어댑터 확장(skill_activated 이벤트 보존) 후 실행할 수 있습니다.", request_id: "1c2d…" }
+        '429':
+          description: 테넌트당 동시 실행 상한(기본 3) 초과
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /scenario-runs:
+    get:
+      tags: [scenario]
+      operationId: RUN-LIST
+      summary: 실행 이력 (테넌트 전체, 최신순)
+      parameters:
+        - name: scenario_id
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/RunStatus' }
+        - name: created_by
+          in: query
+          schema: { type: string, format: uuid, description: members.id }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/ScenarioRunSummary' }
+
+  /scenario-runs/{run_id}:
+    get:
+      tags: [scenario]
+      operationId: RUN-GET
+      summary: 실행 상태·결과 조회 (폴링 대상)
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: 성공
+          headers:
+            Retry-After: { schema: { type: integer }, description: "status ∈ {queued, running} 일 때만" }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioRun' }
+              examples:
+                done:
+                  value:
+                    run_id: 9b3d6b2a-0a1f-4c8e-9f21-6d1e0c2b7a55
+                    scenario_id: S1-3
+                    status: succeeded
+                    progress: { step: 3, total: 3, label: "판정 완료" }
+                    params: { from: now-28d, to: now, team_ids: [], moving_avg_days: 7, spike_threshold_pct: 200 }
+                    resolved_from: '2026-08-10T00:00:00+09:00'
+                    resolved_to: '2026-09-07T00:00:00+09:00'
+                    created_by: { member_id: "5d8e…", display_name: "홍길동" }
+                    created_at: '2026-09-07T10:02:11+09:00'
+                    finished_at: '2026-09-07T10:02:19+09:00'
+                    result:
+                      target_page: P1
+                      applied_filters: { from: now-28d, to: now, team_ids: [], products: [], models: [], price_basis: list }
+                      highlight_widgets: [W1.2, W1.3, W2.5]
+                      findings:
+                        - rule_id: spike_day
+                          severity: anomaly
+                          title: 9/3 비용이 이동평균 대비 +340%
+                          evidence: { metric_id: cost_anomaly, date: '2026-09-03', value: 3.4, baseline_usd: 416.2, actual_usd: 1830.8 }
+                          widget_id: W1.2
+                          action: query_source=subagent 비중이 71% → 에이전트 루프 의심. 해당 팀 비용 귀속(W2.5) 확인
+                        - rule_id: top_mover
+                          severity: warning
+                          title: 팀 '데이터' 비용 비중 12% → 58%
+                          evidence: { metric_id: cost, group: "데이터", before: 0.12, after: 0.58 }
+                          widget_id: W1.3
+                      frames:
+                        cost_anomaly: { status: 200, frames: [] }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [scenario]
+      operationId: RUN-DELETE
+      summary: 실행 이력 삭제 (실행자 또는 owner)
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '204': { description: 삭제됨 }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /scenario-runs/{run_id}/cancel:
+    post:
+      tags: [scenario]
+      operationId: RUN-CANCEL
+      summary: 실행 취소 (queued/running 일 때)
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioRun' }
+        '409':
+          description: 이미 종료된 실행
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /scenario-runs/{run_id}/save:
+    post:
+      tags: [scenario]
+      operationId: RUN-SAVE
+      summary: 결과를 저장 리포트로 보관 (이름·메모·기간 고정 여부)
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 100 }
+                note: { type: string, maxLength: 2000 }
+                time_mode:
+                  type: string
+                  enum: [fixed, relative]
+                  default: fixed
+                  description: fixed=실행 시점의 절대 기간 고정 / relative=열 때마다 상대식 재실행
+      responses:
+        '201':
+          description: 생성됨
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedReport' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /saved-reports:
+    get:
+      tags: [scenario]
+      operationId: SAVED-LIST
+      summary: 저장 리포트 목록
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 성공
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/SavedReport' } }
+
+  /saved-reports/{saved_id}:
+    delete:
+      tags: [scenario]
+      operationId: SAVED-DELETE
+      summary: 저장 리포트 삭제
+      parameters:
+        - name: saved_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: 삭제됨 }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "`Authorization: Bearer <access_token>` — AUTH-LOGIN 발급 토큰 (가정 A4). 기존 운영자용 `X-Admin-Token`은 이 API에서 받지 않는다."
+
+  parameters:
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: 클라이언트 취소·추적용. **서버 의미 없음** (Grafana requestId 와 같은 성격). 응답 `request_id`는 서버가 새로 발급한다.
+      schema: { type: string }
+    XAuditReason:
+      name: X-Audit-Reason
+      in: header
+      required: false
+      description: 개인 식별 조회(member_ids 필터, 이메일 전체 표시)에 필요. 감사 로그에 기록.
+      schema: { type: string, minLength: 10, maxLength: 500 }
+    XAuditReasonRequired:
+      name: X-Audit-Reason
+      in: header
+      required: true
+      description: 조회 사유. 감사 로그(조회자·시각·대상·사유)에 기록.
+      schema: { type: string, minLength: 10, maxLength: 500 }
+    From:
+      name: from
+      in: query
+      schema: { $ref: '#/components/schemas/TimeExpr' }
+    To:
+      name: to
+      in: query
+      schema: { $ref: '#/components/schemas/TimeExpr' }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      description: 이전 응답의 `next_cursor` (불투명 문자열)
+      schema: { type: string }
+    ScenarioId:
+      name: scenario_id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^S[1-8]-[0-9]+$', example: S1-3 }
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    BadRequest:
+      description: 잘못된 요청 (파라미터·group_by 조합·시간식)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            group_by_not_allowed:
+              value: { error: group_by_not_allowed, message: "refusals 지표는 team 분해를 허용하지 않습니다(전사 단위만).", request_id: "a1b2…" }
+            invalid_time_expr:
+              value: { error: invalid_request, message: "from 은 ISO-8601 또는 now-<n><unit> 형식이어야 합니다.", request_id: "a1b2…" }
+    Unauthorized:
+      description: 토큰 없음 또는 무효 (둘을 구분하지 않음 — enrollment 서버 관례)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: unauthorized, message: "Invalid or expired credential", request_id: "a1b2…" }
+    Forbidden:
+      description: 역할·팀 범위 밖, 또는 감사 사유 없음
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            audit_reason_required:
+              value: { error: audit_reason_required, message: "개인 식별 조회에는 X-Audit-Reason 헤더가 필요합니다.", request_id: "a1b2…" }
+            team_out_of_scope:
+              value: { error: forbidden, message: "접근 권한이 없는 팀입니다.", request_id: "a1b2…" }
+    NotFound:
+      description: 없음
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: not_found, message: "Not found", request_id: "a1b2…" }
+    QueryTooWide:
+      description: 기간×해상도가 상한 초과 (max_data_points 또는 90일×1h 등)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: query_too_wide, message: "interval=1h 로 90일은 점 2160개로 상한(1000)을 넘습니다. interval 을 키우거나 기간을 줄이세요.", request_id: "a1b2…" }
+    QueryTimeout:
+      description: ClickHouse 쿼리 시간 초과 (기본 30초)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: query_timeout, message: "쿼리 시간 초과 — 기간을 줄이거나 팀을 좁혀 다시 실행하세요.", request_id: "a1b2…" }
+
+  schemas:
+    Error:
+      type: object
+      description: "enrollment 서버 에러 계약 `{error, message}` 에 `request_id` 를 더한 형태. 예외 메시지 원문은 싣지 않는다."
+      required: [error, message, request_id]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, unauthorized, forbidden, audit_reason_required, not_found, group_by_not_allowed, query_too_wide, query_timeout, scenario_unavailable, run_limit_exceeded, conflict, internal_error]
+        message: { type: string }
+        request_id: { type: string }
+
+    TimeExpr:
+      type: string
+      description: |
+        ISO-8601(`2026-09-01T00:00:00+09:00`) 또는 상대식. 상대식 문법: `now`, `now-<n><unit>` (unit ∈ s,m,h,d,w,M), 경계 정렬 `/d`, `/w`, `/M`
+        (예 `now-7d/d` = 7일 전 자정). Grafana 상대 시간식 차용, 단 **서버가 해석**하고 응답에 `resolved_from/to`를 돌려준다.
+      examples: [now-7d, now/d, '2026-08-31T00:00:00+09:00']
+
+    Interval:
+      type: string
+      description: 버킷 크기. 생략 시 서버가 `max(min_interval, range / max_data_points)` 로 결정 (Grafana step 규칙). 응답 `meta.resolved_interval`.
+      enum: [1h, 6h, 1d, 1w, 1M]
+
+    PriceBasis:
+      type: string
+      enum: [list, contract]
+      description: list=공시 단가(cost_usd 보고값/추정값) · contract=계약 단가(× contract_token_discounts.discount_rate, 가정 A5)
+
+    PageId:
+      type: string
+      enum: [P1, P2, P3, P4, P5]
+
+    Availability:
+      type: string
+      enum: [available, partial, unavailable]
+      description: available=현 스키마로 산출 · partial=일부 차원 대리 측정 · unavailable=어댑터 드롭/원문/외부 데이터 의존(부록)
+
+    MemberRole:
+      type: string
+      enum: [owner, admin, member]
+      description: enrollment.members.role
+    MemberStatus:
+      type: string
+      enum: [invited, active, suspended]
+      description: enrollment.members.status
+
+    GlobalFilters:
+      type: object
+      description: 전역 필터 바와 1:1. 빈 배열은 "전체".
+      properties:
+        team_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: "enrollment.teams.id → ClickHouse `hasAny(team_ids_as_of, team_ids)`"
+        products:
+          type: array
+          items: { type: string, enum: [claude_code, codex] }
+          description: enriched_events.product
+        models:
+          type: array
+          items: { type: string }
+          description: "raw_json.payload.model (log/span) 또는 raw_json.point.attrs.model (metric)"
+        member_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: "P3 전용. members.id → installations.id 목록으로 해석해 `installation_id IN (...)` (가정 A3). X-Audit-Reason 필수"
+
+    QueryRequest:
+      type: object
+      required: [from, to, queries]
+      properties:
+        from: { $ref: '#/components/schemas/TimeExpr' }
+        to: { $ref: '#/components/schemas/TimeExpr' }
+        tz: { type: string, description: 버킷 경계 타임존. 기본 tenants.timezone }
+        compare:
+          type: string
+          enum: [none, previous_period, previous_week]
+          default: none
+          description: 비교 시리즈 추가 (`*_compare` 필드). previous_period=같은 길이의 직전 구간, previous_week=7일 전 같은 구간
+        filters: { $ref: '#/components/schemas/GlobalFilters' }
+        price_basis: { $ref: '#/components/schemas/PriceBasis' }
+        max_data_points:
+          type: integer
+          default: 500
+          maximum: 1000
+          description: 위젯 폭에서 나온 상한. `interval` 미지정 시 step 결정에 쓰임
+        queries:
+          type: array
+          minItems: 1
+          maxItems: 12
+          items: { $ref: '#/components/schemas/Query' }
+
+    Query:
+      type: object
+      required: [ref_id, metric_id]
+      properties:
+        ref_id: { type: string, pattern: '^[A-Z]$', description: 응답 results 의 키 }
+        metric_id: { $ref: '#/components/schemas/MetricId' }
+        group_by:
+          type: array
+          maxItems: 2
+          items: { $ref: '#/components/schemas/Dimension' }
+          description: 허용 조합은 META-METRICS 의 `allowed_group_by`. 프레임은 group 조합마다 하나(라벨은 fields[].labels)
+        interval: { $ref: '#/components/schemas/Interval' }
+        frame_type:
+          type: string
+          enum: [timeseries, table, distribution, scalar]
+          description: 생략 시 지표 기본형(META-METRICS.default_frame_type). distribution=버킷·분위수, scalar=KPI 단일값(+비교값)
+        source:
+          type: string
+          enum: [events, metrics]
+          description: "`cost`·`tokens` 전용. events=raw_json.payload(llm_call, 두 제품 공통) · metrics=raw_json.point(claude_code 메트릭, agent_name/skill_name 등 귀속 차원 가능)"
+        limit: { type: integer, minimum: 1, maximum: 100, description: table/group 상위 N (나머지는 `__other__`) }
+        order:
+          type: string
+          enum: [value_desc, value_asc, label_asc]
+          default: value_desc
+        filters: { $ref: '#/components/schemas/GlobalFilters', description: 이 쿼리만 덮어쓰는 필터 }
+        price_basis: { $ref: '#/components/schemas/PriceBasis' }
+        params:
+          type: object
+          description: 지표별 추가 파라미터 (META-METRICS.params_schema). 예 cost_anomaly.moving_avg_days, rubber_stamp_ratio.threshold_ms
+          additionalProperties: true
+
+    MetricId:
+      type: string
+      description: 지표 카탈로그 키. 정의·컬럼 매핑·참조 SQL은 overview §4. `(A-1)` 등은 지표보고서 ID.
+      enum:
+        - telemetry_coverage      # H-1
+        - active_users            # A-1
+        - adoption_rate           # A-2
+        - sessions                # A-3
+        - active_time             # A-4
+        - automation_ratio        # A-4
+        - prompts_per_session     # A-5
+        - command_prompt_ratio    # A-5
+        - lines_of_code           # B-1
+        - commits                 # B-2
+        - pull_requests           # B-2
+        - integration_depth       # B-3
+        - cost                    # C-1 / H-2
+        - cost_anomaly            # S1-3
+        - cost_per_active_user    # C-4
+        - cost_per_user_hour      # C-4
+        - tokens                  # C-2
+        - cache_read_ratio        # C-2
+        - input_output_ratio      # S1-5
+        - subagent_cost_ratio     # C-3
+        - model_users             # E-1
+        - model_unit_price        # S8-2
+        - contract_commitment_burn # H-2
+        - compactions             # C-5
+        - compaction_reduction    # C-5
+        - edit_acceptance_rate    # D-1
+        - auto_approval_ratio     # D-2
+        - gate_wait_ms            # D-4
+        - tool_rejections         # D-5
+        - rubber_stamp_ratio      # S5-7
+        - mcp_connections         # E-4
+        - mcp_failure_ratio       # E-4
+        - subagent_activity       # E-5(부분)
+        - api_error_rate          # F-1
+        - api_retry_attempts      # F-1
+        - rate_limit_events       # S2-1/S2-2
+        - tool_calls              # F-2
+        - tool_failure_rate       # F-2
+        - read_tool_density       # S7-2
+        - turn_duration_ms        # F-3
+        - llm_ttft_ms             # F-3
+        - llm_duration_ms         # F-3
+        - llm_stop_reasons        # S6-3
+        - hook_executions         # G-1
+        - hook_blocking           # G-1
+        - refusals                # G-2
+        - vendor_account_mismatch # H-3
+        - usage_heatmap           # S2-1
+        - usage_concentration     # S3-2
+        - onboarding_ttfu         # S3-3
+        - onboarding_retention    # S3-3
+        - abandoned_session_ratio # S4-2
+        - session_last_event      # S4-2
+
+    Dimension:
+      type: string
+      description: group_by 차원. 괄호는 원천 컬럼.
+      enum:
+        - team            # enriched_events.team_ids_as_of (ARRAY JOIN) → teams.name
+        - product         # enriched_events.product
+        - model           # raw_json.payload.model | raw_json.point.attrs.model
+        - start_type      # raw_json.point.attrs.start_type
+        - type            # raw_json.point.attrs.type (token/active_time/loc)
+        - query_source    # raw_json.payload.source | raw_json.point.attrs.query_source
+        - agent_name      # raw_json.point.attrs['agent.name']
+        - skill_name      # raw_json.point.attrs['skill.name']
+        - plugin_name     # raw_json.point.attrs['plugin.name']
+        - mcp_server      # raw_json.payload.mcp_server | raw_json.point.attrs['mcp_server.name']
+        - speed           # raw_json.point.attrs.speed
+        - effort          # raw_json.payload.reasoning_effort | raw_json.point.attrs.effort
+        - language        # raw_json.point.attrs.language
+        - decided_by      # raw_json.payload.decided_by
+        - decision        # raw_json.payload.decision
+        - tool_name       # raw_json.payload.tool_name
+        - tool_kind       # raw_json.payload.tool_kind
+        - action          # raw_json.payload.action
+        - error_type      # raw_json.payload.error_type
+        - status_code     # raw_json.payload.status_code
+        - stop_reason     # raw_json.payload.stop_reason
+        - server_name     # raw_json.payload.attrs.server_name
+        - server_scope    # raw_json.payload.attrs.server_scope
+        - transport_type  # raw_json.payload.attrs.transport_type
+        - is_plugin       # raw_json.payload.attrs.is_plugin
+        - trigger         # raw_json.payload.attrs.trigger
+        - category        # raw_json.payload.refusal_category
+        - hook_event      # raw_json.payload.attrs.hook_event
+        - client_version  # raw_json.envelope.client.version
+        - platform        # installations.platform (RDB)
+        - hour            # toHour(ts, tz)
+        - weekday         # toDayOfWeek(ts, tz)
+
+    QueryResponse:
+      type: object
+      required: [request_id, resolved_from, resolved_to, results]
+      properties:
+        request_id: { type: string }
+        resolved_from: { type: string, format: date-time }
+        resolved_to: { type: string, format: date-time }
+        compare_from: { type: [string, 'null'], format: date-time }
+        compare_to: { type: [string, 'null'], format: date-time }
+        coverage:
+          type: object
+          description: 모든 응답에 동봉 — 화면 고정 캡션용 (H-1)
+          properties:
+            active_installations: { type: integer, description: "uniqExact(installation_id) 기간 내 이벤트 있음" }
+            active_members: { type: integer, description: "count(members) status='active'" }
+            ratio: { type: [number, 'null'] }
+            last_ingested_at: { type: string, format: date-time, description: max(ts) }
+        results:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/QueryResult' }
+
+    QueryResult:
+      type: object
+      required: [status, frames]
+      properties:
+        status: { type: integer, description: 200 또는 쿼리 단위 오류 코드 }
+        error: { $ref: '#/components/schemas/Error' }
+        frames:
+          type: array
+          items: { $ref: '#/components/schemas/Frame' }
+
+    Frame:
+      type: object
+      description: 열 지향 DataFrame (Grafana 차용). group 조합마다 프레임 하나, 라벨은 필드에.
+      required: [schema, data]
+      properties:
+        schema:
+          type: object
+          required: [ref_id, metric_id, frame_type, fields]
+          properties:
+            ref_id: { type: string }
+            metric_id: { $ref: '#/components/schemas/MetricId' }
+            frame_type: { type: string, enum: [timeseries, table, distribution, scalar] }
+            fields:
+              type: array
+              items: { $ref: '#/components/schemas/Field' }
+            meta:
+              type: object
+              properties:
+                resolved_interval: { $ref: '#/components/schemas/Interval' }
+                definition: { type: string, description: 계산식 한 줄 (툴팁 ⓘ) }
+                caveat: { type: string, description: 함정·오독 경고 (예 청구액 아님) }
+                active_user_definition:
+                  type: string
+                  enum: [active_time_user, any_event]
+                  description: active_users 계열 — 어느 정의가 적용됐는지 (가정 A2)
+                source_columns:
+                  type: array
+                  items: { type: string }
+                  description: 응답 필드 ↔ ClickHouse/RDB 컬럼 (raw_json.<path> 표기)
+                executed_sql: { type: string, description: 실제 실행 SQL (owner/admin 에게만) }
+                suppressed_groups:
+                  type: array
+                  items: { type: string }
+                  description: n<5 로 마스킹된 group 라벨
+                data_quality:
+                  type: array
+                  items: { type: string }
+                  description: 예 "cumulative temporality 포인트 12개 제외(가정 A1)", "installation_id 없는 이벤트 3% 제외"
+        data:
+          type: object
+          required: [values]
+          properties:
+            values:
+              type: array
+              description: fields 와 같은 길이의 평행 배열. time 필드는 epoch ms
+              items:
+                type: array
+                items: {}
+
+    Field:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [time, number, string, boolean] }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: group_by 키 값 (예 team_id, team_name, model). 행이 아니라 필드에 붙는다
+        config:
+          type: object
+          properties:
+            unit: { type: string, examples: [USD, token, ms, s, count, ratio, percent, lines] }
+            display_name: { type: string }
+            interval_ms: { type: integer }
+            suppressed: { type: boolean, description: n<5 마스킹 — 값은 null }
+            denominator: { type: [number, 'null'], description: 비율 지표의 분모 (0이면 값 null) }
+            numerator: { type: [number, 'null'] }
+            group_size: { type: integer, description: 이 group 의 활성 사용자 수 (마스킹 근거) }
+            percentiles: { type: array, items: { type: number }, description: distribution 프레임의 분위수 목록 }
+
+    MetricDefinition:
+      type: object
+      properties:
+        metric_id: { $ref: '#/components/schemas/MetricId' }
+        indicator_id: { type: string, description: 지표보고서/시나리오 ID (A-1, S1-3 …) }
+        title: { type: string }
+        definition: { type: string }
+        caveat: { type: string }
+        unit: { type: string }
+        availability: { $ref: '#/components/schemas/Availability' }
+        default_frame_type: { type: string, enum: [timeseries, table, distribution, scalar] }
+        allowed_group_by: { type: array, items: { $ref: '#/components/schemas/Dimension' } }
+        forbidden_group_by: { type: array, items: { $ref: '#/components/schemas/Dimension' }, description: "예 refusals → [team]" }
+        min_group_size: { type: integer, default: 5 }
+        source_columns: { type: array, items: { type: string } }
+        params_schema: { type: object, description: "JSON Schema", additionalProperties: true }
+        sql_template_id: { type: string, description: overview §4 의 참조 SQL 번호 }
+
+    TeamOption:
+      type: object
+      properties:
+        team_id: { type: string, format: uuid, description: teams.id }
+        name: { type: string, description: teams.name }
+        status: { type: string, enum: [active, archived], description: teams.status }
+        member_count: { type: integer, description: "count(team_memberships) where left_at IS NULL and members.status='active'" }
+
+    ModelOption:
+      type: object
+      properties:
+        model: { type: string, description: "DISTINCT raw_json.payload.model ∪ raw_json.point.attrs.model" }
+        product: { type: string }
+        vendor: { type: string, enum: [anthropic, openai, google, unknown], description: Pricing 표 접두 매칭으로 추정 }
+
+    SessionEvent:
+      type: object
+      description: raw_json 을 그대로 펼친 이벤트 한 건 (원문 필드는 애초에 없음 — ADR 0017 규칙 1)
+      properties:
+        event_id: { type: string, description: enriched_events.event_id }
+        ts: { type: string, format: date-time, description: enriched_events.ts }
+        signal: { type: string, enum: [log, span, metric], description: enriched_events.signal }
+        type: { type: string, description: raw_json.type (로그·스팬) 또는 raw_json.point.name (메트릭) }
+        turn_id: { type: [string, 'null'], description: raw_json.turn_id }
+        call_id: { type: [string, 'null'], description: raw_json.call_id }
+        call_id_inferred: { type: boolean, description: raw_json.envelope._ingest.call_id_inferred }
+        span_id: { type: [string, 'null'], description: raw_json.span_id }
+        parent_id: { type: [string, 'null'], description: raw_json.parent_id }
+        sequence: { type: [integer, 'null'], description: raw_json.sequence }
+        payload:
+          type: object
+          description: raw_json.payload 또는 raw_json.point (그대로)
+          additionalProperties: true
+
+    ScenarioCategory:
+      type: string
+      enum: [cost, usage_pattern, adoption, productivity, security, quality, governance, strategy]
+      description: 시나리오 문서 8 카테고리 — 1 비용·토큰·예산 / 2 사용 패턴·시간대·Rate Limit / 3 도입·채택 / 4 생산성·활용 역량 / 5 보안·컴플라이언스 / 6 품질·신뢰성·성능·운영 / 7 거버넌스·에이전트·리스크 / 8 ROI·전략·경영 보고
+
+    ScenarioSummary:
+      type: object
+      required: [scenario_id, category, title, availability, target_page]
+      properties:
+        scenario_id: { type: string, example: S1-3 }
+        category: { $ref: '#/components/schemas/ScenarioCategory' }
+        title: { type: string }
+        situation: { type: string, description: 한 줄 상황 }
+        featured: { type: boolean, description: 시나리오 문서 ⭐ }
+        availability: { $ref: '#/components/schemas/Availability' }
+        unavailable_reason: { type: [string, 'null'] }
+        target_page: { $ref: '#/components/schemas/PageId' }
+        highlight_widgets: { type: array, items: { type: string }, description: 결과 뷰에서 강조할 위젯 ID (디자인 프롬프트 W*.*) }
+        required_params: { type: array, items: { type: string } }
+        metric_ids: { type: array, items: { $ref: '#/components/schemas/MetricId' } }
+
+    ScenarioDetail:
+      allOf:
+        - $ref: '#/components/schemas/ScenarioSummary'
+        - type: object
+          properties:
+            metrics:
+              type: array
+              items:
+                type: object
+                properties:
+                  metric_id: { $ref: '#/components/schemas/MetricId' }
+                  indicator_id: { type: string }
+                  availability: { $ref: '#/components/schemas/Availability' }
+                  definition: { type: string }
+                  caveat: { type: string }
+            params_schema: { type: object, description: "JSON Schema — 파라미터 폼 생성용", additionalProperties: true }
+            findings_rules:
+              type: array
+              items:
+                type: object
+                properties:
+                  rule_id: { type: string }
+                  severity: { type: string, enum: [info, warning, anomaly] }
+                  when: { type: string, description: 판정식 (서버 평가) }
+                  message: { type: string, description: 템플릿 }
+            actions: { type: array, items: { type: string }, description: 시나리오 문서 "인사이트 → 액션" }
+
+    RunStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled]
+
+    ScenarioRunSummary:
+      type: object
+      properties:
+        run_id: { type: string, format: uuid, description: dashboard.scenario_runs.id }
+        scenario_id: { type: string }
+        status: { $ref: '#/components/schemas/RunStatus' }
+        params_summary: { type: string, description: 예 "28d · 팀 3 · 임계 +200%" }
+        created_by: { type: object, properties: { member_id: { type: string }, display_name: { type: string } } }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        findings_count: { type: object, properties: { anomaly: { type: integer }, warning: { type: integer }, info: { type: integer } } }
+        saved_id: { type: [string, 'null'], format: uuid }
+
+    ScenarioRun:
+      allOf:
+        - $ref: '#/components/schemas/ScenarioRunSummary'
+        - type: object
+          properties:
+            params: { type: object, additionalProperties: true }
+            resolved_from: { type: string, format: date-time }
+            resolved_to: { type: string, format: date-time }
+            progress:
+              type: object
+              properties:
+                step: { type: integer }
+                total: { type: integer }
+                label: { type: string, description: 예 "쿼리 실행 2/3" }
+            error: { $ref: '#/components/schemas/Error' }
+            result:
+              type: [object, 'null']
+              description: status=succeeded 일 때
+              properties:
+                target_page: { $ref: '#/components/schemas/PageId' }
+                applied_filters:
+                  type: object
+                  description: 결과 뷰가 전역 필터 바에 적용할 값 (QueryRequest 상위 필드와 같은 모양)
+                  additionalProperties: true
+                highlight_widgets: { type: array, items: { type: string } }
+                findings:
+                  type: array
+                  items: { $ref: '#/components/schemas/Finding' }
+                frames:
+                  type: object
+                  description: metric_id → QueryResult (결과 뷰 위젯이 재조회 없이 그릴 수 있게 동봉)
+                  additionalProperties: { $ref: '#/components/schemas/QueryResult' }
+
+    Finding:
+      type: object
+      required: [rule_id, severity, title]
+      properties:
+        rule_id: { type: string }
+        severity: { type: string, enum: [info, warning, anomaly] }
+        title: { type: string }
+        evidence: { type: object, additionalProperties: true, description: 근거 지표·값 }
+        widget_id: { type: [string, 'null'], description: "'관련 위젯으로 이동' 링크 대상" }
+        action: { type: [string, 'null'] }
+
+    SavedReport:
+      type: object
+      properties:
+        saved_id: { type: string, format: uuid, description: dashboard.saved_reports.id }
+        run_id: { type: string, format: uuid }
+        scenario_id: { type: string }
+        name: { type: string }
+        note: { type: [string, 'null'] }
+        time_mode: { type: string, enum: [fixed, relative] }
+        created_by: { type: object, properties: { member_id: { type: string }, display_name: { type: string } } }
+        created_at: { type: string, format: date-time }
+        share_path: { type: string, description: "예 /runs/9b3d… (같은 테넌트 관리자만)" }
+
+    Page:
+      type: object
+      properties:
+        next_cursor: { type: [string, 'null'] }
+        total: { type: [integer, 'null'], description: 계산 비용이 크면 null }
