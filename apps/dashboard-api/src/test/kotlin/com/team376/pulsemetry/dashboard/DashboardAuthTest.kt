@@ -2310,6 +2310,7 @@ class DashboardAuthTest {
         val completed = readRun(id,bearer)
         assertThat(completed["status"].asString()).isEqualTo("succeeded")
         assertThat(completed["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(completed["findings_count"]["anomaly"].asInt()).isEqualTo(1)
         assertThat(completed["result"]["frames"]["cost"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(200.0)
         val finding = completed["result"]["findings"].first { it["rule_id"].asString()=="spike_day" }
         assertThat(finding["evidence"]["ratio"].asDouble()).isEqualTo(3.0)

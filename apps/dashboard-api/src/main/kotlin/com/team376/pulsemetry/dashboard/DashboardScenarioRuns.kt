@@ -68,11 +68,17 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
         return get(id,user)
     }
 
-    fun response(row: DashboardRunRow): Map<String,Any?> = mapOf("run_id" to row.id,"scenario_id" to row.scenario,
+    fun response(row: DashboardRunRow): Map<String,Any?> {
+        val result = row.result?.let { mapper.readTree(it) }
+        val counts = listOf("info","warning","anomaly").associateWith { severity ->
+            result?.path("findings")?.count { it.path("severity").asString("")==severity } ?: 0
+        }
+        return mapOf("run_id" to row.id,"scenario_id" to row.scenario,
         "status" to row.status,"params" to mapper.readTree(row.params),"resolved_from" to row.from.toString(),"resolved_to" to row.to.toString(),
         "created_at" to row.created.toString(),"finished_at" to row.finished?.toString(),"created_by" to mapOf("member_id" to row.creator),
         "progress" to mapOf("step" to row.step,"total" to 3,"label" to when(row.status) { "queued" -> "대기"; "running" -> "지표 조회"; else -> "종료" }),
-        "result" to row.result?.let { mapper.readTree(it) },"error" to row.error?.let { mapper.readTree(it) })
+        "result" to result,"findings_count" to counts,"error" to row.error?.let { mapper.readTree(it) })
+    }
 
     @Scheduled(fixedDelayString = "1000", initialDelayString = "1000")
     fun scheduled() { if (workerEnabled) runOne() }
