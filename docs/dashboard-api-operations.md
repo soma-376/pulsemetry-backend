@@ -37,4 +37,4 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 스크립트는 격리된 PostgreSQL·ClickHouse를 생성하고 실제 frontend를 real 모드로 실행한다.
 테스트 전용 계정을 사용하고 종료 시 컨테이너·임시 키를 제거한다. 포트는 API 18081, frontend 15173이다.
-로그·스크린샷·판정은 `build/e2e/auth-settings`에 남는다. 현재 범위는 인증·P5 메타, 실제 frontend API 클라이언트의 53개 지표 카탈로그 및 메트릭 5개 합계다. 정규화 테스트 포인트를 ClickHouse에 직접 적재하며 ingest 경로·전체 화면 및 PROJ-156 수용 E2E를 대체하지 않는다. 미구현 지표의 쿼리 단위 오류도 결과에 기록한다.
+로그·스크린샷·판정은 `build/e2e/auth-settings`에 남는다. 현재 범위는 인증·P5 메타, 실제 frontend API 클라이언트의 53개 지표 카탈로그 및 합계 5개·활성 사용자·도입률·커버리지 총 8개 지표다. 정규화 테스트 포인트를 ClickHouse에 직접 적재하며 ingest 경로·전체 화면 및 PROJ-156 수용 E2E를 대체하지 않는다. 미구현 지표의 쿼리 단위 오류도 결과에 기록한다.

@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 메트릭 5개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 8개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -142,18 +142,20 @@ try {
     assert.equal(metricIds.length, 53);
     assert.deepEqual(catalog.items.map(item => item.metric_id).sort(), metricIds.sort());
     assert.deepEqual(catalog.items.find(item => item.metric_id === 'refusals').forbidden_group_by, ['team']);
+    const expectedMetrics = [...metricFixtures.map(([metric, , value]) => [metric, value*5]),
+      ['active_users', 5], ['adoption_rate', 5/(role==='owner' ? 7 : 6)], ['telemetry_coverage', 1]];
     const queryResult = await page.evaluate(async fixtures => {
       const client = await import('/src/api/client.ts');
       return client.request('/query', { method: 'POST', body: JSON.stringify({
         from: 'now-1d', to: 'now', compare: 'none',
         queries: fixtures.map(([metric], index) => ({ ref_id: String.fromCharCode(65+index), metric_id: metric, frame_type: 'scalar' })),
       }) });
-    }, metricFixtures);
-    for (let index = 0; index < metricFixtures.length; index++) {
+    }, expectedMetrics);
+    for (let index = 0; index < expectedMetrics.length; index++) {
       const result = queryResult.results[String.fromCharCode(65+index)];
       assert.equal(result.status, 200);
       assert.equal(result.frames.length, 1);
-      assert.equal(result.frames[0].data.values[0][0], metricFixtures[index][2]*5);
+      assert.equal(result.frames[0].data.values[0][0], expectedMetrics[index][1]);
       assert.equal(result.frames[0].schema.fields[0].config.suppressed, false);
     }
 
@@ -172,8 +174,10 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·메트릭 5개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
-    verifiedMetrics: metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 8개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+    verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
+      { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
+      { metric: 'telemetry_coverage', expected: 1 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
