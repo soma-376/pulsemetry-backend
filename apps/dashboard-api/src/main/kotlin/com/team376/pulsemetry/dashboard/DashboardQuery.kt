@@ -60,7 +60,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
-    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio")
     private val sessionMetrics = setOf("prompts_per_session", "read_tool_density")
     private val intervals = linkedMapOf("1h" to "1 HOUR", "6h" to "6 HOUR", "1d" to "1 DAY", "1w" to "1 WEEK", "1M" to "1 MONTH")
     private val utc = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC)
@@ -112,10 +112,12 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics)) {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics)) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
+                else if (q.metricId=="mcp_connections") require(q.params.keys.all { it=="server_scope" } &&
+                    q.params.values.all { it.isString && it.asString().length in 1..100 })
                 else require(q.params.isEmpty())
                 val timeseries = (q.frameType ?: definition.defaultFrameType) == "timeseries"
                 val interval = q.interval ?: if (!timeseries) "1d" else
@@ -217,7 +219,10 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val attempt = "JSONExtract(raw_json,'payload','attempt','Nullable(Int64)')"
         val before = "JSONExtract(raw_json,'payload','tokens_before','Nullable(Int64)')"
         val after = "JSONExtract(raw_json,'payload','tokens_after','Nullable(Int64)')"
+        val mcp = "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='lifecycle' AND JSONExtractString(raw_json,'payload','kind')='mcp_connection'"
         val metric = when (q.metricId) {
+            "mcp_connections", "mcp_failure_ratio" -> mcp + if (q.params.containsKey("server_scope"))
+                " AND JSONExtractString(raw_json,'payload','attrs','server_scope')={server_scope:String}" else ""
             "compactions", "compaction_reduction" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='lifecycle' AND JSONExtractString(raw_json,'payload','kind')='compaction'"
             "usage_heatmap" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='user_prompt'"
             "auto_approval_ratio", "tool_rejections" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='tool_decision'"
@@ -229,13 +234,14 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             "command_prompt_ratio" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='user_prompt' AND JSONExtractString(raw_json,'envelope','session_id') NOT IN ('','(unknown)')"
             else -> "signal='metric' AND product='claude_code' AND $name={metric:String}"
         }
-        val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate","api_retry_attempts","rate_limit_events","auto_approval_ratio","tool_rejections","api_error_rate","usage_heatmap","compactions","compaction_reduction")
+        val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate","api_retry_attempts","rate_limit_events","auto_approval_ratio","tool_rejections","api_error_rate","usage_heatmap","compactions","compaction_reduction","mcp_connections","mcp_failure_ratio")
         val valid = if (q.metricId=="compaction_reduction") "$metric AND isNotNull($before) AND isNotNull($after)" else if (event) metric else "$metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2 AND isNotNull(JSONExtract(raw_json,'point','value','Nullable(Float64)'))"
         val observed = if (q.metricId=="tool_calls") tool else if (q.metricId=="compaction_reduction") metric else valid
         val cumulative = if (event) "0" else "countIf($metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)"
         val pointValue = "JSONExtract(raw_json,'point','value','Nullable(Float64)')"
         val numerator = when (q.metricId) {
-            "compactions" -> "countIf($valid)"
+            "compactions", "mcp_connections" -> "countIf($valid)"
+            "mcp_failure_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','attrs','status')!='connected')"
             "compaction_reduction" -> "sumIf($before-$after,$valid)"
             "api_error_rate" -> "countIf($valid AND JSONExtractString(raw_json,'payload','error_type')!='')"
             "usage_heatmap" -> "countIf($valid)"
@@ -273,6 +279,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             GROUP BY bucket${if (groupNames.isEmpty()) "" else ","+groupNames.joinToString(",")}
             ORDER BY ${if (groupNames.isEmpty()) "" else groupNames.joinToString(",")+","}bucket"""
         val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone, "metric" to pointMetrics[q.metricId].orEmpty(),
+            "server_scope" to (q.params["server_scope"]?.asString() ?: ""),
             "success" to if (q.params["success"]?.asBoolean()==true) "1" else "0")
         val rows = mapper.readTree(reader.query(sql, parameters, remaining(deadline)))["data"].toList().filter { it["points"].asLong()>0 || it["cumulative"].asLong()>0 }
         if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > groupLimit(q))
@@ -361,7 +368,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "team" -> "team"
         "product" -> "product"
         "tool_name", "tool_kind", "action", "error_type", "mcp_server", "decided_by" -> "JSONExtractString(raw_json,'payload','$dim')"
-        "trigger" -> "JSONExtractString(raw_json,'payload','attrs','trigger')"
+        "trigger", "server_name", "server_scope", "transport_type", "is_plugin" -> "JSONExtractString(raw_json,'payload','attrs','$dim')"
         "weekday" -> "toString(toDayOfWeek(ts,0,{zone:String}))"
         "status_code" -> "toString(coalesce(JSONExtract(raw_json,'payload','status_code','Nullable(Int64)'),0))"
         "hour" -> "toString(toHour(ts,{zone:String}))"

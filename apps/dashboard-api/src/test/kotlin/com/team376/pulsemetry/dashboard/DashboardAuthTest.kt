@@ -751,6 +751,53 @@ class DashboardAuthTest {
                 .contains("제외").doesNotContain("4개")
         }
     }
+    private fun mcpEvent(id: UUID, status: String?, scope: String = "user",
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(promptEvent(id,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "lifecycle","payload" to mapOf(
+            "kind" to "mcp_connection","attrs" to mapOf("server_name" to "github","status" to status,
+                "server_scope" to scope,"transport_type" to "stdio","is_plugin" to "True")))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `MCP 상태와 연결 속성을 집계하며 범위 필터를 바인딩한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { id -> listOf(mcpEvent(id,"connected"),mcpEvent(id,"failed"),
+            mcpEvent(id,"disconnected"),mcpEvent(id,null,"project"),compactionEvent(id,100,90)) }
+        seedPoints(rows+rows.first())
+        val ratio = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "mcp_failure_ratio",
+            "group_by" to listOf("server_name")))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(ratio["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.75,15.0,20.0)
+        assertThat(ratio["schema"]["fields"][0]["labels"]["server_name"].asString()).isEqualTo("github")
+        for (dims in listOf(listOf("server_scope","transport_type"),listOf("server_name","is_plugin"))) {
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "mcp_connections",
+                "frame_type" to "scalar","group_by" to dims,"params" to mapOf("server_scope" to "user"))))
+                .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"][0][0].asInt()).isEqualTo(15)
+            assertThat(frame["schema"]["fields"][0]["labels"][dims[1]].asString())
+                .isEqualTo(if (dims[1]=="is_plugin") "True" else "stdio")
+        }
+        for (params in listOf(mapOf("server_scope" to ""),mapOf("server_scope" to true),mapOf("bad" to "user"))) {
+            queryResult(queryBody(mapOf("metric_id" to "mcp_connections","params" to params))).andExpect(status().isBadRequest)
+        }
+        val empty = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "mcp_connections",
+            "params" to mapOf("server_scope" to "x' OR 1=1")))).andReturn().response.contentAsString)
+        assertThat(empty["results"]["A"]["frames"].size()).isZero()
+        seedPoints(ids.map { mcpEvent(it,"connected") })
+        val zero = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "mcp_failure_ratio")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+        assertThat(zero.toList().map { it[0].asDouble() }).containsExactly(0.0,0.0,5.0)
+    }
+    @Test fun `MCP 비교 기간의 작은 집단은 연결 수와 실패율 모두 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { mcpEvent(it,"connected") } +
+            ids.take(4).map { mcpEvent(it,"failed",at="2026-08-31T12:00:00Z") })
+        for (metric in listOf("mcp_connections","mcp_failure_ratio")) {
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar"),
+                mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+            assertThat(frame["schema"]["fields"][0]["config"]["suppressed"].asBoolean()).isTrue()
+        }
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
