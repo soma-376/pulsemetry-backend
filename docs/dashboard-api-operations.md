@@ -47,6 +47,14 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼용이며 현재 서버 실행 검증기는 아니다. S1-3 외 판정 규칙은 아직 정의하지 않았고 실행·이력·저장 API는 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 S1-3 서버 입력 검증에서 공통으로 사용한다. S1-3 외 판정 규칙·실행 계획과 실행 목록·저장 API는 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 시나리오 화면 렌더·실행 결과 검증은 포함하지 않는다.
+
+## S1-3 실행 워커
+
+`POST /v1/scenarios/S1-3/runs`에 `{"params":{"from":"now-28d","to":"now","moving_avg_days":7,"spike_threshold_pct":200},"price_basis":"list"}`를 보내면 202와 실행 ID를 반환한다. `Location`을 2초 간격으로 조회하고, 취소는 `POST /v1/scenario-runs/{id}/cancel`로 요청한다. `wait=true`는 최대 20초까지만 기다린다.
+
+워커는 기본 활성화이며 `pulsemetry.dashboard.worker-enabled=false`로 해당 인스턴스의 claim을 중단할 수 있다. 접수는 계속 가능하므로 유지보수 시 활성 실행 3개 상한에 유의한다. queued는 DB에 남고 running lease가 만료되면 다음 워커 claim 시 실패 처리된다. 재시도는 새 실행 요청으로 한다. 취소는 실행 중인 DB 조회의 즉시 중단을 보장하지 않으며 결과 저장을 차단한다.
+
+현재 S1-3만 실행 가능하다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.

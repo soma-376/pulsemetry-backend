@@ -30,6 +30,8 @@ class DashboardAuthTest {
     @Autowired lateinit var mvc: MockMvc
     @Autowired lateinit var jdbc: JdbcClient
     @Autowired lateinit var mapper: ObjectMapper
+    @Autowired lateinit var scenarioRuns: DashboardScenarioRuns
+    @Autowired lateinit var runStore: com.team376.pulsemetry.persistence.dashboard.DashboardRuns
     @Autowired lateinit var scenarioInputs: DashboardScenarioInputs
     @Autowired lateinit var clock: java.time.Clock
     private lateinit var member: UUID
@@ -1834,6 +1836,7 @@ class DashboardAuthTest {
         private val privateFile = pem("PRIVATE KEY", pair.private.encoded)
         private val publicFile = pem("PUBLIC KEY", pair.public.encoded)
         @JvmStatic @DynamicPropertySource fun properties(r: DynamicPropertyRegistry) {
+            r.add("pulsemetry.dashboard.worker-enabled") { "false" }
             r.add("pulsemetry.dashboard.clickhouse-url") { "http://${clickhouse.host}:${clickhouse.getMappedPort(8123)}" }
             r.add("pulsemetry.dashboard.tenant-id") { tenant.toString() }
             r.add("pulsemetry.dashboard.issuer") { "https://auth.test" }
@@ -2285,6 +2288,153 @@ class DashboardAuthTest {
         jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,'다른 조직 팀')")
             .param("id",team).param("tenant",otherTenant).update()
         assertThatThrownBy { prepareScenario(json = """{"params":{"team_ids":["$team"]}}""") }.hasMessage("forbidden")
+    }
+
+    private fun startRun(bearer: String = token(), id: String = "S1-3", params: String = """{"from":"2026-09-01","to":"2026-09-02","moving_avg_days":3}""") =
+        mvc.perform(post("/v1/scenarios/$id/runs").header("Authorization", "Bearer $bearer")
+            .contentType("application/json").content("""{"params":$params}"""))
+    private fun readRun(id: String, bearer: String) = mapper.readTree(mvc.perform(get("/v1/scenario-runs/$id")
+        .header("Authorization", "Bearer $bearer")).andExpect(status().isOk).andReturn().response.contentAsString)
+
+    @Test fun `실제 비용 시나리오는 큐 워커 결과 조회까지 연결된다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { id -> listOf(costEvent(id,40.0)) + listOf("2026-08-29","2026-08-30","2026-08-31").map { costEvent(id,10.0,"${it}T12:00:00Z") } })
+        val bearer = token()
+        val response = startRun(bearer).andExpect(status().isAccepted).andReturn().response
+        val queued = mapper.readTree(response.contentAsString)
+        val id = queued["run_id"].asString()
+        assertThat(response.getHeader("Location")).isEqualTo("/v1/scenario-runs/$id")
+        assertThat(response.getHeader("Retry-After")).isEqualTo("2")
+        assertThat(queued["status"].asString()).isEqualTo("queued")
+        scenarioRuns.runOne()
+        val completed = readRun(id,bearer)
+        assertThat(completed["status"].asString()).isEqualTo("succeeded")
+        assertThat(completed["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(completed["result"]["frames"]["cost"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(200.0)
+        val finding = completed["result"]["findings"].first { it["rule_id"].asString()=="spike_day" }
+        assertThat(finding["evidence"]["ratio"].asDouble()).isEqualTo(3.0)
+        mvc.perform(post("/v1/scenario-runs/$id/cancel").header("Authorization","Bearer $bearer")).andExpect(status().isConflict)
+    }
+
+    @Test fun `마스킹된 비용 시나리오는 수치 판정 근거를 만들지 않는다`() {
+        val ids = installations(4)
+        seedPoints(ids.flatMap { id -> listOf(costEvent(id,40.0)) + listOf("2026-08-29","2026-08-30","2026-08-31").map { costEvent(id,10.0,"${it}T12:00:00Z") } })
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val result = readRun(id,bearer)["result"]
+        assertThat(result["findings"].size()).isZero()
+        assertThat(result["frames"]["cost"]["frames"][0]["data"]["values"][1][0].isNull).isTrue()
+    }
+
+    @Test fun `실행 입력 오류 불가 미지원과 동시 상한을 HTTP에서 구분한다`() {
+        val bearer = token()
+        startRun(bearer,params="""{"moving_avg_days":"7"}""").andExpect(status().isBadRequest)
+        mvc.perform(get("/v1/scenario-runs/not-a-uuid").header("Authorization","Bearer $bearer")).andExpect(status().isBadRequest)
+        mvc.perform(post("/v1/scenarios/S1-3/runs").param("wait","invalid").header("Authorization","Bearer $bearer")
+            .contentType("application/json").content("""{"params":{}}""")).andExpect(status().isBadRequest)
+
+        startRun(bearer,"S5-1", "{}").andExpect(status().isConflict)
+        startRun(bearer,"S1-1", "{}").andExpect(status().isNotImplemented)
+        startRun(bearer,"S9-1", "{}").andExpect(status().isNotFound)
+        repeat(3) { startRun(bearer).andExpect(status().isAccepted) }
+        startRun(bearer).andExpect(status().isTooManyRequests)
+        mvc.perform(post("/v1/scenarios/S1-3/runs").contentType("application/json").content("""{"params":{}}"""))
+            .andExpect(status().isUnauthorized)
+    }
+
+    @Test fun `동시 admission은 여러 연결에서도 세 개만 허용한다`() {
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
+        val gate = java.util.concurrent.CountDownLatch(1)
+        try {
+            val tasks = (1..8).map { pool.submit<Boolean> {
+                gate.await()
+                runStore.enqueue(UUID.randomUUID(),tenant,"S1-3","{}","{}",clock.instant().minusSeconds(60),clock.instant(),member)
+            } }
+            gate.countDown()
+            assertThat(tasks.count { it.get(10,java.util.concurrent.TimeUnit.SECONDS) }).isEqualTo(3)
+        } finally { pool.shutdownNow() }
+    }
+
+    @Test fun `취소와 lease 만료는 늦은 워커 결과를 차단한다`() {
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer).andReturn().response.contentAsString)["run_id"].asString()
+        val claimed = requireNotNull(runStore.claim())
+        mvc.perform(post("/v1/scenario-runs/$id/cancel").header("Authorization","Bearer $bearer")).andExpect(status().isOk)
+        assertThat(runStore.finish(claimed,"{}",null)).isFalse()
+        assertThat(runStore.progress(claimed,1)).isFalse()
+        assertThat(readRun(id,bearer)["status"].asString()).isEqualTo("cancelled")
+        val expiredId = mapper.readTree(startRun(bearer).andReturn().response.contentAsString)["run_id"].asString()
+        val expired = requireNotNull(runStore.claim())
+        jdbc.sql("UPDATE dashboard.scenario_runs SET lease_until=now()-interval '1 second' WHERE id=:id")
+            .param("id",UUID.fromString(expiredId)).update()
+        assertThat(runStore.finish(expired,"{}",null)).isFalse()
+        assertThat(runStore.claim()).isNull()
+        assertThat(readRun(expiredId,bearer)["error"]["error"].asString()).isEqualTo("worker_lease_expired")
+    }
+
+    @Test fun `실행 중 계정 변경은 실패 처리하고 다른 tenant 조회는 숨긴다`() {
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer).andReturn().response.contentAsString)["run_id"].asString()
+        jdbc.sql("UPDATE enrollment.members SET status='suspended' WHERE id=:id").param("id",member).update()
+        scenarioRuns.runOne()
+        val failed = requireNotNull(runStore.get(tenant,UUID.fromString(id)))
+        assertThat(failed.status).isEqualTo("failed")
+        assertThat(mapper.readTree(failed.error)["error"].asString()).isEqualTo("forbidden")
+        assertThat(failed.result).isNull()
+        assertThatThrownBy { scenarioRuns.get(UUID.fromString(id),com.team376.pulsemetry.security.user.UserIdentity(
+            member,UUID.randomUUID(),"owner",UUID.randomUUID(),null,"web")) }.hasMessage("not_found")
+    }
+
+    @Test fun `admin 실행의 팀 범위는 큐 대기 이후에도 재검증한다`() {
+        val team = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,'실행 팀')").param("id",team).param("tenant",tenant).update()
+        jdbc.sql("INSERT INTO enrollment.team_memberships(team_id,member_id) VALUES (:team,:member)").param("team",team).param("member",member).update()
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        val bearer = token()
+        val queued = mapper.readTree(startRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)
+        assertThat(queued["params"]["team_ids"][0].asString()).isEqualTo(team.toString())
+        val id = queued["run_id"].asString()
+        jdbc.sql("UPDATE enrollment.team_memberships SET left_at=now() WHERE member_id=:id").param("id",member).update()
+        mvc.perform(get("/v1/scenario-runs/$id").header("Authorization","Bearer $bearer")).andExpect(status().isNotFound)
+        scenarioRuns.runOne()
+        assertThat(runStore.get(tenant,UUID.fromString(id))!!.status).isEqualTo("failed")
+        assertThat(runStore.get(tenant,UUID.fromString(id))!!.result).isNull()
+    }
+
+    @Test fun `지표 조회 오류는 일부 결과를 성공으로 저장하지 않는다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { costEvent(it,10.0) })
+        discountContract()
+        discountContract()
+        val bearer = token()
+        val queued = mapper.readTree(mvc.perform(post("/v1/scenarios/S1-3/runs").header("Authorization","Bearer $bearer")
+            .contentType("application/json").content("""{"params":{"from":"2026-09-01","to":"2026-09-02","moving_avg_days":3},"price_basis":"contract"}"""))
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)
+        scenarioRuns.runOne()
+        val failed = readRun(queued["run_id"].asString(),bearer)
+        assertThat(failed["status"].asString()).isEqualTo("failed")
+        assertThat(failed["result"].isNull).isTrue()
+        assertThat(failed["error"]["error"].asString()).isEqualTo("contract_overlap")
+    }
+
+    @Test fun `wait 요청은 워커가 완료하면 결과를 200으로 반환한다`() {
+        seedPoints(emptyList())
+        val bearer = token()
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            val future = executor.submit<org.springframework.test.web.servlet.MvcResult> {
+                mvc.perform(post("/v1/scenarios/S1-3/runs").param("wait","true").header("Authorization","Bearer $bearer")
+                    .contentType("application/json").content("""{"params":{"from":"2026-09-01","to":"2026-09-02"}}"""))
+                    .andExpect(status().isOk).andReturn()
+            }
+            val deadline = System.nanoTime()+java.time.Duration.ofSeconds(5).toNanos()
+            while(jdbc.sql("SELECT count(*) FROM dashboard.scenario_runs").query(Long::class.java).single()==0L && System.nanoTime()<deadline)
+                Thread.sleep(20)
+            scenarioRuns.runOne()
+            assertThat(mapper.readTree(future.get(10,java.util.concurrent.TimeUnit.SECONDS).response.contentAsString)["status"].asString())
+                .isEqualTo("succeeded")
+        } finally { executor.shutdownNow() }
     }
 
 }
