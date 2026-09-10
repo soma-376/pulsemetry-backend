@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5 범위만 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타 계약을 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -98,6 +98,17 @@ try {
     assert.equal((await response.json()).expires_in, 28800);
     await page.getByRole('heading', { name: '설정', exact: true }).waitFor();
     await page.getByRole('cell', { name: 'E2E 개발팀', exact: true }).waitFor();
+    // 실제 frontend의 메모리 토큰·CORS·JSON 처리 경로로 호출한다. 카탈로그 UI 렌더 검증은 아니다.
+    const catalog = await page.evaluate(async () => {
+      const client = await import('/src/api/client.ts');
+      return client.request('/meta/metrics');
+    });
+    const spec = readFileSync(resolve(backend, 'docs/reference/pulsemetry_api_spec.yaml'), 'utf8');
+    const metricSection = spec.split('    MetricId:')[1].split('    Dimension:')[0];
+    const metricIds = [...metricSection.matchAll(/^        - ([a-z_]+)/gm)].map(match => match[1]);
+    assert.equal(metricIds.length, 53);
+    assert.deepEqual(catalog.items.map(item => item.metric_id).sort(), metricIds.sort());
+    assert.deepEqual(catalog.items.find(item => item.metric_id === 'refusals').forbidden_group_by, ['team']);
     if (role === 'owner') {
       await page.getByRole('cell', { name: 'E2E 별도팀', exact: true }).waitFor();
       await page.getByRole('button', { name: '구성원 조회 · 사유 입력' }).click();
@@ -112,7 +123,7 @@ try {
     await page.screenshot({ path: resolve(artifacts, `${role}.png`), fullPage: true });
     await context.close();
   }
-  const result = { scope: '인증 및 P5 설정 smoke; 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 smoke 및 실제 frontend API 클라이언트 지표 카탈로그 계약; 전체 PROJ-156 수용 검증 아님', passed: true,
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
