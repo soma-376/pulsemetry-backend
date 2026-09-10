@@ -112,7 +112,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics)) {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics)) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
@@ -221,6 +221,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val after = "JSONExtract(raw_json,'payload','tokens_after','Nullable(Int64)')"
         val mcp = "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='lifecycle' AND JSONExtractString(raw_json,'payload','kind')='mcp_connection'"
         val metric = when (q.metricId) {
+            "llm_stop_reasons" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type') IN ('llm_call','llm_response')"
             "mcp_connections", "mcp_failure_ratio" -> mcp + if (q.params.containsKey("server_scope"))
                 " AND JSONExtractString(raw_json,'payload','attrs','server_scope')={server_scope:String}" else ""
             "compactions", "compaction_reduction" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='lifecycle' AND JSONExtractString(raw_json,'payload','kind')='compaction'"
@@ -234,13 +235,13 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             "command_prompt_ratio" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='user_prompt' AND JSONExtractString(raw_json,'envelope','session_id') NOT IN ('','(unknown)')"
             else -> "signal='metric' AND product='claude_code' AND $name={metric:String}"
         }
-        val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate","api_retry_attempts","rate_limit_events","auto_approval_ratio","tool_rejections","api_error_rate","usage_heatmap","compactions","compaction_reduction","mcp_connections","mcp_failure_ratio")
+        val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate","api_retry_attempts","rate_limit_events","auto_approval_ratio","tool_rejections","api_error_rate","usage_heatmap","compactions","compaction_reduction","mcp_connections","mcp_failure_ratio","llm_stop_reasons")
         val valid = if (q.metricId=="compaction_reduction") "$metric AND isNotNull($before) AND isNotNull($after)" else if (event) metric else "$metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2 AND isNotNull(JSONExtract(raw_json,'point','value','Nullable(Float64)'))"
         val observed = if (q.metricId=="tool_calls") tool else if (q.metricId=="compaction_reduction") metric else valid
         val cumulative = if (event) "0" else "countIf($metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)"
         val pointValue = "JSONExtract(raw_json,'point','value','Nullable(Float64)')"
         val numerator = when (q.metricId) {
-            "compactions", "mcp_connections" -> "countIf($valid)"
+            "compactions", "mcp_connections", "llm_stop_reasons" -> "countIf($valid)"
             "mcp_failure_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','attrs','status')!='connected')"
             "compaction_reduction" -> "sumIf($before-$after,$valid)"
             "api_error_rate" -> "countIf($valid AND JSONExtractString(raw_json,'payload','error_type')!='')"
@@ -367,7 +368,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private fun dimension(dim: String): String = when (dim) {
         "team" -> "team"
         "product" -> "product"
-        "tool_name", "tool_kind", "action", "error_type", "mcp_server", "decided_by" -> "JSONExtractString(raw_json,'payload','$dim')"
+        "tool_name", "tool_kind", "action", "error_type", "mcp_server", "decided_by", "stop_reason" -> "JSONExtractString(raw_json,'payload','$dim')"
         "trigger", "server_name", "server_scope", "transport_type", "is_plugin" -> "JSONExtractString(raw_json,'payload','attrs','$dim')"
         "weekday" -> "toString(toDayOfWeek(ts,0,{zone:String}))"
         "status_code" -> "toString(coalesce(JSONExtract(raw_json,'payload','status_code','Nullable(Int64)'),0))"
@@ -429,6 +430,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             val quality = mutableListOf<String>()
             if (incompleteCompactions>0) quality += if (suppressed) "전후 토큰 쌍이 없는 압축 이벤트를 감소율에서 제외" else
                 "전후 토큰 쌍이 없는 압축 이벤트 ${incompleteCompactions}개를 감소율에서 제외"
+            if (q.metricId=="llm_stop_reasons") quality += "llm_call·llm_response 관측 이벤트 수; 사유 누락은 빈 라벨"
             if (q.metricId=="api_error_rate") quality += "호출 시도 단위 오류율이며 최종 재시도 실패율이 아님"
             if (cumulative>0) quality += if (suppressed) "누적 temporality 포인트 제외" else "누적 temporality 포인트 ${cumulative}개 제외"
             if (q.metricId=="api_retry_attempts" && unknownAttempts>0) quality += if (suppressed)

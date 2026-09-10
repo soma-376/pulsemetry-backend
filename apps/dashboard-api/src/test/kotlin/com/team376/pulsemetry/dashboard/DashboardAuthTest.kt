@@ -798,6 +798,47 @@ class DashboardAuthTest {
             assertThat(frame["schema"]["fields"][0]["config"]["suppressed"].asBoolean()).isTrue()
         }
     }
+    private fun stopEvent(id: UUID, reason: String?, type: String = "llm_call",
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(llmEvent(id,1,200,type=type,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to type,"payload" to mapOf(
+            "model" to "claude-test","stop_reason" to reason))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `종료 사유는 호출과 응답 이벤트를 집계하고 누락 및 중복을 구별한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(stopEvent(it,"end_turn"),stopEvent(it,"end_turn","llm_response"),
+            stopEvent(it,"max_tokens"),stopEvent(it,null),stopEvent(it,"ignored","llm_request")) }
+        seedPoints(rows+rows.first())
+        val frames = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "llm_stop_reasons",
+            "group_by" to listOf("model","stop_reason")))).andExpect(status().isOk)
+            .andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        assertThat(frames).hasSize(3)
+        val values = frames.associate { it["schema"]["fields"][0]["labels"]["stop_reason"].asString() to
+            it["data"]["values"][0][0].asInt() }
+        assertThat(values).containsExactlyInAnyOrderEntriesOf(mapOf("end_turn" to 10,"max_tokens" to 5,"" to 5))
+        assertThat(frames.all { it["schema"]["fields"][0]["labels"]["model"].asString()=="claude-test" }).isTrue()
+        queryResult(queryBody(mapOf("metric_id" to "llm_stop_reasons","params" to mapOf("status" to "ok"))))
+            .andExpect(status().isBadRequest)
+        seedPoints(ids.map { stopEvent(it,"ignored","llm_request") })
+        val empty = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "llm_stop_reasons")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"]
+        assertThat(empty.size()).isZero()
+    }
+    @Test fun `종료 사유는 작은 비교 집단을 마스킹하고 시계열 빈 구간을 보존한다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { stopEvent(it,"end_turn") })
+        val query = mapOf("metric_id" to "llm_stop_reasons","frame_type" to "timeseries",
+            "interval" to "1d","group_by" to listOf("stop_reason"))
+        val frame = mapper.readTree(queryResult(queryBody(query)).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"][1][0].asInt()).isEqualTo(5)
+        assertThat(frame["data"]["values"][1][1].isNull).isTrue()
+        seedPoints(ids.map { stopEvent(it,"end_turn") } +
+            ids.take(4).map { stopEvent(it,"end_turn",at="2026-08-31T12:00:00Z") })
+        val hidden = mapper.readTree(queryResult(queryBody(query,mapOf("compare" to "previous_period")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(hidden["data"]["values"].toList().drop(1).all { values -> values.toList().all { it.isNull } }).isTrue()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
