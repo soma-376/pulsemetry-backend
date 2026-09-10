@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 49개 및 owner 전용 지표 2개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 50개 및 owner 전용 지표 2개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -451,6 +451,25 @@ try {
     assert.deepEqual(priced[3].points.map(p => p.value.value), [0.4, 2, 5]);
     assert.deepEqual(priced[4].points.map(p => p.value.value), [0.4, 1, 2.5]);
     assert.equal(priced[1].points[0].labels.agent_name, 'worker');
+    if (role === 'admin') {
+      // 다른 지표 검증 뒤에 과거 비용을 넣어 첫 사용 코호트 fixture를 보존한다.
+      const baseline = points.map(JSON.parse).filter(p => JSON.parse(p.raw_json).type === 'llm_call')
+        .map(p => JSON.stringify({ ...p, event_id: randomUUID(), ts: observedAt - 86400,
+          raw_json: JSON.stringify({ type: 'llm_call', payload: { cost_usd: 1, model: 'claude-e2e' } }) }));
+      run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], baseline.join('\n'));
+      const anomaly = await page.evaluate(async () => {
+        const client = await import('/src/api/client.ts');
+        const { series } = await import('/src/widgets/model.ts');
+        const response = await client.request('/query', { method: 'POST', body: JSON.stringify({
+          from: 'now-1d', to: 'now', tz: 'UTC', queries: [
+            { ref_id: 'A', metric_id: 'cost_anomaly', params: { window_days: 1 }, group_by: ['team'] },
+          ],
+        }) });
+        return series(response.results.A);
+      });
+      assert.equal(anomaly.state, 'success');
+      assert.deepEqual(anomaly.points.map(p => p.value.value), [1, 30, 15]);
+    }
     const hookExecutions = hookResults.hooks;
     assert.equal(hookResults.models.state, 'success');
     assert.deepEqual(Object.fromEntries(hookResults.models.points.map(p => [p.key, p.value.value])), { value: 5 });
@@ -496,7 +515,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 49개 및 owner 전용 지표 2개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 2개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -533,7 +552,8 @@ try {
       { metric: 'subagent_cost_ratio', expected: 0.4 },
       { metric: 'cost_per_active_user', list: 6, contract: 3 },
       { metric: 'cost_per_user_hour', list: 180, contract: 90 },
-      { metric: 'model_unit_price', list: 30/6750, contract: 15/6750 }],
+      { metric: 'model_unit_price', list: 30/6750, contract: 15/6750 },
+      { metric: 'cost_anomaly', expected: 1, actual: 30, baseline: 15 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
