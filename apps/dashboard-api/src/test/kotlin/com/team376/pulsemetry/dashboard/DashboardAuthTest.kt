@@ -231,6 +231,9 @@ class DashboardAuthTest {
         assertThat(frame["schema"]["meta"]["data_quality"].toString()).contains("5개")
         assertThat(frame["schema"]["meta"]["executed_sql"].asString()).contains("FINAL", "{tenant:String}")
         assertThat(body["coverage"]["active_installations"].asInt()).isEqualTo(5)
+        val after = queryBody(extra=mapOf("from" to "2026-09-01T12:00:00.001Z"))
+        val fractional = mapper.readTree(queryResult(after).andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(fractional["results"]["A"]["frames"].size()).isZero()
     }
     @Test fun `한 사람의 여러 설치는 마스킹 인원을 늘리지 않고 CSV와 커버리지도 억제한다`() {
         val ids = installations(4)
@@ -238,19 +241,21 @@ class DashboardAuthTest {
         jdbc.sql("""INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform)
             SELECT :copy,tenant_id,member_id,invitation_id,platform FROM enrollment.installations WHERE id=:id""")
             .param("copy",duplicate).param("id",ids[0]).update()
-        seedPoints((ids+duplicate).map { point(it,98765.0) })
-        val input = queryBody(mapOf("frame_type" to "scalar"))
+        val previousIds = ids + installations(1)
+        seedPoints((ids+duplicate).map { point(it,98765.0) } + previousIds.map { point(it,87654.0,"2026-08-31T12:00:00Z") })
+        val input = queryBody(mapOf("frame_type" to "scalar"),mapOf("compare" to "previous_period"))
         val result = queryResult(input).andExpect(status().isOk).andReturn().response.contentAsString
         val body = mapper.readTree(result)
         val frame = body["results"]["A"]["frames"][0]
         assertThat(frame["data"]["values"][0][0].isNull).isTrue()
+        assertThat(frame["data"]["values"][1][0].isNull).isTrue()
         assertThat(frame["schema"]["fields"][0]["config"]["suppressed"].asBoolean()).isTrue()
         assertThat(frame["schema"]["fields"][0]["config"]["group_size"].isNull).isTrue()
         assertThat(body["coverage"]["active_installations"].isNull).isTrue()
         assertThat(body["coverage"]["ratio"].isNull).isTrue()
         val csv = queryResult(input,accept="text/csv").andExpect(status().isOk).andReturn().response
         assertThat(csv.contentType).startsWith("text/csv")
-        assertThat(csv.contentAsString).doesNotContain("98765", "493825")
+        assertThat(csv.contentAsString).doesNotContain("98765", "493825", "438270")
     }
     @Test fun `쿼리 필터는 전역 팀을 유지하고 admin의 범위 밖과 개인 조회를 거부한다`() {
         val mine = UUID.randomUUID(); val other = UUID.randomUUID()
@@ -307,6 +312,8 @@ class DashboardAuthTest {
             queryBody(extra=mapOf("from" to "not-time")), queryBody(mapOf("metric_id" to "refusals","group_by" to listOf("team")))))
             queryResult(input).andExpect(status().isBadRequest)
         queryResult(queryBody(extra=mapOf("from" to "2020-01-01T00:00:00Z"))).andExpect(status().`is`(422))
+        queryResult(queryBody(mapOf("frame_type" to "scalar"),mapOf("max_data_points" to 1,
+            "from" to "2026-01-01T00:00:00Z"))).andExpect(status().isOk)
         val absent = mapper.readTree(queryResult(queryBody()).andExpect(status().isOk).andReturn().response.contentAsString)
         assertThat(absent["results"]["A"]["frames"].size()).isZero()
         val unfinished = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost")))

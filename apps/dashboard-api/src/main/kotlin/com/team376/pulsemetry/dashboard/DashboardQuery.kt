@@ -113,9 +113,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 require(q.params.isEmpty())
-                val interval = q.interval ?: intervals.keys.firstOrNull { buckets(time, from, to, it).size <= body.maxDataPoints }
-                    ?: throw DashboardReadException("query_too_wide", 422)
-                val ticks = buckets(time, from, to, interval)
+                val timeseries = (q.frameType ?: definition.defaultFrameType) == "timeseries"
+                val interval = q.interval ?: if (!timeseries) "1d" else
+                    intervals.keys.firstOrNull { buckets(time, from, to, it).size <= body.maxDataPoints }
+                        ?: throw DashboardReadException("query_too_wide", 422)
+                val ticks = if (timeseries) buckets(time, from, to, interval) else emptyList()
                 if (ticks.size > body.maxDataPoints) throw DashboardReadException("query_too_wide", 422)
                 val scope = scopes.getValue(q.filters?.merge(body.filters) ?: body.filters)
                 try {
@@ -221,6 +223,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val groups = current.data.groupBy(::key)
         val comparisons = previous?.data?.groupBy(::key).orEmpty()
         val keys = (groups.keys + comparisons.keys).distinct()
+        if (keys.size > q.limit) throw DashboardReadException("query_too_wide", 422)
         val frameType = q.frameType ?: definition.defaultFrameType
         val frames = keys.map { group ->
             val rows = groups[group].orEmpty()
