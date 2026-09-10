@@ -934,6 +934,52 @@ class DashboardAuthTest {
             .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
         assertThat(hidden["data"]["values"].toList().drop(1).all { it.toList().all { v -> v.isNull } }).isTrue()
     }
+    private fun gateEvent(id: UUID, wait: Int?, decision: String = "accept", by: String = "user",
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(llmEvent(id,1,200,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("signal","span")
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "tool_gate","payload" to mapOf(
+            "blocked_on_user_ms" to wait,"decision" to decision,"decided_by" to by))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `승인 지표는 정확 대기 분위수와 사용자 승인만의 임계 비율을 계산한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { id -> listOf(gateEvent(id,0),gateEvent(id,1999),gateEvent(id,2000),
+            gateEvent(id,3000),gateEvent(id,null),gateEvent(id,-1),gateEvent(id,100,"reject"),
+            gateEvent(id,0,by="config")) }
+        seedPoints(rows+rows.first())
+        val gate = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "gate_wait_ms",
+            "group_by" to listOf("decision","decided_by")))).andReturn().response.contentAsString)["results"]["A"]["frames"]
+            .toList().single { it["schema"]["fields"][0]["labels"]["decision"].asString()=="accept" &&
+                it["schema"]["fields"][0]["labels"]["decided_by"].asString()=="user" }
+        assertThat(gate["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(2000.0,3000.0)
+        assertThat(gate["schema"]["fields"][0]["config"]["unit"].asString()).isEqualTo("ms")
+        for ((threshold, expected) in listOf(null to 0.5,0 to 0.0,2001 to 0.75,3600000 to 1.0)) {
+            val q = mutableMapOf<String,Any>("metric_id" to "rubber_stamp_ratio")
+            if (threshold!=null) q["params"] = mapOf("threshold_ms" to threshold)
+            val values = mapper.readTree(queryResult(queryBody(q)).andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+            assertThat(values[0][0].asDouble()).isEqualTo(expected)
+            assertThat(values[2][0].asInt()).isEqualTo(20)
+        }
+        for (threshold in listOf<Any>(-1,3600001,1.5,"2000",true,999999999999L)) {
+            queryResult(queryBody(mapOf("metric_id" to "rubber_stamp_ratio","params" to mapOf("threshold_ms" to threshold))))
+                .andExpect(status().isBadRequest)
+        }
+        seedPoints(ids.map { gateEvent(it,100,"reject") })
+        val noAccept = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "rubber_stamp_ratio")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+        assertThat(noAccept[0][0].isNull).isTrue()
+        assertThat(noAccept[2][0].asInt()).isZero()
+    }
+    @Test fun `승인 지표는 작은 비교 집단의 분위수와 비율을 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { gateEvent(it,100) } + ids.take(4).map { gateEvent(it,900,at="2026-08-31T12:00:00Z") })
+        for (metric in listOf("gate_wait_ms","rubber_stamp_ratio")) {
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric),
+                mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        }
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")

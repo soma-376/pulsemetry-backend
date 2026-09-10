@@ -60,8 +60,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
-    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio")
-    private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio")
+    private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms", "gate_wait_ms")
     private val sessionMetrics = setOf("prompts_per_session", "read_tool_density")
     private val intervals = linkedMapOf("1h" to "1 HOUR", "6h" to "6 HOUR", "1d" to "1 DAY", "1w" to "1 WEEK", "1M" to "1 MONTH")
     private val utc = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC)
@@ -119,6 +119,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
                 else if (q.metricId=="mcp_connections") require(q.params.keys.all { it=="server_scope" } &&
                     q.params.values.all { it.isString && it.asString().length in 1..100 })
+                else if (q.metricId=="rubber_stamp_ratio") require(q.params.keys.all { it=="threshold_ms" } &&
+                    q.params.values.all { it.isIntegralNumber && it.canConvertToInt() && it.asInt() in 0..3600000 })
                 else require(q.params.isEmpty())
                 val timeseries = (q.frameType ?: definition.defaultFrameType) == "timeseries"
                 val interval = q.interval ?: if (!timeseries) "1d" else
@@ -222,7 +224,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val before = "JSONExtract(raw_json,'payload','tokens_before','Nullable(Int64)')"
         val after = "JSONExtract(raw_json,'payload','tokens_after','Nullable(Int64)')"
         val mcp = "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='lifecycle' AND JSONExtractString(raw_json,'payload','kind')='mcp_connection'"
+        val blocked = "JSONExtract(raw_json,'payload','blocked_on_user_ms','Nullable(Float64)')"
         val metric = when (q.metricId) {
+            "rubber_stamp_ratio" -> "signal='span' AND JSONExtractString(raw_json,'type')='tool_gate' AND JSONExtractString(raw_json,'payload','decided_by')='user' AND isNotNull($blocked) AND $blocked>=0"
             "llm_stop_reasons" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type') IN ('llm_call','llm_response')"
             "mcp_connections", "mcp_failure_ratio" -> mcp + if (q.params.containsKey("server_scope"))
                 " AND JSONExtractString(raw_json,'payload','attrs','server_scope')={server_scope:String}" else ""
@@ -237,12 +241,13 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             "command_prompt_ratio" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='user_prompt' AND JSONExtractString(raw_json,'envelope','session_id') NOT IN ('','(unknown)')"
             else -> "signal='metric' AND product='claude_code' AND $name={metric:String}"
         }
-        val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate","api_retry_attempts","rate_limit_events","auto_approval_ratio","tool_rejections","api_error_rate","usage_heatmap","compactions","compaction_reduction","mcp_connections","mcp_failure_ratio","llm_stop_reasons")
+        val event = q.metricId in setOf("command_prompt_ratio","tool_calls","tool_failure_rate","api_retry_attempts","rate_limit_events","auto_approval_ratio","tool_rejections","api_error_rate","usage_heatmap","compactions","compaction_reduction","mcp_connections","mcp_failure_ratio","llm_stop_reasons","rubber_stamp_ratio")
         val valid = if (q.metricId=="compaction_reduction") "$metric AND isNotNull($before) AND isNotNull($after)" else if (event) metric else "$metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2 AND isNotNull(JSONExtract(raw_json,'point','value','Nullable(Float64)'))"
         val observed = if (q.metricId=="tool_calls") tool else if (q.metricId=="compaction_reduction") metric else valid
         val cumulative = if (event) "0" else "countIf($metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)"
         val pointValue = "JSONExtract(raw_json,'point','value','Nullable(Float64)')"
         val numerator = when (q.metricId) {
+            "rubber_stamp_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','decision')='accept' AND $blocked<{threshold:UInt32})"
             "compactions", "mcp_connections", "llm_stop_reasons" -> "countIf($valid)"
             "mcp_failure_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','attrs','status')!='connected')"
             "compaction_reduction" -> "sumIf($before-$after,$valid)"
@@ -260,6 +265,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             else -> "sumIf($pointValue,$valid)"
         }
         val denominator = when (q.metricId) {
+            "rubber_stamp_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','decision')='accept')"
             "compaction_reduction" -> "sumIf($before,$valid)"
             "tool_failure_rate" -> "countIf($valid AND isNotNull($success))"
             "automation_ratio" -> "sumIf($pointValue,$valid)"
@@ -282,6 +288,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             GROUP BY bucket${if (groupNames.isEmpty()) "" else ","+groupNames.joinToString(",")}
             ORDER BY ${if (groupNames.isEmpty()) "" else groupNames.joinToString(",")+","}bucket"""
         val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone, "metric" to pointMetrics[q.metricId].orEmpty(),
+            "threshold" to (q.params["threshold_ms"]?.asInt() ?: 2000).toString(),
             "server_scope" to (q.params["server_scope"]?.asString() ?: ""),
             "success" to if (q.params["success"]?.asBoolean()==true) "1" else "0")
         val rows = mapper.readTree(reader.query(sql, parameters, remaining(deadline)))["data"].toList().filter { it["points"].asLong()>0 || it["cumulative"].asLong()>0 }
@@ -296,17 +303,19 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val groups = listOf("bucket") + q.groupBy.indices.map { "g$it" }
         val groupSql = groups.joinToString(",")
         val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
+        val gate = q.metricId=="gate_wait_ms"
         val turn = q.metricId=="turn_duration_ms"
         val ttft = q.metricId=="llm_ttft_ms"
         // 턴 attrs는 정규화 문자열이고 LLM payload는 숫자다. 누락을 0으로 바꾸지 않는다.
         val value = if (turn) "toFloat64OrNull(JSONExtractString(raw_json,'payload','attrs','duration_ms'))"
-            else "JSONExtract(raw_json,'payload','${if (ttft) "ttft_ms" else "duration_ms"}','Nullable(Float64)')"
+            else "JSONExtract(raw_json,'payload','${if (ttft) "ttft_ms" else if (gate) "blocked_on_user_ms" else "duration_ms"}','Nullable(Float64)')"
         val logValid = "signal='log' AND JSONExtractString(raw_json,'type')='llm_call' AND JSONExtractString(raw_json,'payload','error_type')='' AND isNotNull($value) AND $value>=0"
         // 시간 버킷을 나누기 전에 소스를 선택하므로 같은 요청의 로그와 스팬이 버킷 경계에서 중복되지 않는다.
         val requestKey = "if(JSONExtractString(raw_json,'payload','request_id')!='',concat('request:',JSONExtractString(raw_json,'payload','request_id')),concat('session:',toJSONString(tuple(JSONExtractString(raw_json,'envelope','session_id'),${dimension("model")}))))"
         val input = if (ttft) "SELECT *, countIf($logValid) OVER (PARTITION BY installation_id,product,$requestKey) AS preferred_logs $base"
             else "SELECT * $base"
         val source = if (ttft) "(($logValid) OR (preferred_logs=0 AND signal='span' AND JSONExtractString(raw_json,'type')='llm_request' AND JSONExtractString(raw_json,'payload','error_type')=''))"
+            else if (gate) "signal='span' AND JSONExtractString(raw_json,'type')='tool_gate'"
             else if (turn) "signal='span' AND JSONExtractString(raw_json,'type')='turn'"
             else "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='llm_call' AND JSONExtractString(raw_json,'payload','error_type')=''"
         val valid = "$source AND isNotNull($value) AND $value>=0"
@@ -315,7 +324,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             countIf($valid) AS points, 0 AS cumulative,
             quantileExactIf(0.5)($value,$valid) AS p50, quantileExactIf(0.9)($value,$valid) AS p90,
             quantileExactIf(0.95)($value,$valid) AS p95, quantileExactIf(0.99)($value,$valid) AS p99,
-            p50 AS value FROM ($input) GROUP BY $groupSql ORDER BY $groupSql"""
+            p50 AS value FROM ($input)
+            ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
+            GROUP BY $groupSql ORDER BY $groupSql"""
         val parameters = scope.parameters + mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
         val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
             .filter { it["points"].asLong()>0 }
@@ -404,7 +415,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private fun dimension(dim: String): String = when (dim) {
         "team" -> "team"
         "product" -> "product"
-        "tool_name", "tool_kind", "action", "error_type", "mcp_server", "decided_by", "stop_reason" -> "JSONExtractString(raw_json,'payload','$dim')"
+        "tool_name", "tool_kind", "action", "error_type", "mcp_server", "decided_by", "stop_reason", "decision" -> "JSONExtractString(raw_json,'payload','$dim')"
         "trigger", "server_name", "server_scope", "transport_type", "is_plugin" -> "JSONExtractString(raw_json,'payload','attrs','$dim')"
         "weekday" -> "toString(toDayOfWeek(ts,0,{zone:String}))"
         "status_code" -> "toString(coalesce(JSONExtract(raw_json,'payload','status_code','Nullable(Int64)'),0))"
