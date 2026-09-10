@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 45개 및 owner 전용 지표 2개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 46개 및 owner 전용 지표 2개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -104,7 +104,7 @@ try {
       INSERT INTO enrollment.contract_memberships(contract_id,member_id,assigned_at) VALUES ('${costContract}','${memberId}',to_timestamp(${observedAt}-3600));`);
     points.push(JSON.stringify({ event_id: randomUUID(), ts: observedAt, tenant_id: tenant, installation_id: installationId,
       signal: 'metric', product: 'claude_code', team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
-      raw_json: JSON.stringify({ point: { name: 'claude_code.cost.usage', value: 1, aggregation_temporality: 1, attrs: { model: 'claude-e2e', 'agent.name': 'worker' } } }) }));
+      raw_json: JSON.stringify({ point: { name: 'claude_code.cost.usage', value: 1, aggregation_temporality: 1, attrs: { model: 'claude-e2e', 'agent.name': 'worker', query_source: index < 2 ? 'subagent' : 'main' } } }) }));
     for (const [, name, value] of metricFixtures) points.push(JSON.stringify({
       event_id: randomUUID(), ts: observedAt,
       tenant_id: tenant, installation_id: installationId, signal: 'metric', product: 'claude_code',
@@ -429,12 +429,16 @@ try {
           { ref_id: 'A', metric_id: 'cost', frame_type: 'scalar' },
           { ref_id: 'B', metric_id: 'cost', source: 'metrics', frame_type: 'scalar', group_by: ['agent_name'] },
           { ref_id: 'C', metric_id: 'cost', source: 'metrics', price_basis: 'list', frame_type: 'scalar' },
+          { ref_id: 'D', metric_id: 'subagent_cost_ratio', price_basis: 'list', group_by: ['team'] },
+          { ref_id: 'E', metric_id: 'subagent_cost_ratio', group_by: ['team'] },
         ],
       }) });
-      return ['A', 'B', 'C'].map(ref => series(response.results[ref]));
+      return ['A', 'B', 'C', 'D', 'E'].map(ref => series(response.results[ref]));
     });
     assert.ok(priced.every(result => result.state === 'success'));
-    assert.deepEqual(priced.map(result => result.points[0].value.value), [15, 2.5, 5]);
+    assert.deepEqual(priced.map(result => result.points[0].value.value), [15, 2.5, 5, 0.4, 0.4]);
+    assert.deepEqual(priced[3].points.map(p => p.value.value), [0.4, 2, 5]);
+    assert.deepEqual(priced[4].points.map(p => p.value.value), [0.4, 1, 2.5]);
     assert.equal(priced[1].points[0].labels.agent_name, 'worker');
     const hookExecutions = hookResults.hooks;
     assert.equal(hookResults.models.state, 'success');
@@ -481,7 +485,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 45개 및 owner 전용 지표 2개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 46개 및 owner 전용 지표 2개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -514,7 +518,8 @@ try {
       { metric: 'onboarding_ttfu', p50: 3600, p90: 3600 },
       { metric: 'onboarding_retention', cohort_installations: 5 },
       { metric: 'vendor_account_mismatch', expected: 5, scope: 'owner' },
-      { metric: 'cost', eventsList: 30, eventsContract: 15, metricsList: 5, metricsContract: 2.5 }],
+      { metric: 'cost', eventsList: 30, eventsContract: 15, metricsList: 5, metricsContract: 2.5 },
+      { metric: 'subagent_cost_ratio', expected: 0.4 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
