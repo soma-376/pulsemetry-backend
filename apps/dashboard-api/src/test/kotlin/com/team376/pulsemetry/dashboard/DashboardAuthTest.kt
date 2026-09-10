@@ -1731,6 +1731,51 @@ class DashboardAuthTest {
             .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
         assertThat(hidden["data"]["values"].toList().all { it[0].isNull }).isTrue()
     }
+    private fun userTime(id: UUID, seconds: Double, type: String = "user", cumulative: Boolean = false,
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(point(id,seconds,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.active_time.total",
+            "value" to seconds,"aggregation_temporality" to if (cumulative) 2 else 1,"attrs" to mapOf("type" to type)))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `사용자 비용은 사람을 중복 제거하고 시간 비용은 사용자 시간만 합산한다`() {
+        val ids = installations(5)
+        val extra = UUID.randomUUID()
+        jdbc.sql("""INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform)
+            SELECT :extra,tenant_id,member_id,invitation_id,platform FROM enrollment.installations WHERE id=:id""")
+            .param("extra",extra).param("id",ids.first()).update()
+        val rows = (ids+extra).flatMap { listOf(costEvent(it,10.0),userTime(it,3600.0),
+            userTime(it,9999.0,"cli"),userTime(it,9999.0,cumulative=true)) }
+        seedPoints(rows+rows.first())
+        fun frame(metric: String, basis: String = "list") = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric),
+            mapOf("price_basis" to basis))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame("cost_per_active_user")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(12.0,60.0,5.0)
+        val hours = frame("cost_per_user_hour")
+        assertThat(hours["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(10.0,60.0,6.0)
+        assertThat(hours["schema"]["fields"][2]["config"]["unit"].asString()).isEqualTo("h")
+        discountContract()
+        assertThat(frame("cost_per_active_user","contract")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(6.0,30.0,5.0)
+        assertThat(frame("cost_per_user_hour","contract")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(5.0,30.0,6.0)
+    }
+    @Test fun `사용자 비용 폴백과 시간 미관측을 구분하고 비교 소집단을 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { costEvent(it,10.0) })
+        fun result(metric: String, compare: Boolean = false) = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric),
+            if (compare) mapOf("compare" to "previous_period") else emptyMap()))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        val users = result("cost_per_active_user")
+        assertThat(users["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(10.0,50.0,5.0)
+        assertThat(users["schema"]["meta"]["active_user_definition"].asString()).isEqualTo("any_event")
+        val hours = result("cost_per_user_hour")
+        assertThat(hours["data"]["values"][0][0].isNull).isTrue()
+        assertThat(hours["data"]["values"][1][0].asDouble()).isEqualTo(50.0)
+        assertThat(hours["data"]["values"][2][0].isNull).isTrue()
+        seedPoints(ids.flatMap { listOf(costEvent(it,10.0),userTime(it,3600.0)) }+
+            ids.take(4).flatMap { listOf(costEvent(it,10.0,at="2026-08-31T12:00:00Z"),userTime(it,3600.0,at="2026-08-31T12:00:00Z")) })
+        for (metric in listOf("cost_per_active_user","cost_per_user_hour")) {
+            assertThat(result(metric,true)["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        }
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")

@@ -60,7 +60,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
-    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio", "cost_per_active_user", "cost_per_user_hour")
     private val tokenTypes = listOf("input","output","cache_read","cache_create")
     private val tokenRatios = setOf("cache_read_ratio","input_output_ratio")
     private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms", "gate_wait_ms", "onboarding_ttfu")
@@ -226,7 +226,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
-        if (q.metricId in setOf("cost","subagent_cost_ratio")) return readCost(q,scope,from,to,zone,interval,deadline)
+        if (q.metricId in setOf("cost","subagent_cost_ratio","cost_per_active_user","cost_per_user_hour")) return readCost(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="vendor_account_mismatch") return readMismatch(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="onboarding_retention") return readRetention(q,scope,from,to,zone,deadline)
         if (q.metricId=="onboarding_ttfu") return readOnboarding(q,scope,from,to,zone,interval,deadline)
@@ -374,6 +374,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     }
     private fun readCost(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, interval: String, deadline: Long): Rows {
+        val perUser = q.metricId=="cost_per_active_user"
+        val perHour = q.metricId=="cost_per_user_hour"
         val subagent = q.metricId=="subagent_cost_ratio"
         val metrics = q.source=="metrics" || subagent
         val contract = q.priceBasis=="contract"
@@ -399,13 +401,16 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val matched = "arrayFilter(d -> d.1=$person AND d.2=multiIf(product='claude_code','anthropic',product='codex','openai','') AND toInt64(toUnixTimestamp(ts))>=d.3 AND toInt64(toUnixTimestamp(ts))<d.4 AND position(${dimension("model")},d.5)>0,{discounts:Array(Tuple(String,String,Int64,Int64,String,Float64,String,String))})"
         val input = "SELECT *,$value AS raw_cost,${if (contract) matched else "[]"} AS matched $base"
         val factor = if (contract) "if(empty(matched),1.0,matched[1].6)" else "1.0"
-        val aggregate = if (subagent) """sumOrNullIf(raw_cost*$factor,$valid) AS denominator,
+        val activity = "JSONExtract(raw_json,'point','value','Nullable(Float64)')"
+        val denominator = if (perUser) "people" else "sumOrNullIf($activity,$activePoint AND $activity>=0)/3600.0"
+        val aggregate = if (perUser || perHour) """sumOrNullIf(raw_cost*$factor,$valid) AS numerator,
+            $denominator AS denominator,if(denominator=0,NULL,numerator/denominator) AS value""" else if (subagent) """sumOrNullIf(raw_cost*$factor,$valid) AS denominator,
             if(countIf($valid)=0,NULL,sumIf(raw_cost*$factor,$valid AND JSONExtractString(raw_json,'point','attrs','query_source')='subagent')) AS numerator,
             if(denominator=0,NULL,numerator/denominator) AS value""" else "sumOrNullIf(raw_cost*$factor,$valid) AS value"
         val sql = """SELECT $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
             $people AS people,countIf($activePoint)>0 AS active_time_definition,
             countIf($observed) AS points,
-            ${if (metrics) "countIf($source AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)" else "0"} AS cumulative,
+            ${if (metrics) "countIf($source AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)" else if (perUser || perHour) "countIf(signal='metric' AND product='claude_code' AND JSONExtractString(raw_json,'point','name')='claude_code.active_time.total' AND JSONExtractString(raw_json,'point','attrs','type')='user' AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)" else "0"} AS cumulative,
             $aggregate,
             countIf($valid AND length(matched)>1) AS conflicts,
             countIf($valid AND (NOT isFinite($factor) OR $factor<0)) AS invalid_rates,
@@ -856,7 +861,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             }
             fun add(name: String, series: List<JsonNode>, seriesTicks: List<Instant>?, column: String = "value") {
                 fields += mapOf("name" to name, "type" to "number", "labels" to labels,
-                    "config" to mapOf("unit" to if (q.metricId in setOf("subagent_activity","hook_executions") && column=="ratio") "ratio" else if (q.metricId=="subagent_cost_ratio" && column!="value") "USD" else if (column=="value" || q.metricId in durationMetrics) definition.unit else if (q.metricId=="automation_ratio") "s" else if (q.metricId in setOf("compaction_reduction","usage_concentration") || q.metricId in tokenRatios) "token" else "count", "suppressed" to suppressed,
+                    "config" to mapOf("unit" to if (q.metricId in setOf("subagent_activity","hook_executions") && column=="ratio") "ratio" else if (q.metricId in setOf("cost_per_active_user","cost_per_user_hour") && column=="numerator") "USD" else if (q.metricId=="cost_per_user_hour" && column=="denominator") "h" else if (q.metricId=="subagent_cost_ratio" && column!="value") "USD" else if (column=="value" || q.metricId in durationMetrics) definition.unit else if (q.metricId=="automation_ratio") "s" else if (q.metricId in setOf("compaction_reduction","usage_concentration") || q.metricId in tokenRatios) "token" else "count", "suppressed" to suppressed,
                         "group_size" to if (suppressed) null else (rows+prior).minOfOrNull { it["people"].asLong() }))
                 val byTime = series.associateBy { it["bucket"].asLong() }
                 val aligned = if (timeseries) ticks.indices.map { index -> seriesTicks?.getOrNull(index)?.let { byTime[it.toEpochMilli()] } }
@@ -892,9 +897,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 "전후 토큰 쌍이 없는 압축 이벤트 ${incompleteCompactions}개를 감소율에서 제외"
             if (q.metricId=="subagent_activity") quality += "도구 호출에서 관측된 agent_id 수와 호출 비율; 완료·성공 여부는 판정하지 않음"
             if (q.metricId=="abandoned_session_ratio") quality += "조회 기간 내 로그 세션과 관측 산출만 판정; 세션 종료를 보장하지 않으며 미관측 산출이 있을 수 있음"
-            if (q.metricId in setOf("cost","subagent_cost_ratio")) {
+            if (q.metricId in setOf("cost","subagent_cost_ratio","cost_per_active_user","cost_per_user_hour")) {
                 quality += "원천: ${if (q.metricId=="subagent_cost_ratio") "metrics" else q.source ?: "events"}; 가격 기준: ${q.priceBasis ?: "list"}; 누락·음수 비용 제외, 청구액 아님"
                 if (q.priceBasis=="contract") quality += "현재 계약 정보의 배정·유효 기간과 제품 벤더·모델 부분 문자열 일치, all 배율만 적용; 일치 없음은 1배"
+                if (q.metricId=="cost_per_active_user") quality += "비용 / 활성 구성원; 사용자 활동 시간 원천이 없으면 관측 구성원 수 사용"
+                if (q.metricId=="cost_per_user_hour") quality += "비용 / 사용자 활동 시간(시간 단위); cli·누적·음수 시간 제외, 시간 미관측은 분모 null"
                 if (q.metricId=="subagent_cost_ratio") quality += "query_source=subagent 비용 / 전체 메트릭 비용; 귀속 누락도 전체 비용에 포함"
                 if (q.metricId=="cost" && q.source!="metrics") quality += if (suppressed) "reported·estimated 관측 비용 포함" else
                     "reported ${(rows+prior).sumOf { it["reported"].asLong() }}개, estimated ${(rows+prior).sumOf { it["estimated"].asLong() }}개 관측 비용"
