@@ -1,7 +1,7 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
 // 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 50개 및 owner 전용 지표 3개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync, existsSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,6 +14,10 @@ const { chromium } = await import(pathToFileURL(resolve(frontend, 'node_modules/
 const work = mkdtempSync(resolve(tmpdir(), 'proj156-e2e-'));
 const artifacts = resolve(backend, 'build/e2e/auth-settings');
 mkdirSync(artifacts, { recursive: true });
+const resultFile = resolve(artifacts, 'result.json');
+if (existsSync(resultFile) && JSON.parse(readFileSync(resultFile, 'utf8')).passed)
+  copyFileSync(resultFile, resolve(artifacts, 'last-success.json'));
+writeFileSync(resultFile, JSON.stringify({ passed: false, status: 'running', startedAt: new Date().toISOString() }, null, 2));
 const processes = [];
 const logStreams = [];
 let container;
@@ -23,8 +27,8 @@ const tenant = randomUUID();
 const api = 'http://127.0.0.1:18081';
 const ui = 'http://127.0.0.1:15173';
 const run = (cmd, args, input) => {
-  const result = spawnSync(cmd, args, { cwd: backend, input, encoding: 'utf8' });
-  if (result.status !== 0) throw new Error(`${cmd} failed: ${result.stderr}`);
+  const result = spawnSync(cmd, args, { cwd: backend, input, encoding: 'utf8', timeout: 60000 });
+  if (result.status !== 0) throw new Error(`${cmd} failed: ${result.error?.message || result.stderr}`);
   return result.stdout.trim();
 };
 const launch = (cmd, args, env, cwd, name) => {
@@ -598,13 +602,55 @@ try {
       assert.equal(await page.getByRole('cell', { name: 'E2E 별도팀', exact: true }).count(), 0);
       await page.getByText('구성원 이메일 목록은 owner 권한으로 제공됩니다.', { exact: true }).waitFor();
     }
+    if (role === 'admin') {
+      const history = points.map(JSON.parse).filter(p => JSON.parse(p.raw_json).type === 'llm_call')
+        .flatMap(p => [2, 3].map(days => JSON.stringify({ ...p, event_id: randomUUID(), ts: observedAt - days*86400,
+          raw_json: JSON.stringify({ type: 'llm_call', payload: { cost_usd: 1, model: 'claude-e2e' } }) })));
+      run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], history.join('\n'));
+    }
+    const scenarioRun = await page.evaluate(async () => {
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      const { adaptResult } = await import('/src/api/frames.ts');
+      const { resultFilters } = await import('/src/pages/scenarios/resultModel.ts');
+      const started = await scenarioApi.start('S1-3', { params: { from: 'now-1d', to: 'now', moving_avg_days: 3, spike_threshold_pct: 50 } });
+      let run = started.run;
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return { initial: started.run.status, run, filters: resultFilters(run),
+        adapted: Object.fromEntries(Object.entries(run.result?.frames || {}).map(([id, frame]) => [id, adaptResult(frame)])) };
+    });
+    assert.equal(scenarioRun.initial, 'queued');
+    assert.equal(scenarioRun.run.status, 'succeeded');
+    assert.deepEqual(Object.keys(scenarioRun.adapted), ['cost', 'cost_anomaly', 'api_retry_attempts']);
+    assert.ok(Object.values(scenarioRun.adapted).every(result => result.status !== 'error'));
+    assert.ok(scenarioRun.run.result.findings.some(finding => finding.rule_id === 'retry_cost'));
+    if (role === 'admin') assert.ok(scenarioRun.run.result.findings.some(finding => finding.rule_id === 'spike_day' && finding.evidence.ratio === 1));
+    if (role === 'admin') assert.deepEqual(scenarioRun.filters.filters.team_ids, ['00000000-0000-0000-0000-000000000010']);
+    const cancelled = await page.evaluate(async () => {
+      const { scenarioApi } = await import('/src/api/scenarios.ts');
+      const { run } = await scenarioApi.start('S1-3', { params: { from: 'now-1d', to: 'now' } });
+      return (await scenarioApi.cancel(run.run_id)).run;
+    });
+    assert.equal(cancelled.status, 'cancelled');
+    await page.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, scenarioRun.run.run_id);
+    await page.getByLabel('시나리오 판정', { exact: true }).waitFor();
+    await page.getByRole('heading', { name: '재시도 요청 비율이 5% 이상입니다', exact: true }).waitFor();
+    if (role === 'admin') await page.getByRole('heading', { name: '일 비용이 이동평균 대비 임계를 초과했습니다', exact: true }).waitFor();
+    await page.screenshot({ path: resolve(artifacts, `${role}-scenario.png`), fullPage: true });
+
     await page.screenshot({ path: resolve(artifacts, `${role}.png`), fullPage: true });
     await Promise.all(responseReads);
     await context.close();
   }
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedInstallations: { count: 5, pages: 3, audited: true, actualFrontendCard: false },
-    verifiedScenarios: { count: 46, actualFrontendClient: true, parameterFormValidation: true, actualCatalogUI: false, runs: false },
+    verifiedScenarios: { count: 46, actualFrontendClient: true, parameterFormValidation: true, actualCatalogUI: false, runs: { scenario: 'S1-3', completed: true, cancelled: true, actualResultUI: true } },
     verifiedSessionEvents: { actualFrontendClient: true, paginated: true, audited: true, actualSessionSearchUI: false },
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
@@ -650,6 +696,9 @@ try {
     unexpectedOrUnimplementedResponses: failures };
   writeFileSync(resolve(artifacts, 'result.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
+} catch (error) {
+  writeFileSync(resultFile, JSON.stringify({ passed: false, status: 'failed', error: String(error), finishedAt: new Date().toISOString() }, null, 2));
+  throw error;
 } finally {
   if (browser) await browser.close();
   for (const child of processes.reverse()) child.kill('SIGTERM');
