@@ -1691,6 +1691,46 @@ class DashboardAuthTest {
         assertThat(frame["schema"]["meta"]["data_quality"].toString()).contains("reported·estimated").doesNotContain("9개")
         assertThat(queryResult(request,accept="text/csv").andReturn().response.contentAsString).doesNotContain("493825","395060")
     }
+    private fun subagentCost(id: UUID, value: Double, source: String, model: String = "claude-test",
+        cumulative: Boolean = false, at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(point(id,value,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.cost.usage",
+            "value" to value,"aggregation_temporality" to if (cumulative) 2 else 1,
+            "attrs" to mapOf("query_source" to source,"model" to model)))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `서브에이전트 비용 비율은 메트릭만 사용하고 계약 배율을 각 비용에 적용한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(subagentCost(it,2.0,"subagent"),subagentCost(it,6.0,"","other"),
+            subagentCost(it,100.0,"subagent",cumulative=true),subagentCost(it,-1.0,"subagent"),costEvent(it,9999.0)) }
+        seedPoints(rows+rows.first())
+        fun result(basis: String) = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "subagent_cost_ratio"),
+            mapOf("price_basis" to basis))).andReturn().response.contentAsString)["results"]["A"]
+        val list = result("list")
+        assertThat(list["status"].asInt()).isEqualTo(200)
+        assertThat(list["frames"][0]["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.25,10.0,40.0)
+        assertThat(list["frames"][0]["schema"]["fields"][1]["config"]["unit"].asString()).isEqualTo("USD")
+        discountContract()
+        val contract = result("contract")
+        assertThat(contract["frames"][0]["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(5.0/35,5.0,35.0)
+    }
+    @Test fun `서브에이전트 비용 비율은 영 분모와 작은 비교 집단을 구분한다`() {
+        val ids = installations(5)
+        val q = mapOf("metric_id" to "subagent_cost_ratio")
+        seedPoints(ids.map { subagentCost(it,0.0,"subagent") })
+        val zero = mapper.readTree(queryResult(queryBody(q)).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(zero["data"]["values"][0][0].isNull).isTrue()
+        assertThat(zero["data"]["values"][1][0].asDouble()).isZero()
+        assertThat(zero["data"]["values"][2][0].asDouble()).isZero()
+        seedPoints(ids.map { subagentCost(it,10.0,"main") })
+        val noSubagent = mapper.readTree(queryResult(queryBody(q)).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(noSubagent["data"]["values"][0][0].asDouble()).isZero()
+        seedPoints(ids.map { subagentCost(it,10.0,"subagent") }+
+            ids.take(4).map { subagentCost(it,10.0,"subagent",at="2026-08-31T12:00:00Z") })
+        val hidden = mapper.readTree(queryResult(queryBody(q,mapOf("compare" to "previous_period")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(hidden["data"]["values"].toList().all { it[0].isNull }).isTrue()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
