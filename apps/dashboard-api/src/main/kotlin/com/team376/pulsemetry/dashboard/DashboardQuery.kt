@@ -60,7 +60,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
-    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio")
     private val tokenTypes = listOf("input","output","cache_read","cache_create")
     private val tokenRatios = setOf("cache_read_ratio","input_output_ratio")
     private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms", "gate_wait_ms")
@@ -218,6 +218,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
+        if (q.metricId=="abandoned_session_ratio") return readAbandoned(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="tokens") return readTokens(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="hook_executions") return readHookExecutions(q,scope,from,to,zone,interval,deadline)
         if (q.metricId in durationMetrics) return readDuration(q, scope, from, to, zone, interval, deadline)
@@ -334,6 +335,45 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > groupLimit(q))
             throw DashboardReadException("query_too_wide", 422)
         return Rows(rows, sql)
+    }
+    private fun readAbandoned(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
+        zone: String, interval: String, deadline: Long): Rows {
+        val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
+        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val groupNames = q.groupBy.indices.map { "g$it" }
+        val suffix = if (groupNames.isEmpty()) "" else ","+groupNames.joinToString(",")
+        val groups = "bucket$suffix"
+        val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
+        val name = "JSONExtractString(raw_json,'point','name')"
+        val output = "signal='metric' AND product='claude_code' AND (($name='claude_code.code_edit_tool.decision' AND JSONExtractString(raw_json,'point','attrs','decision')='accept') OR $name IN ('claude_code.lines_of_code.count','claude_code.commit.count','claude_code.pull_request.count'))"
+        val cumulative = "JSONExtractInt(raw_json,'point','aggregation_temporality')=2"
+        // 산출은 기간 전체의 같은 설치·제품·세션과 연결하고 마지막 로그 시각의 버킷에 한 번 배치한다.
+        val sql = """WITH observed AS (
+            SELECT *${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
+                JSONExtractString(raw_json,'envelope','session_id') AS session_id
+            FROM (SELECT * $base)
+            ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
+        ), privacy AS (
+            SELECT $bucket AS bucket$suffix, $people AS people,
+                countIf($activePoint)>0 AS active_time_definition FROM observed GROUP BY $groups
+        ), sessions AS (
+            SELECT installation_id,product,session_id$suffix, maxIf(ts,signal='log') AS ts,
+                countIf(signal='log') AS logs,
+                sumIf(JSONExtract(raw_json,'point','value','Nullable(Float64)'),$output AND NOT ($cumulative)) AS output_value,
+                countIf($output AND $cumulative) AS cumulative_points
+            FROM observed WHERE session_id NOT IN ('','(unknown)')
+            GROUP BY installation_id,product,session_id$suffix
+        ), stats AS (
+            SELECT $bucket AS bucket$suffix, count() AS points, countIf(coalesce(output_value,0)<=0) AS numerator,
+                count() AS denominator, numerator/denominator AS value, sum(cumulative_points) AS cumulative
+            FROM sessions WHERE logs>0 GROUP BY $groups
+        ) SELECT stats.*,privacy.people,privacy.active_time_definition
+            FROM stats INNER JOIN privacy USING ($groups) ORDER BY $groups"""
+        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
+        val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
+        if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size>groupLimit(q))
+            throw DashboardReadException("query_too_wide",422)
+        return Rows(rows,sql)
     }
     private fun readTokens(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, interval: String, deadline: Long): Rows {
@@ -597,6 +637,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             if (incompleteCompactions>0) quality += if (suppressed) "전후 토큰 쌍이 없는 압축 이벤트를 감소율에서 제외" else
                 "전후 토큰 쌍이 없는 압축 이벤트 ${incompleteCompactions}개를 감소율에서 제외"
             if (q.metricId=="subagent_activity") quality += "도구 호출에서 관측된 agent_id 수와 호출 비율; 완료·성공 여부는 판정하지 않음"
+            if (q.metricId=="abandoned_session_ratio") quality += "조회 기간 내 로그 세션과 관측 산출만 판정; 세션 종료를 보장하지 않으며 미관측 산출이 있을 수 있음"
             if (q.metricId=="tokens") quality += "원천: ${q.source ?: "events"}; 관측된 토큰 값만 합산하며 누락·음수는 제외"
             if (q.metricId in tokenRatios) quality += "llm_call 이벤트 원천; 필요한 토큰 값이 모두 있는 호출의 합계 비율, 누락·음수 호출 제외"
             if (q.metricId=="llm_ttft_ms") quality += "조회 기간 내 설치·제품·요청별 유효 로그 우선, 없으면 스팬; 요청 ID 누락은 세션·모델별 소스 선택"

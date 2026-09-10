@@ -1307,6 +1307,46 @@ class DashboardAuthTest {
             mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
         assertThat(hidden["data"]["values"].toList().all { it[0].isNull }).isTrue()
     }
+    private fun sessionOutput(id: UUID, session: String, name: String, value: Double = 1.0,
+        cumulative: Boolean = false, at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(point(id,value,at=at,cumulative=cumulative)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("envelope" to mapOf("session_id" to session),
+            "point" to mapOf("name" to name,"value" to value,"aggregation_temporality" to if (cumulative) 2 else 1,
+                "attrs" to mapOf("decision" to "accept")))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `무산출 세션은 로그 세션과 산출을 연결하고 누적과 다른 제품을 구분한다`() {
+        val ids = installations(5)
+        val outputs = listOf("claude_code.code_edit_tool.decision","claude_code.lines_of_code.count",
+            "claude_code.commit.count","claude_code.pull_request.count")
+        val rows = ids.flatMap { id -> outputs.flatMapIndexed { index, name ->
+            listOf(promptEvent(id,session="s$index"),sessionOutput(id,"s$index",name)) }+
+            listOf(promptEvent(id,session="empty"),promptEvent(id,session="cumulative"),
+                sessionOutput(id,"cumulative",outputs[0],cumulative=true),promptEvent(id,session="zero"),
+                sessionOutput(id,"zero",outputs[1],value=0.0),promptEvent(id,session="s0",product="codex"),
+                sessionOutput(id,"metric-only",outputs[0]),promptEvent(id,session="(unknown)")) }
+        seedPoints(rows+rows.first())
+        val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "abandoned_session_ratio")))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.5,20.0,40.0)
+        assertThat(frame["schema"]["meta"]["data_quality"].toList().map { it.asString() }.joinToString())
+            .contains("종료를 보장하지","5개")
+    }
+    @Test fun `무산출 세션은 마지막 로그 버킷에 배치하고 비교 집단을 숨긴다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(promptEvent(it,session="s"),promptEvent(it,session="s",at="2026-09-02T12:00:00Z"),
+            sessionOutput(it,"s","claude_code.commit.count")) }
+        seedPoints(rows)
+        val query = mapOf("metric_id" to "abandoned_session_ratio","frame_type" to "timeseries","interval" to "1d")
+        val frame = mapper.readTree(queryResult(queryBody(query)).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"][1][0].isNull).isTrue()
+        assertThat(frame["data"]["values"][1][1].asDouble()).isZero()
+        assertThat(frame["data"]["values"][3][1].asInt()).isEqualTo(5)
+        seedPoints(rows+ids.take(4).map { promptEvent(it,session="s",at="2026-08-31T12:00:00Z") })
+        val hidden = mapper.readTree(queryResult(queryBody(query,mapOf("compare" to "previous_period")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(hidden["data"]["values"].toList().drop(1).all { it.toList().all { v -> v.isNull } }).isTrue()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
