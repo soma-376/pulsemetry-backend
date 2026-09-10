@@ -1141,6 +1141,40 @@ class DashboardAuthTest {
         assertThat(frame["schema"]["fields"].size()).isEqualTo(8)
         assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
     }
+    private fun refusalEvent(id: UUID, category: String?, reason: String = "refusal", type: String = "llm_response",
+        at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(promptEvent(id,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to type,"payload" to mapOf(
+            "model" to "claude-test","stop_reason" to reason,"refusal_category" to category))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `모델 거부는 응답만 집계하고 분류 누락과 다른 종료 사유를 구분한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(refusalEvent(it,"policy"),refusalEvent(it,null),refusalEvent(it,""),
+            refusalEvent(it,"ignored",reason="end_turn"),refusalEvent(it,"ignored",type="llm_call")) }
+        seedPoints(rows+rows.first())
+        val frames = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "refusals",
+            "frame_type" to "scalar","group_by" to listOf("category","model")))).andExpect(status().isOk)
+            .andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        assertThat(frames.associate { it["schema"]["fields"][0]["labels"]["category"].asString() to
+            it["data"]["values"][0][0].asInt() }).containsExactlyInAnyOrderEntriesOf(mapOf("policy" to 5,"unspecified" to 10))
+        assertThat(frames.all { it["schema"]["fields"][0]["labels"]["model"].asString()=="claude-test" }).isTrue()
+        queryResult(queryBody(mapOf("metric_id" to "refusals","group_by" to listOf("team")))).andExpect(status().isBadRequest)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        queryResult(queryBody(mapOf("metric_id" to "refusals"))).andExpect(status().isForbidden)
+    }
+    @Test fun `모델 거부는 작은 비교 집단을 숨기고 관측 없는 기간은 빈 프레임이다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { refusalEvent(it,"policy") }+
+            ids.take(4).map { refusalEvent(it,"policy",at="2026-08-31T12:00:00Z") })
+        val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "refusals","frame_type" to "scalar"),
+            mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        seedPoints(ids.map { refusalEvent(it,"policy",reason="end_turn") })
+        val empty = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "refusals")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"]
+        assertThat(empty.size()).isZero()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
