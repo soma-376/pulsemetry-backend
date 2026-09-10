@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 19개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 21개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -85,6 +85,7 @@ try {
     ['commits', 'claude_code.commit.count', 1],
     ['pull_requests', 'claude_code.pull_request.count', 1],
   ];
+  const observedAt = Math.floor(Date.now()/1000)-120;
   const points = [];
   for (let index = 0; index < 5; index++) {
     const memberId = randomUUID(), installationId = randomUUID(), invitationId = randomUUID();
@@ -96,33 +97,33 @@ try {
       INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform)
         VALUES ('${installationId}','${tenant}','${memberId}','${invitationId}','linux');`);
     for (const [, name, value] of metricFixtures) points.push(JSON.stringify({
-      event_id: randomUUID(), ts: Math.floor(Date.now()/1000)-120,
+      event_id: randomUUID(), ts: observedAt,
       tenant_id: tenant, installation_id: installationId, signal: 'metric', product: 'claude_code',
       team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
       raw_json: JSON.stringify({ point: { name, value, aggregation_temporality: 1, attrs: { type: 'user', start_type: 'fresh' } } }),
     }));
     for (const command_name of ['/review', null]) points.push(JSON.stringify({
-      event_id: randomUUID(), ts: Math.floor(Date.now()/1000)-120,
+      event_id: randomUUID(), ts: observedAt,
       tenant_id: tenant, installation_id: installationId, signal: 'log', product: 'claude_code',
       team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
       raw_json: JSON.stringify({ type: 'user_prompt', envelope: { session_id: installationId }, payload: { command_name } }),
     }));
     for (const success of [true, false, null]) points.push(JSON.stringify({
-      event_id: randomUUID(), ts: Math.floor(Date.now()/1000)-120,
+      event_id: randomUUID(), ts: observedAt,
       tenant_id: tenant, installation_id: installationId, signal: 'log', product: 'claude_code',
       team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
       raw_json: JSON.stringify({ type: 'tool_call', envelope: { session_id: installationId },
         payload: { tool_name: 'Read', tool_kind: 'function', action: 'read', success } }),
     }));
     for (const [attempt, status_code] of [[1, 200], [2, 429], [null, null]]) points.push(JSON.stringify({
-      event_id: randomUUID(), ts: Math.floor(Date.now()/1000)-120,
+      event_id: randomUUID(), ts: observedAt,
       tenant_id: tenant, installation_id: installationId, signal: 'log', product: 'claude_code',
       team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
       raw_json: JSON.stringify({ type: 'llm_call', envelope: { session_id: installationId },
-        payload: { model: 'claude-e2e', attempt, status_code } }),
+        payload: { model: 'claude-e2e', attempt, status_code, error_type: status_code === 429 ? 'rate_limit' : null } }),
     }));
     for (const [decided_by, decision] of [['config', 'reject'], ['hook', 'accept'], ['user', 'abort'], [null, null]]) points.push(JSON.stringify({
-      event_id: randomUUID(), ts: Math.floor(Date.now()/1000)-120,
+      event_id: randomUUID(), ts: observedAt,
       tenant_id: tenant, installation_id: installationId, signal: 'log', product: 'claude_code',
       team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
       raw_json: JSON.stringify({ type: 'tool_decision', envelope: { session_id: installationId },
@@ -169,6 +170,7 @@ try {
     assert.equal(metricIds.length, 53);
     assert.deepEqual(catalog.items.map(item => item.metric_id).sort(), metricIds.sort());
     assert.deepEqual(catalog.items.find(item => item.metric_id === 'refusals').forbidden_group_by, ['team']);
+    assert.equal(catalog.items.find(item => item.metric_id === 'api_error_rate').availability, 'partial');
     const expectedMetrics = [...metricFixtures.map(([metric, , value]) => [metric, value*5]),
       ['active_users', 5], ['adoption_rate', 5/(role==='owner' ? 7 : 6)], ['telemetry_coverage', 1], ['automation_ratio', 0], ['integration_depth', 1], ['command_prompt_ratio', 0.5]];
     const queryResult = await page.evaluate(async fixtures => {
@@ -213,6 +215,8 @@ try {
           { ref_id: 'F', metric_id: 'rate_limit_events', frame_type: 'scalar', group_by: ['team', 'product'] },
           { ref_id: 'G', metric_id: 'auto_approval_ratio', group_by: ['team', 'tool_name'] },
           { ref_id: 'H', metric_id: 'tool_rejections', frame_type: 'scalar', group_by: ['team', 'tool_name'] },
+          { ref_id: 'I', metric_id: 'api_error_rate', group_by: ['team', 'model'] },
+          { ref_id: 'J', metric_id: 'usage_heatmap', group_by: ['weekday', 'hour'] },
         ],
       }) });
       return Object.fromEntries(Object.entries(response.results).map(([ref, result]) => [ref, series(result)]));
@@ -227,6 +231,11 @@ try {
     assert.deepEqual(toolValues('F'), { value: 5 });
     assert.deepEqual(toolValues('G'), { value: 0.5, numerator: 10, denominator: 20 });
     assert.deepEqual(toolValues('H'), { value: 5 });
+    assert.deepEqual(toolValues('I'), { value: 1/3, numerator: 5, denominator: 15 });
+    assert.deepEqual(toolValues('J'), { value: 10 });
+    const localObserved = new Date((observedAt + 9*3600)*1000);
+    assert.equal(tools.J.points[0].labels.hour, String(localObserved.getUTCHours()));
+    assert.equal(tools.J.points[0].labels.weekday, String(localObserved.getUTCDay() || 7));
 
     if (role === 'owner') {
       await page.getByRole('cell', { name: 'E2E 별도팀', exact: true }).waitFor();
@@ -243,7 +252,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 19개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 21개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -252,7 +261,8 @@ try {
       { metric: 'tool_calls', expected: 15, failedOnly: 5 }, { metric: 'tool_failure_rate', expected: 0.5 },
       { metric: 'read_tool_density', p50: 3, p90: 3 },
       { metric: 'api_retry_attempts', expected: 1/3 }, { metric: 'rate_limit_events', expected: 5 },
-      { metric: 'auto_approval_ratio', expected: 0.5 }, { metric: 'tool_rejections', expected: 5 }],
+      { metric: 'auto_approval_ratio', expected: 0.5 }, { metric: 'tool_rejections', expected: 5 },
+      { metric: 'api_error_rate', expected: 1/3 }, { metric: 'usage_heatmap', expected: 10 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
