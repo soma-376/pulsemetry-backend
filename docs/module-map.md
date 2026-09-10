@@ -256,3 +256,9 @@ libs/
 
 security.user가 JWT·가입 검증·세션 회전 코어를 제공하고 enrollment.auth가 HTTP·빈을 조립한다.
 SQL과 V5 테이블은 enrollment-persistence 소유다. 기존 모듈 간 단방향 의존을 유지한다.
+
+## PROJ-156 대시보드 앱
+
+`:apps:dashboard-api`는 `com.team376.pulsemetry.dashboard` 패키지에서 웹 로그인·관리자 조회를 제공한다(8081).
+인증은 `:libs:security`, 조직 조회는 `:libs:enrollment-persistence`에 의존한다. 앱 간 의존은 없다.
+웹 세션은 ADR 0019에 따라 CLI와 분리한다.

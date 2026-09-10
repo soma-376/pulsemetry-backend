@@ -1,0 +1,26 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: pulsemetry-dashboard
+  datasource:
+    url: ${PULSEMETRY_DB_URL:jdbc:postgresql://localhost:5432/pulsemetry}
+    username: ${PULSEMETRY_DB_USERNAME:pulsemetry}
+    password: ${PULSEMETRY_DB_PASSWORD:pulsemetry}
+    hikari:
+      connection-timeout: 3000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+  flyway:
+    locations: classpath:db/migration,classpath:db/dashboard
+    schemas: enrollment
+    default-schema: enrollment
+    baseline-on-migrate: true
+pulsemetry:
+  dashboard:
+    tenant-id: ${PULSEMETRY_DASHBOARD_TENANT_ID}
+    issuer: ${PULSEMETRY_USER_AUTH_ISSUER}
+    active-kid: ${PULSEMETRY_USER_AUTH_ACTIVE_KID}
+    private-key-file: ${PULSEMETRY_USER_AUTH_PRIVATE_KEY_FILE}
