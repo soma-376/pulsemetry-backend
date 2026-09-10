@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 43개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 44개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -354,7 +354,7 @@ try {
       const client = await import('/src/api/client.ts');
       const { series } = await import('/src/widgets/model.ts');
       const response = await client.request('/query', { method: 'POST', body: JSON.stringify({
-        from: 'now-1d', to: 'now', queries: [
+        from: 'now-1d', to: 'now', tz: 'UTC', queries: [
           { ref_id: 'A', metric_id: 'hook_executions', frame_type: 'scalar', group_by: ['hook_event'] },
           { ref_id: 'B', metric_id: 'model_users', group_by: ['model'] },
           { ref_id: 'C', metric_id: 'cache_read_ratio', group_by: ['team', 'model'] },
@@ -366,9 +366,10 @@ try {
           { ref_id: 'H', metric_id: 'session_last_event', group_by: ['team'] },
           { ref_id: 'I', metric_id: 'usage_concentration', group_by: ['team'] },
           { ref_id: 'J', metric_id: 'onboarding_ttfu', group_by: ['team', 'platform'] },
+          { ref_id: 'K', metric_id: 'onboarding_retention', group_by: ['team'] },
         ],
       }) });
-      return { hooks: series(response.results.A), models: series(response.results.B), cache: series(response.results.C), io: series(response.results.D), tokens: series(response.results.E), metricTokens: series(response.results.F), abandoned: series(response.results.G), last: series(response.results.H), concentration: series(response.results.I), onboarding: series(response.results.J) };
+      return { hooks: series(response.results.A), models: series(response.results.B), cache: series(response.results.C), io: series(response.results.D), tokens: series(response.results.E), metricTokens: series(response.results.F), abandoned: series(response.results.G), last: series(response.results.H), concentration: series(response.results.I), onboarding: series(response.results.J), retention: series(response.results.K), retentionTo: response.resolved_to };
     });
     for (const key of ['cache', 'io']) assert.equal(hookResults[key].state, 'success');
     assert.deepEqual(Object.fromEntries(hookResults.cache.points.map(p => [p.key, p.value.value])),
@@ -400,6 +401,14 @@ try {
     assert.equal(hookResults.onboarding.points.find(p => p.key === 'p90').value.value, 3600);
     assert.deepEqual(hookResults.onboarding.points.filter(p => !['p50', 'p90'].includes(p.key)).map(p => p.value.value), [0, 5, 0, 0, 0]);
     assert.ok(hookResults.onboarding.points.every(p => p.labels.platform === 'linux'));
+    assert.equal(hookResults.retention.state, 'success');
+    assert.ok(hookResults.retention.points.filter(p => p.key === 'denominator').every(p => p.value.value === 5));
+    assert.ok(hookResults.retention.points.some(p => p.labels.week_index === '0' && p.labels.cohort_week));
+    for (const p of hookResults.retention.points.filter(p => p.key === 'value')) {
+      const week = Number(p.labels.week_index);
+      const end = Date.parse(p.labels.cohort_week + 'T00:00:00Z') + (week + 1)*7*86400000;
+      assert.equal(p.value.value, end <= Date.parse(hookResults.retentionTo) ? (week === 0 ? 1 : 0) : null);
+    }
     const hookExecutions = hookResults.hooks;
     assert.equal(hookResults.models.state, 'success');
     assert.deepEqual(Object.fromEntries(hookResults.models.points.map(p => [p.key, p.value.value])), { value: 5 });
@@ -440,7 +449,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 43개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 44개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -470,7 +479,8 @@ try {
       { metric: 'abandoned_session_ratio', expected: 0, sessions: 5 },
       { metric: 'session_last_event', expected: 5, last_event: 'api_error' },
       { metric: 'usage_concentration', expected: 0.2, total: 6750 },
-      { metric: 'onboarding_ttfu', p50: 3600, p90: 3600 }],
+      { metric: 'onboarding_ttfu', p50: 3600, p90: 3600 },
+      { metric: 'onboarding_retention', cohort_installations: 5 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
