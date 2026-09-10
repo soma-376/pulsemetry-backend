@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 41개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 42개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -364,9 +364,10 @@ try {
             group_by: ['team', 'agent_name'], params: { types: ['output', 'cache_read'] } },
           { ref_id: 'G', metric_id: 'abandoned_session_ratio', group_by: ['team'] },
           { ref_id: 'H', metric_id: 'session_last_event', group_by: ['team'] },
+          { ref_id: 'I', metric_id: 'usage_concentration', group_by: ['team'] },
         ],
       }) });
-      return { hooks: series(response.results.A), models: series(response.results.B), cache: series(response.results.C), io: series(response.results.D), tokens: series(response.results.E), metricTokens: series(response.results.F), abandoned: series(response.results.G), last: series(response.results.H) };
+      return { hooks: series(response.results.A), models: series(response.results.B), cache: series(response.results.C), io: series(response.results.D), tokens: series(response.results.E), metricTokens: series(response.results.F), abandoned: series(response.results.G), last: series(response.results.H), concentration: series(response.results.I) };
     });
     for (const key of ['cache', 'io']) assert.equal(hookResults[key].state, 'success');
     assert.deepEqual(Object.fromEntries(hookResults.cache.points.map(p => [p.key, p.value.value])),
@@ -386,6 +387,13 @@ try {
     assert.equal(hookResults.last.points.length, 1);
     assert.equal(hookResults.last.points[0].value.value, 5);
     assert.equal(hookResults.last.points[0].labels.last_event, 'api_error');
+    assert.equal(hookResults.concentration.state, 'success');
+    const concentration = hookResults.concentration.points;
+    assert.equal(concentration.find(p => p.key === 'value').value.value, 0.2);
+    assert.equal(concentration.find(p => p.key === 'numerator').value.value, 1350);
+    assert.equal(concentration.find(p => p.key === 'denominator').value.value, 6750);
+    assert.deepEqual(concentration.filter(p => p.key === 'lorenz_cumulative').map(p => p.value.value), [0, 1350, 2700, 4050, 5400, 6750]);
+    assert.deepEqual(concentration.filter(p => p.key === 'population_share').map(p => p.value.value), [0, 0.2, 0.4, 0.6, 0.8, 1]);
     const hookExecutions = hookResults.hooks;
     assert.equal(hookResults.models.state, 'success');
     assert.deepEqual(Object.fromEntries(hookResults.models.points.map(p => [p.key, p.value.value])), { value: 5 });
@@ -426,7 +434,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 41개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 42개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -454,7 +462,8 @@ try {
       { metric: 'cache_read_ratio', expected: 0.5 }, { metric: 'input_output_ratio', expected: 2 },
       { metric: 'tokens', events: 6750, selectedMetrics: 250 },
       { metric: 'abandoned_session_ratio', expected: 0, sessions: 5 },
-      { metric: 'session_last_event', expected: 5, last_event: 'api_error' }],
+      { metric: 'session_last_event', expected: 5, last_event: 'api_error' },
+      { metric: 'usage_concentration', expected: 0.2, total: 6750 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
