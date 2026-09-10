@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 33개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 34개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -153,6 +153,12 @@ try {
       enrichment_json: '{}', raw_json: JSON.stringify({ type: 'tool_gate',
         payload: { blocked_on_user_ms, decided_by: 'user', decision: 'accept' } }),
     }));
+    for (const num_blocking of ['2', '3']) points.push(JSON.stringify({
+      event_id: randomUUID(), ts: observedAt, tenant_id: tenant, installation_id: installationId,
+      signal: 'span', product: 'claude_code', team_ids_as_of: ['00000000-0000-0000-0000-000000000010'],
+      enrichment_json: '{}', raw_json: JSON.stringify({ type: 'hook',
+        payload: { kind: 'hook', attrs: { hook_event: 'PreToolUse', num_blocking } } }),
+    }));
     for (const [decided_by, decision] of [['config', 'reject'], ['hook', 'accept'], ['user', 'abort'], [null, null]]) points.push(JSON.stringify({
       event_id: randomUUID(), ts: observedAt,
       tenant_id: tenant, installation_id: installationId, signal: 'log', product: 'claude_code',
@@ -216,6 +222,7 @@ try {
     assert.deepEqual(catalog.items.find(item => item.metric_id === 'refusals').forbidden_group_by, ['team']);
     assert.equal(catalog.items.find(item => item.metric_id === 'api_error_rate').availability, 'partial');
     assert.equal(catalog.items.find(item => item.metric_id === 'subagent_activity').availability, 'partial');
+    assert.equal(catalog.items.find(item => item.metric_id === 'hook_blocking').availability, 'partial');
     const expectedMetrics = [...metricFixtures.map(([metric, , value]) => [metric, value*5]),
       ['active_users', 5], ['adoption_rate', 5/(role==='owner' ? 7 : 6)], ['telemetry_coverage', 1], ['automation_ratio', 0], ['integration_depth', 1], ['command_prompt_ratio', 0.5]];
     const queryResult = await page.evaluate(async fixtures => {
@@ -299,6 +306,7 @@ try {
           { ref_id: 'I', metric_id: 'rubber_stamp_ratio', params: { threshold_ms: 2001 } },
           { ref_id: 'J', metric_id: 'edit_acceptance_rate', group_by: ['language', 'tool_name'] },
           { ref_id: 'K', metric_id: 'subagent_activity', frame_type: 'scalar', group_by: ['team'] },
+          { ref_id: 'L', metric_id: 'hook_blocking', frame_type: 'scalar', group_by: ['hook_event'] },
         ],
       }) });
       return Object.fromEntries(Object.entries(response.results).map(([ref, result]) => [ref, series(result)]));
@@ -332,6 +340,8 @@ try {
     assert.equal(mcp.J.points[0].labels.tool_name, 'Edit');
     assert.deepEqual(Object.fromEntries(mcp.K.points.map(p => [p.key, p.value.value])),
       { value: 2, ratio: 2/3, numerator: 10, denominator: 15 });
+    assert.deepEqual(Object.fromEntries(mcp.L.points.map(p => [p.key, p.value.value])), { value: 25 });
+    assert.equal(mcp.L.points[0].labels.hook_event, 'PreToolUse');
     const localObserved = new Date((observedAt + 9*3600)*1000);
     assert.equal(tools.J.points[0].labels.hour, String(localObserved.getUTCHours()));
     assert.equal(tools.J.points[0].labels.weekday, String(localObserved.getUTCDay() || 7));
@@ -351,7 +361,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 33개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 34개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -371,7 +381,8 @@ try {
       { metric: 'gate_wait_ms', p50: 2000, p90: 3000 },
       { metric: 'rubber_stamp_ratio', expected: 0.5, threshold2001: 0.75 },
       { metric: 'edit_acceptance_rate', expected: 0.5 },
-      { metric: 'subagent_activity', count: 2, ratio: 2/3 }],
+      { metric: 'subagent_activity', count: 2, ratio: 2/3 },
+      { metric: 'hook_blocking', expected: 25 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
