@@ -1384,6 +1384,68 @@ class DashboardAuthTest {
             .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
         assertThat(hidden["data"]["values"].toList().drop(1).all { it.toList().all { v -> v.isNull } }).isTrue()
     }
+    @Test fun `사용 집중도는 사람 설치를 합치고 익명 곡선과 올림한 상위 십퍼센트를 반환한다`() {
+        val ids = installations(10)
+        val extra = UUID.randomUUID()
+        jdbc.sql("""INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform)
+            SELECT :extra,tenant_id,member_id,invitation_id,platform FROM enrollment.installations WHERE id=:id""")
+            .param("extra",extra).param("id",ids.first()).update()
+        val unknown = UUID.randomUUID()
+        val rows = ids.mapIndexed { index,id -> tokenEvent(id,index+1,0,0,0) }+
+            listOf(tokenEvent(extra,100,0,0,0),tokenEvent(unknown,0,0,0,0))
+        seedPoints(rows+rows.first())
+        val response = queryResult(queryBody(mapOf("metric_id" to "usage_concentration")))
+            .andExpect(status().isOk).andReturn().response.contentAsString
+        assertThat(response).doesNotContain(extra.toString(),unknown.toString(),ids.first().toString())
+        val result = mapper.readTree(response)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val frames = result["frames"].toList()
+        assertThat(frames).hasSize(2)
+        val summary = frames.single { it["schema"]["fields"][0]["name"].asString()=="value" }
+        assertThat(summary["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(111.0/155,111.0,155.0)
+        val curve = frames.single { it["schema"]["fields"][0]["name"].asString()=="population_share" }
+        assertThat(curve["data"]["values"][0].size()).isEqualTo(12)
+        assertThat(curve["data"]["values"][0][1].asDouble()).isEqualTo(1.0/11)
+        assertThat(curve["data"]["values"][1].toList().map { it.asDouble() })
+            .containsExactly(0.0,0.0,2.0,5.0,9.0,14.0,20.0,27.0,35.0,44.0,54.0,155.0)
+        assertThat(curve["data"]["values"][2][11].asDouble()).isEqualTo(1.0)
+    }
+    @Test fun `사용 집중도는 누락과 음수 호출을 제외하고 영 분모를 보존한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(tokenEvent(it,10,20,30,40),tokenEvent(it,null,999,999,999),
+            tokenEvent(it,-1,999,999,999),modelPoint(it,"test",true)) })
+        val q = mapOf("metric_id" to "usage_concentration","frame_type" to "scalar")
+        val frame = mapper.readTree(queryResult(queryBody(q)).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.2,100.0,500.0)
+        seedPoints(ids.map { tokenEvent(it,0,0,0,0) })
+        val zero = mapper.readTree(queryResult(queryBody(q)).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(zero["data"]["values"][0][0].isNull).isTrue()
+        assertThat(zero["data"]["values"][1][0].asDouble()).isZero()
+        assertThat(zero["data"]["values"][2][0].asDouble()).isZero()
+        seedPoints(emptyList())
+        val empty = mapper.readTree(queryResult(queryBody(q)).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(empty["status"].asInt()).isEqualTo(200)
+        assertThat(empty["frames"].size()).isZero()
+    }
+    @Test fun `집중도 비교 소집단은 요약과 곡선 좌표 및 길이와 CSV를 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { tokenEvent(it,98765,0,0,0) }+
+            ids.take(4).map { tokenEvent(it,98765,0,0,0,at="2026-08-31T12:00:00Z") })
+        val request = queryBody(mapOf("metric_id" to "usage_concentration","frame_type" to "distribution"),
+            mapOf("compare" to "previous_period"))
+        val result = mapper.readTree(queryResult(request).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        assertThat(result["frames"].size()).isEqualTo(2)
+        result["frames"].forEach { frame ->
+            frame["data"]["values"].forEach { column ->
+                assertThat(column.size()).isEqualTo(1)
+                assertThat(column[0].isNull).isTrue()
+            }
+            assertThat(frame["schema"]["fields"].toList().all { it["config"]["suppressed"].asBoolean() }).isTrue()
+        }
+        assertThat(queryResult(request,accept="text/csv").andReturn().response.contentAsString)
+            .doesNotContain("98765","493825","395060")
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
