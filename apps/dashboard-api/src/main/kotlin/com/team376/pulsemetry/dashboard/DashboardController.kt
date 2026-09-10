@@ -49,7 +49,7 @@ class DashboardErrors {
     fun unexpected(e: Exception) = response(500, "internal_error")
     @ExceptionHandler(UserAuthException::class) fun auth(e: UserAuthException) = response(e.status, e.code, e.retryAfter)
     @ExceptionHandler(DataAccessException::class, org.springframework.transaction.TransactionException::class) fun unavailable(e: Exception) = response(503, "service_unavailable", 2)
-    @ExceptionHandler(HttpMessageNotReadableException::class, IllegalArgumentException::class)
+    @ExceptionHandler(HttpMessageNotReadableException::class, IllegalArgumentException::class, java.time.DateTimeException::class)
     fun invalid(e: Exception) = response(400, "invalid_request")
     private fun response(status: Int, code: String, retry: Long? = null): ResponseEntity<Map<String, String>> {
         val id = UUID.randomUUID().toString()

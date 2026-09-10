@@ -26,22 +26,24 @@ class DashboardClickHouseReader(
     }
 
     /** template은 앱의 정적 SQL 레지스트리만 공급한다. DDL/INSERT 용도로 호출할 수 없다. */
-    fun query(template: String, parameters: Map<String, String>): String {
+    fun query(template: String, parameters: Map<String, String>, remaining: Duration = timeout): String {
+        if (remaining <= Duration.ZERO) throw DashboardReadException("query_timeout", 504)
+        val effectiveTimeout = minOf(timeout, remaining)
         require(template.trimStart().startsWith("SELECT ") || template.trimStart().startsWith("WITH "))
         require(!template.contains(';'))
         require(parameters.keys.all { Regex("[a-z][a-z0-9_]*").matches(it) })
-        val settings = linkedMapOf("database" to database, "readonly" to "2", "max_execution_time" to "30",
+        val settings = linkedMapOf("database" to database, "readonly" to "2", "max_execution_time" to (effectiveTimeout.toNanos()/1_000_000_000.0).toString(),
             "max_result_rows" to "100000", "max_result_bytes" to "16777216", "result_overflow_mode" to "throw",
             "wait_end_of_query" to "1")
         parameters.forEach { (key, value) -> settings["param_$key"] = value }
         val uri = URI.create(endpoint.toString().trimEnd('/') + "/?" + settings.entries.joinToString("&") {
             encode(it.key) + "=" + encode(it.value)
         })
-        val request = HttpRequest.newBuilder(uri).timeout(timeout).header("Content-Type", "text/plain; charset=utf-8")
+        val request = HttpRequest.newBuilder(uri).timeout(effectiveTimeout).header("Content-Type", "text/plain; charset=utf-8")
             .POST(HttpRequest.BodyPublishers.ofString(template + " FORMAT JSON", StandardCharsets.UTF_8)).build()
         // ofString의 completion은 본문 수신까지 포함한다. 헤더만 도착한 채 멈춰도 제한 시간이 적용된다.
         val future = client.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-        val response = try { future.orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS).join() }
+        val response = try { future.orTimeout(maxOf(1, effectiveTimeout.toMillis()), TimeUnit.MILLISECONDS).join() }
         catch (e: CompletionException) {
             future.cancel(true)
             if (e.cause is TimeoutException || e.cause is java.net.http.HttpTimeoutException)

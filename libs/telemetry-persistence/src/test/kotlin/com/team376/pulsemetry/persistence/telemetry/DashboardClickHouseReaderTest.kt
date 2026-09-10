@@ -44,6 +44,11 @@ class DashboardClickHouseReaderTest {
                 .isInstanceOfSatisfying(DashboardReadException::class.java) { assertThat(it.status).isEqualTo(504) }
         } finally { server.stop(0) }
     }
+    @Test fun `요청 예산이 소진되면 추가 조회를 전송하지 않는다`() {
+        val reader = DashboardClickHouseReader(URI("http://127.0.0.1:1"))
+        assertThatThrownBy { reader.query("SELECT 1", emptyMap(), Duration.ZERO) }
+            .isInstanceOfSatisfying(DashboardReadException::class.java) { assertThat(it.status).isEqualTo(504) }
+    }
     companion object {
         @Container @JvmStatic val clickhouse = GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
             .withEnv("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1").withExposedPorts(8123)

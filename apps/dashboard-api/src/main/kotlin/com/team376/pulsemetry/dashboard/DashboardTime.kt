@@ -41,7 +41,7 @@ class DashboardTime(val now: Instant, val zone: ZoneId) {
     }
     fun next(at: Instant, interval: String): Instant = when (interval) {
         "1h" -> at.plusSeconds(3600)
-        "6h" -> at.plusSeconds(21600)
+        "6h" -> at.atZone(zone).toLocalDateTime().plusHours(6).atZone(zone).toInstant()
         "1d" -> at.atZone(zone).plusDays(1).toInstant()
         "1w" -> at.atZone(zone).plusWeeks(1).toInstant()
         "1M" -> at.atZone(zone).plusMonths(1).toInstant()

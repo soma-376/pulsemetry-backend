@@ -178,6 +178,141 @@ class DashboardAuthTest {
         assertThat(result).contains("claude-test").doesNotContain("gpt-test")
         mvc.perform(get("/v1/meta/filters").header("Authorization", "Bearer $token")).andExpect(status().isOk)
     }
+    private fun installations(people: Int, team: UUID? = null): List<UUID> = (1..people).map { n ->
+        val person = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.members(id,tenant_id,email) VALUES (:id,:tenant,:email)")
+            .param("id",person).param("tenant",tenant).param("email","person-$person@example.com").update()
+        if (team != null) jdbc.sql("INSERT INTO enrollment.team_memberships(team_id,member_id) VALUES (:team,:member)")
+            .param("team",team).param("member",person).update()
+        val invitation = UUID.randomUUID()
+        jdbc.sql("""INSERT INTO enrollment.invitations(id,tenant_id,target_member_id,created_by_member_id,code_hash,expires_at)
+            VALUES (:id,:tenant,:member,:creator,:hash,now()+interval '1 day')""")
+            .param("id",invitation).param("tenant",tenant).param("member",person).param("creator",member)
+            .param("hash",UUID.randomUUID().toString()).update()
+        val id = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform) VALUES (:id,:tenant,:member,:invite,'linux')")
+            .param("id",id).param("tenant",tenant).param("member",person).param("invite",invitation).update()
+        id
+    }
+    private fun point(installation: UUID, value: Double, at: String = "2026-09-01T12:00:00Z", cumulative: Boolean = false,
+        team: UUID? = null, tenantId: UUID = tenant): String = mapper.writeValueAsString(mapOf(
+        "event_id" to UUID.randomUUID().toString(),"ts" to java.time.Instant.parse(at).epochSecond,
+        "tenant_id" to tenantId.toString(),"installation_id" to installation.toString(),"signal" to "metric", "product" to "claude_code",
+        "team_ids_as_of" to listOfNotNull(team?.toString()),"enrichment_json" to "{}",
+        "raw_json" to mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.session.count", "value" to value,
+            "aggregation_temporality" to if (cumulative) 2 else 1,"attrs" to mapOf("start_type" to "fresh"))))))
+    private fun seedPoints(rows: List<String>) {
+        val writer = com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient("http://${clickhouse.host}:${clickhouse.getMappedPort(8123)}")
+        com.team376.pulsemetry.persistence.telemetry.ClickHouseSchemaMigrator(writer).apply()
+        writer.execute("TRUNCATE TABLE enriched_events")
+        if (rows.isNotEmpty()) writer.execute("INSERT INTO enriched_events FORMAT JSONEachRow",rows.joinToString("\n").toByteArray())
+    }
+    private fun queryBody(query: Map<String, Any> = emptyMap(), extra: Map<String, Any> = emptyMap()) = mapper.writeValueAsString(
+        mapOf("from" to "2026-09-01T00:00:00Z", "to" to "2026-09-03T00:00:00Z", "tz" to "UTC",
+            "queries" to listOf(mapOf("ref_id" to "A", "metric_id" to "sessions", "interval" to "1d")+query))+extra)
+    private fun queryResult(body: String, token: String = token(), accept: String = "application/json") =
+        mvc.perform(post("/v1/query").header("Authorization", "Bearer $token").header("Accept",accept)
+            .contentType("application/json").content(body))
+
+    @Test fun `집계는 FINAL과 delta만 사용하고 비교의 빈 버킷을 보존한다`() {
+        val ids = installations(5)
+        val current = ids.map { point(it,2.0) }
+        seedPoints(current+current+ids.map { point(it,100.0,cumulative=true) }+
+            ids.map { point(it,4.0,"2026-08-31T12:00:00Z") }+ids.map { point(it,999.0,tenantId=UUID.randomUUID()) })
+        val response = queryResult(queryBody(extra=mapOf("compare" to "previous_period"))).andExpect(status().isOk)
+            .andReturn().response.contentAsString
+        val body = mapper.readTree(response)
+        assertThat(body["results"]["A"]["status"].asInt()).isEqualTo(200)
+        val frame = body["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"][1][0].asDouble()).isEqualTo(10.0)
+        assertThat(frame["data"]["values"][1][1].isNull).isTrue()
+        assertThat(frame["data"]["values"][2][0].isNull).isTrue()
+        assertThat(frame["data"]["values"][2][1].asDouble()).isEqualTo(20.0)
+        assertThat(frame["schema"]["meta"]["data_quality"].toString()).contains("5개")
+        assertThat(frame["schema"]["meta"]["executed_sql"].asString()).contains("FINAL", "{tenant:String}")
+        assertThat(body["coverage"]["active_installations"].asInt()).isEqualTo(5)
+    }
+    @Test fun `한 사람의 여러 설치는 마스킹 인원을 늘리지 않고 CSV와 커버리지도 억제한다`() {
+        val ids = installations(4)
+        val duplicate = UUID.randomUUID()
+        jdbc.sql("""INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform)
+            SELECT :copy,tenant_id,member_id,invitation_id,platform FROM enrollment.installations WHERE id=:id""")
+            .param("copy",duplicate).param("id",ids[0]).update()
+        seedPoints((ids+duplicate).map { point(it,98765.0) })
+        val input = queryBody(mapOf("frame_type" to "scalar"))
+        val result = queryResult(input).andExpect(status().isOk).andReturn().response.contentAsString
+        val body = mapper.readTree(result)
+        val frame = body["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"][0][0].isNull).isTrue()
+        assertThat(frame["schema"]["fields"][0]["config"]["suppressed"].asBoolean()).isTrue()
+        assertThat(frame["schema"]["fields"][0]["config"]["group_size"].isNull).isTrue()
+        assertThat(body["coverage"]["active_installations"].isNull).isTrue()
+        assertThat(body["coverage"]["ratio"].isNull).isTrue()
+        val csv = queryResult(input,accept="text/csv").andExpect(status().isOk).andReturn().response
+        assertThat(csv.contentType).startsWith("text/csv")
+        assertThat(csv.contentAsString).doesNotContain("98765", "493825")
+    }
+    @Test fun `쿼리 필터는 전역 팀을 유지하고 admin의 범위 밖과 개인 조회를 거부한다`() {
+        val mine = UUID.randomUUID(); val other = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:a,:tenant,'내 팀'),(:b,:tenant,'다른 팀')")
+            .param("a",mine).param("b",other).param("tenant",tenant).update()
+        jdbc.sql("INSERT INTO enrollment.team_memberships(team_id,member_id) VALUES (:team,:member)")
+            .param("team",mine).param("member",member).update()
+        val ids = installations(5,mine)
+        seedPoints(ids.map { point(it,2.0,team=mine) } + ids.map { point(it,999.0,team=other) })
+        val request = queryBody(mapOf("frame_type" to "scalar", "group_by" to listOf("team"), "filters" to mapOf("products" to listOf("claude_code"))),
+            mapOf("filters" to mapOf("team_ids" to listOf(mine))))
+        val owner = mapper.readTree(queryResult(request).andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(owner["results"]["A"]["frames"].size()).isEqualTo(1)
+        assertThat(owner["results"]["A"]["frames"][0]["data"]["values"][0][0].asDouble()).isEqualTo(10.0)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        val admin = token()
+        queryResult(queryBody(extra=mapOf("filters" to mapOf("team_ids" to listOf(other)))),admin).andExpect(status().isForbidden)
+        queryResult(queryBody(extra=mapOf("filters" to mapOf("member_ids" to listOf(member)))),admin).andExpect(status().isForbidden)
+        queryResult(request,admin).andExpect(status().isOk)
+    }
+    @Test fun `활성 시간 원천이 있으면 이벤트만 보낸 구성원으로 보호 인원을 늘리지 않는다`() {
+        val ids = installations(5)
+        val activity = ids.mapIndexed { index, id ->
+            val row = mapper.readTree(point(id,0.0)) as tools.jackson.databind.node.ObjectNode
+            row.put("raw_json", mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.active_time.total",
+                "value" to if (index==0) 10 else 0,"aggregation_temporality" to 1,"attrs" to mapOf("type" to "user")))))
+            mapper.writeValueAsString(row)
+        }
+        seedPoints(ids.map { point(it,2.0) } + activity)
+        val result = mapper.readTree(queryResult(queryBody(mapOf("frame_type" to "scalar")))
+            .andExpect(status().isOk).andReturn().response.contentAsString)
+        val frame = result["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"][0][0].isNull).isTrue()
+        assertThat(frame["schema"]["meta"]["active_user_definition"].asString()).isEqualTo("active_time_user")
+        assertThat(result["coverage"]["ratio"].isNull).isTrue()
+    }
+    @Test fun `개인 집계는 감사 저장 이후 조회하고 값은 계속 마스킹한다`() {
+        val ids = installations(1)
+        val person = jdbc.sql("SELECT member_id FROM enrollment.installations WHERE id=:id").param("id",ids[0])
+            .query(UUID::class.java).single()
+        seedPoints(ids.map { point(it,10.0) })
+        val input = queryBody(mapOf("frame_type" to "scalar"),mapOf("filters" to mapOf("member_ids" to listOf(person))))
+        queryResult(input).andExpect(status().isForbidden)
+        val result = mvc.perform(post("/v1/query").header("Authorization", "Bearer ${token()}")
+            .header("X-Audit-Reason", "개인 설치 이슈를 확인하기 위한 감사 조회")
+            .contentType("application/json").content(input)).andExpect(status().isOk).andReturn().response.contentAsString
+        assertThat(mapper.readTree(result)["results"]["A"]["frames"][0]["data"]["values"][0][0].isNull).isTrue()
+        assertThat(jdbc.sql("SELECT target FROM dashboard.audit_log WHERE action='query'").query(String::class.java).single())
+            .isEqualTo(person.toString())
+    }
+    @Test fun `잘못된 요청은 오류로 거부하고 미구현 계산은 성공이나 원천 불가로 표시하지 않는다`() {
+        seedPoints(emptyList())
+        for (input in listOf(queryBody(mapOf("ref_id" to "AA")), queryBody(mapOf("metric_id" to "unknown")),
+            queryBody(extra=mapOf("from" to "not-time")), queryBody(mapOf("metric_id" to "refusals","group_by" to listOf("team")))))
+            queryResult(input).andExpect(status().isBadRequest)
+        queryResult(queryBody(extra=mapOf("from" to "2020-01-01T00:00:00Z"))).andExpect(status().`is`(422))
+        val absent = mapper.readTree(queryResult(queryBody()).andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(absent["results"]["A"]["frames"].size()).isZero()
+        val unfinished = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost")))
+            .andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(unfinished["results"]["A"]["status"].asInt()).isEqualTo(501)
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
