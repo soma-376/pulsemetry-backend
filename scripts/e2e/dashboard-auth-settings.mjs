@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 48개 및 owner 전용 지표 2개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 49개 및 owner 전용 지표 2개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -435,12 +435,17 @@ try {
           { ref_id: 'G', metric_id: 'cost_per_user_hour', price_basis: 'list', group_by: ['team'] },
           { ref_id: 'H', metric_id: 'cost_per_active_user', group_by: ['team'] },
           { ref_id: 'I', metric_id: 'cost_per_user_hour', group_by: ['team'] },
+          { ref_id: 'J', metric_id: 'model_unit_price', price_basis: 'list', group_by: ['model'] },
+          { ref_id: 'K', metric_id: 'model_unit_price', group_by: ['model'] },
         ],
       }) });
-      return ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'].map(ref => series(response.results[ref]));
+      return ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'].map(ref => series(response.results[ref]));
     });
     assert.ok(priced.every(result => result.state === 'success'));
-    assert.deepEqual(priced.map(result => result.points[0].value.value), [15, 2.5, 5, 0.4, 0.4, 6, 180, 3, 90]);
+    assert.deepEqual(priced.map(result => result.points[0].value.value), [15, 2.5, 5, 0.4, 0.4, 6, 180, 3, 90, 30/6750, 15/6750]);
+    assert.deepEqual(priced[9].points.map(p => p.value.value), [30/6750, 30, 6750]);
+    assert.deepEqual(priced[10].points.map(p => p.value.value), [15/6750, 15, 6750]);
+    assert.equal(priced[9].points[0].labels.model, 'claude-e2e');
     assert.deepEqual(priced[5].points.map(p => p.value.value), [6, 30, 5]);
     assert.deepEqual(priced[6].points.map(p => p.value.value), [180, 30, 1/6]);
     assert.deepEqual(priced[3].points.map(p => p.value.value), [0.4, 2, 5]);
@@ -491,7 +496,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 48개 및 owner 전용 지표 2개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 49개 및 owner 전용 지표 2개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -527,7 +532,8 @@ try {
       { metric: 'cost', eventsList: 30, eventsContract: 15, metricsList: 5, metricsContract: 2.5 },
       { metric: 'subagent_cost_ratio', expected: 0.4 },
       { metric: 'cost_per_active_user', list: 6, contract: 3 },
-      { metric: 'cost_per_user_hour', list: 180, contract: 90 }],
+      { metric: 'cost_per_user_hour', list: 180, contract: 90 },
+      { metric: 'model_unit_price', list: 30/6750, contract: 15/6750 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
