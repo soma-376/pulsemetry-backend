@@ -490,6 +490,66 @@ class DashboardAuthTest {
             .andReturn().response.contentAsString)["results"]["A"]["frames"]
         assertThat(empty.toList()).isEmpty()
     }
+    private fun toolEvent(id: UUID, success: Boolean?, action: String = "read", at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(promptEvent(id,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "tool_call",
+            "envelope" to mapOf("session_id" to "shared-session"),"payload" to mapOf("success" to success,
+                "tool_name" to "Read", "tool_kind" to "function", "action" to action,"error_type" to "io_error","mcp_server" to "files"))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `도구 호출은 성공 미판정을 실패로 세지 않고 boolean 필터와 payload 차원을 적용한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(toolEvent(it,true),toolEvent(it,false),toolEvent(it,null)) }
+        seedPoints(rows + rows.first())
+        for ((metric,expected) in mapOf("tool_calls" to 15.0,"tool_failure_rate" to 0.5)) {
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar",
+                "group_by" to listOf("tool_name")))).andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"][0][0].asDouble()).isEqualTo(expected)
+            assertThat(frame["schema"]["fields"][0]["labels"]["tool_name"].asString()).isEqualTo("Read")
+            if (metric=="tool_failure_rate") {
+                assertThat(frame["data"]["values"][1][0].asInt()).isEqualTo(5)
+                assertThat(frame["data"]["values"][2][0].asInt()).isEqualTo(10)
+            }
+        }
+        for (success in listOf(true,false)) {
+            for (dimension in listOf("tool_kind","action","error_type","mcp_server")) {
+                val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tool_calls","frame_type" to "scalar",
+                    "group_by" to listOf(dimension),"params" to mapOf("success" to success))))
+                    .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+                assertThat(frame["data"]["values"][0][0].asInt()).isEqualTo(5)
+            }
+        }
+        queryResult(queryBody(mapOf("metric_id" to "tool_calls","params" to mapOf("success" to "false")))).andExpect(status().isBadRequest)
+        queryResult(queryBody(mapOf("metric_id" to "tool_calls","params" to mapOf("unknown" to true)))).andExpect(status().isBadRequest)
+        seedPoints(ids.map { toolEvent(it,null) })
+        val unjudged = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tool_failure_rate")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+        assertThat(unjudged[0][0].isNull).isTrue()
+        assertThat(unjudged[2][0].isNumber).isTrue()
+        assertThat(unjudged[2][0].asInt()).isZero()
+        val noFailure = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tool_calls","frame_type" to "scalar",
+            "params" to mapOf("success" to false)))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"][0][0]
+        assertThat(noFailure.isNumber).isTrue()
+        assertThat(noFailure.asInt()).isZero()
+    }
+    @Test fun `읽기 밀도는 읽기 호출이 없는 도구 세션을 포함하고 비교 집단이 작으면 숨긴다`() {
+        val ids = installations(5)
+        val rows = ids.zip(listOf(0,1,2,4,8)).flatMap { (id,count) ->
+            listOf(toolEvent(id,true,"write")) + (1..count).map { toolEvent(id,true,listOf("read","search","fetch")[it%3]) }
+        }
+        seedPoints(rows)
+        val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "read_tool_density")))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["schema"]["frame_type"].asString()).isEqualTo("distribution")
+        assertThat(frame["schema"]["fields"].toList().map { it["name"].asString() }).containsExactly("p50","p90")
+        assertThat(frame["data"]["values"].toList().map { it[0].asInt() }).containsExactly(2,8)
+        seedPoints(rows + ids.take(4).map { toolEvent(it,false,at="2026-08-31T12:00:00Z") })
+        for (metric in listOf("tool_calls","tool_failure_rate","read_tool_density")) {
+            val hidden = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar"),
+                mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(hidden["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        }
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
