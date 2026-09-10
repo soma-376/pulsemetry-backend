@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 35개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 36개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -344,16 +344,21 @@ try {
       { value: 2, ratio: 2/3, numerator: 10, denominator: 15 });
     assert.deepEqual(Object.fromEntries(mcp.L.points.map(p => [p.key, p.value.value])), { value: 25 });
     assert.equal(mcp.L.points[0].labels.hook_event, 'PreToolUse');
-    const hookExecutions = await page.evaluate(async () => {
+    const hookResults = await page.evaluate(async () => {
       const client = await import('/src/api/client.ts');
       const { series } = await import('/src/widgets/model.ts');
       const response = await client.request('/query', { method: 'POST', body: JSON.stringify({
         from: 'now-1d', to: 'now', queries: [
           { ref_id: 'A', metric_id: 'hook_executions', frame_type: 'scalar', group_by: ['hook_event'] },
+          { ref_id: 'B', metric_id: 'model_users', group_by: ['model'] },
         ],
       }) });
-      return series(response.results.A);
+      return { hooks: series(response.results.A), models: series(response.results.B) };
     });
+    const hookExecutions = hookResults.hooks;
+    assert.equal(hookResults.models.state, 'success');
+    assert.deepEqual(Object.fromEntries(hookResults.models.points.map(p => [p.key, p.value.value])), { value: 5 });
+    assert.equal(hookResults.models.points[0].labels.model, 'claude-e2e');
     assert.equal(hookExecutions.state, 'success');
     assert.deepEqual(Object.fromEntries(hookExecutions.points.map(p => [p.key, p.value.value])),
       { value: 10, ratio: 1, numerator: 5, denominator: 5 });
@@ -390,7 +395,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 35개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 36개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -413,7 +418,8 @@ try {
       { metric: 'subagent_activity', count: 2, ratio: 2/3 },
       { metric: 'hook_blocking', expected: 25 },
       { metric: 'hook_executions', expected: 10, ratio: 1, sessions: 5 },
-      { metric: 'refusals', owner: 5 }],
+      { metric: 'refusals', owner: 5 },
+      { metric: 'model_users', expected: 5 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
