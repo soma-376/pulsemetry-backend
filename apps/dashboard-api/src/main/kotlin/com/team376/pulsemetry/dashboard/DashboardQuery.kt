@@ -63,7 +63,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration")
     private val tokenTypes = listOf("input","output","cache_read","cache_create")
     private val tokenRatios = setOf("cache_read_ratio","input_output_ratio")
-    private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms", "gate_wait_ms")
+    private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms", "gate_wait_ms", "onboarding_ttfu")
     private val sessionMetrics = setOf("prompts_per_session", "read_tool_density")
     private val intervals = linkedMapOf("1h" to "1 HOUR", "6h" to "6 HOUR", "1d" to "1 DAY", "1w" to "1 WEEK", "1M" to "1 MONTH")
     private val utc = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC)
@@ -173,7 +173,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private fun scope(user: UserIdentity, f: DashboardQueryFilters): Scope {
         val teams = access.teams(user, f.teamIds)
         val unrestricted = user.role == "owner" && f.teamIds.isEmpty()
-        val rows = jdbc.sql("""SELECT i.id,m.id AS member_id,i.status::text AS installation_status FROM enrollment.installations i
+        val rows = jdbc.sql("""SELECT i.id,m.id AS member_id,i.status::text AS installation_status, i.platform::text AS platform, floor(extract(epoch FROM i.created_at))::bigint AS created_epoch FROM enrollment.installations i
             JOIN enrollment.members m ON m.id=i.member_id AND m.tenant_id=i.tenant_id WHERE i.tenant_id=:tenant LIMIT 5001""")
             .param("tenant", user.tenantId).query().listOfRows()
         if (rows.size > 5000) throw DashboardReadException("query_too_wide", 422)
@@ -197,6 +197,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val map = selected.joinToString(",", "{", "}") { "'${it["id"]}':'${it["member_id"]}'" }
         return Scope(mapOf("tenant" to user.tenantId.toString(), "teams" to array(teams.map { it.toString() }),
             "unrestricted" to if (unrestricted) "1" else "0", "products" to array(f.products), "models" to array(f.models),
+            "created" to selected.joinToString(",","{","}") { "'${it["id"]}':${it["created_epoch"]}" },
+            "platforms" to selected.joinToString(",","{","}") { "'${it["id"]}':'${it["platform"]}'" },
             "members" to map, "personal" to if (f.memberIds.isNotEmpty()) "1" else "0"), members.size, names, teamMembers, installationCount)
     }
     private fun boundary(at: Instant) = utc.format(if (at.nano == 0) at else at.plusSeconds(1).minusNanos(at.nano.toLong()))
@@ -218,6 +220,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
+        if (q.metricId=="onboarding_ttfu") return readOnboarding(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="usage_concentration") return readConcentration(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="session_last_event") return readLastEvent(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="abandoned_session_ratio") return readAbandoned(q,scope,from,to,zone,interval,deadline)
@@ -337,6 +340,41 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > groupLimit(q))
             throw DashboardReadException("query_too_wide", 422)
         return Rows(rows, sql)
+    }
+    private fun readOnboarding(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
+        zone: String, interval: String, deadline: Long): Rows {
+        val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
+        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val suffix = if (dimensions.isEmpty()) "" else ","+q.groupBy.indices.joinToString(",") { "g$it" }
+        val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
+        // 과거 사용을 신규 사용으로 오인하지 않도록 하한 이전의 보존 이력도 조회한다.
+        val history = base.replace("ts>={from:DateTime} AND ","")
+        val sql = """WITH observed AS (
+            SELECT *${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")}
+            FROM (SELECT * $history)
+            ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
+        ), privacy AS (
+            SELECT $bucket AS bucket$suffix,$people AS people,countIf($activePoint)>0 AS active_time_definition
+            FROM observed WHERE ts>={from:DateTime} GROUP BY bucket$suffix
+        ), first_events AS (
+            SELECT installation_id$suffix,min(ts) AS first_at FROM observed
+            WHERE $known GROUP BY installation_id$suffix
+        ), cohort AS (
+            SELECT installation_id$suffix,first_at AS ts,
+                toInt64(toUnixTimestamp(first_at))-{created:Map(String,Int64)}[installation_id] AS seconds
+            FROM first_events WHERE first_at>={from:DateTime} AND seconds>=0
+        ), stats AS (
+            SELECT $bucket AS bucket$suffix,count() AS points,0 AS cumulative,
+                uniqExact($person) AS cohort_people,
+                quantileExact(0.5)(seconds) AS p50,quantileExact(0.9)(seconds) AS p90,p50 AS value,
+                countIf(seconds<3600) AS b1,countIf(seconds>=3600 AND seconds<86400) AS b2,
+                countIf(seconds>=86400 AND seconds<604800) AS b3,
+                countIf(seconds>=604800 AND seconds<2592000) AS b4,countIf(seconds>=2592000) AS b5
+            FROM cohort GROUP BY bucket$suffix
+        ) SELECT stats.*,least(privacy.people,stats.cohort_people) AS people,privacy.active_time_definition
+            FROM stats INNER JOIN privacy USING (bucket$suffix) ORDER BY bucket$suffix"""
+        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
+        return Rows(mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList(),sql)
     }
     private fun readConcentration(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, interval: String, deadline: Long): Rows {
@@ -638,6 +676,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private fun dimension(dim: String): String = when (dim) {
         "team" -> "team"
         "product" -> "product"
+        "platform" -> "{platforms:Map(String,String)}[installation_id]"
         "category" -> "coalesce(nullIf(JSONExtractString(raw_json,'payload','refusal_category'),''),'unspecified')"
         "language" -> "JSONExtractString(raw_json,'point','attrs','language')"
         "tool_name" -> "coalesce(nullIf(JSONExtractString(raw_json,'payload','tool_name'),''),JSONExtractString(raw_json,'point','attrs','tool_name'))"
@@ -709,6 +748,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 "전후 토큰 쌍이 없는 압축 이벤트 ${incompleteCompactions}개를 감소율에서 제외"
             if (q.metricId=="subagent_activity") quality += "도구 호출에서 관측된 agent_id 수와 호출 비율; 완료·성공 여부는 판정하지 않음"
             if (q.metricId=="abandoned_session_ratio") quality += "조회 기간 내 로그 세션과 관측 산출만 판정; 세션 종료를 보장하지 않으며 미관측 산출이 있을 수 있음"
+            if (q.metricId=="onboarding_ttfu") quality += "필터·권한 범위의 보존 이력에서 첫 관측이 조회 기간에 속한 설치; 생성 이전 이벤트 제외, 과거 이력 유실 시 실제 첫 사용과 다를 수 있음; 생성 시각도 이벤트 정밀도에 맞춰 정수 초로 절삭"
             if (q.metricId=="usage_concentration") quality += "Q26 llm_call 이벤트 원천; 네 토큰 값이 모두 있는 비음수 호출만 사용; 상위 인원은 ceil(인원*0.1), 설치를 사람으로 병합하며 미매핑 설치는 별도 익명 단위"
             if (q.metricId=="session_last_event") quality += "Q25 로그의 마지막 관측 유형; 오류는 api_error, 긴 대기·실제 종료는 미판정; 시각·sequence 동률은 event_id 순서"
             if (q.metricId=="tokens") quality += "원천: ${q.source ?: "events"}; 관측된 토큰 값만 합산하며 누락·음수는 제외"
@@ -757,13 +797,13 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 val curve = mapOf("schema" to ((summary.getValue("schema") as Map<*,*>)+mapOf("fields" to curveFields)),
                     "data" to mapOf("values" to curveValues))
                 listOf(summary,curve)
-            } else if (frameType=="distribution" && q.metricId=="prompts_per_session") {
+            } else if (frameType=="distribution" && q.metricId in setOf("prompts_per_session","onboarding_ttfu")) {
                 val histogramFields = mutableListOf<Map<String,Any?>>(mapOf("name" to "bucket", "type" to "string"),
-                    fields.first()+mapOf("name" to "count"))
+                    fields.first()+mapOf("name" to "count", "config" to ((fields.first().getValue("config") as Map<*,*>)+mapOf("unit" to "count"))))
                 fun counts(row: JsonNode?): List<Any?> = (1..5).map { if (suppressed) null else row?.get("b$it")?.asLong() }
-                val histogramValues = mutableListOf<List<Any?>>(listOf("1","2–3","4–7","8–15","16+"),counts(rows.firstOrNull()))
+                val histogramValues = mutableListOf<List<Any?>>(if (q.metricId=="onboarding_ttfu") listOf("<1h","1h–1d","1d–7d","7d–30d","30d+") else listOf("1","2–3","4–7","8–15","16+"),counts(rows.firstOrNull()))
                 if (previous!=null) {
-                    histogramFields += fields[1]+mapOf("name" to "count_compare")
+                    histogramFields += histogramFields[1]+mapOf("name" to "count_compare")
                     histogramValues += counts(prior.firstOrNull())
                 }
                 val histogram = mapOf("schema" to ((summary.getValue("schema") as Map<*,*>) + mapOf("fields" to histogramFields)),

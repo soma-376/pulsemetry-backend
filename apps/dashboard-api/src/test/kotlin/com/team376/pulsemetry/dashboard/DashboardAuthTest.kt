@@ -1446,6 +1446,63 @@ class DashboardAuthTest {
         assertThat(queryResult(request,accept="text/csv").andReturn().response.contentAsString)
             .doesNotContain("98765","493825","395060")
     }
+    private fun installationCreated(id: UUID, at: String) {
+        jdbc.sql("UPDATE enrollment.installations SET created_at=CAST(:at AS timestamptz) WHERE id=:id")
+            .param("id",id).param("at",at).update()
+    }
+    @Test fun `첫 사용 시간은 생성 시각과 최초 이벤트의 초 간격 및 분포를 반환한다`() {
+        val ids = installations(5)
+        val seconds = listOf(0L,3600L,86400L,604800L,2592000L)
+        val first = java.time.Instant.parse("2026-09-01T12:00:00Z")
+        ids.zip(seconds).forEach { (id,delay) -> installationCreated(id,first.minusSeconds(delay).plusMillis(500).toString()) }
+        val rows = ids.flatMap { listOf(promptEvent(it),promptEvent(it,at="2026-09-02T12:00:00Z")) }
+        seedPoints(rows+rows.first())
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "onboarding_ttfu","group_by" to listOf("platform"))))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val frames = result["frames"].toList()
+        assertThat(frames).hasSize(2)
+        val histogram = frames.single { it["schema"]["fields"][0]["name"].asString()=="bucket" }
+        assertThat(histogram["data"]["values"][1].toList().map { it.asInt() }).containsExactly(1,1,1,1,1)
+        assertThat(histogram["schema"]["fields"][1]["config"]["unit"].asString()).isEqualTo("count")
+        val summary = frames.single { it["schema"]["fields"][0]["name"].asString()=="p50" }
+        assertThat(summary["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(86400.0,2592000.0)
+        assertThat(summary["schema"]["fields"][0]["config"]["unit"].asString()).isEqualTo("s")
+        assertThat(summary["schema"]["fields"][0]["labels"]["platform"].asString()).isEqualTo("linux")
+    }
+    @Test fun `첫 사용은 기간 이전 이력을 확인하고 생성 이전 및 미매핑 이벤트를 제외한다`() {
+        val fresh = installations(5); val old = installations(5); val invalid = installations(5)
+        fresh.forEach { installationCreated(it,"2026-09-01T12:00:00Z") }
+        old.forEach { installationCreated(it,"2026-08-01T00:00:00Z") }
+        invalid.forEach { installationCreated(it,"2026-09-03T00:00:00Z") }
+        seedPoints(fresh.map { promptEvent(it,at="2026-09-02T12:00:00Z") }+
+            old.flatMap { listOf(promptEvent(it,at="2026-08-31T12:00:00Z"),promptEvent(it,at="2026-09-02T12:00:00Z")) }+
+            invalid.map { promptEvent(it) }+promptEvent(UUID.randomUUID()))
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "onboarding_ttfu","frame_type" to "timeseries")))
+            .andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val frame = result["frames"][0]
+        assertThat(frame["data"]["values"][1][0].isNull).isTrue()
+        assertThat(frame["data"]["values"][1][1].asDouble()).isEqualTo(86400.0)
+        assertThat(frame["schema"]["fields"][1]["config"]["group_size"].asInt()).isEqualTo(5)
+    }
+    @Test fun `첫 사용 비교 소집단은 분위수와 분포 및 CSV를 숨긴다`() {
+        val current = installations(5); val previous = installations(4)
+        (current+previous).forEach { installationCreated(it,"2026-08-01T00:00:00Z") }
+        seedPoints(current.map { promptEvent(it) }+previous.map { promptEvent(it,at="2026-08-31T12:00:00Z") })
+        val request = queryBody(mapOf("metric_id" to "onboarding_ttfu"),mapOf("compare" to "previous_period"))
+        val result = mapper.readTree(queryResult(request).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        assertThat(result["frames"].size()).isEqualTo(2)
+        result["frames"].forEach { frame -> frame["schema"]["fields"].forEachIndexed { index,field ->
+            if (field["type"].asString()=="number") {
+                assertThat(field["config"]["suppressed"].asBoolean()).isTrue()
+                assertThat(frame["data"]["values"][index].toList().all { it.isNull }).isTrue()
+            }
+        } }
+        assertThat(queryResult(request,accept="text/csv").andReturn().response.contentAsString)
+            .doesNotContain("2721600","2635200")
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
