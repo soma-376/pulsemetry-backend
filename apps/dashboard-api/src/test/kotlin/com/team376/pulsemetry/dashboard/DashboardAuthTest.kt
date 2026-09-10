@@ -1260,6 +1260,53 @@ class DashboardAuthTest {
             assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
         }
     }
+    private fun tokenPoint(id: UUID, type: String, value: Int, cumulative: Boolean = false): String {
+        val row = mapper.readTree(point(id,value.toDouble(),cumulative=cumulative)) as tools.jackson.databind.node.ObjectNode
+        row.put("raw_json",mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.token.usage",
+            "value" to value,"aggregation_temporality" to if (cumulative) 2 else 1,
+            "attrs" to mapOf("type" to type,"agent.name" to "worker","query_source" to "subagent","model" to "test")))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `토큰은 원천을 섞지 않고 종류를 정규화하여 합산한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(tokenEvent(it,100,50,200,100),tokenPoint(it,"input",10),
+            tokenPoint(it,"output",20),tokenPoint(it,"cacheRead",30),tokenPoint(it,"cacheCreation",40),
+            tokenPoint(it,"cacheRead",999,true),tokenPoint(it,"other",999)) }
+        seedPoints(rows+rows.first())
+        for ((source, expected) in mapOf("events" to mapOf("input" to 500,"output" to 250,"cache_read" to 1000,"cache_create" to 500),
+            "metrics" to mapOf("input" to 50,"output" to 100,"cache_read" to 150,"cache_create" to 200))) {
+            val frames = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tokens","source" to source,
+                "frame_type" to "scalar","group_by" to listOf("type")))).andExpect(status().isOk)
+                .andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+            assertThat(frames.associate { it["schema"]["fields"][0]["labels"]["type"].asString() to
+                it["data"]["values"][0][0].asInt() }).containsExactlyInAnyOrderEntriesOf(expected)
+        }
+        val selected = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tokens","source" to "metrics",
+            "frame_type" to "scalar","params" to mapOf("types" to listOf("cache_read","output")),
+            "group_by" to listOf("agent_name","query_source")))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(selected["data"]["values"][0][0].asInt()).isEqualTo(250)
+        assertThat(selected["schema"]["fields"][0]["labels"]["agent_name"].asString()).isEqualTo("worker")
+        assertThat(selected["schema"]["fields"][0]["labels"]["query_source"].asString()).isEqualTo("subagent")
+        queryResult(queryBody(mapOf("metric_id" to "tokens","group_by" to listOf("agent_name")))).andExpect(status().isBadRequest)
+        for (types in listOf<Any>(listOf("input","input"),listOf("unknown"),"input",listOf(1))) {
+            queryResult(queryBody(mapOf("metric_id" to "tokens","params" to mapOf("types" to types)))).andExpect(status().isBadRequest)
+        }
+    }
+    @Test fun `토큰은 누락과 영을 구분하고 작은 비교 집단을 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { tokenEvent(it,null,0,null,null) })
+        val frames = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tokens","frame_type" to "scalar",
+            "group_by" to listOf("type")))).andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        assertThat(frames.single { it["schema"]["fields"][0]["labels"]["type"].asString()=="input" }["data"]["values"][0][0].isNull).isTrue()
+        val output = frames.single { it["schema"]["fields"][0]["labels"]["type"].asString()=="output" }["data"]["values"][0][0]
+        assertThat(output.isNumber).isTrue()
+        assertThat(output.asInt()).isZero()
+        seedPoints(ids.map { tokenEvent(it,10,20,30,40) }+
+            ids.take(4).map { tokenEvent(it,10,20,30,40,at="2026-08-31T12:00:00Z") })
+        val hidden = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tokens","frame_type" to "scalar"),
+            mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(hidden["data"]["values"].toList().all { it[0].isNull }).isTrue()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
