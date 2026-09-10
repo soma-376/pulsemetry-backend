@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 11개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 12개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -165,6 +165,20 @@ try {
       assert.equal(result.frames[0].schema.fields[0].config.suppressed, false);
     }
 
+    const distribution = await page.evaluate(async () => {
+      const client = await import('/src/api/client.ts');
+      const { series } = await import('/src/widgets/model.ts');
+      const response = await client.request('/query', { method: 'POST', body: JSON.stringify({
+        from: 'now-1d', to: 'now', compare: 'previous_period', queries: [{ ref_id: 'A', metric_id: 'prompts_per_session', group_by: ['team', 'product'] }],
+      }) });
+      return series(response.results.A);
+    });
+    assert.equal(distribution.state, 'success');
+    assert.equal(distribution.frames.length, 2);
+    assert.ok(distribution.points.every(point => point.previous?.state === 'missing'));
+    assert.deepEqual(Object.fromEntries(distribution.points.map(point => [point.key, point.value.value])),
+      { '1': 0, '2–3': 5, '4–7': 0, '8–15': 0, '16+': 0, p50: 2, p90: 2 });
+
     if (role === 'owner') {
       await page.getByRole('cell', { name: 'E2E 별도팀', exact: true }).waitFor();
       await page.getByRole('button', { name: '구성원 조회 · 사유 입력' }).click();
@@ -180,11 +194,12 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 11개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 12개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
-      { metric: 'integration_depth', expected: 1 }, { metric: 'command_prompt_ratio', expected: 0.5 }],
+      { metric: 'integration_depth', expected: 1 }, { metric: 'command_prompt_ratio', expected: 0.5 },
+      { metric: 'prompts_per_session', p50: 2, p90: 2, buckets: [0, 5, 0, 0, 0] }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
