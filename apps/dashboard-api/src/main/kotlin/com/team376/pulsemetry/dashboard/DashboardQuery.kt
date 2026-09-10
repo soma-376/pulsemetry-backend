@@ -60,6 +60,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio")
     private val intervals = linkedMapOf("1h" to "1 HOUR", "6h" to "6 HOUR", "1d" to "1 DAY", "1w" to "1 WEEK", "1M" to "1 MONTH")
     private val utc = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC)
     private data class Scope(val parameters: Map<String, String>, val members: Int, val teamNames: Map<String, String>, val teamMembers: Map<String, Int>, val installations: Int)
@@ -110,7 +111,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics) || q.frameType == "distribution") {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics) || q.frameType == "distribution") {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 require(q.params.isEmpty())
@@ -205,17 +206,41 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
         val groupNames = q.groupBy.indices.map { "g$it" }
         val bucket = if (frameType == "timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
-        val metric = "signal='metric' AND product='claude_code' AND JSONExtractString(raw_json,'point','name')={metric:String}"
-        val valid = "$metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2 AND isNotNull(JSONExtract(raw_json,'point','value','Nullable(Float64)'))"
+        val name = "JSONExtractString(raw_json,'point','name')"
+        val attrType = "JSONExtractString(raw_json,'point','attrs','type')"
+        val metric = when (q.metricId) {
+            "automation_ratio" -> "signal='metric' AND product='claude_code' AND $name='claude_code.active_time.total' AND $attrType IN ('user','cli')"
+            "integration_depth" -> "signal='metric' AND product='claude_code' AND ($name IN ('claude_code.commit.count','claude_code.pull_request.count') OR ($name='claude_code.session.count' AND JSONExtractString(raw_json,'point','attrs','start_type')='fresh'))"
+            "command_prompt_ratio" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='user_prompt' AND JSONExtractString(raw_json,'envelope','session_id') NOT IN ('','(unknown)')"
+            else -> "signal='metric' AND product='claude_code' AND $name={metric:String}"
+        }
+        val prompt = q.metricId=="command_prompt_ratio"
+        val valid = if (prompt) metric else "$metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')!=2 AND isNotNull(JSONExtract(raw_json,'point','value','Nullable(Float64)'))"
+        val cumulative = if (prompt) "0" else "countIf($metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2)"
+        val pointValue = "JSONExtract(raw_json,'point','value','Nullable(Float64)')"
+        val numerator = when (q.metricId) {
+            "automation_ratio" -> "sumIf($pointValue,$valid AND $attrType='cli')"
+            "integration_depth" -> "sumIf($pointValue,$valid AND $name IN ('claude_code.commit.count','claude_code.pull_request.count'))"
+            "command_prompt_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','command_name')!='')"
+            else -> "sumIf($pointValue,$valid)"
+        }
+        val denominator = when (q.metricId) {
+            "automation_ratio" -> "sumIf($pointValue,$valid)"
+            "integration_depth" -> "sumIf($pointValue,$valid AND $name='claude_code.session.count')"
+            else -> "countIf($valid)"
+        }
+        val result = if (q.metricId in ratioMetrics)
+            "coalesce($numerator,0) AS numerator, coalesce($denominator,0) AS denominator, numerator/nullIf(denominator,0) AS value"
+            else "$numerator AS value"
         val sql = """SELECT $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
             $people AS people, countIf($activePoint)>0 AS active_time_definition,
-            countIf($valid) AS points, countIf($metric AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2) AS cumulative,
-            sumIf(JSONExtract(raw_json,'point','value','Nullable(Float64)'),$valid) AS value
+            countIf($valid) AS points, $cumulative AS cumulative,
+            $result
             FROM (SELECT * $base)
             ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
             GROUP BY bucket${if (groupNames.isEmpty()) "" else ","+groupNames.joinToString(",")}
             ORDER BY ${if (groupNames.isEmpty()) "" else groupNames.joinToString(",")+","}bucket"""
-        val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone, "metric" to pointMetrics.getValue(q.metricId))
+        val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone, "metric" to pointMetrics[q.metricId].orEmpty())
         val rows = mapper.readTree(reader.query(sql, parameters, remaining(deadline)))["data"].toList().filter { it["points"].asLong()>0 || it["cumulative"].asLong()>0 }
         if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > q.limit)
             throw DashboardReadException("query_too_wide", 422)
@@ -289,7 +314,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             }
             fun add(name: String, series: List<JsonNode>, seriesTicks: List<Instant>?, column: String = "value") {
                 fields += mapOf("name" to name, "type" to "number", "labels" to labels,
-                    "config" to mapOf("unit" to if (column=="value") definition.unit else "count", "suppressed" to suppressed,
+                    "config" to mapOf("unit" to if (column=="value") definition.unit else if (q.metricId=="automation_ratio") "s" else "count", "suppressed" to suppressed,
                         "group_size" to if (suppressed) null else series.minOfOrNull { it["people"].asLong() }))
                 val byTime = series.associateBy { it["bucket"].asLong() }
                 val aligned = if (timeseries) ticks.indices.map { index -> seriesTicks?.getOrNull(index)?.let { byTime[it.toEpochMilli()] } }
@@ -300,7 +325,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             }
             add("value", rows, ticks)
             if (previous != null) add("value_compare", prior, previousTicks)
-            if (q.metricId in setOf("adoption_rate", "telemetry_coverage")) {
+            if (q.metricId in ratioMetrics || q.metricId in setOf("adoption_rate", "telemetry_coverage")) {
                 for (column in listOf("numerator", "denominator")) {
                     add(column,rows,ticks,column)
                     if (previous!=null) add("${column}_compare",prior,previousTicks,column)

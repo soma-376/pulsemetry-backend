@@ -368,6 +368,63 @@ class DashboardAuthTest {
             assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
         }
     }
+    @Test fun `비율은 합계의 비로 계산하고 누적 포인트와 알 수 없는 세션을 제외한다`() {
+        val ids = installations(5)
+        fun metric(id: UUID, name: String, value: Double, type: String = "user", cumulative: Boolean = false): String {
+            val row = mapper.readTree(point(id,value)) as tools.jackson.databind.node.ObjectNode
+            row.put("raw_json",mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.$name",
+                "value" to value,"aggregation_temporality" to if (cumulative) 2 else 1,
+                "attrs" to mapOf("type" to type,"start_type" to "fresh")))))
+            return mapper.writeValueAsString(row)
+        }
+        fun prompt(id: UUID, command: String?, session: String): String {
+            val row = mapper.readTree(point(id,0.0)) as tools.jackson.databind.node.ObjectNode
+            row.put("signal","log")
+            row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "user_prompt",
+                "envelope" to mapOf("session_id" to session),"payload" to mapOf("command_name" to command))))
+            return mapper.writeValueAsString(row)
+        }
+        val points = ids.flatMap { id -> listOf(metric(id,"active_time.total",10.0),
+            metric(id,"active_time.total",30.0,"cli"),metric(id,"active_time.total",900.0,"cli",true),
+            metric(id,"session.count",2.0),metric(id,"commit.count",1.0),metric(id,"pull_request.count",2.0),
+            prompt(id,"/review",id.toString()),prompt(id,null,id.toString()),prompt(id,"/review","(unknown)")) }
+        seedPoints(points + points.first())
+        for ((metric, expected) in mapOf("automation_ratio" to listOf(0.75,150.0,200.0),
+            "integration_depth" to listOf(1.5,15.0,10.0),"command_prompt_ratio" to listOf(0.5,5.0,10.0))) {
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar")))
+                .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"].toList().map { it[0].asDouble() }).isEqualTo(expected)
+        }
+        // 분모가 없는 관측은 0 대신 null이며, 비교 구간의 작은 집단은 양쪽의 모든 숫자를 숨긴다.
+        seedPoints(ids.map { metric(it,"commit.count",1.0) })
+        val zero = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "integration_depth","frame_type" to "scalar")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+        assertThat(zero[0][0].isNull).isTrue()
+        assertThat(zero[1][0].asDouble()).isEqualTo(5.0)
+        assertThat(zero[2][0].isNumber).isTrue()
+        assertThat(zero[2][0].asDouble()).isEqualTo(0.0)
+        seedPoints(ids.map { metric(it,"active_time.total",10.0) })
+        val userOnly = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "automation_ratio","frame_type" to "scalar")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+        assertThat(userOnly[0][0].isNumber).isTrue()
+        assertThat(userOnly[0][0].asDouble()).isEqualTo(0.0)
+        assertThat(userOnly[1][0].isNumber).isTrue()
+        assertThat(userOnly[1][0].asDouble()).isEqualTo(0.0)
+        assertThat(userOnly[2][0].asDouble()).isEqualTo(50.0)
+        val prior = points.filter { mapper.readTree(it)["installation_id"].asString()!=ids.last().toString() }.map {
+            val row = mapper.readTree(it) as tools.jackson.databind.node.ObjectNode
+            row.put("ts",java.time.Instant.parse("2026-08-31T12:00:00Z").epochSecond)
+            row.put("event_id",UUID.randomUUID().toString())
+            mapper.writeValueAsString(row)
+        }
+        seedPoints(points + prior)
+        for (metric in listOf("automation_ratio","integration_depth","command_prompt_ratio")) {
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar"),
+                mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"].size()).isEqualTo(6)
+            assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        }
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
