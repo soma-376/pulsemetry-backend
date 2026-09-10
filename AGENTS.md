@@ -38,7 +38,7 @@ libs/telemetry-persistence/  파이프라인 적재 단계 — ClickHouse 스키
 |---|---|---|
 | 사람 계정·로그인 | PROJ-107 서버 JSON API 구현. `security.user` 코어·`enrollment.auth` 조립. 키 설정으로 활성화하며 실제 웹·CLI 및 관리자 인가 전환은 별도 |
 | manifest 작성 API | 미구현 (현재 수동 INSERT) | manifest 저장은 이미 이 레포 소유 |
-| 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | 확정 ADR은 아직 없다 |
+| 대시보드 API | `:apps:dashboard-api`에서 PROJ-156 구현 중 | ADR 0019·`docs/dashboard-api-progress.md` |
 | 텔레메트리 파이프라인 이관 | **코드는 끝났다. 배포만 남았다** | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 로컬에서는 다섯 모듈이 한 요청에서 돈다 — 남은 것은 infra 가 이 앱을 배포하고 collector 컨테이너를 내리는 일이다(PROJ-106) |
 
 **파이프라인은 이 레포의 단일 앱이다**(허브 ADR 0004·0005 — 배포 단위 하나, OTel Collector 바이너리 없음).
@@ -159,7 +159,7 @@ docker compose up -d                              # 로컬 Postgres · ClickHous
 - **인증 조회의 DB 장애는 401도 403도 아니다.** 데몬은 그 둘을 같은 칸에 두고 토큰을 폐기·재발급한다.
   필터에 넘긴 `TelemetryTokenUnavailableHandler`가 503 + `Retry-After`를 쓴다. 예외를 컨테이너까지
   흘리지 마라.
-- ADR을 추가하면 `0019`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
+- ADR을 추가하면 `0020`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.
 
 ## PROJ-107 사용자 인증
