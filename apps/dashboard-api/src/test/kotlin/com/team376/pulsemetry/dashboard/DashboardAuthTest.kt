@@ -1098,6 +1098,49 @@ class DashboardAuthTest {
         assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
         assertThat(frame["schema"]["fields"].toList().all { it["config"]["suppressed"].asBoolean() }).isTrue()
     }
+    private fun hookSession(id: UUID, session: String?, event: String = "PreToolUse",
+        product: String = "claude_code", at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(hookEvent(id,"0",event=event,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("product",product)
+        val raw = mapper.readTree(row["raw_json"].asString()) as tools.jackson.databind.node.ObjectNode
+        raw.set("envelope",mapper.valueToTree(mapOf("session_id" to session)))
+        row.put("raw_json",mapper.writeValueAsString(raw))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `훅 실행은 실행 수와 전체 세션 대비 비율을 구분한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(hookSession(it,"same"),hookSession(it,"same"),
+            hookSession(it,"same","PostToolUse"),hookSession(it,null),
+            hookSession(it,"same",product="codex"),promptEvent(it,session="no-hook")) }
+        seedPoints(rows+rows.first())
+        val frames = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "hook_executions",
+            "frame_type" to "scalar","group_by" to listOf("hook_event")))).andExpect(status().isOk)
+            .andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        val pre = frames.single { it["schema"]["fields"][0]["labels"]["hook_event"].asString()=="PreToolUse" }
+        assertThat(pre["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(20.0,2.0/3,10.0,15.0)
+        val post = frames.single { it["schema"]["fields"][0]["labels"]["hook_event"].asString()=="PostToolUse" }
+        assertThat(post["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(5.0,1.0/3,5.0,15.0)
+        assertThat(pre["schema"]["fields"][1]["config"]["unit"].asString()).isEqualTo("ratio")
+        seedPoints(ids.flatMap { listOf(hookSession(it,null),hookSession(it,"(unknown)")) })
+        val noSession = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "hook_executions","frame_type" to "scalar")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"]
+        assertThat(noSession[0][0].asInt()).isEqualTo(10)
+        assertThat(noSession[1][0].isNull).isTrue()
+        assertThat(noSession[3][0].asInt()).isZero()
+        seedPoints(ids.map { promptEvent(it) })
+        val empty = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "hook_executions")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"]
+        assertThat(empty.size()).isZero()
+    }
+    @Test fun `훅 실행 세션 비율은 작은 비교 집단에서 모든 수치를 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { hookSession(it,"same") }+
+            ids.take(4).map { hookSession(it,"same",at="2026-08-31T12:00:00Z") })
+        val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "hook_executions","frame_type" to "scalar"),
+            mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["schema"]["fields"].size()).isEqualTo(8)
+        assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")

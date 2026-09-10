@@ -113,7 +113,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics)) {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics)) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
@@ -208,6 +208,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
+        if (q.metricId=="hook_executions") return readHookExecutions(q,scope,from,to,zone,interval,deadline)
         if (q.metricId in durationMetrics) return readDuration(q, scope, from, to, zone, interval, deadline)
         if (q.metricId in sessionMetrics) return readSessionDistribution(q, scope, from, to, zone, interval, deadline)
         if (q.metricId in populationMetrics) return readPopulation(q, scope, from, to, zone, interval, deadline)
@@ -306,6 +307,37 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > groupLimit(q))
             throw DashboardReadException("query_too_wide", 422)
         return Rows(rows, sql)
+    }
+    private fun readHookExecutions(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
+        zone: String, interval: String, deadline: Long): Rows {
+        val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
+        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val groupSql = (listOf("bucket")+q.groupBy.indices.map { "g$it" }).joinToString(",")
+        val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
+        // 훅 종류를 나누기 전의 전체 관측 세션을 분모로 사용한다.
+        val sql = """WITH observed AS (
+            SELECT *, $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
+                JSONExtractString(raw_json,'envelope','session_id') AS session_id,
+                tuple(installation_id,product,session_id) AS session_key,
+                session_id NOT IN ('','(unknown)') AS valid_session,
+                signal='span' AND JSONExtractString(raw_json,'type')='hook' AS is_hook
+            FROM (SELECT * $base)
+        ), totals AS (
+            SELECT bucket, uniqExactIf(session_key,valid_session) AS denominator
+            FROM observed GROUP BY bucket
+        ), stats AS (
+            SELECT $groupSql, $people AS people, countIf($activePoint)>0 AS active_time_definition,
+                countIf(is_hook) AS points, countIf(is_hook) AS value,
+                uniqExactIf(session_key,valid_session AND is_hook) AS numerator
+            FROM observed GROUP BY $groupSql
+        ) SELECT stats.*, totals.denominator, numerator/nullIf(denominator,0) AS ratio, 0 AS cumulative
+            FROM stats INNER JOIN totals USING (bucket) ORDER BY $groupSql"""
+        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
+        val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
+            .filter { it["points"].asLong()>0 }
+        if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size>groupLimit(q))
+            throw DashboardReadException("query_too_wide",422)
+        return Rows(rows,sql)
     }
     private fun readDuration(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, interval: String, deadline: Long): Rows {
@@ -460,7 +492,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             }
             fun add(name: String, series: List<JsonNode>, seriesTicks: List<Instant>?, column: String = "value") {
                 fields += mapOf("name" to name, "type" to "number", "labels" to labels,
-                    "config" to mapOf("unit" to if (q.metricId=="subagent_activity" && column=="ratio") "ratio" else if (column=="value" || q.metricId in durationMetrics) definition.unit else if (q.metricId=="automation_ratio") "s" else if (q.metricId=="compaction_reduction") "token" else "count", "suppressed" to suppressed,
+                    "config" to mapOf("unit" to if (q.metricId in setOf("subagent_activity","hook_executions") && column=="ratio") "ratio" else if (column=="value" || q.metricId in durationMetrics) definition.unit else if (q.metricId=="automation_ratio") "s" else if (q.metricId=="compaction_reduction") "token" else "count", "suppressed" to suppressed,
                         "group_size" to if (suppressed) null else (rows+prior).minOfOrNull { it["people"].asLong() }))
                 val byTime = series.associateBy { it["bucket"].asLong() }
                 val aligned = if (timeseries) ticks.indices.map { index -> seriesTicks?.getOrNull(index)?.let { byTime[it.toEpochMilli()] } }
@@ -478,11 +510,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 add("value", rows, ticks)
                 if (previous != null) add("value_compare", prior, previousTicks)
             }
-            if (q.metricId=="subagent_activity") {
+            if (q.metricId in setOf("subagent_activity","hook_executions")) {
                 add("ratio",rows,ticks,"ratio")
                 if (previous!=null) add("ratio_compare",prior,previousTicks,"ratio")
             }
-            if (q.metricId in ratioMetrics || q.metricId=="subagent_activity" || q.metricId in setOf("adoption_rate", "telemetry_coverage")) {
+            if (q.metricId in ratioMetrics || q.metricId in setOf("subagent_activity","hook_executions") || q.metricId in setOf("adoption_rate", "telemetry_coverage")) {
                 for (column in listOf("numerator", "denominator")) {
                     add(column,rows,ticks,column)
                     if (previous!=null) add("${column}_compare",prior,previousTicks,column)
