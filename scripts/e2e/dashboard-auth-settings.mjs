@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 39개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 공통 지표 40개 및 owner 거부 지표 1개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -100,7 +100,7 @@ try {
       event_id: randomUUID(), ts: observedAt,
       tenant_id: tenant, installation_id: installationId, signal: 'metric', product: 'claude_code',
       team_ids_as_of: ['00000000-0000-0000-0000-000000000010'], enrichment_json: '{}',
-      raw_json: JSON.stringify({ point: { name, value, aggregation_temporality: 1, attrs: { type: 'user', start_type: 'fresh' } } }),
+      raw_json: JSON.stringify({ envelope: { session_id: installationId }, point: { name, value, aggregation_temporality: 1, attrs: { type: 'user', start_type: 'fresh' } } }),
     }));
     for (const [decision, source, value] of [['accept', 'user_temporary', 3], ['accept', 'user_permanent', 2],
       ['reject', 'user_reject', 5], ['accept', 'config', 100]]) points.push(JSON.stringify({
@@ -362,9 +362,10 @@ try {
           { ref_id: 'E', metric_id: 'tokens', frame_type: 'scalar', group_by: ['type'] },
           { ref_id: 'F', metric_id: 'tokens', source: 'metrics', frame_type: 'scalar',
             group_by: ['team', 'agent_name'], params: { types: ['output', 'cache_read'] } },
+          { ref_id: 'G', metric_id: 'abandoned_session_ratio', group_by: ['team'] },
         ],
       }) });
-      return { hooks: series(response.results.A), models: series(response.results.B), cache: series(response.results.C), io: series(response.results.D), tokens: series(response.results.E), metricTokens: series(response.results.F) };
+      return { hooks: series(response.results.A), models: series(response.results.B), cache: series(response.results.C), io: series(response.results.D), tokens: series(response.results.E), metricTokens: series(response.results.F), abandoned: series(response.results.G) };
     });
     for (const key of ['cache', 'io']) assert.equal(hookResults[key].state, 'success');
     assert.deepEqual(Object.fromEntries(hookResults.cache.points.map(p => [p.key, p.value.value])),
@@ -377,6 +378,9 @@ try {
       { input: 1500, output: 750, cache_read: 3000, cache_create: 1500 });
     assert.deepEqual(Object.fromEntries(hookResults.metricTokens.points.map(p => [p.key, p.value.value])), { value: 250 });
     assert.equal(hookResults.metricTokens.points[0].labels.agent_name, 'worker');
+    assert.equal(hookResults.abandoned.state, 'success');
+    assert.deepEqual(Object.fromEntries(hookResults.abandoned.points.map(p => [p.key, p.value.value])),
+      { value: 0, numerator: 0, denominator: 5 });
     const hookExecutions = hookResults.hooks;
     assert.equal(hookResults.models.state, 'success');
     assert.deepEqual(Object.fromEntries(hookResults.models.points.map(p => [p.key, p.value.value])), { value: 5 });
@@ -417,7 +421,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 39개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 40개 및 owner 거부 지표 1개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -443,7 +447,8 @@ try {
       { metric: 'refusals', owner: 5 },
       { metric: 'model_users', expected: 5 },
       { metric: 'cache_read_ratio', expected: 0.5 }, { metric: 'input_output_ratio', expected: 2 },
-      { metric: 'tokens', events: 6750, selectedMetrics: 250 }],
+      { metric: 'tokens', events: 6750, selectedMetrics: 250 },
+      { metric: 'abandoned_session_ratio', expected: 0, sessions: 5 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
