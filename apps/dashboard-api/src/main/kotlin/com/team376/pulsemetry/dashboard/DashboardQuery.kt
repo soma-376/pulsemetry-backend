@@ -60,7 +60,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
-    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention")
     private val tokenTypes = listOf("input","output","cache_read","cache_create")
     private val tokenRatios = setOf("cache_read_ratio","input_output_ratio")
     private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms", "gate_wait_ms", "onboarding_ttfu")
@@ -115,7 +115,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users","tokens","session_last_event")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId!="usage_concentration")) {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users","tokens","session_last_event")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId!="usage_concentration") || (q.metricId=="onboarding_retention" && q.frameType=="timeseries")) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
@@ -142,7 +142,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 try {
                     val current = read(q, scope, from, to, zone, interval, deadline)
                     val previous = comparison?.let { read(q, scope, it.first, it.second, zone, interval, deadline) }
-                    results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else q, definition, current, previous, interval, ticks, comparison?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
+                    results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else if (q.metricId=="onboarding_retention") q.copy(groupBy=q.groupBy+listOf("cohort_index","week_index")) else q, definition, current, previous, interval, ticks, comparison?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
                         tick.minus(Duration.between(from,to)) else tick.atZone(time.zone).minusWeeks(1).toInstant(), interval) } }, scope.teamNames))
                 } catch (e: DashboardReadException) { results[q.refId] = error(id, e.status, e.code) }
             }
@@ -220,6 +220,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
+        if (q.metricId=="onboarding_retention") return readRetention(q,scope,from,to,zone,deadline)
         if (q.metricId=="onboarding_ttfu") return readOnboarding(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="usage_concentration") return readConcentration(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="session_last_event") return readLastEvent(q,scope,from,to,zone,interval,deadline)
@@ -340,6 +341,40 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size > groupLimit(q))
             throw DashboardReadException("query_too_wide", 422)
         return Rows(rows, sql)
+    }
+    private fun readRetention(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
+        zone: String, deadline: Long): Rows {
+        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val suffix = if (dimensions.isEmpty()) "" else ","+q.groupBy.indices.joinToString(",") { "g$it" }
+        val cohortKey = "g${q.groupBy.size}"
+        val weekKey = "g${q.groupBy.size+1}"
+        val history = base.replace("ts>={from:DateTime} AND ","")
+        val sql = """WITH observed AS (
+            SELECT *${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")}
+            FROM (SELECT * $history)
+            ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
+        ), installations AS (
+            SELECT installation_id$suffix,min(ts) AS first_at,
+                groupUniqArray(toStartOfWeek(ts,1,{zone:String})) AS active_weeks
+            FROM observed WHERE $known AND ts<{observed_to:DateTime} GROUP BY installation_id$suffix
+        ), cohort AS (
+            SELECT *,toStartOfWeek(first_at,1,{zone:String}) AS cohort_start FROM installations
+            WHERE first_at>={from:DateTime}
+        ) SELECT 0 AS bucket$suffix,
+            toString(dateDiff('week',toStartOfWeek({from:DateTime},1,{zone:String}),cohort_start)) AS $cohortKey,
+            toString(week_number) AS $weekKey,toString(cohort_start) AS cohort_week,
+            toDateTime(addWeeks(cohort_start,toInt32(week_number)+1),{zone:String})<={cutoff:DateTime} AS complete,
+            count() AS points,count() AS denominator,
+            if(complete,countIf(has(active_weeks,addWeeks(cohort_start,toInt32(week_number)))),NULL) AS numerator,
+            numerator/denominator AS value,uniqExact($person) AS people,
+            0 AS cumulative,0 AS active_time_definition
+            FROM cohort ARRAY JOIN range(toUInt32(dateDiff('week',cohort_start,
+                toStartOfWeek({to:DateTime}-INTERVAL 1 SECOND,1,{zone:String})))+1) AS week_number
+            GROUP BY cohort_start,week_number$suffix ORDER BY cohort_start,week_number$suffix"""
+        val cutoff = minOf(to,clock.instant())
+        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone,
+            "cutoff" to utc.format(cutoff),"observed_to" to boundary(cutoff))
+        return Rows(mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList(),sql)
     }
     private fun readOnboarding(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, interval: String, deadline: Long): Rows {
@@ -701,6 +736,10 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             val rows = groups[group].orEmpty()
             val prior = comparisons[group].orEmpty()
             val labels = q.groupBy.zip(group).toMap().toMutableMap()
+            if (q.metricId=="onboarding_retention") {
+                rows.firstOrNull()?.get("cohort_week")?.let { labels["cohort_week"] = it.asString() }
+                prior.firstOrNull()?.get("cohort_week")?.let { labels["cohort_week_compare"] = it.asString() }
+            }
             labels["team"]?.let { labels["team_id"] = it; labels["team_name"] = names[it] ?: it }
             val fields = mutableListOf<Map<String, Any?>>()
             val values = mutableListOf<List<Any?>>()
@@ -748,6 +787,10 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 "전후 토큰 쌍이 없는 압축 이벤트 ${incompleteCompactions}개를 감소율에서 제외"
             if (q.metricId=="subagent_activity") quality += "도구 호출에서 관측된 agent_id 수와 호출 비율; 완료·성공 여부는 판정하지 않음"
             if (q.metricId=="abandoned_session_ratio") quality += "조회 기간 내 로그 세션과 관측 산출만 판정; 세션 종료를 보장하지 않으며 미관측 산출이 있을 수 있음"
+            if (q.metricId=="onboarding_retention") {
+                quality += "필터·권한 범위의 보존된 첫 사용 주 코호트; 월요일 기준 설치 잔존율, 소집단은 구성원 수; 비교는 상대 코호트 주·경과 주차 정렬"
+                if ((rows+prior).any { !it["complete"].asBoolean() }) quality += "아직 관측이 끝나지 않은 주차는 비율·재사용 수 미판정; 코호트 크기는 유지"
+            }
             if (q.metricId=="onboarding_ttfu") quality += "필터·권한 범위의 보존 이력에서 첫 관측이 조회 기간에 속한 설치; 생성 이전 이벤트 제외, 과거 이력 유실 시 실제 첫 사용과 다를 수 있음; 생성 시각도 이벤트 정밀도에 맞춰 정수 초로 절삭"
             if (q.metricId=="usage_concentration") quality += "Q26 llm_call 이벤트 원천; 네 토큰 값이 모두 있는 비음수 호출만 사용; 상위 인원은 ceil(인원*0.1), 설치를 사람으로 병합하며 미매핑 설치는 별도 익명 단위"
             if (q.metricId=="session_last_event") quality += "Q25 로그의 마지막 관측 유형; 오류는 api_error, 긴 대기·실제 종료는 미판정; 시각·sequence 동률은 event_id 순서"

@@ -1503,6 +1503,64 @@ class DashboardAuthTest {
         assertThat(queryResult(request,accept="text/csv").andReturn().response.contentAsString)
             .doesNotContain("2721600","2635200")
     }
+    @Test fun `잔존율은 설치 코호트와 재사용 주차를 중복 제거하고 지난 빈 주는 영으로 채운다`() {
+        val ids = installations(5)
+        val extra = UUID.randomUUID()
+        jdbc.sql("""INSERT INTO enrollment.installations(id,tenant_id,member_id,invitation_id,platform)
+            SELECT :extra,tenant_id,member_id,invitation_id,platform FROM enrollment.installations WHERE id=:id""")
+            .param("extra",extra).param("id",ids.first()).update()
+        val old = installations(5)
+        val rows = (ids+extra).map { promptEvent(it,at="2026-08-04T12:00:00Z") }+
+            ids.take(3).map { promptEvent(it,at="2026-08-11T12:00:00Z") }+
+            old.flatMap { listOf(promptEvent(it,at="2026-07-28T12:00:00Z"),promptEvent(it,at="2026-08-04T12:00:00Z")) }+
+            promptEvent(UUID.randomUUID(),at="2026-08-04T12:00:00Z")
+        seedPoints(rows+rows.first())
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "onboarding_retention"),
+            mapOf("from" to "2026-08-03T00:00:00Z","to" to "2026-08-24T00:00:00Z")))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val frames = result["frames"].toList().associateBy { it["schema"]["fields"][0]["labels"]["week_index"].asString() }
+        assertThat(frames.keys).containsExactlyInAnyOrder("0","1","2")
+        for ((week,value) in listOf(1.0,0.5,0.0).withIndex()) {
+            val frame = frames.getValue(week.toString())
+            assertThat(frame["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(value,value*6,6.0)
+            assertThat(frame["schema"]["fields"][0]["labels"]["cohort_week"].asString()).isEqualTo("2026-08-03")
+            assertThat(frame["schema"]["fields"][0]["config"]["group_size"].asInt()).isEqualTo(5)
+        }
+    }
+    @Test fun `잔존율 진행 중과 미래 주는 미판정이며 미래 이벤트를 사용하지 않는다`() {
+        val ids = installations(5)
+        val at = clock.instant().minusSeconds(5)
+        val monday = at.atZone(java.time.ZoneOffset.UTC).toLocalDate().with(java.time.DayOfWeek.MONDAY)
+            .atStartOfDay(java.time.ZoneOffset.UTC).toInstant()
+        val future = monday.plus(java.time.Duration.ofDays(8))
+        seedPoints(ids.map { promptEvent(it,at=at.toString()) }+installations(5).map { promptEvent(it,at=future.toString()) })
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "onboarding_retention"),mapOf(
+            "from" to monday.toString(),"to" to monday.plus(java.time.Duration.ofDays(14)).toString())))
+            .andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        assertThat(result["frames"].size()).isEqualTo(2)
+        result["frames"].forEach { frame ->
+            assertThat(frame["data"]["values"][0][0].isNull).isTrue()
+            assertThat(frame["data"]["values"][1][0].isNull).isTrue()
+            assertThat(frame["data"]["values"][2][0].asInt()).isEqualTo(5)
+        }
+    }
+    @Test fun `잔존율 비교는 상대 코호트 주를 맞추고 작은 비교 코호트를 숨긴다`() {
+        val current = installations(5); val previous = installations(4)
+        seedPoints(current.map { promptEvent(it,at="2026-08-18T12:00:00Z") }+
+            previous.map { promptEvent(it,at="2026-08-04T12:00:00Z") })
+        val request = queryBody(mapOf("metric_id" to "onboarding_retention"),mapOf("from" to "2026-08-17T00:00:00Z",
+            "to" to "2026-08-31T00:00:00Z","compare" to "previous_period"))
+        val result = mapper.readTree(queryResult(request).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        assertThat(result["frames"].size()).isEqualTo(2)
+        result["frames"].forEach { frame ->
+            assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+            assertThat(frame["schema"]["fields"][0]["labels"]["cohort_week"].asString()).isEqualTo("2026-08-17")
+            assertThat(frame["schema"]["fields"][0]["labels"]["cohort_week_compare"].asString()).isEqualTo("2026-08-03")
+        }
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
