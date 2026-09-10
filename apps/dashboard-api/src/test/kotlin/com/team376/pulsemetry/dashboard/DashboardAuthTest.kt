@@ -600,6 +600,58 @@ class DashboardAuthTest {
             }
         }
     }
+    private fun decisionEvent(id: UUID, source: String?, decision: String?, at: String = "2026-09-01T12:00:00Z",
+        product: String = "claude_code", signal: String = "log"): String {
+        val row = mapper.readTree(promptEvent(id,product=product,at=at)) as tools.jackson.databind.node.ObjectNode
+        row.put("signal",signal)
+        row.put("raw_json",mapper.writeValueAsString(mapOf("type" to "tool_decision",
+            "envelope" to mapOf("session_id" to "session"),"payload" to mapOf("decided_by" to source,
+                "decision" to decision,"tool_name" to "Bash"))))
+        return mapper.writeValueAsString(row)
+    }
+    @Test fun `자동 결정 비율과 거절 수는 취소 및 누락을 구분하고 주체별 집계와 비교를 제공한다`() {
+        val ids = installations(5)
+        val rows = ids.flatMap { listOf(decisionEvent(it,"config","reject"),
+            decisionEvent(it,"hook","accept",product="codex",signal="span"),decisionEvent(it,"user","abort"),
+            decisionEvent(it,null,null),toolEvent(it,false)) }
+        seedPoints(rows + rows.first() + ids.map { decisionEvent(it,"user","reject",at="2026-08-31T12:00:00Z") })
+        val ratio = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "auto_approval_ratio"),
+            mapOf("compare" to "previous_period"))).andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(ratio["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.5,0.0,10.0,0.0,20.0,5.0)
+        val rejected = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tool_rejections","frame_type" to "scalar")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"][0][0]
+        assertThat(rejected.asInt()).isEqualTo(5)
+        val groups = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "auto_approval_ratio",
+            "group_by" to listOf("decided_by","tool_name")))).andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        assertThat(groups).hasSize(4)
+        val config = groups.single { it["schema"]["fields"][0]["labels"]["decided_by"].asString()=="config" }
+        assertThat(config["data"]["values"][0][0].asDouble()).isEqualTo(1.0)
+        assertThat(config["schema"]["fields"][0]["labels"]["tool_name"].asString()).isEqualTo("Bash")
+        val filtered = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "auto_approval_ratio",
+            "filters" to mapOf("products" to listOf("codex"))))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(filtered["data"]["values"][0][0].asDouble()).isEqualTo(1.0)
+        seedPoints(ids.map { decisionEvent(it,"user","abort") })
+        for (metric in listOf("auto_approval_ratio","tool_rejections")) {
+            val value = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar")))
+                .andReturn().response.contentAsString)["results"]["A"]["frames"][0]["data"]["values"][0][0]
+            assertThat(value.isNumber).isTrue()
+            assertThat(value.asInt()).isZero()
+        }
+    }
+    @Test fun `결정 지표는 작은 비교 집단의 비율과 분모 및 거절 수를 숨긴다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { decisionEvent(it,"config","accept") } +
+            ids.take(4).map { decisionEvent(it,"hook","reject",at="2026-08-31T12:00:00Z") })
+        for (metric in listOf("auto_approval_ratio","tool_rejections")) {
+            val frame = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "scalar"),
+                mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+            assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        }
+        seedPoints(emptyList())
+        val empty = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "auto_approval_ratio")))
+            .andReturn().response.contentAsString)["results"]["A"]["frames"]
+        assertThat(empty.toList()).isEmpty()
+    }
     companion object {
         @org.testcontainers.junit.jupiter.Container @JvmStatic
         val clickhouse = org.testcontainers.containers.GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
