@@ -60,7 +60,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
-    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio", "cost_per_active_user", "cost_per_user_hour", "model_unit_price", "cost_anomaly")
+    private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio", "cost_per_active_user", "cost_per_user_hour", "model_unit_price", "cost_anomaly", "contract_commitment_burn")
     private val tokenTypes = listOf("input","output","cache_read","cache_create")
     private val tokenRatios = setOf("cache_read_ratio","input_output_ratio")
     private val durationMetrics = setOf("turn_duration_ms", "llm_duration_ms", "llm_ttft_ms", "gate_wait_ms", "onboarding_ttfu")
@@ -97,7 +97,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             require(q.interval == null || q.interval in intervals)
             require(q.priceBasis == null || q.priceBasis in setOf("list", "contract"))
             require(q.source == null || (q.metricId in setOf("cost", "tokens") && q.source in setOf("events", "metrics")))
-            if (q.metricId in setOf("refusals", "vendor_account_mismatch") && user.role != "owner") throw UserAuthException("forbidden", 403)
+            if (q.metricId in setOf("refusals", "vendor_account_mismatch", "contract_commitment_burn") && user.role != "owner") throw UserAuthException("forbidden", 403)
         }
         val filters = (listOf(body.filters) + body.queries.mapNotNull { it.filters?.merge(body.filters) }).distinct()
         filters.forEach { f ->
@@ -109,6 +109,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val personal = filters.flatMap { it.memberIds }.distinct()
         if (personal.isNotEmpty() || body.queries.any { it.metricId == "vendor_account_mismatch" })
             access.personal(user, audit, "query", personal.sorted().joinToString(",").ifEmpty { "vendor_account_mismatch" })
+        body.queries.filter { it.metricId=="contract_commitment_burn" }.forEach { q ->
+            val f = q.filters?.merge(body.filters) ?: body.filters
+            if (f.teamIds.isNotEmpty() || f.memberIds.isNotEmpty() || f.products.isNotEmpty() || f.models.isNotEmpty())
+                throw UserAuthException("contract_scope_required",403)
+        }
         val scopes = filters.associateWith { scope(user, it) }
         val id = UUID.randomUUID().toString()
         val results = linkedMapOf<String, Any>()
@@ -123,6 +128,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                     q.params.values.all { it.isString && it.asString().length in 1..100 })
                 else if (q.metricId=="rubber_stamp_ratio") require(q.params.keys.all { it=="threshold_ms" } &&
                     q.params.values.all { it.isIntegralNumber && it.canConvertToInt() && it.asInt() in 0..3600000 })
+                else if (q.metricId=="contract_commitment_burn") {
+                    require(q.params.keys.all { it=="contract_id" })
+                    q.params["contract_id"]?.let { require(it.isString &&
+                        runCatching { UUID.fromString(it.asString()).toString()==it.asString().lowercase() }.getOrDefault(false)) }
+                }
                 else if (q.metricId=="cost_anomaly") {
                     require(q.params.keys.all { it in setOf("moving_avg_days","window_days") } &&
                         q.params.values.all { it.isIntegralNumber && it.canConvertToInt() && it.asInt() in 1..90 })
@@ -150,11 +160,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 val ticks = if (timeseries) buckets(time, from, to, interval) else emptyList()
                 if (ticks.size > body.maxDataPoints) throw DashboardReadException("query_too_wide", 422)
                 val scope = scopes.getValue(q.filters?.merge(body.filters) ?: body.filters)
-                val calculation = q.copy(priceBasis=q.priceBasis ?: body.priceBasis)
+                val calculation = q.copy(priceBasis=if (q.metricId=="contract_commitment_burn") "contract" else q.priceBasis ?: body.priceBasis)
                 try {
                     val current = read(calculation, scope, from, to, zone, interval, deadline)
                     val previous = comparison?.let { read(calculation, scope, it.first, it.second, zone, interval, deadline) }
-                    results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else if (q.metricId=="onboarding_retention") q.copy(groupBy=q.groupBy+listOf("cohort_index","week_index")) else calculation, definition, current, previous, interval, ticks, comparison?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
+                    results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="contract_commitment_burn") calculation.copy(groupBy=listOf("contract_id")) else if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else if (q.metricId=="onboarding_retention") q.copy(groupBy=q.groupBy+listOf("cohort_index","week_index")) else calculation, definition, current, previous, interval, ticks, comparison?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
                         tick.minus(Duration.between(from,to)) else tick.atZone(time.zone).minusWeeks(1).toInstant(), interval) } }, scope.teamNames))
                 } catch (e: DashboardReadException) { results[q.refId] = error(id, e.status, e.code) }
             }
@@ -233,6 +243,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long): Rows {
+        if (q.metricId=="contract_commitment_burn") return readCommitment(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="cost_anomaly") return readAnomaly(q,scope,from,to,zone,deadline)
         if (q.metricId in setOf("cost","subagent_cost_ratio","cost_per_active_user","cost_per_user_hour","model_unit_price")) return readCost(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="vendor_account_mismatch") return readMismatch(q,scope,from,to,zone,interval,deadline)
@@ -380,6 +391,50 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 "${quoted(row["model_pattern"]?.toString() ?: "")},${row["discount_rate"]},${quoted(row["id"].toString())},${quoted(row["discount_id"].toString())})"
         }
     }
+    /** 약정 계약의 기간·배정·벤더를 모두 만족하는 관측만 비용과 보호 인원에 포함한다. */
+    private fun readCommitment(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
+        zone: String, interval: String, deadline: Long): Rows {
+        val tenant = UUID.fromString(scope.parameters.getValue("tenant"))
+        val contractZone = jdbc.sql("SELECT timezone FROM enrollment.tenants WHERE id=:tenant")
+            .param("tenant",tenant).query(String::class.java).single()
+        val selected = q.params["contract_id"]?.asString()
+        val records = jdbc.sql("""SELECT c.id,c.vendor::text,tc.commitment_amount,tc.currency,cm.member_id,
+            ceil(extract(epoch FROM greatest(cm.assigned_at,c.starts_at::timestamp AT TIME ZONE :zone)))::bigint AS valid_from,
+            ceil(extract(epoch FROM least(coalesce(cm.released_at,'infinity'::timestamptz),
+                coalesce(c.terminated_at,'infinity'::timestamptz),
+                coalesce(c.ends_at+1,DATE '9999-12-31')::timestamp AT TIME ZONE :zone)))::bigint AS valid_to
+            FROM enrollment.contracts c JOIN enrollment.contract_term_commitments tc ON tc.contract_id=c.id
+            JOIN enrollment.contract_memberships cm ON cm.contract_id=c.id
+            JOIN enrollment.members m ON m.id=cm.member_id AND m.tenant_id=c.tenant_id
+            WHERE c.tenant_id=:tenant AND c.contract_type='term_commitment' AND c.status!='draft'
+                AND (:all OR c.id=:contract) ORDER BY c.id,cm.member_id LIMIT 5001""")
+            .param("tenant",tenant).param("zone",contractZone).param("all",selected==null)
+            .param("contract",selected?.let(UUID::fromString) ?: UUID(0,0)).query().listOfRows()
+        val contracts = records.groupBy { it["id"].toString() }
+        if (records.size>5000 || contracts.size>groupLimit(q)) throw DashboardReadException("query_too_wide",422)
+        val statements = mutableListOf<String>()
+        val result = contracts.flatMap { (id, members) ->
+            val info = members.first()
+            if (info["currency"].toString().trim()!="USD") throw DashboardReadException("unsupported_contract_currency",422)
+            val amount = (info["commitment_amount"] as? java.math.BigDecimal)?.toDouble()
+            if (amount!=null && (!amount.isFinite() || amount<0)) throw DashboardReadException("invalid_commitment_amount",422)
+            val membership = members.joinToString(",","[","]") {
+                "(${quoted(it["member_id"].toString())},${it["valid_from"]},${it["valid_to"]},${quoted(it["vendor"].toString())})"
+            }
+            val costs = readCost(q.copy(metricId="cost",priceBasis="contract"),scope,from,to,zone,interval,deadline,membership)
+            statements += costs.sql
+            costs.data.map { row ->
+                val node = row.deepCopy() as tools.jackson.databind.node.ObjectNode
+                node.put("g0",id)
+                node.set("numerator",row["value"])
+                if (amount==null) node.putNull("denominator") else node.put("denominator",amount)
+                if (amount==null || amount==0.0 || row["value"].isNull) node.putNull("value")
+                else node.put("value",row["value"].asDouble()/amount)
+                node
+            }
+        }
+        return Rows(result,statements.distinct().joinToString("\n"))
+    }
     /** 누락일은 0원으로 추정하지 않는다. 기준일 각각의 개인정보 보호 조건도 결과에 전파한다. */
     private fun readAnomaly(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, deadline: Long): Rows {
@@ -414,7 +469,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return Rows(result,daily.sql)
     }
     private fun readCost(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
-        zone: String, interval: String, deadline: Long): Rows {
+        zone: String, interval: String, deadline: Long, membership: String? = null): Rows {
         val unitPrice = q.metricId=="model_unit_price"
         val perUser = q.metricId=="cost_per_active_user"
         val perHour = q.metricId=="cost_per_user_hour"
@@ -443,7 +498,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val valid = "$observed AND isNotNull(raw_cost) AND raw_cost>=0"+
             if (unitPrice) " AND "+tokenValues.joinToString(" AND ") { "isNotNull($it) AND $it>=0" } else ""
         val matched = "arrayFilter(d -> d.1=$person AND d.2=multiIf(product='claude_code','anthropic',product='codex','openai','') AND toInt64(toUnixTimestamp(ts))>=d.3 AND toInt64(toUnixTimestamp(ts))<d.4 AND position(${dimension("model")},d.5)>0,{discounts:Array(Tuple(String,String,Int64,Int64,String,Float64,String,String))})"
-        val input = "SELECT *,$value AS raw_cost,${if (contract) matched else "[]"} AS matched $base"
+        val membershipFilter = if (membership==null) "" else " AND arrayExists(cm -> cm.1=$person AND toInt64(toUnixTimestamp(ts))>=cm.2 AND toInt64(toUnixTimestamp(ts))<cm.3 AND cm.4=multiIf(product='claude_code','anthropic',product='codex','openai',''),{commitments:Array(Tuple(String,Int64,Int64,String))})"
+        val input = "SELECT *,$value AS raw_cost,${if (contract) matched else "[]"} AS matched $base$membershipFilter"
         val factor = if (contract) "if(empty(matched),1.0,matched[1].6)" else "1.0"
         val activity = "JSONExtract(raw_json,'point','value','Nullable(Float64)')"
         val denominator = if (unitPrice) "sumOrNullIf(${tokenValues.joinToString("+")},$valid)" else if (perUser) "people" else "sumOrNullIf($activity,$activePoint AND $activity>=0)/3600.0"
@@ -464,7 +520,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
             GROUP BY $groups ORDER BY $groups"""
         val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone,
-            "discounts" to if (contract) discounts(scope) else "[]")
+            "discounts" to if (contract) discounts(scope) else "[]", "commitments" to (membership ?: "[]"))
         val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
             .filter { it["points"].asLong()>0 || it["cumulative"].asLong()>0 }
         if (rows.any { it["conflicts"].asLong()>0 }) throw DashboardReadException("contract_overlap",422)
@@ -905,7 +961,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             }
             fun add(name: String, series: List<JsonNode>, seriesTicks: List<Instant>?, column: String = "value") {
                 fields += mapOf("name" to name, "type" to "number", "labels" to labels,
-                    "config" to mapOf("unit" to if (q.metricId in setOf("subagent_activity","hook_executions") && column=="ratio") "ratio" else if (q.metricId in setOf("cost_per_active_user","cost_per_user_hour","model_unit_price") && column=="numerator") "USD" else if (q.metricId=="model_unit_price" && column=="denominator") "token" else if (q.metricId=="cost_per_user_hour" && column=="denominator") "h" else if (q.metricId in setOf("subagent_cost_ratio","cost_anomaly") && column!="value") "USD" else if (column=="value" || q.metricId in durationMetrics) definition.unit else if (q.metricId=="automation_ratio") "s" else if (q.metricId in setOf("compaction_reduction","usage_concentration") || q.metricId in tokenRatios) "token" else "count", "suppressed" to suppressed,
+                    "config" to mapOf("unit" to if (q.metricId in setOf("subagent_activity","hook_executions") && column=="ratio") "ratio" else if (q.metricId in setOf("cost_per_active_user","cost_per_user_hour","model_unit_price") && column=="numerator") "USD" else if (q.metricId=="model_unit_price" && column=="denominator") "token" else if (q.metricId=="cost_per_user_hour" && column=="denominator") "h" else if (q.metricId in setOf("subagent_cost_ratio","cost_anomaly","contract_commitment_burn") && column!="value") "USD" else if (column=="value" || q.metricId in durationMetrics) definition.unit else if (q.metricId=="automation_ratio") "s" else if (q.metricId in setOf("compaction_reduction","usage_concentration") || q.metricId in tokenRatios) "token" else "count", "suppressed" to suppressed,
                         "group_size" to if (suppressed) null else (rows+prior).minOfOrNull { it["people"].asLong() }))
                 val byTime = series.associateBy { it["bucket"].asLong() }
                 val aligned = if (timeseries) ticks.indices.map { index -> seriesTicks?.getOrNull(index)?.let { byTime[it.toEpochMilli()] } }
@@ -920,8 +976,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                     if (previous!=null) add("${column}_compare",prior,previousTicks,column)
                 }
             } else {
-                add("value", rows, ticks)
-                if (previous != null) add("value_compare", prior, previousTicks)
+                val valueName = if (q.metricId=="contract_commitment_burn") "burn_ratio" else "value"
+                add(valueName, rows, ticks)
+                if (previous != null) add("${valueName}_compare", prior, previousTicks)
             }
             if (q.metricId in setOf("subagent_activity","hook_executions")) {
                 add("ratio",rows,ticks,"ratio")
@@ -929,8 +986,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             }
             if (q.metricId in ratioMetrics || q.metricId in setOf("subagent_activity","hook_executions") || q.metricId in setOf("adoption_rate", "telemetry_coverage")) {
                 for (column in listOf("numerator", "denominator")) {
-                    add(column,rows,ticks,column)
-                    if (previous!=null) add("${column}_compare",prior,previousTicks,column)
+                    val name = if (q.metricId=="contract_commitment_burn") (if (column=="numerator") "cost_usd" else "commitment_amount") else column
+                    add(name,rows,ticks,column)
+                    if (previous!=null) add("${name}_compare",prior,previousTicks,column)
                 }
             }
             val cumulative = (rows+prior).sumOf { it["cumulative"].asLong() }
@@ -951,6 +1009,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 if (q.metricId=="cost" && q.source!="metrics") quality += if (suppressed) "reported·estimated 관측 비용 포함" else
                     "reported ${(rows+prior).sumOf { it["reported"].asLong() }}개, estimated ${(rows+prior).sumOf { it["estimated"].asLong() }}개 관측 비용"
             }
+            if (q.metricId=="contract_commitment_burn") quality += "owner 전사 범위; 조회·약정·배정 기간과 벤더가 일치하는 이벤트 계약 비용 / 전체 USD 약정액; 시계열은 버킷별 비용 비율이며 누적 소진율은 계약 시작부터 scalar 조회; all 배율만 적용, 약정액 누락·0은 비율 null, 청구액 아님"
             if (q.metricId=="cost_anomaly") quality += "일별 비용 / 직전 ${(q.params["moving_avg_days"] ?: q.params["window_days"])?.asInt() ?: 7}개 달력일 평균 - 1; 원천: ${if ("agent_name" in q.groupBy) "metrics" else "events"}; 가격 기준: ${q.priceBasis}; 기준일 누락·평균 0은 null, 기준일 소집단도 마스킹; 시작일은 자정부터, 마지막 날은 조회 종료까지, 단일값·표는 마지막 관측일; 청구액 아님"
             if (q.metricId=="vendor_account_mismatch") quality += "설치별 마지막 비어 있지 않은 로그·스팬 이메일과 현재 등록 이메일을 대소문자 구분 없이 비교; 시계열은 버킷별 판정, 동률은 sequence·event_id 순서; 주소는 반환하지 않음"
             if (q.metricId=="onboarding_retention") {

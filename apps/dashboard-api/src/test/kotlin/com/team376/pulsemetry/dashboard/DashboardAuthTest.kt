@@ -323,7 +323,7 @@ class DashboardAuthTest {
             "from" to "2026-01-01T00:00:00Z"))).andExpect(status().isOk)
         val absent = mapper.readTree(queryResult(queryBody()).andExpect(status().isOk).andReturn().response.contentAsString)
         assertThat(absent["results"]["A"]["frames"].size()).isZero()
-        val unfinished = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "contract_commitment_burn")))
+        val unfinished = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost","frame_type" to "distribution")))
             .andExpect(status().isOk).andReturn().response.contentAsString)
         assertThat(unfinished["results"]["A"]["status"].asInt()).isEqualTo(501)
     }
@@ -1900,6 +1900,87 @@ class DashboardAuthTest {
         assertThat(frame["data"]["values"][0][0].asLong()).isEqualTo(java.time.Instant.parse("2026-09-01T15:00:00Z").toEpochMilli())
         assertThat(frame["data"]["values"].toList().drop(1).map { it[0].asDouble() }).containsExactly(1.0,10.0,5.0)
         assertThat(frame["schema"]["fields"][1]["labels"]["agent_name"].asString()).isEqualTo("worker")
+    }
+
+    private fun termContract(): UUID {
+        val id = UUID.randomUUID()
+        jdbc.sql("""INSERT INTO enrollment.contracts(id,tenant_id,vendor,contract_type,name,contracted_at,starts_at,ends_at)
+            VALUES (:id,:tenant,'anthropic','term_commitment','테스트 약정','2026-08-01','2026-08-01','2026-09-30')""")
+            .param("id",id).param("tenant",tenant).update()
+        jdbc.sql("INSERT INTO enrollment.contract_term_commitments(contract_id,commitment_months,commitment_amount) VALUES (:id,2,1000)")
+            .param("id",id).update()
+        jdbc.sql("""INSERT INTO enrollment.contract_memberships(contract_id,member_id,assigned_at)
+            SELECT :id,id,'2026-08-01T00:00:00Z' FROM enrollment.members WHERE tenant_id=:tenant""")
+            .param("id",id).param("tenant",tenant).update()
+        return id
+    }
+    @Test fun `약정 소진율은 계약 배정 벤더 기간과 할인 비용으로 계산한다`() {
+        val ids = installations(5)
+        val contract = termContract()
+        discountContract()
+        jdbc.sql("""UPDATE enrollment.contract_memberships SET assigned_at='2026-09-01T12:00:00Z',
+            released_at='2026-09-01T13:00:00Z' WHERE contract_id=:id""").param("id",contract).update()
+        val valid = ids.map { costEvent(it,10.0) }
+        val wrongVendor = ids.map { id ->
+            val row = mapper.readTree(costEvent(id,999.0)) as tools.jackson.databind.node.ObjectNode
+            row.put("product","codex")
+            mapper.writeValueAsString(row)
+        }
+        seedPoints(valid+valid.first()+wrongVendor+ids.flatMap { listOf(costEvent(it,999.0,at="2026-09-01T11:59:59Z"),
+            costEvent(it,999.0,at="2026-09-01T13:00:00Z"),costPoint(it,999.0)) })
+        val request = queryBody(mapOf("metric_id" to "contract_commitment_burn","params" to mapOf("contract_id" to contract.toString())))
+        val frame = mapper.readTree(queryResult(request).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.025,25.0,1000.0)
+        assertThat(frame["schema"]["fields"][0]["labels"]["contract_id"].asString()).isEqualTo(contract.toString())
+        assertThat(frame["schema"]["fields"][2]["config"]["unit"].asString()).isEqualTo("USD")
+        jdbc.sql("UPDATE enrollment.contracts SET terminated_at='2026-09-01T12:00:00Z' WHERE id=:id").param("id",contract).update()
+        assertThat(mapper.readTree(queryResult(request).andReturn().response.contentAsString)["results"]["A"]["frames"].size()).isZero()
+    }
+    @Test fun `약정액 누락과 영 금액을 구분하고 통화와 음수는 오류로 반환한다`() {
+        val ids = installations(5)
+        val contract = termContract()
+        seedPoints(ids.map { costEvent(it,10.0) })
+        fun result() = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "contract_commitment_burn")))
+            .andReturn().response.contentAsString)["results"]["A"]
+        for (amount in listOf("NULL","0")) {
+            jdbc.sql("UPDATE enrollment.contract_term_commitments SET commitment_amount=$amount WHERE contract_id=:id").param("id",contract).update()
+            val frame = result()["frames"][0]
+            assertThat(frame["data"]["values"][0][0].isNull).isTrue()
+            assertThat(frame["data"]["values"][1][0].asDouble()).isEqualTo(50.0)
+            assertThat(frame["data"]["values"][2][0].isNull).isEqualTo(amount=="NULL")
+        }
+        jdbc.sql("UPDATE enrollment.contract_term_commitments SET currency='KRW' WHERE contract_id=:id").param("id",contract).update()
+        assertThat(result()["status"].asInt()).isEqualTo(422)
+        jdbc.sql("UPDATE enrollment.contract_term_commitments SET currency='USD',commitment_amount=-1 WHERE contract_id=:id").param("id",contract).update()
+        assertThat(result()["status"].asInt()).isEqualTo(422)
+    }
+    @Test fun `약정 소진율 비교 집단은 비율 비용 약정액과 CSV를 숨긴다`() {
+        val ids = installations(5)
+        termContract()
+        seedPoints(ids.map { costEvent(it,10.0) }+ids.take(4).map { costEvent(it,10.0,at="2026-08-31T12:00:00Z") })
+        val request = queryBody(mapOf("metric_id" to "contract_commitment_burn","frame_type" to "timeseries"),
+            mapOf("compare" to "previous_period"))
+        val frame = mapper.readTree(queryResult(request).andReturn().response.contentAsString)["results"]["A"]["frames"][0]
+        assertThat(frame["data"]["values"].toList().drop(1).all { it.toList().all { value -> value.isNull } }).isTrue()
+        assertThat(frame["schema"]["fields"][1]["config"]["suppressed"].asBoolean()).isTrue()
+        assertThat(queryResult(request,"text/csv").andReturn().response.contentAsString).doesNotContain("1000","50.0","40.0")
+    }
+    @Test fun `약정 조회는 owner 전사 범위와 UUID를 검증하고 다른 tenant 계약을 반환하지 않는다`() {
+        seedPoints(emptyList())
+        val request = queryBody(mapOf("metric_id" to "contract_commitment_burn"))
+        queryResult(queryBody(mapOf("metric_id" to "contract_commitment_burn","params" to mapOf("contract_id" to "bad"))))
+            .andExpect(status().isBadRequest)
+        queryResult(queryBody(mapOf("metric_id" to "contract_commitment_burn"),mapOf("filters" to mapOf("products" to listOf("codex")))))
+            .andExpect(status().isForbidden)
+        val other = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.tenants(id,name) VALUES (:id,'다른 조직')").param("id",other).update()
+        val contract = termContract()
+        jdbc.sql("DELETE FROM enrollment.contract_memberships WHERE contract_id=:id").param("id",contract).update()
+        jdbc.sql("UPDATE enrollment.contracts SET tenant_id=:tenant WHERE id=:id").param("tenant",other).param("id",contract).update()
+        val foreign = queryBody(mapOf("metric_id" to "contract_commitment_burn","params" to mapOf("contract_id" to contract.toString())))
+        assertThat(mapper.readTree(queryResult(foreign).andReturn().response.contentAsString)["results"]["A"]["frames"].size()).isZero()
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        queryResult(request).andExpect(status().isForbidden)
     }
 
 }
