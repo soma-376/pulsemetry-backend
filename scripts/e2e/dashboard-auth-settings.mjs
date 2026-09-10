@@ -1,5 +1,5 @@
 // 실제 frontend + dashboard + 격리 PostgreSQL. HTTP 응답을 가로채거나 목업으로 바꾸지 않는다.
-// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 23개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
+// 이 테스트는 인증·P5와 브라우저 API 클라이언트의 지표 메타와 지표 25개 집계를 검증하며 전체 PROJ-156 E2E를 대체하지 않는다.
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, createWriteStream, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -136,6 +136,12 @@ try {
       raw_json: JSON.stringify({ type: 'lifecycle', envelope: { session_id: installationId },
         payload: { kind: 'compaction', tokens_before, tokens_after, attrs: { trigger: 'auto', success: false } } }),
     }));
+    for (const status of ['connected', 'failed', 'disconnected', null]) points.push(JSON.stringify({
+      event_id: randomUUID(), ts: observedAt, tenant_id: tenant, installation_id: installationId,
+      signal: 'log', product: 'claude_code', team_ids_as_of: ['00000000-0000-0000-0000-000000000010'],
+      enrichment_json: '{}', raw_json: JSON.stringify({ type: 'lifecycle', payload: { kind: 'mcp_connection',
+        attrs: { server_name: 'github', server_scope: 'user', transport_type: 'stdio', is_plugin: 'True', status } } }),
+    }));
   }
   run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], points.join('\n'));
   launch('node', [resolve(frontend, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '15173', '--strictPort'],
@@ -244,6 +250,24 @@ try {
     assert.deepEqual(toolValues('J'), { value: 10 });
     assert.deepEqual(toolValues('K'), { value: 15 });
     assert.deepEqual(toolValues('L'), { value: 0.81, numerator: 4050, denominator: 5000 });
+    const mcp = await page.evaluate(async () => {
+      const client = await import('/src/api/client.ts');
+      const { series } = await import('/src/widgets/model.ts');
+      const response = await client.request('/query', { method: 'POST', body: JSON.stringify({
+        from: 'now-1d', to: 'now', queries: [
+          { ref_id: 'A', metric_id: 'mcp_connections', frame_type: 'scalar',
+            group_by: ['server_name', 'is_plugin'], params: { server_scope: 'user' } },
+          { ref_id: 'B', metric_id: 'mcp_failure_ratio', group_by: ['server_name'] },
+        ],
+      }) });
+      return Object.fromEntries(Object.entries(response.results).map(([ref, result]) => [ref, series(result)]));
+    });
+    for (const result of Object.values(mcp)) assert.equal(result.state, 'success');
+    assert.deepEqual(Object.fromEntries(mcp.A.points.map(p => [p.key, p.value.value])), { value: 20 });
+    assert.deepEqual(Object.fromEntries(mcp.B.points.map(p => [p.key, p.value.value])),
+      { value: 0.75, numerator: 15, denominator: 20 });
+    assert.equal(mcp.A.points[0].labels.is_plugin, 'True');
+    assert.equal(mcp.B.points[0].labels.server_name, 'github');
     const localObserved = new Date((observedAt + 9*3600)*1000);
     assert.equal(tools.J.points[0].labels.hour, String(localObserved.getUTCHours()));
     assert.equal(tools.J.points[0].labels.weekday, String(localObserved.getUTCDay() || 7));
@@ -263,7 +287,7 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 23개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·지표 25개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
       { metric: 'telemetry_coverage', expected: 1 }, { metric: 'automation_ratio', expected: 0 },
@@ -274,7 +298,8 @@ try {
       { metric: 'api_retry_attempts', expected: 1/3 }, { metric: 'rate_limit_events', expected: 5 },
       { metric: 'auto_approval_ratio', expected: 0.5 }, { metric: 'tool_rejections', expected: 5 },
       { metric: 'api_error_rate', expected: 1/3 }, { metric: 'usage_heatmap', expected: 10 },
-      { metric: 'compactions', expected: 15 }, { metric: 'compaction_reduction', expected: 0.81 }],
+      { metric: 'compactions', expected: 15 }, { metric: 'compaction_reduction', expected: 0.81 },
+      { metric: 'mcp_connections', expected: 20 }, { metric: 'mcp_failure_ratio', expected: 0.75 }],
     backend: run('git', ['rev-parse', 'HEAD']),
     jarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar'))).digest('hex'), frontend: run('git', ['-C', frontend, 'rev-parse', 'HEAD']),
     unexpectedOrUnimplementedResponses: failures };
