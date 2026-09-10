@@ -48,6 +48,49 @@ class DashboardAuthTest {
         assertThat(body.has("refresh_token")).isFalse()
         return body["access_token"].asString()
     }
+    @Test fun `지표 카탈로그는 인증을 요구하고 OpenAPI의 모든 지표와 차원을 제공한다`() {
+        mvc.perform(get("/v1/meta/metrics")).andExpect(status().isUnauthorized)
+        val root = generateSequence(java.nio.file.Path.of("").toAbsolutePath()) { it.parent }
+            .first { Files.exists(it.resolve("docs/reference/pulsemetry_api_spec.yaml")) }
+        val spec = Files.readString(root.resolve("docs/reference/pulsemetry_api_spec.yaml"))
+        fun enumValues(name: String): Set<String> = Regex("(?m)^        - ([a-z_]+)")
+            .findAll(spec.substringAfter("    $name:").substringBefore("\n    QueryResponse:")
+                .let { if (name == "MetricId") it.substringBefore("\n    Dimension:") else it })
+            .map { it.groupValues[1] }.toSet()
+        val expected = enumValues("MetricId")
+        val dimensions = enumValues("Dimension")
+        val rdbColumns = jdbc.sql("""SELECT table_schema || '.' || table_name || '.' || column_name
+            FROM information_schema.columns WHERE table_schema='enrollment'""").query(String::class.java).list()
+        assertThat(expected).hasSize(53)
+        for (role in listOf("owner", "admin")) {
+            jdbc.sql("UPDATE enrollment.members SET role=CAST(:role AS enrollment.member_role)")
+                .param("role", role).update()
+            val response = mvc.perform(get("/v1/meta/metrics").header("Authorization", "Bearer ${token()}"))
+                .andExpect(status().isOk).andReturn().response.contentAsString
+            val definitions = mapper.readTree(response)["items"].toList()
+            assertThat(definitions.map { it["metric_id"].asString() }).containsExactlyInAnyOrderElementsOf(expected)
+            for (definition in definitions) {
+                assertThat(definition.has("metricId")).isFalse()
+                assertThat(definition["definition"].asString()).isNotBlank()
+                assertThat(definition["title"].asString()).isNotBlank()
+                val columns = definition["source_columns"].toList().map { it.asString() }
+                assertThat(columns).isNotEmpty()
+                assertThat(rdbColumns).containsAll(columns.filter { it.startsWith("enrollment.") })
+                assertThat(definition["min_group_size"].asInt()).isEqualTo(5)
+                val allowed = definition["allowed_group_by"].toList().map { it.asString() }
+                val forbidden = definition["forbidden_group_by"].toList().map { it.asString() }
+                assertThat(dimensions).containsAll(allowed + forbidden)
+                assertThat(allowed.intersect(forbidden.toSet())).isEmpty()
+            }
+            val refusal = definitions.single { it["metric_id"].asString() == "refusals" }
+            assertThat(refusal["forbidden_group_by"].toList().map { it.asString() }).containsExactly("team")
+            assertThat(refusal["availability"].asString()).isEqualTo("partial")
+            assertThat(refusal["caveat"].asString()).contains("server_fallback_hop")
+            val cost = definitions.single { it["metric_id"].asString() == "cost" }
+            assertThat(cost["availability"].asString()).isEqualTo("available")
+            assertThat(cost["caveat"].asString()).contains("청구액이 아닙니다", "token_type=all")
+        }
+    }
     @Test fun `manifest 없는 owner 로그인 후 사용자 정보 조회하고 폐기하면 즉시 거부한다`() {
         val token = token()
         mvc.perform(get("/v1/not-implemented").header("Authorization", "Bearer $token")).andExpect(status().isNotFound)
