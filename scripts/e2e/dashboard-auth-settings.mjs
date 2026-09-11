@@ -779,6 +779,46 @@ try {
         }) });
         return { cost: series(response.results.A), unit: series(response.results.B), duration: series(response.results.C), users: series(response.results.D), tokens: series(response.results.E) };
       });
+      const securityEvents = installations.flatMap(p => ['A', 'A', 'B', 'C'].flatMap(category => [
+        JSON.stringify({ ...p, event_id: randomUUID(), signal: 'log', raw_json: JSON.stringify({
+          type: 'llm_response', payload: { model: 'security-top-e2e', stop_reason: 'refusal', refusal_category: category } }) }),
+        JSON.stringify({ ...p, event_id: randomUUID(), signal: 'span', raw_json: JSON.stringify({
+          type: 'hook', envelope: { session_id: 'shared-hook-session' },
+          payload: { model: 'security-top-e2e', attrs: { hook_event: category, num_blocking: '0' } } }) }),
+      ]));
+      run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], securityEvents.join('\n'));
+      const hookTop = await page.evaluate(async () => {
+        const { request } = await import('/src/api/client.ts');
+        const { series } = await import('/src/widgets/model.ts');
+        const response = await request('/query', { method: 'POST', body: JSON.stringify({
+          from: 'now-1d', to: 'now', filters: { models: ['security-top-e2e'] },
+          queries: [{ ref_id: 'A', metric_id: 'hook_executions', group_by: ['hook_event'], frame_type: 'table', limit: 1 }],
+        }) });
+        return series(response.results.A);
+      });
+      assert.equal(hookTop.state, 'success');
+      assert.deepEqual(Object.fromEntries(hookTop.points.filter(p => p.labels.hook_event === '__other__').map(p => [p.key, p.value.value])),
+        { value: 10, ratio: 1, numerator: 5, denominator: 5 });
+      const securityContext = await browser.newContext();
+      try {
+        const ownerPage = await securityContext.newPage();
+        await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
+        await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
+        await ownerPage.getByLabel('비밀번호', { exact: true }).fill('fixture-password-123');
+        await ownerPage.getByRole('button', { name: '로그인', exact: true }).click();
+        await ownerPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
+        const refusalTop = await ownerPage.evaluate(async () => {
+          const { request } = await import('/src/api/client.ts');
+          const { series } = await import('/src/widgets/model.ts');
+          const response = await request('/query', { method: 'POST', body: JSON.stringify({
+            from: 'now-1d', to: 'now', filters: { models: ['security-top-e2e'] },
+            queries: [{ ref_id: 'A', metric_id: 'refusals', group_by: ['category'], frame_type: 'table', limit: 1 }],
+          }) });
+          return series(response.results.A);
+        });
+        assert.equal(refusalTop.state, 'success');
+        assert.deepEqual(Object.fromEntries(refusalTop.points.map(p => [p.labels.category, p.value.value])), { A: 10, '__other__': 10 });
+      } finally { await securityContext.close(); }
       assert.equal(topCost.cost.state, 'success');
       assert.deepEqual(Object.fromEntries(topCost.cost.points.map(p => [p.labels.model, p.value.value])),
         { 'top-e2e-a': 50, '__other__': 25 });
@@ -807,6 +847,7 @@ try {
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
+    verifiedSecurityTopN: { actualFrontendClient: true, hookAdmin: true, refusalOwner: true, otherExecutions: 10, otherSessions: 5, otherSessionRatio: 1, otherRefusals: 10 },
     verifiedTokensTopN: { actualFrontendClient: true, admin: true, top: 5, other: 10, tiedTop: 'top-e2e-a' },
     verifiedDurationAndUsersTopN: { actualFrontendClient: true, admin: true, topMedian: 10, otherMedian: 3, otherUsers: 5 },
     verifiedUnitPriceTopN: { actualFrontendClient: true, admin: true, top: 10, other: 2.5, otherCost: 25, otherTokens: 10 },
