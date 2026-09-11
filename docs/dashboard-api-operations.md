@@ -114,4 +114,9 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 
 ## 실제 수집부터 frontend까지 검증
 
-`dashboard-ingest.mjs`는 smoke 마지막 admin 세션에서 실제 telemetry-ingest 앱을 같은 격리 DB에 연결한다. 토큰 해시 등 인증 fixture만 PostgreSQL에 만들고, 검증 대상 텔레메트리 행은 `/v1/logs`, `/v1/metrics`, `/v1/traces`로만 전송한다. 검증 항목은 잘못된 토큰 401, 자기신고 신원 덮어쓰기, 팀 as-of 보강, 동일 요청 재전송 중복 제거, frontend 실제 클라이언트의 4명 마스킹과 5명 공개 집계다. `result.json.verifiedIngest`와 `ingestJarSha256`, `ingest.log`에 증거를 남긴다. metrics는 delta 비용 1~5 USD의 합계 15와 cumulative 999의 제외를, traces는 TTFT 100~500ms의 p50=300/p90=500을 검증한다. 세 신호 모두 잘못된 인증을 거부하며 동일 바이트를 두 번 전송해도 저장 행은 logs 5개, metrics 10개, spans 5개다. 토큰 발급/enroll, 다른 벤더·이벤트 종류, 수집 데이터로 실행한 시나리오와 전체 화면 검증은 이 범위에 포함되지 않는다.
+`dashboard-ingest.mjs`는 smoke 마지막 admin 세션에서 실제 telemetry-ingest 앱을 같은 격리 DB에 연결한다. 토큰 해시 등 인증 fixture만 PostgreSQL에 만들고, 검증 대상 텔레메트리 행은 `/v1/logs`, `/v1/metrics`, `/v1/traces`로만 전송한다. 검증 항목은 잘못된 토큰 401, 자기신고 신원 덮어쓰기, 팀 as-of 보강, 동일 요청 재전송 중복 제거, frontend 실제 클라이언트의 4명 마스킹과 5명 공개 집계다. `result.json.verifiedIngest`와 `ingestJarSha256`, `ingest.log`에 증거를 남긴다. metrics는 delta 비용 1~5 USD의 합계 15와 cumulative 999의 제외를, traces는 TTFT 100~500ms의 p50=300/p90=500을 검증한다. 세 신호 모두 잘못된 인증을 거부하며 동일 바이트를 두 번 전송해도 저장 행은 logs 5개, metrics 10개, spans 5개다(아래 시나리오용 비용 로그를 포함하면 logs 10개, 전체 25행). 토큰 발급/enroll, 다른 벤더·이벤트 종류, 다른 시나리오와 전체 화면 검증은 이 범위에 포함되지 않는다.
+
+
+## 실제 수집 데이터의 S1-3 실행
+
+기존 smoke가 끝난 후 이번 실행 전용 ClickHouse 테이블을 비워 직접 주입 데이터를 제거한다. 이후 OTLP로만 도구 호출·비용 로그, 비용 metrics, TTFT traces를 전송한다. 비용 로그는 5명이 1~5 USD씩 사용하고 1명만 attempt=2인 고정 데이터다. 실제 frontend 클라이언트로 S1-3을 시작하고 queued→succeeded, 모델·팀 비용 각각 15 USD, 재시도 비율 0.2와 retry_cost 판정을 확인한다. `/runs/{id}` 화면의 판정 제목과 W1.3 팀별 비용 $15.00을 검증하고 `admin-ingest-scenario.png`를 저장한다. `result.json.verifiedIngest.scenario`가 실행 ID와 검증 범위를 담는다. 이동평균 급증과 모델 비중 변화의 실제 수집 시계열, 다른 시나리오와 저장·재실행의 수집 기반 확장은 아직 범위 밖이다.

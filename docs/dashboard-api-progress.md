@@ -540,3 +540,12 @@
 - 세 신호 모두 잘못된 토큰 401, 인증 tenant/installation 스탬핑, 팀 as-of 보강, 4명 이하 비공개를 검증한다. 총 30회 전송 후 FINAL 저장 행은 logs 5개·metrics 10개·spans 5개이며 중복이 집계되지 않는다.
 - 잔여 범위는 시나리오 실행 확장, 조회 명세 보완, 수집 데이터로 실행하는 시나리오·화면 E2E다. 이번 작업은 Claude Code의 대표 이벤트 세 종류를 검증하며 모든 벤더·이벤트 종류나 enroll/토큰 발급까지 검증한 것은 아니다.
 - 최종 실제 frontend E2E 통과, 예상하지 않은 API 오류 응답 0건. 기존 owner/admin 검증도 함께 통과했다. 테스트 스크립트 변경으로 앱 JAR 변경은 없으며 frontend 작업 트리는 깨끗하다.
+
+
+## 수집 데이터 기반 S1-3 결과 화면 E2E
+
+- 기존 smoke 이후 이번 실행의 격리 ClickHouse를 비우고 OTLP 데이터만 다시 수집한다. 직접 주입 fixture가 시나리오의 이동평균 기준 기간에 섞이지 않도록 분리했다. 인증·팀 소속용 PostgreSQL fixture는 유지한다.
+- 5개 installation의 api_request 비용 로그 1~5 USD와 attempt=2 한 건을 전송했다. 같은 요청 재전송 후 전체 저장 행은 25개이며 logs/metrics/spans의 신원·팀 소속도 검증한다.
+- 실제 frontend 클라이언트로 S1-3 비동기 실행, 모델·팀 비용 15 USD, 재시도 비율 0.2, retry_cost 판정과 실제 결과 화면의 W1.3 $15.00을 검증한다. 증거는 `verifiedIngest.scenario` 및 `admin-ingest-scenario.png`다.
+- 시나리오 실행 확장(S1-3 외), 잔여 조회 명세, 실제 수집 시계열의 급증·모델 비중 변화 및 다른 화면 흐름 검증은 남아 있다.
+- 최종 E2E 통과(예상하지 않은 API 오류 0건), 스크린샷에서 비용 추세 점·팀 비용 막대/$15.00·재시도 20% 판정을 확인했다. 기존 W2.5 frontend 매핑 누락으로 재시도 프레임은 별도 표에 표시되며 해당 위젯은 미연결 상태다. frontend 코드는 변경하지 않았다.

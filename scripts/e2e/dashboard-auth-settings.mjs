@@ -793,7 +793,7 @@ try {
       assert.deepEqual(Object.fromEntries(topCost.users.points.map(p => [p.labels.model, p.value.value])),
         { 'top-e2e-a': 5, '__other__': 5 });
     }
-    if (role === 'admin') verifiedIngest = await verifyDashboardIngest({ page, launch, waitFor, sql, backend, work, port, chPort,
+    if (role === 'admin') verifiedIngest = await verifyDashboardIngest({ page, launch, waitFor, sql, backend, work, port, chPort, artifacts,
       installations: [...new Set(points.map(line => JSON.parse(line).installation_id))], tenant });
     await page.screenshot({ path: resolve(artifacts, `${role}.png`), fullPage: true });
     await Promise.all(responseReads);
