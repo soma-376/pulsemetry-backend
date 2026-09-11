@@ -487,3 +487,12 @@
 - DB 테스트 2건으로 현재 상위 50/나머지 25, 동일 그룹의 비교 5/100, 나머지 중복 사용자 5명, 소집단의 순위 영향 배제와 마스킹을 검증했다. dashboard 테스트 135건 통과(실패·오류·skip 0). 구현 커밋 `122dd5a`.
 - 실제 frontend E2E도 통과했다. admin 클라이언트의 `series`가 상위 비용 50과 나머지 25를 해석하며, 기존 지표·설정·설치·세션·S1-3·저장/삭제 화면에 오류 응답이 없다. 커밋 전 부모 `42e113d`, jar SHA-256 `7aeb68c9ed9f3b0a8650f4fed31d053928d9318478b6099449be2b1fc9539ae6`, frontend `52f7cb1`로 검증했다. `result.json.verifiedCostTopN`에 결과를 남긴다.
 - 이번 범위는 비용 지표다. 다른 지표의 상위 N·나머지, 나머지 시나리오 실행 계획, 조회 명세 보완과 ingest부터의 전체 E2E는 남아 있다.
+
+
+## 합계·건수 상위 그룹 확장
+
+- `sessions`, `active_time`, `lines_of_code`, `commits`, `pull_requests`, `tool_calls`, `rate_limit_events`, `tool_rejections`, `usage_heatmap`, `compactions`, `mcp_connections`, `llm_stop_reasons`, `hook_blocking` 13개 지표에 상위 N·`__other__` 처리를 확장했다. 비용을 포함한 지원 지표는 14개다. 비율·백분위·고유 인원 지표 등은 별도 집계가 필요하며 아직 확장하지 않았다.
+- 비용과 일반 합계 쿼리의 차원 재그룹화를 공통화했다. 현재 합계·동률 키 정렬·마스킹 그룹 점수 0·비교 기간 동일 그룹·원본 인원 재집계 규칙을 유지한다. 따옴표가 있는 그룹 키를 테스트하면서 ClickHouse String 파라미터 역이스케이프로 JSON이 깨지는 문제를 수정했다. 값은 명명 파라미터로 전달한다.
+- DB 테스트 2건을 추가하고 히트맵 제한 테스트를 새 명세 동작으로 갱신했다. 누적 9,999 포인트 제외, 세션 상위 50/나머지 25와 비교 100, 빈 버킷 null, 도구 성공 필터·한글/따옴표 키·복수 차원, 히트맵 100칸+나머지 340, 중복 제거 인원 5를 확인했다. dashboard 137건 통과(실패·오류·skip 0). 구현 커밋 `e3d4e4d`.
+- 실제 frontend E2E에서 owner/admin의 종료 사유 상위 10/나머지 10을 `series`로 해석했다. 기존 53개 지표·P5·설치·세션·S1-3·저장/삭제 및 비용 상위 그룹도 통과했고 오류 응답은 없다. `result.json.verifiedCountTopN`에 범위를 기록한다. 쿼리를 추가할 때 테스트 요청이 12개 상한을 넘긴 실패는 요청을 분리하여 해결했다.
+- 검증한 작업 트리 부모는 `edc7507`, jar SHA-256은 `796b023f6dbfb79b535abd4fe329e64ea3bf7f4a424f02b80cef6d3be528e2b3`, frontend는 `52f7cb1`이다. 이후 서버 소스 변경은 주석 교정뿐이다. frontend 수정은 없다. 나머지 조회 명세·시나리오 실행 계획·ingest부터의 전체 E2E는 계속 남아 있다.

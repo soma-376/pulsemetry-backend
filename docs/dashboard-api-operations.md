@@ -82,3 +82,10 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 ## 비용 그룹 상위 N
 
 `/v1/query`의 `cost` 쿼리에 `group_by`와 `limit`을 지정하면 그룹 초과 시 상위 N 및 `__other__`를 받는다. 예: `{"ref_id":"A","metric_id":"cost","group_by":["model"],"frame_type":"table","limit":5}`는 최대 6개 그룹을 반환한다. 현재 기간의 공개 가능한 비용 합계로 선택하며, 마스킹 대상 그룹은 순위 점수 0을 사용한다. 비교 기간도 같은 그룹 구성을 사용한다. 나머지 인원과 비용은 원본에서 다시 계산하므로 나머지가 5명 미만이면 수치가 null이다. 다른 지표에는 아직 이 동작을 적용하지 않았다.
+
+
+## 합계·건수 그룹 상위 N
+
+비용에 더해 `sessions`, `active_time`, `lines_of_code`, `commits`, `pull_requests`, `tool_calls`, `rate_limit_events`, `tool_rejections`, `usage_heatmap`, `compactions`, `mcp_connections`, `llm_stop_reasons`, `hook_blocking`도 상위 N과 `__other__`를 지원한다. 현재 기간 합계로 선택하고, 현재 또는 비교 기간에 마스킹된 그룹은 순위 점수 0을 사용한다. 복수 차원은 조합 단위로 선택하며 비교 기간에도 같은 조합을 유지한다.
+
+누적 포인트 제외·도구 성공 필터·인원 중복 제거는 나머지 원본 재집계에도 적용한다. 히트맵의 weekday/hour 기본 168칸은 유지하며, limit=100을 명시하면 최대 100칸과 나머지 합계 한 그룹을 반환한다. 비율·백분위·고유 인원 등 다른 지표의 나머지 처리는 아직 미구현이다.
