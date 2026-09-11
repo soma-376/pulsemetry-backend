@@ -63,7 +63,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "api_retry_attempts","auto_approval_ratio","api_error_rate","compaction_reduction","mcp_failure_ratio",
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
     private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
-    private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topCostRatioMetrics + setOf("cost","tool_calls","rate_limit_events","tool_rejections",
+    private val topPeriodMetrics = topCostRatioMetrics + setOf("model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
+    private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("cost","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
     private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio", "cost_per_active_user", "cost_per_user_hour", "model_unit_price", "cost_anomaly", "contract_commitment_burn")
@@ -176,8 +177,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                         val priorGroups = previous?.data?.groupBy(::key).orEmpty()
                         val keys = (grouped.keys+priorGroups.keys).distinct()
                         if (keys.size>groupLimit(q)) {
-                            // 사용자 수처럼 더할 수 없는 분모도 기간 전체에서 중복 제거해 순위를 계산한다.
-                            val period = if (q.metricId in topCostRatioMetrics && timeseries)
+                            // 사용자 수·백분위수처럼 더할 수 없는 값은 기간 전체에서 다시 계산해 순위를 정한다.
+                            val period = if (q.metricId in topPeriodMetrics && timeseries)
                                 read(calculation.copy(frameType="scalar"),scope,from,to,zone,interval,deadline) else current
                             val periodGroups = period.data.associateBy(::key)
                             // 소집단의 숨겨진 수치가 상위 그룹의 선택이나 순서에 영향을 주지 않는다.
@@ -185,7 +186,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                                 compareByDescending<List<String>> { key ->
                                     val rows = grouped[key].orEmpty()
                                     if ((rows+priorGroups[key].orEmpty()).any { it["people"].asLong()<5 }) 0.0
-                                    else if (q.metricId in topCostRatioMetrics) periodGroups[key]?.get("value")?.asDouble(0.0) ?: 0.0
+                                    else if (q.metricId in topPeriodMetrics) periodGroups[key]?.get("value")?.asDouble(0.0) ?: 0.0
                                     else if (q.metricId in topRatioMetrics) {
                                         // 일별 비율의 합계가 아니라 관측량으로 가중한 전체 기간 비율을 사용한다.
                                         val denominator = rows.sumOf { it["denominator"].asDouble(0.0) }
@@ -287,7 +288,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (q.metricId=="abandoned_session_ratio") return readAbandoned(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="tokens") return readTokens(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="hook_executions") return readHookExecutions(q,scope,from,to,zone,interval,deadline)
-        if (q.metricId in durationMetrics) return readDuration(q, scope, from, to, zone, interval, deadline)
+        if (q.metricId in durationMetrics) return readDuration(q, scope, from, to, zone, interval, deadline,retained)
         if (q.metricId in sessionMetrics) return readSessionDistribution(q, scope, from, to, zone, interval, deadline)
         if (q.metricId in populationMetrics) return readPopulation(q, scope, from, to, zone, interval, deadline)
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
@@ -838,9 +839,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return Rows(rows,sql)
     }
     private fun readDuration(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
-        zone: String, interval: String, deadline: Long): Rows {
+        zone: String, interval: String, deadline: Long, retained: List<List<String>>? = null): Rows {
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
-        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val dimensions = groupDimensions(q.groupBy.map(::dimension),retained)
         val groups = listOf("bucket") + q.groupBy.indices.map { "g$it" }
         val groupSql = groups.joinToString(",")
         val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
@@ -868,10 +869,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             p50 AS value FROM ($input)
             ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
             GROUP BY $groupSql ORDER BY $groupSql"""
-        val parameters = scope.parameters + mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
+        val parameters = scope.parameters + mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone,
+            "retained" to mapper.writeValueAsString(retained.orEmpty()).replace("\\", "\\\\"))
         val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
             .filter { it["points"].asLong()>0 }
-        if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size>groupLimit(q))
+        if (q.metricId !in topGroupMetrics && rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size>groupLimit(q))
             throw DashboardReadException("query_too_wide",422)
         return Rows(rows,sql)
     }

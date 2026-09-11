@@ -941,6 +941,43 @@ class DashboardAuthTest {
         row.put("raw_json",mapper.writeValueAsString(mapOf("type" to if (turn) "turn" else "llm_call","payload" to payload)))
         return mapper.writeValueAsString(row)
     }
+    @Test fun `시간 상위 그룹은 기간 중앙값으로 선택하고 나머지 백분위수를 원본에서 계산한다`() {
+        val ids = installations(5)
+        fun sample(id: UUID, model: String, value: Int, at: String): String {
+            val row = mapper.readTree(durationEvent(id,value,at=at)) as tools.jackson.databind.node.ObjectNode
+            val raw = mapper.readTree(row["raw_json"].asString())
+            (raw["payload"] as tools.jackson.databind.node.ObjectNode).put("model",model)
+            row.put("raw_json",raw.toString())
+            return row.toString()
+        }
+        val first = "2026-09-01T12:00:00Z"
+        val second = "2026-09-02T12:00:00Z"
+        seedPoints(ids.flatMap { id -> listOf(sample(id,"a",100,first)) + List(9) { sample(id,"a",1,second) }+
+            listOf(first,second).flatMap { listOf(sample(id,"b",20,it),sample(id,"c",10,it)) }
+        })
+        val totals = topFrames("llm_duration_ms","model")
+        assertThat(totals.keys).containsExactlyInAnyOrder("b","__other__")
+        assertThat(totals.getValue("b")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(20.0,20.0,20.0)
+        assertThat(totals.getValue("__other__")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(1.0,100.0,100.0)
+        assertThat(totals.getValue("__other__")["schema"]["fields"][0]["config"]["group_size"].asLong()).isEqualTo(5)
+        val daily = topFrames("llm_duration_ms","model","timeseries")
+        assertThat(daily.keys).containsExactlyInAnyOrder("b","__other__")
+        assertThat(daily.getValue("__other__")["data"]["values"][1].toList().map { it.asDouble() }).containsExactly(100.0,1.0)
+    }
+    @Test fun `모델 사용자 상위 선택과 나머지는 모델 및 날짜를 가로질러 사람을 중복 제거한다`() {
+        val ids = installations(10)
+        seedPoints(listOf("2026-09-01T12:00:00Z","2026-09-02T12:00:00Z").flatMapIndexed { day, at ->
+            ids.take(5).flatMap { listOf(modelCost(it,"a",1.0,at),modelCost(it,"c",1.0,at)) }+
+                ids.drop(day*5).take(5).map { modelCost(it,"b",1.0,at) }
+        })
+        val totals = topFrames("model_users","model")
+        assertThat(totals.keys).containsExactlyInAnyOrder("b","__other__")
+        assertThat(totals.getValue("b")["data"]["values"][0][0].asDouble()).isEqualTo(10.0)
+        assertThat(totals.getValue("__other__")["data"]["values"][0][0].asDouble()).isEqualTo(5.0)
+        val daily = topFrames("model_users","model","timeseries")
+        assertThat(daily.keys).containsExactlyInAnyOrder("b","__other__")
+        assertThat(daily.getValue("__other__")["data"]["values"][1].toList().map { it.asDouble() }).containsExactly(5.0,5.0)
+    }
     @Test fun `소요 시간은 정확 백분위수와 밀리초 단위를 반환하며 누락 음수 오류를 제외한다`() {
         val ids = installations(5)
         for (turn in listOf(false,true)) {
@@ -1878,7 +1915,7 @@ class DashboardAuthTest {
         row.putArray("team_ids_as_of").add(team.toString())
         return row.toString()
     }
-    private fun topCostFrames(metric: String, group: String, type: String = "table") =
+    private fun topFrames(metric: String, group: String, type: String = "table") =
         mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"group_by" to listOf(group),
             "frame_type" to type,"limit" to 1))).andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"].toList().associateBy {
                 it["schema"]["fields"][if(type=="timeseries") 1 else 0]["labels"][group].asString()
@@ -1890,11 +1927,11 @@ class DashboardAuthTest {
             ids.take(5).flatMap { listOf(costEvent(it,5.0,at,teams[0]),costEvent(it,2.0,at,teams[2])) }+
                 ids.drop(day*5).take(5).map { costEvent(it,6.0,at,teams[1]) }
         })
-        val totals = topCostFrames("cost_per_active_user","team")
+        val totals = topFrames("cost_per_active_user","team")
         assertThat(totals.keys).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
         assertThat(totals.getValue(teams[0].toString())["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(10.0,50.0,5.0)
         assertThat(totals.getValue("__other__")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(8.0,80.0,10.0)
-        val daily = topCostFrames("cost_per_active_user","team","timeseries")
+        val daily = topFrames("cost_per_active_user","team","timeseries")
         assertThat(daily.keys).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
         assertThat(daily.getValue("__other__")["data"]["values"][1].toList().map { it.asDouble() }).containsExactly(8.0,4.0)
     }
@@ -1915,7 +1952,7 @@ class DashboardAuthTest {
                 source(id,sub,true,team),source(id,all-sub,false,team))
         } })
         for (metric in listOf("cost_per_user_hour","subagent_cost_ratio")) {
-            val frames = topCostFrames(metric,"team")
+            val frames = topFrames(metric,"team")
             assertThat(frames.keys).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
             assertThat(frames.getValue("__other__")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.2,10.0,50.0)
         }
@@ -1929,7 +1966,7 @@ class DashboardAuthTest {
             row.put("raw_json",raw.toString())
             row.toString()
         } })
-        val frames = topCostFrames("model_unit_price","model")
+        val frames = topFrames("model_unit_price","model")
         assertThat(frames.keys).containsExactlyInAnyOrder("a","__other__")
         assertThat(frames.getValue("a")["data"]["values"][0][0].asDouble()).isEqualTo(2.0)
         assertThat(frames.getValue("__other__")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.1,50.0,500.0)
