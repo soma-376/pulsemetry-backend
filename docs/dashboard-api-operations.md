@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S5-2·S5-7·S6-4·S6-5·S7-1·S7-3·S8-1·S8-4의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S5-2·S5-7·S6-4·S6-5·S7-1·S7-2·S7-3·S8-1·S8-4의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -260,3 +260,7 @@ owner가 감사 사유와 함께 실행한다. `threshold_ms`는 1~60000ms이며
 ### S6-4 선택 모델 레이턴시
 
 owner가 감사 사유와 함께 실행한다. models 생략·빈 배열은 전체 모델이며 최대 100개, 각 모델명은 1~200자다. 네 지표와 결과 필터에 동일한 모델 조건을 적용한다. 첫 토큰 지연 p90이 양수면 info 관측을 제공한다. 지연이 있다는 사실만으로 장애나 SLA 위반을 판정하지 않는다.
+
+### S7-2 읽기 밀도
+
+owner가 감사 사유와 함께 실행한다. density_threshold는 0 이상의 수이고 기본 10이다. 세션별 read·search·fetch 호출 수 p90이 이를 엄격히 초과할 때 info 관측을 제공한다. 데이터량·접근 권한 위반·유출 여부를 측정하는 지표는 아니다. MCP 연결과 자동 승인 비율은 별도로 제공한다.

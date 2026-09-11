@@ -592,6 +592,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let externalRun;
   let fastApprovalRun;
   let latencyRun;
+  let readDensityRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -766,11 +767,40 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, latencyRun.run_id);
     await ownerPage.getByRole('heading', { name: '첫 토큰 응답 지연이 관측되었습니다', exact: true }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-latency-scenario.png'), fullPage: true });
+    readDensityRun = await ownerPage.evaluate(async from => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S7-2/runs', { method: 'POST', body: JSON.stringify({
+        params: { from, to: new Date(Date.now() + 1000).toISOString(), density_threshold: 0 },
+      }) }, '세션 읽기 밀도 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, scenarioFrom);
+    assert.equal(readDensityRun.status, 'succeeded');
+    assert.equal(readDensityRun.params.density_threshold, 0);
+    assert.equal(readDensityRun.progress.step, 3);
+    assert.equal(readDensityRun.progress.total, 3);
+    assert.equal(readDensityRun.result.target_page, 'P3');
+    assert.deepEqual(Object.keys(readDensityRun.result.frames).sort(), ['auto_approval_ratio', 'mcp_connections', 'read_tool_density']);
+    assert.equal(readDensityRun.result.findings.length, 0);
+    assert.ok(readDensityRun.result.frames.read_tool_density.frames.some(f => f.data.values[1].includes(0)));
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S7-2'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, readDensityRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(readDensityRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-read-density-scenario.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    readDensityScenario: { id: 'S7-2', runId: readDensityRun.run_id, owner: true, audited: true, actualResultUI: true, threshold: 0, p90CallsPerSession: 0 },
     latencyScenario: { id: 'S6-4', runId: latencyRun.run_id, owner: true, audited: true, actualResultUI: true, model, p90Ms: 500, activeUsers: 5 },
     fastApprovalScenario: { id: 'S5-7', runId: fastApprovalRun.run_id, owner: true, audited: true, actualResultUI: true, thresholdMs: 60000, ratio: 0 },
     externalScenario: { id: 'S5-2', runId: externalRun.run_id, owner: true, audited: true, actualResultUI: true, mcpFindings: 0, readDensity: 0 },

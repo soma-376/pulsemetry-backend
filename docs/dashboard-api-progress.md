@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S5-2·S5-7·S6-4·S6-5·S7-1·S7-3·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S5-2·S5-7·S6-4·S6-5·S7-1·S7-2·S7-3·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -734,3 +734,11 @@
 - dashboard 테스트 189건 통과. 모델 제외, 필터 전달, 지연 p90=100ms·활성 사용자 5, 잘못된 모델 범위·감사 누락·admin 거부, 소집단·미관측 모델·빈 데이터·0ms에서 판정 제외를 검증했다.
 - 실제 OTLP 수집→owner 로그인→감사 실행→P3 결과 UI E2E 통과. 선택한 ingest 모델의 첫 토큰 지연 p50=300ms/p90=500ms·활성 사용자 5, 모델 필터 UI 및 감사 행 1건을 확인했다. 실행 가능한 시나리오는 23개다.
 - frontend 소스 변경 없음. 일반 P3 폼의 감사 사유 전달은 여전히 없어 공통 API 클라이언트로 감사 헤더를 전달했다. 첫 토큰 지연은 일반 표이며, 선택 모델의 llm_call 원본이 없는 이번 입력에서는 전체 응답 시간·에러율이 미관측으로 표시된다.
+
+## S7-2 읽기 밀도 임계값 실행
+
+- read_tool_density·mcp_connections·auto_approval_ratio를 3단계로 조회한다. 세션별 read·search·fetch 호출 수의 p90이 density_threshold(기본 10, 최소 0)를 초과하면 info 판정을 제공한다. 같은 값은 제외하며 근거에 p90_calls_per_session과 threshold를 기록한다.
+- 접근 데이터의 내용·권한·외부 전송을 확인하지 않으므로 부적절한 접근이나 유출을 확정하지 않는다. owner·감사 사유와 실행 중 현재 권한 검사를 유지한다.
+- dashboard 테스트 191건 통과. 세션당 읽기 호출 3건에서 임계값 2.5 초과 및 3·10 미초과, 음수 거부, 감사 누락·admin 거부, 소집단·빈 데이터·쓰기 전용 세션 제외를 검증했다.
+- 실제 OTLP 수집→owner 로그인→감사 실행→P3 결과 UI E2E 통과. 정규화 action=other인 기존 입력에서 읽기 밀도 p50/p90=0, threshold=0, 판정 0건 및 감사 행 1건을 확인했다. 양수 밀도는 DB 통합 테스트로 검증했다. 실행 가능한 시나리오는 24개다.
+- frontend 소스 변경 없음. 일반 P3 폼의 감사 사유 전달은 여전히 없어 공통 API 클라이언트를 사용했다. 읽기 밀도는 일반 표로 표시되며 W3.3 매핑과 MCP·자동 승인 미관측 상태가 남는다.
