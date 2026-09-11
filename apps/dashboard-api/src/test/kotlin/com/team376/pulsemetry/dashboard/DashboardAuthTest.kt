@@ -2682,6 +2682,39 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `유즈케이스 시나리오는 action별 기간 합계를 분리한다`() {
+        val ids = installations(5)
+        val bearer = token()
+        seedPoints(ids.flatMap { listOf(toolEvent(it,true,"read"),toolEvent(it,false,"read"),toolEvent(it,true,"write")) })
+        val id = mapper.readTree(startRun(bearer,"S4-6","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(2)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(2)
+        assertThat(run["result"]["frames"].propertyNames()).containsExactlyInAnyOrder("tool_calls","lines_of_code")
+        val findings = run["result"]["findings"].toList()
+        assertThat(findings.map { it["evidence"]["action"].asString() }).containsExactly("read","write")
+        assertThat(findings.map { it["evidence"]["calls"].asDouble() }).containsExactly(10.0,5.0)
+        assertThat(findings.all { it["severity"].asString()=="info" }).isTrue()
+    }
+
+    @Test fun `유즈케이스 시나리오는 action 소집단과 미관측을 제외한다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.map { toolEvent(it,true,"read") } + ids.take(4).map { toolEvent(it,true,"write") },emptyList())) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S4-6","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isEqualTo(if(rows.isEmpty()) 0 else 1)
+            if(rows.isNotEmpty()) assertThat(run["result"]["findings"][0]["evidence"]["action"].asString()).isEqualTo("read")
+        }
+    }
+
     @Test fun `대기 시나리오는 분 임계값과 p90을 비교하고 경계값을 제외한다`() {
         val ids = installations(5)
         val bearer = token()

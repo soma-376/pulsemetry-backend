@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S4-1·S4-2·S4-8·S7-1의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S4-1·S4-2·S4-6·S4-8·S7-1의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -57,7 +57,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 워커는 기본 활성화이며 `pulsemetry.dashboard.worker-enabled=false`로 해당 인스턴스의 claim을 중단할 수 있다. 접수는 계속 가능하므로 유지보수 시 활성 실행 3개 상한에 유의한다. queued는 DB에 남고 running lease가 만료되면 다음 워커 claim 시 실패 처리된다. 재시도는 새 실행 요청으로 한다. 취소는 실행 중인 DB 조회의 즉시 중단을 보장하지 않으며 결과 저장을 차단한다.
 
-현재 S1-1, S1-3, S1-4, S1-5, S4-1, S4-2, S4-8, S7-1을 실행할 수 있다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
+현재 S1-1, S1-3, S1-4, S1-5, S4-1, S4-2, S4-6, S4-8, S7-1을 실행할 수 있다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
 
 E2E 스크립트는 각 외부 명령을 60초로 제한한다. `result.json`은 최신 시도의 상태이며 이전 성공은 `last-success.json`에 보관한다. S1-3 실행·폴링·취소와 실측 판정은 실제 frontend 클라이언트로 검증했다. 2026-09-11 Docker 재시작 후 backend `cd057dc` / frontend `52f7cb1`에서 owner/admin의 결과 화면 판정 표시까지 통과했다. 스크린샷은 `owner-scenario.png`, `admin-scenario.png`다. W1.3·W2.5의 결과 미연결 안내는 남아 있어 모든 위젯의 시각화 완료를 검증한 것은 아니다.
 
@@ -189,3 +189,10 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 일별 p90을 분으로 환산해 각 입력 임계값보다 큰 경우 정보성 high_gate_wait 판정을 제공한다. 예: p90=120,000ms, 임계값 [1,2,3]이면 1분 초과 안내만 나온다. 음수·비숫자는 400이며 빈 배열은 지표만 조회한다. 미관측·마스킹은 판정하지 않는다. tool_gate 관측은 Plan 전용 대기나 생산성 손실을 의미하지 않는다.
 
 실제 OTLP tool.blocked_on_user 스팬 5건의 시작/종료 시각에서 대기 120,000ms를 수집하고, 실제 frontend 실행·결과 화면까지 검증한다. `verifiedIngest.gateScenario`와 `admin-ingest-gate-scenario.png`가 증거다. fixture에는 거부 이벤트가 없어 tool_rejections는 미관측이다. usage_heatmap은 이 실행에서 일별 사용량 차트로 제공한다.
+
+
+## S4-6 도구 action 분포
+
+`POST /v1/scenarios/S4-6/runs`는 from/to/team_ids를 받는다. tool_calls는 action별, lines_of_code는 전체 기간 합계 표로 조회한다. P2/W2.8을 반환하는 2단계 실행이며 주제 분류 불가의 partial 상태를 유지한다.
+
+공개 가능한 양수 action별 건수를 observed_tool_action 정보성 안내로 제공한다. 성공·실패 호출을 모두 포함한다. 업무 주제·사용 목적·생산성을 추정하지 않으며 소집단·빈 action·topN 잔여 그룹은 안내하지 않는다. 미분류 other는 원천 분류 그대로 표시하며 숨겨진 그룹의 비율은 계산하지 않는다.

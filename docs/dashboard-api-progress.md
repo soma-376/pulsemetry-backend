@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S4-1·S4-2·S4-8·S7-1 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S4-1·S4-2·S4-6·S4-8·S7-1 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -606,3 +606,10 @@
 - 관측 tool_gate 전체의 대기를 사용하며 Plan 전용 대기나 생산성 손실로 단정하지 않는다. p90 미관측·소집단 마스킹은 판정에서 제외한다.
 - DB 통합 테스트 2건 추가: 분 단위 변환·동일 임계값 제외·3단계 결과·음수 거부·소집단·빈 데이터·빈 임계값. dashboard 159건 통과(실패·오류·skip 0), bootJar 빌드 성공.
 - 실제 수집 E2E 통과(API 오류 0건): OTLP 승인 대기 스팬 5건을 추가하고 최종 저장 40행·p90=120,000ms·1분 초과 판정과 W2.7 표를 확인했다. 기존 7개 실행 시나리오도 통과했다. frontend 변경은 없다. 거부 이벤트가 없어 tool_rejections는 미관측이며 usage_heatmap은 일별 사용량 차트로 제공한다.
+
+
+## S4-6 action 분포 실행 확장
+
+- 아홉 번째 실행 시나리오 S4-6을 추가했다. tool_calls는 action별 기간 합계 표, lines_of_code는 기간 합계 표로 조회하는 2단계이며 P2/W2.8을 반환한다. partial(주제 분류 불가)을 유지한다.
+- 상세 판정식 공백은 공개 가능한 양수 action별 관측 건수의 정보성 안내로 보완한다. 비중·업무 주제·생산성은 추정하지 않는다. 빈 action·topN 잔여 그룹·소집단 마스킹·미관측은 안내에서 제외하며 어댑터 미분류 값 other는 그대로 표시한다.
+- DB 통합 테스트 2건 추가: 읽기 10건/쓰기 5건 분리·2단계 결과·action별 소집단·빈 데이터. dashboard 161건 통과(실패·오류·skip 0), bootJar 빌드 성공.
