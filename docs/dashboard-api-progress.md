@@ -706,3 +706,6 @@
 - owner·감사 사유 필수 P3 실행에 `tool_rejections`·`hook_blocking`·`gate_wait_ms` 일 시계열을 연결했다. 양수 도구 거절 수에 정보 판정을 제공하되 실제 정책 위반·악의적 사용·에스컬레이션을 단정하지 않는다.
 - 거절은 `tool_decision`, 대기는 `tool_gate`, 훅 차단은 span의 `num_blocking` 원천을 사용한다. 서로 다른 이벤트를 같은 것으로 취급하지 않는다.
 - dashboard 테스트 183건 통과. 실제 DB에서 거절 5건·훅 차단 10건·대기 120초, 감사 기록, admin·감사 누락 거부, 소집단·미관측·승인의 판정 제외를 검증했다.
+- 실제 OTLP 수집→owner 로그인→감사 실행→P3 결과 UI E2E 통과. gate_wait p50/p90 120000ms, 판정 0건 및 감사 행 1건을 확인했다. fixture에는 tool_decision·hook span이 없어 거절·차단 UI는 미관측 안내로 표시된다. 양수 결과는 실제 DB 테스트에서 검증했다. 실행 가능한 시나리오는 20개다.
+- frontend 소스는 변경하지 않았다. 일반 실행 폼의 감사 사유 전달은 여전히 없어 공통 `request` 클라이언트로 시작했다. 결과 UI의 W3.3 도구 거절 카드와 대기 시간 표를 확인했다.
+- 증거: `build/e2e/auth-settings/result.json`, `owner-ingest-policy-scenario.png`. 전체 PROJ-156 수용 완료를 뜻하지 않는다.

@@ -588,6 +588,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   const ownerPage = await page.context().newPage();
   let pressureRun;
   let retryRun;
+  let policyRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -651,11 +652,39 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, retryRun.run_id);
     await ownerPage.getByRole('heading', { name: 'API 재시도가 관측되었습니다', exact: true }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-retry-scenario.png'), fullPage: true });
+    policyRun = await ownerPage.evaluate(async from => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S7-3/runs', { method: 'POST', body: JSON.stringify({
+        params: { from, to: new Date(Date.now() + 1000).toISOString() },
+      }) }, '도구 거절 및 훅 차단 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, scenarioFrom);
+    assert.equal(policyRun.status, 'succeeded');
+    assert.equal(policyRun.progress.step, 3);
+    assert.equal(policyRun.progress.total, 3);
+    assert.equal(policyRun.result.target_page, 'P3');
+    assert.deepEqual(Object.keys(policyRun.result.frames).sort(), ['gate_wait_ms', 'hook_blocking', 'tool_rejections']);
+    assert.equal(policyRun.result.findings.length, 0);
+    assert.ok(policyRun.result.frames.gate_wait_ms.frames.some(f => f.data.values[1].includes(120000)));
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S7-3'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, policyRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(policyRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-policy-scenario.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    policyScenario: { id: 'S7-3', runId: policyRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionFindings: 0, gateWaitMs: 120000 },
     retryScenario: { id: 'S6-5', runId: retryRun.run_id, owner: true, audited: true, actualResultUI: true, retryRatio: 0.2, costUsd: 15 },
     pressureScenario: { id: 'S2-2', runId: pressureRun.run_id, owner: true, audited: true, actualResultUI: true, rateLimitFindings: 0 },
     effortScenario: { id: 'S1-6', runId: effortRun.run_id, actualResultUI: true, costUsd: 15, effort: 'high', speed: 'fast', source: 'metrics' },
