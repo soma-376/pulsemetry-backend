@@ -2682,6 +2682,43 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `고급 기능 시나리오는 서브에이전트 비용과 보조 지표를 제공한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(subagentCost(it,2.0,"subagent"),subagentCost(it,6.0,"main"),
+            mcpEvent(it,"connected"),promptEvent(it),toolEvent(it,true),toolEvent(it,false)) })
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer,"S3-5","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrder("mcp_connections","subagent_cost_ratio","command_prompt_ratio","tool_failure_rate")
+        assertThat(frames["mcp_connections"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+        assertThat(frames["tool_failure_rate"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(0.5)
+        val findings = run["result"]["findings"]
+        assertThat(findings.size()).isEqualTo(1)
+        assertThat(findings[0]["rule_id"].asString()).isEqualTo("observed_subagent_cost")
+        assertThat(findings[0]["evidence"]["ratio"].asDouble()).isEqualTo(0.25)
+    }
+
+    @Test fun `고급 기능 시나리오는 소집단 분모 영과 서브에이전트 미관측에서 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { subagentCost(it,3.0,"subagent") },emptyList(),
+            ids.map { subagentCost(it,0.0,"subagent") },ids.map { subagentCost(it,3.0,"main") })) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S3-5","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     @Test fun `채택 시나리오는 팀별 다섯 지표와 관측 채택률을 제공한다`() {
         val team = costTeams().first()
         val ids = installations(5,team)
