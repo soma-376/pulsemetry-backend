@@ -507,8 +507,34 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, hourlyRun.run.run_id);
   await page.locator('aside[aria-label="시나리오 판정"]').getByText(hourlyRun.run.run_id.slice(0, 8), { exact: false }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-hourly-scenario.png'), fullPage: true });
+  const reportingRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S8-1', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, tokens: series(run.result?.frames.tokens), unitCost: series(run.result?.frames.cost_per_active_user) };
+  }, scenarioFrom);
+  assert.equal(reportingRun.run.status, 'succeeded');
+  assert.equal(reportingRun.run.progress.step, 7);
+  assert.equal(reportingRun.run.progress.total, 7);
+  assert.deepEqual(Object.keys(reportingRun.run.result.frames).sort(), ['active_time', 'commits', 'cost_per_active_user', 'lines_of_code', 'pull_requests', 'sessions', 'tokens']);
+  assert.ok(reportingRun.tokens.points.some(p => p.value.value === 1050));
+  assert.ok(reportingRun.unitCost.points.some(p => p.unit === 'USD' && p.value.state === 'value' && p.value.value === 3));
+  assert.equal(reportingRun.run.result.findings.length, 1);
+  assert.equal(reportingRun.run.result.findings[0].evidence.count, 5);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, reportingRun.run.run_id);
+  await page.getByRole('heading', { name: '경영 보고용 세션 사용량이 관측되었습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-reporting-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    reportingScenario: { id: 'S8-1', runId: reportingRun.run.run_id, actualResultUI: true, sessions: 5, tokens: 1050, costPerActiveUserUsd: 3 },
     hourlyScenario: { id: 'S2-1', runId: hourlyRun.run.run_id, actualResultUI: true, prompts: 10, zone: 'Asia/Seoul', rateLimitFindings: 0 },
     advancedScenario: { id: 'S3-5', runId: advancedRun.run.run_id, actualResultUI: true, subagentCostRatio: 1, toolFailureRate: 0.2 },
     adoptionScenario: { id: 'S3-1', runId: adoptionRun.run.run_id, actualResultUI: true, activeUsers: 5, adoptionRate: 5 / 6, toolCalls: 5 },

@@ -250,3 +250,5 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 `POST /v1/scenarios/S8-1/runs`는 from/to를 받는다. sessions·tokens·active_time·lines_of_code·commits·pull_requests·cost_per_active_user를 일별로 조회하는 7단계이며 P1/W1.1·W1.5·W1.2를 반환한다. owner는 조직, admin은 본인 팀 범위로 실행한다.
 
 양수 세션 수를 observed_reporting_usage 정보성 안내로 제공한다. 재무 조인 없는 partial 상태이며 ROI·절감액·생산성 향상을 계산하거나 보장하지 않는다. 소집단·미관측·0은 판정하지 않으며 비용과 활성 사용자 정의는 기존 조회 계약을 유지한다.
+
+실제 수집 E2E의 `verifiedIngest.reportingScenario`, `admin-ingest-reporting-scenario.png`에 세션 5건·토큰 1,050·활성 사용자당 비용 3달러의 실행·화면 증거를 남긴다. 활동 시간·코드·커밋·PR은 해당 수집 fixture에 없어 미관측이며 DB 통합 테스트로 검증한다. 현재 frontend의 W1.2 강조 연결은 누락되어 있다.
