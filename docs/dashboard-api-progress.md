@@ -35,7 +35,7 @@
 
 ## 검증
 
-- 기존 security/enrollment 테스트 및 전체 `./gradlew build` 통과: 마지막 전체 빌드 결과 933건, 실패·오류·skip 0건.
+- 2026-09-12 `./gradlew build --rerun-tasks` 통과: 전체 1,008건(dashboard 201건 포함), 실패·오류·skip 0건. 58개 task를 캐시 재사용 없이 실행했다.
 - META-METRICS: OpenAPI의 53개 MetricId와 차원 집합 일치, 원천 RDB 컬럼 실재, owner/admin 접근·비인증 거부 검증.
 - QRY: 실제 ClickHouse에서 FINAL 중복 제거·delta 합산·비교 빈 버킷·초 미만 범위 경계·팀 필터 병합·owner 감사·여러 설치의 사람 중복 제거·값/비교값/CSV/커버리지 마스킹을 검증했다.
 - 웹 로그인·권한 변경·폐기·만료·잠금·CLI 격리 및 감사 사유 테스트.
@@ -49,14 +49,14 @@
 1. QRY 보완: 53개 지표의 기본 계산은 연결했다. 미지원 frame 형식과 상위 N의 `__other__`, W3.3 주소 테이블 등 남은 명세를 보완한다.
 2. 계약 기반 파생 지표 검토: 약정 소진율도 연결했다. 현재 366일 조회 제한보다 긴 계약의 전체 기간 조회는 후속 보완 대상이다.
 3. 설치·세션 API는 구현했다. 기존 frontend 설치 카드의 감사 사유 전달 및 P3 전체 UI 검증은 후속 보완 대상이다.
-4. 46개 시나리오: 카탈로그·상세·실행 입력 검증과 S1-3 실측 실행은 구현했다. 나머지 실행 계획·판정 정책을 연결한다.
+4. 46개 시나리오: 29개 실행 경로가 연결되었다. 추가 구현 대상은 13개이며, 명세상 unavailable 4개는 409 거부를 유지한다. 연결된 실행도 관측 한계를 유지하며 시나리오 제목이 암시하는 인과 분석 전체를 구현한 것은 아니다.
 5. 실행 워커·조회·취소·목록·삭제는 연결했다. 추가 운영·복구 검증을 보완한다.
 6. 저장 리포트: 저장·목록·삭제, 접근 범위 재검증, fixed/relative와 active·linked 삭제 409를 연결했다.
 7. 실제 ingest → ClickHouse → dashboard → frontend 전체 E2E 및 operation/metric/scenario 추적표.
 
 ## 알려진 한계
 
-- QRY의 일부 distribution 형식, 시나리오·실행·저장 API는 미구현이다. 지표 결과나 가용성을 임의로 만들어 반환하지 않는다.
+- QRY의 일부 frame 형식·상위 N 처리와 13개 시나리오 실행 계획이 남아 있다. 실행·조회·취소·목록·저장·삭제 API는 연결되어 있으며, 실행 계획이 없는 available/partial 시나리오는 501로 거부한다.
 - telemetry_coverage 계산은 연결되었다. 약정 소진율도 owner 전사 범위에서 연결했다. 모든 frame 형식과 전체 수용 조건을 충족한 것은 아니다.
 - 전체 계획 완료나 운영 배포 가능 상태로 판정하지 않는다.
 
@@ -783,3 +783,39 @@
 - dashboard 테스트 201건 통과. 동일 이벤트의 서울 9월 2일·UTC 9월 1일 연결, 세션 5건, 잘못된 날짜 거부, 다른 날짜·소집단·빈 선택·미관측 제외를 검증했다.
 - 실제 OTLP 수집→admin 실행→P2 결과 UI E2E 통과. 서울 현지 sprint_date=2026-09-12의 세션 5건과 날짜·시간대 근거를 확인했다. 실행 가능한 시나리오는 29개다.
 - frontend 소스 변경 없음. usage_heatmap은 전용 히트맵 대신 일반 막대 차트이며 W2.4 매핑은 비어 있다. 이번 입력은 전체 응답 시간이 미관측이고 스프린트 구간·주기성 분석은 제공하지 않는다.
+
+
+## 2026-09-12 남은 실행 계획 대조
+
+카탈로그의 availability는 데이터 가용성이고 실행 구현 여부와 별개다. 현재 46개 중 실행 경로 29개, 추가 실행 구현 대상 13개, 명세상 실행 불가 4개다. 실행 경로 수를 기능 완성률로 해석하지 않는다.
+
+| 추가 구현 대상 | 필요한 처리 |
+|---|---|
+| S1-2 모델 티어 미스매치 | premium_model_patterns의 분류 의미와 분류별 집계·판정 |
+| S1-7 유휴 라이선스·좀비 시트 | as_of·inactive_days 기준 기간 고정 및 유휴 설치 연결 |
+| S3-3 온보딩 정착 | 코호트 기간과 관측 기간 분리, 잔존율 파라미터 연결 |
+| S4-3 코드 수용률·revert | language 필터 연결; revert 미관측 한계 유지 |
+| S4-4 교육 효과 전후 비교 | pivot_date·window_weeks로 전후 기간 분리 및 비교 |
+| S5-4 섀도우 AI | vendor_account_mismatch의 워커 감사 경로 및 불일치 관측 |
+| S5-5 인젝션·탈옥 시도 | probe_window_min·probe_count를 실제 시간 창 집계에 적용 |
+| S5-6 정책 위반 용도 | from/to 안의 pivot_date를 기준으로 관측 비교 |
+| S6-3 모델 버전 드리프트 | 모델 조건과 pivot_date 전후 관측 기간 연결 |
+| S8-2 예산 수립·비용 예측 | growth_model별 예측·입력 데이터 충분성 검증 |
+| S8-3 신규 모델 A/B | model_a·model_b의 독립 집계와 비교 |
+| S8-6 정책 실효성 | pivot_date·window_weeks 전후 비교; 각 조회의 기간 제한 유지 |
+| S8-7 챔피언 프로그램 | pivot_date·팀 범위 적용 및 관측 비교 |
+
+명세상 실행 불가 항목은 S4-7(외부 DORA), S5-1(원문 미취급), S5-3(원문), S6-2(외부 신고 채널)다. 해당 원천 없이 성공 결과를 생성하지 않는다.
+
+다음 기능 구현은 S4-4·S8-6에서 재사용할 현지 날짜 기준 전후 기간 처리부터 진행한다. window_weeks=52일 때 전체 범위는 728일이므로 기존 366일 단일 조회에 합치지 않고 두 기간을 독립 조회해야 한다. DST 경계·pivot 중복 제외·소집단 마스킹·미관측 비교를 검증한다.
+
+
+## 2026-09-12 전체 회귀 재검증
+
+- 검증 코드: backend `855b46885644e52229ae0e57f3bc32f2a6449bc3`, frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`. 이번 변경은 진행 문서만 수정한다.
+- `JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home ./gradlew build --rerun-tasks`: 58개 task 실제 실행, 전체 테스트 1,008건, 실패·오류·skip 0건.
+- 모듈별 테스트: dashboard 201, enrollment 앱 233, ingest 앱 39, enrollment 저장소 67, security 67, adapter 145, collector 166, enricher 39, telemetry 저장소 51.
+- 새로 빌드한 JAR로 `node scripts/e2e/dashboard-auth-settings.mjs` 통과. 53개 지표 frontend 클라이언트 검증 및 실제 OTLP 수집과 연결된 29개 시나리오 검증을 다시 수행했다. `unexpectedOrUnimplementedResponses=[]`이며 frontend 워킹 트리는 깨끗하다.
+- dashboard JAR SHA-256: `ef5df03c3270a2b7e9f865b296b342162176b4aa647364bae379eee40d1830cc`; ingest JAR SHA-256: `579ab0706ef54f91d25616999b25adbb3c03cf8e91620bd76a4b45be058f47b3`.
+- 실행 증거는 `build/e2e/auth-settings/result.json`, 전체 빌드 로그는 `/tmp/proj156-full-build.log`, E2E 로그는 `/tmp/proj156-full-e2e.log`에 있다. 로컬 생성물은 다음 실행으로 덮어쓸 수 있다.
+- 이 통과는 현재 구현 경로의 회귀 검증이다. 추가 실행 대상 13개·QRY 보완·frontend 감사 사유 폼과 전용 위젯의 미완료 범위는 유지한다. owner 감사 실행은 기존 frontend 공통 클라이언트 경로로 검증했으며 일반 실행 버튼의 감사 사유 전달까지 통과한 것은 아니다.
