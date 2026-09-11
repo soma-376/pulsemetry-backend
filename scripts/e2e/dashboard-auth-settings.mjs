@@ -7,6 +7,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { generateKeyPairSync, randomUUID, createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
+import { verifyDashboardIngest } from './dashboard-ingest.mjs';
 
 const backend = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const frontend = resolve(backend, '../pulsemetry-frontend');
@@ -211,6 +212,7 @@ try {
     { VITE_API_MODE: 'real', VITE_API_BASE_URL: `${api}/v1` }, frontend, 'frontend');
   await waitFor(async () => (await fetch(ui)).ok);
   browser = await chromium.launch({ headless: true });
+  let verifiedIngest;
   const failures = [];
   const responseReads = [];
   for (const role of ['owner', 'admin']) {
@@ -791,11 +793,16 @@ try {
       assert.deepEqual(Object.fromEntries(topCost.users.points.map(p => [p.labels.model, p.value.value])),
         { 'top-e2e-a': 5, '__other__': 5 });
     }
+    if (role === 'admin') verifiedIngest = await verifyDashboardIngest({ page, launch, waitFor, sql, backend, work, port, chPort,
+      installations: [...new Set(points.map(line => JSON.parse(line).installation_id))], tenant });
     await page.screenshot({ path: resolve(artifacts, `${role}.png`), fullPage: true });
     await Promise.all(responseReads);
     await context.close();
   }
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+  assert.deepEqual(failures, [], '예상하지 않은 API 오류 응답');
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP 로그 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
+    verifiedIngest,
+    ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
     verifiedDurationAndUsersTopN: { actualFrontendClient: true, admin: true, topMedian: 10, otherMedian: 3, otherUsers: 5 },
     verifiedUnitPriceTopN: { actualFrontendClient: true, admin: true, top: 10, other: 2.5, otherCost: 25, otherTokens: 10 },
     verifiedRatioTopN: { metric: 'api_error_rate', actualFrontendClient: true, roles: ['owner', 'admin'], top: 1, other: 0, otherDenominator: 10 },

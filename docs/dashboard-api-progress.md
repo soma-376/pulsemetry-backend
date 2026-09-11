@@ -523,3 +523,11 @@
 - DB 테스트 2건을 추가했다. 일별 중앙값 합산 시 잘못 선택될 분포에서 table/timeseries 모두 기간 p50=20인 모델을 선택하고, 나머지 p50/p95/p99=1/100/100 및 일별 p50=100/1을 검증했다. 날짜마다 다른 사용자가 등장하는 모델은 전체 10명으로 선택되며 두 모델에 겹치는 나머지는 5명으로 중복 제거된다. dashboard 144건 통과(실패·오류·skip 0). 구현 커밋 `4fc48ba`.
 - 실제 frontend E2E에서 admin 클라이언트가 상위 중앙값 10ms/나머지 3ms, 상위/나머지 사용자 각각 5명을 해석했다. 기존 owner/admin 지표·설정·설치·세션·S1-3·저장/삭제와 이전 상위 그룹 검증도 오류 응답 없이 통과했다. `result.json.verifiedDurationAndUsersTopN`에 검증 범위를 기록한다.
 - 검증 작업 트리 부모 `899e997`, jar SHA-256 `c55b5ef497547d85e05aa9c484d6ab0699418a4c4df818954adc48eb161b0c81`, frontend `52f7cb1`. frontend는 수정하지 않았다. 나머지 조회 명세·시나리오 실행 확장·ingest부터의 전체 E2E는 남아 있다.
+
+
+## 실제 OTLP 로그 → dashboard → frontend E2E
+
+- 실제 telemetry-ingest 앱을 기존 격리 PostgreSQL·ClickHouse에 연결하고 관리자 frontend 클라이언트까지 이어지는 검증을 추가했다. 대상 행은 DB에 직접 넣지 않고 `/v1/logs`에 전송한다.
+- 5개 installation이 각 1개 도구 호출을 동일 바이트로 두 번씩 전송한다. 잘못된 토큰 401, 인증 신원으로 자기신고 tenant/installation 대체, 실제 팀 as-of 보강, FINAL 조회 5행과 frontend 집계 5를 검증했다. 4명까지는 frontend cell이 masked/null이고 5명부터 공개된다.
+- 기존 owner/admin smoke도 함께 통과했다. dashboard/ingest bootJar 빌드 성공. frontend는 수정하지 않았다. 이번 작업은 E2E 스크립트 변경이며 dashboard 단위 테스트 수를 늘리지 않았다.
+- 남은 큰 범위는 시나리오 실행 확장(S1-3 외), 조회 명세 잔여 항목, metrics/traces와 시나리오·화면까지 확대한 수집 E2E다. 이번 검증은 로그 한 경로의 완료이며 전체 PROJ-156 완료를 뜻하지 않는다.
