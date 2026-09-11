@@ -808,6 +808,12 @@ try {
           }),
         }))).flat()));
       run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], sessionEvents.join('\n'));
+      const populationEvents = installations.flatMap(p => ['claude_code', 'codex'].map(product => JSON.stringify({
+        ...p, event_id: randomUUID(), product, signal: 'log', raw_json: JSON.stringify({
+          type: 'user_prompt', envelope: { session_id: 'population-top-e2e' }, payload: { model: 'population-top-e2e' },
+        }),
+      })));
+      run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], populationEvents.join('\n'));
       const securityContext = await browser.newContext();
       try {
         const ownerPage = await securityContext.newPage();
@@ -840,6 +846,22 @@ try {
           assert.deepEqual(result.points.filter(p => p.key === 'p50').map(p => p.value.value).sort(), [3, 5]);
           assert.deepEqual(Object.fromEntries(result.points.filter(p => p.labels.team === '__other__').map(p => [p.key, p.value.value])), { p50: 3, p90: 3 });
         }
+        const populationTop = await ownerPage.evaluate(async () => {
+          const { request } = await import('/src/api/client.ts');
+          const { series } = await import('/src/widgets/model.ts');
+          const response = await request('/query', { method: 'POST', body: JSON.stringify({
+            from: 'now-1d', to: 'now',
+            queries: [{ ref_id: 'A', metric_id: 'active_users', filters: { models: ['session-top-e2e'] }, group_by: ['team'], frame_type: 'table', limit: 1 },
+              { ref_id: 'B', metric_id: 'telemetry_coverage', filters: { models: ['population-top-e2e'] }, group_by: ['product'], frame_type: 'table', limit: 1 }],
+          }) });
+          return { active: series(response.results.A), coverage: series(response.results.B) };
+        });
+        assert.equal(populationTop.active.state, 'success');
+        assert.deepEqual(populationTop.active.points.map(p => p.value.value), [5, 5]);
+        assert.equal(populationTop.active.points.find(p => p.labels.team === '__other__').value.value, 5);
+        assert.equal(populationTop.coverage.state, 'success');
+        assert.deepEqual(Object.fromEntries(populationTop.coverage.points.filter(p => p.labels.product === '__other__').map(p => [p.key, p.value.value])),
+          { value: 1, numerator: 5, denominator: 5 });
         assert.equal(refusalTop.state, 'success');
         assert.deepEqual(Object.fromEntries(refusalTop.points.map(p => [p.labels.category, p.value.value])), { A: 10, '__other__': 10 });
       } finally { await securityContext.close(); }
@@ -871,6 +893,7 @@ try {
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
+    verifiedPopulationTopN: { actualFrontendClient: true, owner: true, otherActiveUsers: 5, otherObservedInstallations: 5, coverageDenominator: 5, otherCoverage: 1 },
     verifiedSessionTopN: { actualFrontendClient: true, owner: true, metrics: ['prompts_per_session', 'read_tool_density'], topMedian: 5, otherMedian: 3, otherP90: 3 },
     verifiedSecurityTopN: { actualFrontendClient: true, hookAdmin: true, refusalOwner: true, otherExecutions: 10, otherSessions: 5, otherSessionRatio: 1, otherRefusals: 10 },
     verifiedTokensTopN: { actualFrontendClient: true, admin: true, top: 5, other: 10, tiedTop: 'top-e2e-a' },
