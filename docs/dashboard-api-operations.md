@@ -187,3 +187,5 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 `POST /v1/scenarios/S4-8/runs`는 from/to/team_ids와 필수 배열 wait_thresholds_min을 받는다. gate_wait_ms(p50/p90), tool_rejections, usage_heatmap을 일별로 조회하는 3단계이며 P2/W2.7을 반환한다.
 
 일별 p90을 분으로 환산해 각 입력 임계값보다 큰 경우 정보성 high_gate_wait 판정을 제공한다. 예: p90=120,000ms, 임계값 [1,2,3]이면 1분 초과 안내만 나온다. 음수·비숫자는 400이며 빈 배열은 지표만 조회한다. 미관측·마스킹은 판정하지 않는다. tool_gate 관측은 Plan 전용 대기나 생산성 손실을 의미하지 않는다.
+
+실제 OTLP tool.blocked_on_user 스팬 5건의 시작/종료 시각에서 대기 120,000ms를 수집하고, 실제 frontend 실행·결과 화면까지 검증한다. `verifiedIngest.gateScenario`와 `admin-ingest-gate-scenario.png`가 증거다. fixture에는 거부 이벤트가 없어 tool_rejections는 미관측이다. usage_heatmap은 이 실행에서 일별 사용량 차트로 제공한다.

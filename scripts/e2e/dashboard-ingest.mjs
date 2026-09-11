@@ -79,6 +79,11 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
       startTimeUnixNano: String(now), endTimeUnixNano: String(now + 1000000000n),
       attributes: [attr('session.id', `ingest-${installation}`), attr('model', model),
         attr('request_id', randomUUID()), { key: 'ttft_ms', value: { intValue: String((index + 1) * 100) } }],
+    }, {
+      traceId: randomUUID().replaceAll('-', ''), spanId: randomUUID().replaceAll('-', '').slice(0, 16),
+      name: 'claude_code.tool.blocked_on_user', kind: 1,
+      startTimeUnixNano: String(now), endTimeUnixNano: String(now + 120000000000n),
+      attributes: [attr('session.id', `ingest-${installation}`), attr('decision', 'accept')],
     }] }] }] });
     for (const [signal, payload] of [['logs', body], ['metrics', metrics], ['traces', traces]]) {
       const push = token => fetch(`${endpoint}/v1/${signal}`, { method: 'POST',
@@ -112,13 +117,13 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   assert.equal(quantiles.p90, 500);
 
   const response = await fetch(`http://127.0.0.1:${chPort}/?query=${encodeURIComponent(
-    `SELECT tenant_id, installation_id, signal, team_ids_as_of FROM enriched_events FINAL WHERE JSONExtractString(raw_json, 'payload', 'tool_name') = '${tool}' OR JSONExtractString(raw_json, 'payload', 'model') = '${model}' OR JSONExtractString(raw_json, 'point', 'attrs', 'model') = '${model}' OR JSONExtractString(raw_json, 'payload', 'model') = '${scenarioModel}' OR JSONExtractString(raw_json, 'type') = 'user_prompt' FORMAT JSONEachRow`)}`);
+    `SELECT tenant_id, installation_id, signal, team_ids_as_of FROM enriched_events FINAL WHERE JSONExtractString(raw_json, 'payload', 'tool_name') = '${tool}' OR JSONExtractString(raw_json, 'payload', 'model') = '${model}' OR JSONExtractString(raw_json, 'point', 'attrs', 'model') = '${model}' OR JSONExtractString(raw_json, 'payload', 'model') = '${scenarioModel}' OR JSONExtractString(raw_json, 'type') IN ('user_prompt','tool_gate') FORMAT JSONEachRow`)}`);
   assert.equal(response.status, 200);
   const rows = (await response.text()).trim().split('\n').map(JSON.parse);
-  assert.equal(rows.length, 35);
+  assert.equal(rows.length, 40);
   assert.ok(rows.every(row => row.tenant_id === tenant));
   assert.ok(rows.every(row => row.team_ids_as_of.includes('00000000-0000-0000-0000-000000000010')));
-  for (const [signal, count] of [['log', 4], ['metric', 2], ['span', 1]]) {
+  for (const [signal, count] of [['log', 4], ['metric', 2], ['span', 2]]) {
     assert.deepEqual(rows.filter(row => row.signal === signal).map(row => row.installation_id).sort(),
       installations.flatMap(id => Array(count).fill(id)).sort());
   }
@@ -323,8 +328,34 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, promptRun.run.run_id);
   await page.getByRole('heading', { name: '세션별 프롬프트 수 중앙값이 1을 초과했습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-prompts-scenario.png'), fullPage: true });
+  const gateRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    let { run } = await scenarioApi.start('S4-8', { params: {
+      from, to: new Date(Date.now() + 1000).toISOString(), wait_thresholds_min: [1, 2, 3],
+    } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return run;
+  }, scenarioFrom);
+  assert.equal(gateRun.status, 'succeeded');
+  assert.equal(gateRun.progress.step, 3);
+  assert.equal(gateRun.progress.total, 3);
+  assert.deepEqual(Object.keys(gateRun.result.frames).sort(), ['gate_wait_ms', 'tool_rejections', 'usage_heatmap']);
+  assert.equal(gateRun.result.findings.length, 1);
+  assert.equal(gateRun.result.findings[0].evidence.p90_ms, 120000);
+  assert.equal(gateRun.result.findings[0].evidence.threshold_min, 1);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, gateRun.run_id);
+  await page.getByRole('heading', { name: '도구 승인 대기 p90이 입력 임계값을 초과했습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-gate-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
-    authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 35,
+    authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 40,
+    gateScenario: { id: 'S4-8', runId: gateRun.run_id, actualResultUI: true, p90Ms: 120000, thresholdMin: 1 },
     promptScenario: { id: 'S4-1', runId: promptRun.run.run_id, actualResultUI: true, p50: 2, tokens: 1050 },
     cacheScenario: { id: 'S1-4', runId: cacheRun.run.run_id, actualResultUI: true, cacheRatio: 0, tokens: 1050 },
     abandonedScenario: { id: 'S4-2', runId: abandonedRun.run.run_id, actualResultUI: true, ratio: 1 },
