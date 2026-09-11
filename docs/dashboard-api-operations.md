@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-3·S4-4·S4-5·S4-6·S4-8·S5-2·S5-4·S5-6·S5-7·S6-1·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-3·S8-4·S8-5·S8-6의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-3·S4-4·S4-5·S4-6·S4-8·S5-2·S5-4·S5-6·S5-7·S6-1·S6-3·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-3·S8-4·S8-5·S8-6·S8-7의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -334,3 +334,10 @@ owner/admin이 from/to·team_ids와 선택 language를 지정한다. language는
 
 
 언어 선택 시 마스킹 인원은 해당 언어의 유효 편집 관측자다. 다른 언어 사용자는 5인 기준을 채우지 않는다. 수집 E2E의 `verifiedIngest.acceptanceScenario`는 admin의 언어 입력·완료 응답·미관측 화면을 검증한다. 양수 수락률은 DB 통합 테스트로 확인하며 frontend 상단의 언어 전용 표시는 미연결이다.
+
+
+### S6-3·S8-7 고정 4주 비교
+
+사용자 확정에 따라 pivot_date 현지 자정의 전후 각각 4주를 조회한다. 입력 스키마에는 기간 변경 옵션이 없으며 applied_filters.window_weeks=4와 비교 시간을 제공한다. 아직 끝나지 않은 이후 기간은 observation_complete=false이고 변화 판정은 없다.
+
+S6-3은 owner + 감사 사유가 필요하다. models는 최대 100개·각 1~200자이며 생략·빈 배열은 전체 모델이다. 종료 사유를 stop_reason별로 비교하고 빈 사유는 빈 라벨로 보존한다. S8-7은 owner/admin의 현재 팀 범위에서 도입률·프롬프트·집중도를 비교하며 개인 명단을 반환하지 않는다. 양쪽 유효 관측값의 차이만 제공하고 소집단·미관측·인과 효과는 추정하지 않는다.

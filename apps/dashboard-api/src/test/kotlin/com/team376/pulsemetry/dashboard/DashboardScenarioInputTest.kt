@@ -90,6 +90,16 @@ class DashboardScenarioInputTest {
                 .isInstanceOf(IllegalArgumentException::class.java)
     }
 
+    @Test fun `모델 드리프트와 챔피언 비교는 확정된 전후 4주 현지 자정을 사용한다`() {
+        for (id in listOf("S6-3","S8-7")) {
+            val result = input(id,"""{"params":{"pivot_date":"2026-03-08"},"tz":"America/New_York"}""")
+            assertThat(result.times["compare_from"]).isEqualTo(Instant.parse("2026-02-08T05:00:00Z"))
+            assertThat(result.times["from"]).isEqualTo(Instant.parse("2026-03-08T05:00:00Z"))
+            assertThat(result.times["to"]).isEqualTo(Instant.parse("2026-04-05T04:00:00Z"))
+            assertThat(result.params.has("window_weeks")).isFalse()
+        }
+    }
+
     @Test fun `모든 카탈로그 파라미터 스키마에 타입에 맞는 입력을 적용할 수 있다`() {
         val examples = mapOf("pivot_date" to "2026-09-01", "cohort_from" to "2026-08-01", "cohort_to" to "2026-09-01",
             "model_a" to "model-a", "model_b" to "model-b")

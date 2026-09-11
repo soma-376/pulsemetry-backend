@@ -86,7 +86,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     /** 워커가 고정한 전후 현지 날짜 범위. 공개 QRY 파라미터를 확장하지 않는다. */
     internal fun compareScenario(user: UserIdentity, body: DashboardQueryRequest,
         before: Pair<Instant, Instant>): ResponseEntity<*> {
-        require(body.compare == "none" && body.queries.all { it.frameType == "table" && it.groupBy.isEmpty() })
+        require(body.compare == "none" && body.queries.all { it.frameType == "table" &&
+            (it.groupBy.isEmpty() || (it.metricId=="llm_stop_reasons" && it.groupBy==listOf("stop_reason"))) })
         return execute(user, body, null, "application/json", before)
     }
 

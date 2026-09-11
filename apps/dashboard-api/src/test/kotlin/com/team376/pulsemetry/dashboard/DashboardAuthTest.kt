@@ -3022,6 +3022,75 @@ class DashboardAuthTest {
         }
     }
 
+    private fun fixedComparisonRun(bearer: String, scenario: String, models: List<String> = listOf("claude-test"),
+        pivot: String = "2026-08-10", audit: String? = "fixed period comparison") =
+        mvc.perform(post("/v1/scenarios/$scenario/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content(mapper.writeValueAsString(mapOf("params" to
+                (mapOf("pivot_date" to pivot) + if(scenario=="S6-3") mapOf("models" to models) else emptyMap())))))
+
+    @Test fun `드리프트 비교는 선택 모델과 종료 사유별 전후 건수를 보존한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(stopEvent(it,"end_turn",at="2026-08-01T12:00:00Z"),
+            stopEvent(it,"end_turn"),stopEvent(it,"end_turn",at="2026-09-02T12:00:00Z"),
+            comparisonModelEvent(it,"excluded",99,9999,500)) })
+        val bearer = token()
+        fixedComparisonRun(bearer,"S6-3",audit=null).andExpect(status().isForbidden)
+        fixedComparisonRun(bearer,"S6-3",models=listOf("x".repeat(201))).andExpect(status().isBadRequest)
+        val id = mapper.readTree(fixedComparisonRun(bearer,"S6-3").andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+        assertThat(run["result"]["applied_filters"]["window_weeks"].asInt()).isEqualTo(4)
+        assertThat(run["result"]["applied_filters"]["filters"]["models"].toList().map { it.asString() }).containsExactly("claude-test")
+        val finding = run["result"]["findings"].single()
+        assertThat(finding["widget_id"].asString()).isEqualTo("W3.1")
+        assertThat(finding["evidence"]["dimensions"]["stop_reason"].asString()).isEqualTo("end_turn")
+        assertThat(finding["evidence"]["before"].asDouble()).isEqualTo(5.0)
+        assertThat(finding["evidence"]["after"].asDouble()).isEqualTo(10.0)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        fixedComparisonRun(token(),"S6-3").andExpect(status().isForbidden)
+    }
+
+    @Test fun `챔피언 비교는 전후 프롬프트와 사용 집중도를 비교하고 개인을 반환하지 않는다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMapIndexed { i,id -> listOf(promptEvent(id,at="2026-08-01T12:00:00Z"),promptEvent(id),
+            promptEvent(id,at="2026-09-02T12:00:00Z"),tokenEvent(id,10,0,0,0,at="2026-08-01T12:00:00Z"),
+            tokenEvent(id,if(i==4) 100 else 10,0,0,0)) })
+        val bearer = token()
+        val id = mapper.readTree(fixedComparisonRun(bearer,"S8-7",audit=null).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        val findings = run["result"]["findings"].toList().associateBy { it["evidence"]["metric_id"].asString() }
+        assertThat(findings.keys).containsExactlyInAnyOrder("prompts_per_session","usage_concentration")
+        assertThat(findings.getValue("prompts_per_session")["evidence"]["before"].asDouble()).isEqualTo(1.0)
+        assertThat(findings.getValue("prompts_per_session")["evidence"]["after"].asDouble()).isEqualTo(2.0)
+        assertThat(findings.getValue("usage_concentration")["evidence"]["after"].asDouble()).isGreaterThan(0.7)
+        ids.forEach { assertThat(run.toString()).doesNotContain(it.toString()) }
+    }
+
+    @Test fun `고정 4주 비교는 소집단 미관측과 미완료 기간을 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for ((rows,pivot) in listOf((ids.take(4).flatMap { listOf(promptEvent(it,at="2026-08-01T12:00:00Z"),
+            stopEvent(it,"end_turn",at="2026-08-01T12:00:00Z")) } + ids.flatMap { listOf(promptEvent(it),stopEvent(it,"end_turn")) }) to "2026-08-10",
+            emptyList<String>() to "2026-08-10",ids.flatMap { listOf(promptEvent(it),stopEvent(it,"end_turn")) } to "2026-09-01")) {
+            seedPoints(rows)
+            for (scenario in listOf("S6-3","S8-7")) {
+                val id = mapper.readTree(fixedComparisonRun(bearer,scenario,pivot=pivot).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+                scenarioRuns.runOne()
+                val run = readRun(id,bearer)
+                assertThat(run["status"].asString()).isEqualTo("succeeded")
+                assertThat(run["result"]["findings"].size()).isZero()
+            }
+        }
+    }
+
     private fun sprintRun(bearer: String, dates: List<String>, zone: String = "Asia/Seoul") =
         mvc.perform(post("/v1/scenarios/S2-3/runs").header("Authorization","Bearer $bearer")
             .contentType("application/json").content(mapper.writeValueAsString(mapOf("tz" to zone,"params" to
