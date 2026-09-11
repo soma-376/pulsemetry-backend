@@ -2682,6 +2682,58 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `팀 활용 시나리오는 네 지표의 팀별 기간 합계를 제공한다`() {
+        val teams = costTeams().take(2)
+        val rows = teams.flatMapIndexed { index, team -> installations(5,team).flatMap { id ->
+            listOf(point(id,(index+1).toDouble(),team=team),inTeam(userTime(id,60.0),team),
+                inTeam(sessionOutput(id,"s","claude_code.lines_of_code.count",10.0),team))
+        } }
+        seedPoints(rows)
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer,"S3-4","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrder("sessions","active_time","lines_of_code","adoption_rate")
+        for(metric in listOf("sessions","active_time","lines_of_code")) {
+            val byTeam = frames[metric]["frames"].toList().associate { f ->
+                f["schema"]["fields"][0]["labels"]["team"].asString() to f["data"]["values"][0][0].asDouble()
+            }
+            assertThat(byTeam.keys).containsExactlyInAnyOrderElementsOf(teams.map { it.toString() })
+            assertThat(byTeam.values).containsExactlyInAnyOrderElementsOf(when(metric) {
+                "sessions" -> listOf(5.0,10.0); "active_time" -> listOf(300.0,300.0); else -> listOf(50.0,50.0)
+            })
+        }
+        assertThat(run["result"]["findings"].size()).isEqualTo(2)
+    }
+
+    @Test fun `팀 활용 시나리오는 소집단을 판정에서 제외하고 admin 팀으로 제한한다`() {
+        val teams = costTeams().take(2)
+        val ids = teams.map { installations(5,it) }
+        seedPoints(ids[0].map { point(it,1.0,team=teams[0]) } + ids[1].take(4).map { point(it,100.0,team=teams[1]) })
+        val bearer = token()
+        val ownerId = mapper.readTree(startRun(bearer,"S3-4","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        assertThat(readRun(ownerId,bearer)["result"]["findings"].size()).isEqualTo(1)
+        jdbc.sql("INSERT INTO enrollment.team_memberships(team_id,member_id) VALUES (:team,:member)")
+            .param("team",teams[0]).param("member",member).update()
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        val admin = token()
+        val id = mapper.readTree(startRun(admin,"S3-4","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,admin)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["result"]["frames"].properties().flatMap { it.value["frames"].toList() }
+            .flatMap { it["schema"]["fields"].toList() }.map { it.path("labels").path("team").asString() }.toSet())
+            .containsExactly(teams[0].toString())
+    }
+
     @Test fun `유즈케이스 시나리오는 action별 기간 합계를 분리한다`() {
         val ids = installations(5)
         val bearer = token()

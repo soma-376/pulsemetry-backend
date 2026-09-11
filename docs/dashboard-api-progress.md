@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S4-1·S4-2·S4-6·S4-8·S7-1 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S3-4·S4-1·S4-2·S4-6·S4-8·S7-1 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -614,3 +614,10 @@
 - 상세 판정식 공백은 공개 가능한 양수 action별 관측 건수의 정보성 안내로 보완한다. 비중·업무 주제·생산성은 추정하지 않는다. 빈 action·topN 잔여 그룹·소집단 마스킹·미관측은 안내에서 제외하며 어댑터 미분류 값 other는 그대로 표시한다.
 - DB 통합 테스트 2건 추가: 읽기 10건/쓰기 5건 분리·2단계 결과·action별 소집단·빈 데이터. dashboard 161건 통과(실패·오류·skip 0), bootJar 빌드 성공.
 - 실제 수집 E2E 통과(API 오류 0건): 미분류 도구 action other의 호출 5건·정보성 안내·결과 화면을 확인했다. 기존 8개 시나리오도 통과했다. 코드 변경량 fixture는 없어 미관측이다. frontend 차트 축은 action 대신 value로 표시하지만 판정에는 action이 보존된다. frontend 코드는 변경하지 않았다.
+
+
+## S3-4 팀별 활용 실행 확장
+
+- 열 번째 실행 시나리오 S3-4를 추가했다. sessions·active_time·lines_of_code·adoption_rate를 팀별 기간 합계 표로 제공하는 4단계이며 P1/W1.6·W1.5를 반환한다. admin은 실행 당시 본인 팀 범위로 고정하고 워커에서 현재 권한을 재검증한다.
+- 명세의 상세 격차 판정식은 비어 있다. 팀별 양수 공개 세션 수를 정보성 관측 안내로 제공한다. 팀 규모·수집 범위를 보정하지 않은 값으로 활용 우열이나 생산성 격차를 판정하지 않는다. 소집단·빈 팀·잔여 그룹·미관측·0은 안내에서 제외한다.
+- DB 통합 테스트 2건 추가: 두 팀의 세션 5/10·활동 시간 300초씩·코드 변경 50줄씩·4단계 결과, 소집단 판정 제외·admin 팀 제한. dashboard 163건 통과(실패·오류·skip 0), bootJar 빌드 성공.
