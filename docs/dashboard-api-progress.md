@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S5-2·S6-5·S7-1·S7-3·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S5-2·S5-7·S6-5·S7-1·S7-3·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -717,3 +717,12 @@
 - 실제 OTLP 수집→owner 로그인→감사 실행→P3 결과 UI E2E 통과. 읽기 밀도 p50/p90=0, MCP 미관측, 판정 0건 및 감사 행 1건을 확인했다. MCP 양수 결과는 실제 DB 테스트로 검증했다. 실행 가능한 시나리오는 21개다.
 - frontend 소스는 변경하지 않았다. 일반 실행 폼의 감사 사유 전달은 없어 공통 `request` 클라이언트로 시작했다. W3.2 MCP 카드와 일반 읽기 밀도 표를 확인했다.
 - 증거: `build/e2e/auth-settings/result.json`, `owner-ingest-external-scenario.png`. 전체 PROJ-156 수용 완료를 뜻하지 않는다.
+
+## S5-7 즉시 승인 관측 실행
+
+- `rubber_stamp_ratio`, `auto_approval_ratio`, `pull_requests`를 3단계로 조회한다. 카탈로그의 `threshold_ms`(기본 2000, 1~60000)를 rubber_stamp_ratio 쿼리에 전달한다. 유효 대기 시간이 있는 사용자 accept만 분모이며 임계값과 같은 시간은 분자에서 제외한다.
+- 비율이 0보다 클 때 info 판정과 실제 `threshold_ms`를 제공한다. 검증 생략·실제 반출·PR과의 인과관계는 확정하지 않는다. owner와 감사 사유를 요구하고 실행 중 현재 권한을 재검증한다.
+- dashboard 테스트 187건 통과. 기본 2000ms에서 1/3, 2001ms에서 2/3, 잘못된 범위 거부, 감사 누락·admin 거부, 소집단·결측·임계값 이상·거절의 판정 제외를 검증했다.
+- 실제 OTLP 수집→owner 로그인→감사 실행→P3 결과 UI E2E 통과. `source=user_temporary`인 승인 대기 120000ms 5건에 threshold_ms=60000을 적용해 비율 0(분자 0/분모 5), 판정 0건, 감사 행 1건을 확인했다. 실행 가능한 시나리오는 22개다.
+- 초기 E2E 입력은 승인 주체가 빠져 분모가 없었으므로 0 기대값 검증이 실패했다. 어댑터 계약대로 source를 명시해 수정했다. 양수 및 임계값 변경 결과는 실제 DB 테스트로 검증했다.
+- frontend 소스 변경 없음. 일반 P3 실행 폼의 감사 사유 전달은 아직 없어 owner 로그인 후 공통 API 클라이언트로 감사 헤더를 전달했다. 결과 화면의 rubber_stamp_ratio는 일반 표이며 자동 승인·PR은 이번 입력에서 미관측이다.

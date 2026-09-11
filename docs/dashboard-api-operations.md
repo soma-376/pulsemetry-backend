@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S5-2·S6-5·S7-1·S7-3·S8-1·S8-4의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S5-2·S5-7·S6-5·S7-1·S7-3·S8-1·S8-4의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -252,3 +252,7 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 양수 세션 수를 observed_reporting_usage 정보성 안내로 제공한다. 재무 조인 없는 partial 상태이며 ROI·절감액·생산성 향상을 계산하거나 보장하지 않는다. 소집단·미관측·0은 판정하지 않으며 비용과 활성 사용자 정의는 기존 조회 계약을 유지한다.
 
 실제 수집 E2E의 `verifiedIngest.reportingScenario`, `admin-ingest-reporting-scenario.png`에 세션 5건·토큰 1,050·활성 사용자당 비용 3달러의 실행·화면 증거를 남긴다. 활동 시간·코드·커밋·PR은 해당 수집 fixture에 없어 미관측이며 DB 통합 테스트로 검증한다. 현재 frontend의 W1.2 강조 연결은 누락되어 있다.
+
+### S5-7 사용자 승인 시간
+
+owner가 감사 사유와 함께 실행한다. `threshold_ms`는 1~60000ms이며 기본 2000ms다. 사용자 accept 중 유효 대기 시간이 이 값 미만인 비율을 조회하고, 양수일 때 info 관측을 제공한다. 판정의 `threshold`는 비율 비교 기준 0이며 `threshold_ms`가 승인 시간 기준이다. 실제 검증 여부나 반출은 측정하지 않는다. 자동 승인 비율과 PR 수는 별도의 관측값이다.

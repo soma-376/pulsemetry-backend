@@ -88,7 +88,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
       traceId: randomUUID().replaceAll('-', ''), spanId: randomUUID().replaceAll('-', '').slice(0, 16),
       name: 'claude_code.tool.blocked_on_user', kind: 1,
       startTimeUnixNano: String(now), endTimeUnixNano: String(now + 120000000000n),
-      attributes: [attr('session.id', `ingest-${installation}`), attr('decision', 'accept')],
+      attributes: [attr('session.id', `ingest-${installation}`), attr('decision', 'accept'), attr('source', 'user_temporary')],
     }] }] }] });
     for (const [signal, payload] of [['logs', body], ['metrics', metrics], ['traces', traces]]) {
       const push = token => fetch(`${endpoint}/v1/${signal}`, { method: 'POST',
@@ -590,6 +590,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let retryRun;
   let policyRun;
   let externalRun;
+  let fastApprovalRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -707,11 +708,40 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, externalRun.run_id);
     await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(externalRun.run_id.slice(0, 8), { exact: false }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-external-scenario.png'), fullPage: true });
+    fastApprovalRun = await ownerPage.evaluate(async from => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S5-7/runs', { method: 'POST', body: JSON.stringify({
+        params: { from, to: new Date(Date.now() + 1000).toISOString(), threshold_ms: 60000 },
+      }) }, '사용자 승인 임계 시간 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, scenarioFrom);
+    assert.equal(fastApprovalRun.status, 'succeeded');
+    assert.equal(fastApprovalRun.params.threshold_ms, 60000);
+    assert.equal(fastApprovalRun.progress.step, 3);
+    assert.equal(fastApprovalRun.progress.total, 3);
+    assert.equal(fastApprovalRun.result.target_page, 'P3');
+    assert.deepEqual(Object.keys(fastApprovalRun.result.frames).sort(), ['auto_approval_ratio', 'pull_requests', 'rubber_stamp_ratio']);
+    assert.equal(fastApprovalRun.result.findings.length, 0);
+    assert.ok(fastApprovalRun.result.frames.rubber_stamp_ratio.frames.some(f => f.data.values[1].includes(0)));
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S5-7'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, fastApprovalRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(fastApprovalRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-fast-approval-scenario.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    fastApprovalScenario: { id: 'S5-7', runId: fastApprovalRun.run_id, owner: true, audited: true, actualResultUI: true, thresholdMs: 60000, ratio: 0 },
     externalScenario: { id: 'S5-2', runId: externalRun.run_id, owner: true, audited: true, actualResultUI: true, mcpFindings: 0, readDensity: 0 },
     policyScenario: { id: 'S7-3', runId: policyRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionFindings: 0, gateWaitMs: 120000 },
     retryScenario: { id: 'S6-5', runId: retryRun.run_id, owner: true, audited: true, actualResultUI: true, retryRatio: 0.2, costUsd: 15 },
