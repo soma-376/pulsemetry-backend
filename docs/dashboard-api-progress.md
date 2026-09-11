@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S7-1·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S7-1·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -681,3 +681,9 @@
 - 실제 OTLP 비용 메트릭에 effort=high·speed=fast를 넣어 수집→admin 실행→frontend 결과 UI E2E를 통과했다. 모델·effort와 모델·speed 각각 $15이고 누적값 999는 제외됐다. 실행 가능한 시나리오는 17개다.
 - frontend 소스는 변경하지 않았다. 비용 차트 제목은 `팀별 비용`이며 두 분류가 같은 모델 이름의 막대로 표시되어 차트에서 effort/speed 축을 구분하기 어렵다. 결과 필드의 라벨과 정보 판정은 두 축 및 중복 합산 금지를 제공한다.
 - 증거: `build/e2e/auth-settings/result.json`, `admin-ingest-effort-scenario.png`. 전체 PROJ-156 수용 완료를 뜻하지 않는다.
+
+## S2-2 Rate Limit 실행
+
+- P3 시나리오로 owner와 10~500자 감사 사유를 요구한다. 시작 시 `scenario_run` 감사를 기록하며 worker는 각 조회 전 현재 역할·팀 범위를 재검증한다.
+- `rate_limit_events`·`tokens`·`api_retry_attempts`를 일 시계열로 제공한다. 공개 가능한 양수 제한 이벤트에 정보 판정을 제공하되 retries_exhausted가 없어 상시 도달·작업 중단·한도 소진을 확정하지 않는다.
+- dashboard 테스트 179건 통과. 실제 DB에서 429 이벤트 집계, 토큰 값, 감사 누락·admin 거부, 실행 전 역할 변경 실패, 소집단·미관측·정상 응답의 판정 제외를 검증했다.

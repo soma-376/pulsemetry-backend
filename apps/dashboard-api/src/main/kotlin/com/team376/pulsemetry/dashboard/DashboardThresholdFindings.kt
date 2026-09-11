@@ -14,6 +14,8 @@ internal object DashboardThresholdFindings {
                 "컨텍스트 첨부 여부는 관측하지 못합니다. 입력 토큰 사용을 검토하세요.")
             "S8-1" -> Rule("observed_reporting_usage","경영 보고용 세션 사용량이 관측되었습니다","W1.1",
                 "재무 데이터와 연결하지 않은 사용량입니다. ROI·절감액·생산성 향상을 계산하거나 보장하지 않습니다.")
+            "S2-2" -> Rule("observed_rate_limit_pressure","Rate Limit 이벤트가 관측되었습니다","W3.3",
+                "관측된 제한 이벤트 수입니다. 재시도 고갈 이벤트가 없어 상시 도달·작업 중단·실제 한도 소진을 확정하지 않습니다.")
             "S2-1" -> Rule("observed_rate_limits","Rate Limit 이벤트가 관측되었습니다","W2.3",
                 "시간대별 프롬프트 수와 관측 제한 이벤트입니다. 오전·오후 변동의 원인이나 작업 중단을 확정하지 않습니다.")
             "S3-5" -> Rule("observed_subagent_cost","서브에이전트 비용이 관측되었습니다","W2.8",
@@ -37,7 +39,7 @@ internal object DashboardThresholdFindings {
                     "rule_id" to rule.id, "severity" to "info", "widget_id" to rule.widget,
                     "title" to rule.title,
                     "evidence" to mapOf("date" to Instant.ofEpochMilli(frame["data"]["values"][time][i].asLong()).toString(),
-                        (when(scenario) { "S4-1" -> "p50"; "S2-1","S8-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
+                        (when(scenario) { "S4-1" -> "p50"; "S2-1","S2-2","S8-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
                         "limitation" to rule.limitation))
             }
         }

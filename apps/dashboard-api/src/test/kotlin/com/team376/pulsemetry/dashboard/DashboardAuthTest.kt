@@ -2682,6 +2682,51 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun rateLimitRun(bearer: String, audit: String? = "rate limit scenario review") =
+        mvc.perform(post("/v1/scenarios/S2-2/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content("""{"params":{"from":"2026-09-01","to":"2026-09-02"}}"""))
+
+    @Test fun `제한 시나리오는 owner 감사 후 실행하고 권한 변경을 재검증한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(llmEvent(it,2,429),tokenEvent(it,100,50,0,0)) })
+        val bearer = token()
+        rateLimitRun(bearer,null).andExpect(status().isForbidden)
+        val id = mapper.readTree(rateLimitRun(bearer).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S2-2'")
+            .query(Long::class.java).single()).isEqualTo(1)
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        assertThat(run["result"]["target_page"].asString()).isEqualTo("P3")
+        assertThat(run["result"]["findings"][0]["evidence"]["count"].asDouble()).isEqualTo(5.0)
+        assertThat(run["result"]["frames"]["tokens"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(750.0)
+        val queued = mapper.readTree(rateLimitRun(bearer).andReturn().response.contentAsString)["run_id"].asString()
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        rateLimitRun(token()).andExpect(status().isForbidden)
+        scenarioRuns.runOne()
+        val failed = jdbc.sql("SELECT status FROM dashboard.scenario_runs WHERE id=CAST(:id AS uuid)").param("id",queued)
+            .query(String::class.java).single()
+        assertThat(failed).isEqualTo("failed")
+    }
+
+    @Test fun `제한 시나리오는 소집단과 미관측에서 고갈을 추정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { llmEvent(it,2,429) },emptyList(),ids.map { llmEvent(it,1,200) })) {
+            seedPoints(rows)
+            val id = mapper.readTree(rateLimitRun(bearer).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun effortCost(id: UUID, value: Double, effort: String, speed: String, cumulative: Boolean = false): String {
         val row = mapper.readTree(subagentCost(id,value,"main",cumulative=cumulative)) as tools.jackson.databind.node.ObjectNode
         val raw = mapper.readTree(row["raw_json"].asString())
