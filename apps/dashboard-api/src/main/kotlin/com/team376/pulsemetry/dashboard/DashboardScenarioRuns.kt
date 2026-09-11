@@ -35,13 +35,13 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
         val scenario = catalog.detail(id)
         if (scenario["availability"].asString()=="unavailable") throw UserAuthException("scenario_unavailable",409)
         // 실행 계획이 없는 시나리오를 일반 지표 조회만으로 성공 처리하지 않는다.
-        if (id !in setOf("S1-1","S1-3","S1-4","S1-5","S1-6","S2-1","S2-2","S2-3","S3-1","S3-2","S3-4","S3-5","S4-1","S4-2","S4-4","S4-5","S4-6","S4-8","S5-2","S5-6","S5-7","S6-1","S6-4","S6-5","S7-1","S7-2","S7-3","S7-4","S8-1","S8-3","S8-4","S8-5","S8-6")) throw UserAuthException("scenario_not_implemented",501)
+        if (id !in setOf("S1-1","S1-3","S1-4","S1-5","S1-6","S2-1","S2-2","S2-3","S3-1","S3-2","S3-4","S3-5","S4-1","S4-2","S4-4","S4-5","S4-6","S4-8","S5-2","S5-4","S5-6","S5-7","S6-1","S6-4","S6-5","S7-1","S7-2","S7-3","S7-4","S8-1","S8-3","S8-4","S8-5","S8-6")) throw UserAuthException("scenario_not_implemented",501)
         val zone = jdbc.sql("SELECT timezone FROM enrollment.tenants WHERE id=:tenant").param("tenant",user.tenantId)
             .query(String::class.java).single()
         val input = inputs.prepare(id,body,user,zone,clock.instant(),audit)
         if (!input.organizationScope && input.teamIds.isEmpty()) throw UserAuthException("forbidden",403)
         val execution = mapper.writeValueAsString(mapOf("tz" to input.zone.id,"price_basis" to input.priceBasis,
-            "team_ids" to input.teamIds.map { it.toString() },"organization_scope" to input.organizationScope,"actor_role" to user.role) + input.times.filterKeys { it.startsWith("compare_") }.mapValues { it.value.toString() })
+            "team_ids" to input.teamIds.map { it.toString() },"organization_scope" to input.organizationScope,"actor_role" to user.role) + (if(id=="S5-4") mapOf("audit_reason" to requireNotNull(input.auditReason)) else emptyMap()) + input.times.filterKeys { it.startsWith("compare_") }.mapValues { it.value.toString() })
         // admin의 빈 선택값은 실행 당시의 실제 팀으로 고정해 frontend 결과 범위에도 전달한다.
         if (!input.organizationScope) input.params.set("team_ids",mapper.valueToTree<JsonNode>(input.teamIds.map { it.toString() }))
         val runId = UUID.randomUUID()
@@ -111,7 +111,7 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
     fun runOne() {
         val row = runs.claim() ?: return
         try {
-            if (row.scenario in setOf("S1-1","S1-4","S1-5","S1-6","S2-1","S2-2","S2-3","S3-1","S3-2","S3-4","S3-5","S4-1","S4-2","S4-4","S4-5","S4-6","S4-8","S5-2","S5-6","S5-7","S6-1","S6-4","S6-5","S7-1","S7-2","S7-3","S7-4","S8-1","S8-3","S8-4","S8-5","S8-6")) { runCatalogScenario(row); return }
+            if (row.scenario in setOf("S1-1","S1-4","S1-5","S1-6","S2-1","S2-2","S2-3","S3-1","S3-2","S3-4","S3-5","S4-1","S4-2","S4-4","S4-5","S4-6","S4-8","S5-2","S5-4","S5-6","S5-7","S6-1","S6-4","S6-5","S7-1","S7-2","S7-3","S7-4","S8-1","S8-3","S8-4","S8-5","S8-6")) { runCatalogScenario(row); return }
             if (row.scenario!="S1-3") throw UserAuthException("scenario_not_implemented",501)
             val execution = mapper.readTree(row.execution)
             val params = mapper.readTree(row.params)
@@ -179,7 +179,10 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
                     groupBy=when { row.scenario=="S8-5" && metric=="active_users" -> listOf("product"); row.scenario=="S1-6" && metric=="cost" -> listOf("model",if(index==0) "effort" else "speed"); row.scenario in setOf("S2-1","S2-3") && metric=="usage_heatmap" -> listOf("weekday","hour"); row.scenario in setOf("S1-1","S3-1","S3-4") -> listOf("team"); row.scenario=="S4-6" && metric=="tool_calls" -> listOf("action"); row.scenario=="S8-4" -> if(metric=="tokens") listOf("product","model") else listOf("product"); else -> emptyList() },interval="1d",limit=if(row.scenario in setOf("S2-1","S2-3") && metric=="usage_heatmap") null else 100,
                     params=if(row.scenario=="S5-7" && metric=="rubber_stamp_ratio") mapOf("threshold_ms" to mapper.readTree(row.params)["threshold_ms"])
                         else if(row.scenario=="S4-5" && metric=="command_prompt_ratio" && mapper.readTree(row.params).has("command_names")) mapOf("command_names" to mapper.readTree(row.params)["command_names"]) else emptyMap())))
-            val result = mapper.valueToTree<JsonNode>(query.query(actor(row),request,null,"application/json").body)["results"]["A"]
+            // 검증된 사유를 공개 조회 경계에 다시 전달한다. 퍼센트·더하기 문자는 이중 디코딩하지 않는다.
+            val queryAudit = if(metric=="vendor_account_mismatch") execution.path("audit_reason").takeIf { it.isString }
+                ?.asString()?.let { java.net.URLEncoder.encode(it,java.nio.charset.StandardCharsets.UTF_8) } else null
+            val result = mapper.valueToTree<JsonNode>(query.query(actor(row),request,queryAudit,"application/json").body)["results"]["A"]
             if(result["status"].asInt()!=200) throw UserAuthException(result.path("error").path("error").asString("query_failed"),result["status"].asInt())
             if(row.scenario=="S1-6" && metric=="cost" && frames.containsKey(metric)) {
                 // 같은 비용의 두 분류이며 합산하지 않는다. 각 필드 라벨로 분류 축을 보존한다.
@@ -199,8 +202,8 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
             else if(row.scenario=="S3-4") DashboardTeamUsageFindings.evaluate(frames.getValue("sessions"))
             else if(row.scenario=="S4-6") DashboardActionFindings.evaluate(frames.getValue("tool_calls"))
             else if(row.scenario=="S4-8") DashboardGateFindings.evaluate(frames.getValue("gate_wait_ms"),mapper.readTree(row.params)["wait_thresholds_min"])
-            else DashboardThresholdFindings.evaluate(row.scenario,frames.getValue(when(row.scenario) { "S6-4" -> "llm_ttft_ms"; "S2-1" -> "rate_limit_events"; "S1-4" -> "cache_read_ratio"; "S3-5" -> "subagent_cost_ratio"; else -> metricIds.first() }),
-                when(row.scenario) { "S1-4","S2-1","S2-2","S3-5","S4-2","S4-5","S5-2","S5-6","S5-7","S6-1","S6-4","S6-5","S7-3","S7-4","S8-1" -> 0.0; "S4-1" -> 1.0; else -> mapper.readTree(row.params)[thresholdKey].asDouble() },
+            else DashboardThresholdFindings.evaluate(row.scenario,frames.getValue(when(row.scenario) { "S5-4" -> "vendor_account_mismatch"; "S6-4" -> "llm_ttft_ms"; "S2-1" -> "rate_limit_events"; "S1-4" -> "cache_read_ratio"; "S3-5" -> "subagent_cost_ratio"; else -> metricIds.first() }),
+                when(row.scenario) { "S1-4","S2-1","S2-2","S3-5","S4-2","S4-5","S5-2","S5-4","S5-6","S5-7","S6-1","S6-4","S6-5","S7-3","S7-4","S8-1" -> 0.0; "S4-1" -> 1.0; else -> mapper.readTree(row.params)[thresholdKey].asDouble() },
                 details=if(row.scenario=="S5-7") mapOf("threshold_ms" to mapper.readTree(row.params)["threshold_ms"].asInt()) else emptyMap())
         actor(row)
         if (!runs.progress(row,metricIds.size)) return

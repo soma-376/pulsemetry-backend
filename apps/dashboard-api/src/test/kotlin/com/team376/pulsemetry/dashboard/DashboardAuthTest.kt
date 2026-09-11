@@ -2903,6 +2903,72 @@ class DashboardAuthTest {
         }
     }
 
+    private fun shadowRun(bearer: String, reason: String? = "vendor account review") =
+        mvc.perform(post("/v1/scenarios/S5-4/runs").header("Authorization","Bearer $bearer")
+            .also { if(reason!=null) it.header("X-Audit-Reason",java.net.URLEncoder.encode(reason,java.nio.charset.StandardCharsets.UTF_8)) }
+            .contentType("application/json").content("""{"params":{"from":"2026-09-01","to":"2026-09-02"}}"""))
+
+    @Test fun `섀도우 관측은 감사 사유를 보존하고 주소 없는 일별 불일치를 반환한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMapIndexed { index,id ->
+            val email = "registered-$id@example.test"
+            jdbc.sql("UPDATE enrollment.members SET email=:email WHERE id=(SELECT member_id FROM enrollment.installations WHERE id=:id)")
+                .param("email",email).param("id",id).update()
+            listOf(vendorEvent(id,"old@vendor.test"),vendorEvent(id,if(index<2) "other@vendor.test" else email.uppercase(),2))
+        })
+        val bearer = token()
+        shadowRun(bearer,null).andExpect(status().isForbidden)
+        val reason = "계정 확인 100% + %2F 사유"
+        val id = mapper.readTree(shadowRun(bearer,reason).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+        assertThat(run["result"]["frames"].propertyNames()).containsExactlyInAnyOrder("rate_limit_events","vendor_account_mismatch","mcp_connections","active_users")
+        assertThat(run["result"]["findings"].single()["evidence"]["count"].asDouble()).isEqualTo(2.0)
+        assertThat(run.toString()).doesNotContain("@vendor.test","@example.test",reason,"audit_reason")
+        assertThat(jdbc.sql("SELECT reason FROM dashboard.audit_log WHERE action='query' AND target='vendor_account_mismatch'")
+            .query(String::class.java).single()).isEqualTo(reason)
+        assertThat(jdbc.sql("SELECT reason FROM dashboard.audit_log WHERE action='scenario_run' AND target='S5-4'")
+            .query(String::class.java).single()).isEqualTo(reason)
+    }
+
+    @Test fun `섀도우 관측은 작은 집단 일치와 미관측을 불일치로 추정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for (rows in listOf(ids.take(4).map { vendorEvent(it,"different@vendor.test") },
+            ids.map { id ->
+                val email = jdbc.sql("SELECT m.email FROM enrollment.members m JOIN enrollment.installations i ON i.member_id=m.id WHERE i.id=:id")
+                    .param("id",id).query(String::class.java).single()
+                vendorEvent(id,email.uppercase())
+            },emptyList<String>())) {
+            seedPoints(rows)
+            val id = mapper.readTree(shadowRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
+    @Test fun `섀도우 워커는 권한 변경과 저장 사유 누락 시 조회를 거부한다`() {
+        val bearer = token()
+        seedPoints(installations(5).map { vendorEvent(it,"different@vendor.test") })
+        val first = mapper.readTree(shadowRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        jdbc.sql("UPDATE dashboard.scenario_runs SET execution=execution-'audit_reason' WHERE id=:id").param("id",UUID.fromString(first)).update()
+        scenarioRuns.runOne()
+        assertThat(readRun(first,bearer)["status"].asString()).isEqualTo("failed")
+        assertThat(readRun(first,bearer)["error"]["error"].asString()).isEqualTo("audit_reason_required")
+        val second = mapper.readTree(shadowRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        scenarioRuns.runOne()
+        shadowRun(token()).andExpect(status().isForbidden)
+        assertThat(jdbc.sql("SELECT status::text FROM dashboard.scenario_runs WHERE id=:id").param("id",UUID.fromString(second)).query(String::class.java).single()).isEqualTo("failed")
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='query'").query(Long::class.java).single()).isZero()
+    }
+
     private fun sprintRun(bearer: String, dates: List<String>, zone: String = "Asia/Seoul") =
         mvc.perform(post("/v1/scenarios/S2-3/runs").header("Authorization","Bearer $bearer")
             .contentType("application/json").content(mapper.writeValueAsString(mapOf("tz" to zone,"params" to

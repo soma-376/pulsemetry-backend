@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-4·S4-5·S4-6·S4-8·S5-2·S5-6·S5-7·S6-1·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-3·S8-4·S8-5·S8-6의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-4·S4-5·S4-6·S4-8·S5-2·S5-4·S5-6·S5-7·S6-1·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-3·S8-4·S8-5·S8-6의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -314,3 +314,10 @@ owner가 감사 사유와 함께 서로 다른 model_a·model_b(각 1~200자), f
 
 
 S8-3 수집 E2E는 `verifiedIngest.modelComparisonScenario`에 기록한다. 모델 A 이벤트 비용 15달러와 B 비용 미관측, owner 감사 및 결과 화면을 확인한다. 양쪽 모델의 유효 값 차이는 DB 통합 테스트로 검증한다. 현재 frontend 비용 제목은 '팀별 비용'이며 긴 모델 라벨이 잘릴 수 있다. 모델 비교용 표시와 일반 폼 감사 사유 전달은 후속 대상이다.
+
+
+### S5-4 벤더 계정 불일치 관측
+
+owner가 from/to와 감사 사유로 실행한다. 429 이벤트·일별 벤더 불일치·MCP 연결·활성 사용자를 반환한다. 불일치는 설치의 일별 마지막 비어 있지 않은 로그/스팬 계정과 현재 등록 계정의 대소문자 무시 비교이며 주소는 응답하지 않는다. 양수 불일치 설치 수만 info로 제공하며 비인가 사용을 확정하지 않는다.
+
+검증한 사유는 S5-4의 내부 execution.audit_reason에 저장되며 시작 감사와 워커의 vendor_account_mismatch query 감사에 동일하게 기록된다. 퍼센트·더하기 문자를 보존하고 사유 누락 또는 권한 변경은 실패 처리한다. 실행 응답에는 사유를 노출하지 않는다.

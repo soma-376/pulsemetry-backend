@@ -17,6 +17,7 @@ data class DashboardScenarioInput(
     val times: Map<String, Instant>,
     val teamIds: Set<UUID>,
     val organizationScope: Boolean = false,
+    val auditReason: String? = null,
 )
 
 /** 큐에 넣기 전 검증 경계. 재실행·워커에서도 현재 권한을 다시 확인해야 한다. */
@@ -37,9 +38,9 @@ class DashboardScenarioInputs(private val scenarios: DashboardScenarioCatalog, p
         val budgets = parsed.params.path("budget_by_team").properties().map { UUID.fromString(it.key) }.toSet()
         val allowed = access.teams(user, requested)
         if (!allowed.containsAll(budgets)) throw UserAuthException("forbidden", 403)
-        if (scenario["target_page"].asString() == "P3" || scenario["metric_ids"].any { it.asString() == "refusals" })
-            access.personal(user, auditReason, "scenario_run", scenarioId)
-        return parsed.copy(teamIds = allowed, organizationScope = user.role == "owner" && requested.isEmpty())
+        val reason = if (scenario["target_page"].asString() == "P3" || scenario["metric_ids"].any { it.asString() == "refusals" })
+            access.personal(user, auditReason, "scenario_run", scenarioId) else null
+        return parsed.copy(teamIds = allowed, organizationScope = user.role == "owner" && requested.isEmpty(),auditReason=reason)
     }
 }
 

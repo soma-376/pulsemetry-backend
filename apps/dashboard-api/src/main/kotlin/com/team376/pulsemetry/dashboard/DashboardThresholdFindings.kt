@@ -22,6 +22,8 @@ internal object DashboardThresholdFindings {
                 "query_source 메트릭의 비용 비율입니다. 스킬·플러그인 사용률이나 고급 기능 숙련도를 측정하지 않습니다.")
             "S5-2" -> Rule("observed_mcp_connections","MCP 연결 이벤트가 관측되었습니다","W3.2",
                 "연결 상태 이벤트와 세션별 읽기 도구 사용량입니다. 외부 전송 내용·목적지·승인 여부를 확인하지 않으므로 코드·문서 유출을 탐지하거나 확정하지 않습니다.")
+            "S5-4" -> Rule("observed_vendor_mismatch","등록 계정과 다른 벤더 계정이 관측되었습니다","W3.3",
+                "일별 설치의 마지막 비어 있지 않은 로그·스팬 계정과 현재 등록 계정을 대소문자 구분 없이 비교한 설치 수입니다. 주소는 반환하지 않으며 비인가 사용·개인 계정·섀도우 AI를 확정하지 않습니다.")
             "S5-7" -> Rule("observed_fast_approvals","임계 시간 미만의 사용자 승인이 관측되었습니다","W3.3",
                 "유효 대기 시간이 있는 사용자 accept 중 threshold_ms 미만 비율입니다. 승인 내용의 검증 여부·실제 반출·PR과의 인과관계를 확인하지 않습니다.")
             "S6-1" -> Rule("observed_quality_refusals","모델 거부 응답이 관측되었습니다","W2.7",
@@ -57,7 +59,7 @@ internal object DashboardThresholdFindings {
                     "rule_id" to rule.id, "severity" to "info", "widget_id" to rule.widget,
                     "title" to rule.title,
                     "evidence" to (mapOf("date" to Instant.ofEpochMilli(frame["data"]["values"][time][i].asLong()).toString(),
-                        (when(scenario) { "S7-2" -> "p90_calls_per_session"; "S6-4" -> "p90_ms"; "S4-1" -> "p50"; "S2-1","S2-2","S5-2","S6-1","S7-3","S8-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
+                        (when(scenario) { "S7-2" -> "p90_calls_per_session"; "S6-4" -> "p90_ms"; "S4-1" -> "p50"; "S2-1","S2-2","S5-2","S5-4","S6-1","S7-3","S8-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
                         "limitation" to rule.limitation) + details))
             }
         }
