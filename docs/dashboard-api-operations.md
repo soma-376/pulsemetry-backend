@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-5·S4-6·S4-8·S5-2·S5-7·S6-1·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-4·S8-5의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-4·S4-5·S4-6·S4-8·S5-2·S5-7·S6-1·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-4·S8-5·S8-6의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -284,3 +284,10 @@ P2 결과라도 owner와 감사 사유가 필요하다. models는 최대 100개�
 ### S2-3 요일·스프린트 날짜 관측
 
 owner/admin이 from·to·sprint_dates를 지정한다. 요일·시간대 프롬프트 표와 일별 세션·응답 시간·제한 이벤트를 반환한다. 실행 시간대의 sprint_dates 날짜에 관측된 세션을 info로 연결한다. 날짜는 스프린트 구간으로 확장하지 않으며 주기성이나 인과 효과를 계산하지 않는다.
+
+
+### S4-4·S8-6 기준일 전후 비교
+
+pivot_date와 window_weeks(기본 4, 1~52)를 받는다. 실행 시간대의 자정으로 전후 동일 주 수의 기간을 고정한다. 이후 기간이 resolved_from/to이며 이전 기간은 applied_filters.compare_from/compare_to다. 각 지표의 기간 전체 표에서 일반 필드는 이후, `_compare`는 이전 값이다. 공개 QRY 비교 파라미터는 변경하지 않았다.
+
+S4-4는 owner/admin의 현재 범위로 active_users·prompts_per_session·edit_acceptance_rate·mcp_connections를 조회한다. S8-6은 owner와 감사 사유를 요구하며 tool_rejections·hook_blocking·gate_wait_ms를 조회한다. 양쪽 소집단 마스킹을 유지하고 한쪽 미관측을 0으로 치환하지 않는다. 기간이 아직 끝나지 않았으면 observation_complete=false이며 변화 판정을 생성하지 않는다. 완료 기간의 유효한 값 차이만 info로 제공하고 인과 효과는 추정하지 않는다.

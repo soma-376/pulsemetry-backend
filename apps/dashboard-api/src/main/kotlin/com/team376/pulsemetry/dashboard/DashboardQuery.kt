@@ -80,7 +80,18 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     @PostMapping("/query")
     fun query(@AuthenticationPrincipal user: UserIdentity, @RequestBody body: DashboardQueryRequest,
         @RequestHeader(value = "X-Audit-Reason", required = false) audit: String?,
-        @RequestHeader(value = "Accept", defaultValue = "application/json") accept: String): ResponseEntity<*> {
+        @RequestHeader(value = "Accept", defaultValue = "application/json") accept: String): ResponseEntity<*> =
+        execute(user, body, audit, accept, null)
+
+    /** 워커가 고정한 전후 현지 날짜 범위. 공개 QRY 파라미터를 확장하지 않는다. */
+    internal fun compareScenario(user: UserIdentity, body: DashboardQueryRequest,
+        before: Pair<Instant, Instant>): ResponseEntity<*> {
+        require(body.compare == "none" && body.queries.all { it.frameType == "table" && it.groupBy.isEmpty() })
+        return execute(user, body, null, "application/json", before)
+    }
+
+    private fun execute(user: UserIdentity, body: DashboardQueryRequest, audit: String?, accept: String,
+        before: Pair<Instant, Instant>?): ResponseEntity<*> {
         val deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos()
         require(body.queries.size in 1..12 && body.maxDataPoints in 1..1000)
         require(body.queries.map { it.refId }.distinct().size == body.queries.size)
@@ -92,7 +103,12 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val to = time.resolve(body.to)
         require(from < to)
         if (Duration.between(from, to) > Duration.ofDays(366)) throw DashboardReadException("query_too_wide", 422)
-        val comparison = time.compare(from, to, body.compare)
+        val comparison = before ?: time.compare(from, to, body.compare)
+        if (before != null) {
+            require(before.first < before.second && before.second == from)
+            if (Duration.between(before.first, before.second) > Duration.ofDays(366))
+                throw DashboardReadException("query_too_wide", 422)
+        }
         // 권한·감사는 전체 요청에 선행한다. 쿼리 오류로 감춰서 다른 결과를 반환하지 않는다.
         body.queries.forEach { q ->
             require(q.refId.matches(Regex("[A-Z]")) && (q.limit==null || q.limit in 1..100))
@@ -199,7 +215,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                             previous = comparison?.let { read(calculation,scope,it.first,it.second,zone,interval,deadline,retained) }
                         }
                     }
-                    results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="contract_commitment_burn") calculation.copy(groupBy=listOf("contract_id")) else if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else if (q.metricId=="onboarding_retention") q.copy(groupBy=q.groupBy+listOf("cohort_index","week_index")) else calculation, definition, current, previous, interval, ticks, comparison?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
+                    results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="contract_commitment_burn") calculation.copy(groupBy=listOf("contract_id")) else if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else if (q.metricId=="onboarding_retention") q.copy(groupBy=q.groupBy+listOf("cohort_index","week_index")) else calculation, definition, current, previous, interval, ticks, comparison?.takeIf { before == null }?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
                         tick.minus(Duration.between(from,to)) else tick.atZone(time.zone).minusWeeks(1).toInstant(), interval) } }, scope.teamNames))
                 } catch (e: DashboardReadException) { results[q.refId] = error(id, e.status, e.code) }
             }

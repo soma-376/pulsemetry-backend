@@ -2682,6 +2682,102 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun comparisonRun(bearer: String, scenario: String, weeks: Int = 1,
+        pivot: String = "2026-09-01", audit: String? = "period comparison review") =
+        mvc.perform(post("/v1/scenarios/$scenario/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content(mapper.writeValueAsString(mapOf("tz" to "Asia/Seoul",
+                "params" to mapOf("pivot_date" to pivot,"window_weeks" to weeks)))))
+
+    @Test fun `교육 전후 비교는 기준일을 중복하지 않고 기간 전체 프롬프트 분포를 비교한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(promptEvent(it,at="2026-08-24T15:00:00Z"),
+            promptEvent(it,at="2026-08-31T15:00:00Z"),promptEvent(it,at="2026-09-01T12:00:00Z"),
+            promptEvent(it,at="2026-09-07T15:00:00Z")) })
+        val bearer = token()
+        val id = mapper.readTree(comparisonRun(bearer,"S4-4",audit=null).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+        val filters = run["result"]["applied_filters"]
+        assertThat(filters["compare_from"].asString()).isEqualTo("2026-08-24T15:00:00Z")
+        assertThat(filters["compare_to"]).isEqualTo(filters["from"])
+        assertThat(filters["observation_complete"].asBoolean()).isTrue()
+        val finding = run["result"]["findings"].single()["evidence"]
+        assertThat(finding["metric_id"].asString()).isEqualTo("prompts_per_session")
+        assertThat(finding["before"].asDouble()).isEqualTo(1.0)
+        assertThat(finding["after"].asDouble()).isEqualTo(2.0)
+        assertThat(finding["delta"].asDouble()).isEqualTo(1.0)
+    }
+
+    @Test fun `정책 전후 비교는 owner 감사와 거절 수 및 대기 중앙값을 연결한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(decisionEvent(it,"config","reject",at="2026-08-25T12:00:00Z"),
+            decisionEvent(it,"config","reject"),decisionEvent(it,"hook","reject"),
+            gateEvent(it,100,at="2026-08-25T12:00:00Z"),gateEvent(it,300)) })
+        val bearer = token()
+        comparisonRun(bearer,"S8-6",audit=null).andExpect(status().isForbidden)
+        comparisonRun(bearer,"S8-6",pivot="2026-02-30").andExpect(status().isBadRequest)
+        val id = mapper.readTree(comparisonRun(bearer,"S8-6").andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        val findings = run["result"]["findings"].toList().associateBy { it["evidence"]["metric_id"].asString() }
+        assertThat(findings.keys).containsExactlyInAnyOrder("tool_rejections","gate_wait_ms")
+        assertThat(findings.getValue("tool_rejections")["evidence"]["before"].asDouble()).isEqualTo(5.0)
+        assertThat(findings.getValue("tool_rejections")["evidence"]["after"].asDouble()).isEqualTo(10.0)
+        assertThat(findings.getValue("gate_wait_ms")["evidence"]["delta"].asDouble()).isEqualTo(200.0)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        comparisonRun(token(),"S8-6").andExpect(status().isForbidden)
+    }
+
+    @Test fun `정책 비교는 영 기준값과 감소를 백분율 추정 없이 처리한다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for ((prior,current,expected) in listOf(Triple("accept","reject",5.0),Triple("reject","accept",-5.0),Triple("accept","accept",0.0))) {
+            seedPoints(ids.flatMap { listOf(decisionEvent(it,"config",prior,at="2026-08-25T12:00:00Z"),decisionEvent(it,"config",current)) })
+            val id = mapper.readTree(comparisonRun(bearer,"S8-6").andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            if (expected==0.0) assertThat(run["result"]["findings"].size()).isZero()
+            else assertThat(run["result"]["findings"].single()["evidence"]["delta"].asDouble()).isEqualTo(expected)
+        }
+    }
+
+    @Test fun `전후 비교는 한쪽 소집단 미관측과 미완료 기간을 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for ((rows,pivot) in listOf(
+            (ids.take(4).map { promptEvent(it,at="2026-08-25T12:00:00Z") } + ids.map { promptEvent(it) }) to "2026-09-01",
+            ids.map { promptEvent(it) } to "2026-09-01",
+            emptyList<String>() to "2026-09-01",
+            (ids.map { promptEvent(it) } + ids.map { promptEvent(it,at="2026-09-09T12:00:00Z") }) to "2026-09-08")) {
+            seedPoints(rows)
+            val id = mapper.readTree(comparisonRun(bearer,"S4-4",pivot=pivot).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+            if (rows.size==9) {
+                val frame = run["result"]["frames"]["prompts_per_session"]["frames"].single()
+                assertThat(frame["data"]["values"].toList().flatMap { it.toList() }.all { it.isNull }).isTrue()
+            }
+        }
+        val id = mapper.readTree(comparisonRun(bearer,"S8-6",weeks=52).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        assertThat(readRun(id,bearer)["status"].asString()).isEqualTo("succeeded")
+    }
+
     private fun sprintRun(bearer: String, dates: List<String>, zone: String = "Asia/Seoul") =
         mvc.perform(post("/v1/scenarios/S2-3/runs").header("Authorization","Bearer $bearer")
             .contentType("application/json").content(mapper.writeValueAsString(mapOf("tz" to zone,"params" to

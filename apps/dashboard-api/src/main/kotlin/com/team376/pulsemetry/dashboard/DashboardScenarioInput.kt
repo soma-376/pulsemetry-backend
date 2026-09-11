@@ -59,12 +59,20 @@ internal object ScenarioParameterValidator {
         check(schema, params)
         val time = DashboardTime(now, zone)
         val times = listOf("from", "to", "as_of", "pivot_date", "cohort_from", "cohort_to")
-            .filter { params.has(it) }.associateWith { time.resolve(params[it].asString()) }
+            .filter { params.has(it) }.associateWith { time.resolve(params[it].asString()) }.toMutableMap()
         for ((start, end) in listOf("from" to "to", "cohort_from" to "cohort_to")) {
             if (times.containsKey(start) && times.containsKey(end)) {
                 require(times.getValue(start) < times.getValue(end))
                 require(Duration.between(times.getValue(start), times.getValue(end)) <= Duration.ofDays(366))
             }
+        }
+        if (scenario["scenario_id"].asString() in setOf("S4-4", "S8-6")) {
+            val pivot = LocalDate.parse(params["pivot_date"].asString())
+            val weeks = params["window_weeks"].asLong()
+            times["from"] = pivot.atStartOfDay(zone).toInstant()
+            times["to"] = pivot.plusWeeks(weeks).atStartOfDay(zone).toInstant()
+            times["compare_from"] = pivot.minusWeeks(weeks).atStartOfDay(zone).toInstant()
+            times["compare_to"] = times.getValue("from")
         }
         params.path("team_ids").forEach { canonicalUuid(it.asString()) }
         if (params.has("budget_by_team")) {

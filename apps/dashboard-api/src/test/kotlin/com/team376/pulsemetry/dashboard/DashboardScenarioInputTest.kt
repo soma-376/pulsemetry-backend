@@ -64,6 +64,22 @@ class DashboardScenarioInputTest {
         assertThatThrownBy { input("S8-3", """{"params":{"model_a":"same","model_b":"same"}}""") }.isInstanceOf(IllegalArgumentException::class.java)
     }
 
+    @Test fun `전후 비교는 현지 자정과 DST를 보존하고 52주를 각각 고정한다`() {
+        for (id in listOf("S4-4","S8-6")) {
+            val result = input(id,"""{"params":{"pivot_date":"2026-03-08","window_weeks":1},"tz":"America/New_York"}""")
+            assertThat(result.times["compare_from"]).isEqualTo(Instant.parse("2026-03-01T05:00:00Z"))
+            assertThat(result.times["compare_to"]).isEqualTo(Instant.parse("2026-03-08T05:00:00Z"))
+            assertThat(result.times["from"]).isEqualTo(result.times["compare_to"])
+            assertThat(result.times["to"]).isEqualTo(Instant.parse("2026-03-15T04:00:00Z"))
+            val long = input(id,"""{"params":{"pivot_date":"2026-09-01","window_weeks":52}}""")
+            assertThat(java.time.Duration.between(long.times["compare_from"],long.times["to"]).toDays()).isEqualTo(728)
+            assertThat(long.params.has("from")).isFalse()
+            for (weeks in listOf(0,53)) assertThatThrownBy {
+                input(id,"""{"params":{"pivot_date":"2026-09-01","window_weeks":$weeks}}""")
+            }.isInstanceOf(IllegalArgumentException::class.java)
+        }
+    }
+
     @Test fun `모든 카탈로그 파라미터 스키마에 타입에 맞는 입력을 적용할 수 있다`() {
         val examples = mapOf("pivot_date" to "2026-09-01", "cohort_from" to "2026-08-01", "cohort_to" to "2026-09-01",
             "model_a" to "model-a", "model_b" to "model-b")
