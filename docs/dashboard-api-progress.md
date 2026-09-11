@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S6-5·S7-1·S7-3·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S5-2·S6-5·S7-1·S7-3·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -709,3 +709,8 @@
 - 실제 OTLP 수집→owner 로그인→감사 실행→P3 결과 UI E2E 통과. gate_wait p50/p90 120000ms, 판정 0건 및 감사 행 1건을 확인했다. fixture에는 tool_decision·hook span이 없어 거절·차단 UI는 미관측 안내로 표시된다. 양수 결과는 실제 DB 테스트에서 검증했다. 실행 가능한 시나리오는 20개다.
 - frontend 소스는 변경하지 않았다. 일반 실행 폼의 감사 사유 전달은 여전히 없어 공통 `request` 클라이언트로 시작했다. 결과 UI의 W3.3 도구 거절 카드와 대기 시간 표를 확인했다.
 - 증거: `build/e2e/auth-settings/result.json`, `owner-ingest-policy-scenario.png`. 전체 PROJ-156 수용 완료를 뜻하지 않는다.
+
+## S5-2 외부 접근 관측 실행
+
+- owner·감사 사유 필수 P3 실행에 `mcp_connections`·`read_tool_density` 일 시계열을 연결했다. 양수 MCP 연결 상태 이벤트에는 정보 판정을 제공하며 실제 외부 전송·목적지·승인을 확인하지 못하므로 유출 탐지로 해석하지 않는다.
+- dashboard 테스트 185건 통과. 실제 DB에서 MCP 이벤트 5건·읽기 밀도 p50=2, 감사 기록, admin·감사 누락 거부, 소집단·미관측 및 읽기만 관측된 경우의 판정 제외를 검증했다.

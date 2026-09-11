@@ -2682,6 +2682,52 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun externalAccessRun(bearer: String, audit: String? = "external access review") =
+        mvc.perform(post("/v1/scenarios/S5-2/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content("""{"params":{"from":"2026-09-01","to":"2026-09-02"}}"""))
+
+    @Test fun `외부 접근 시나리오는 감사 후 MCP와 읽기 밀도를 제공한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(mcpEvent(it,"connected"),toolEvent(it,true,"read"),toolEvent(it,true,"search")) })
+        val bearer = token()
+        externalAccessRun(bearer,null).andExpect(status().isForbidden)
+        val id = mapper.readTree(externalAccessRun(bearer).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(2)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(2)
+        assertThat(run["result"]["target_page"].asString()).isEqualTo("P3")
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrder("mcp_connections","read_tool_density")
+        assertThat(frames["mcp_connections"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+        assertThat(frames["read_tool_density"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(2.0)
+        val findings = run["result"]["findings"]
+        assertThat(findings.size()).isEqualTo(1)
+        assertThat(findings[0]["rule_id"].asString()).isEqualTo("observed_mcp_connections")
+        assertThat(findings[0]["evidence"]["count"].asDouble()).isEqualTo(5.0)
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S5-2'")
+            .query(Long::class.java).single()).isEqualTo(1)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        externalAccessRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `외부 접근 시나리오는 소집단과 읽기만으로 유출을 추정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { mcpEvent(it,"connected") },emptyList(),ids.map { toolEvent(it,true,"read") })) {
+            seedPoints(rows)
+            val id = mapper.readTree(externalAccessRun(bearer).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun policyRun(bearer: String, audit: String? = "policy scenario review") =
         mvc.perform(post("/v1/scenarios/S7-3/runs").header("Authorization","Bearer $bearer")
             .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
