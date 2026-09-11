@@ -593,6 +593,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let fastApprovalRun;
   let latencyRun;
   let readDensityRun;
+  let governanceRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -795,11 +796,42 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, readDensityRun.run_id);
     await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(readDensityRun.run_id.slice(0, 8), { exact: false }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-read-density-scenario.png'), fullPage: true });
+    governanceRun = await ownerPage.evaluate(async from => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S7-4/runs', { method: 'POST', body: JSON.stringify({
+        params: { from, to: new Date(Date.now() + 1000).toISOString() },
+      }) }, '수집 커버리지 거버넌스 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, scenarioFrom);
+    assert.equal(governanceRun.status, 'succeeded');
+    assert.equal(governanceRun.progress.step, 3);
+    assert.equal(governanceRun.progress.total, 3);
+    assert.equal(governanceRun.result.target_page, 'P3');
+    assert.deepEqual(Object.keys(governanceRun.result.frames).sort(), ['hook_executions', 'mcp_connections', 'telemetry_coverage']);
+    assert.equal(governanceRun.result.findings.length, 1);
+    assert.ok(governanceRun.result.findings[0].evidence.ratio > 0);
+    const coverageFrame = governanceRun.result.frames.telemetry_coverage.frames[0];
+    const numeratorIndex = coverageFrame.schema.fields.findIndex(f => f.name === 'numerator');
+    assert.ok(coverageFrame.data.values[numeratorIndex].includes(5));
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S7-4'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, governanceRun.run_id);
+    await ownerPage.getByRole('heading', { name: '텔레메트리 수집 커버리지가 관측되었습니다', exact: true }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-governance-scenario.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    governanceScenario: { id: 'S7-4', runId: governanceRun.run_id, owner: true, audited: true, actualResultUI: true, observedInstallations: 5, coverage: governanceRun.result.findings[0].evidence.ratio },
     readDensityScenario: { id: 'S7-2', runId: readDensityRun.run_id, owner: true, audited: true, actualResultUI: true, threshold: 0, p90CallsPerSession: 0 },
     latencyScenario: { id: 'S6-4', runId: latencyRun.run_id, owner: true, audited: true, actualResultUI: true, model, p90Ms: 500, activeUsers: 5 },
     fastApprovalScenario: { id: 'S5-7', runId: fastApprovalRun.run_id, owner: true, audited: true, actualResultUI: true, thresholdMs: 60000, ratio: 0 },
