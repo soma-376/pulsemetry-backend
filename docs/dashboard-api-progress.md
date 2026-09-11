@@ -496,3 +496,12 @@
 - DB 테스트 2건을 추가하고 히트맵 제한 테스트를 새 명세 동작으로 갱신했다. 누적 9,999 포인트 제외, 세션 상위 50/나머지 25와 비교 100, 빈 버킷 null, 도구 성공 필터·한글/따옴표 키·복수 차원, 히트맵 100칸+나머지 340, 중복 제거 인원 5를 확인했다. dashboard 137건 통과(실패·오류·skip 0). 구현 커밋 `e3d4e4d`.
 - 실제 frontend E2E에서 owner/admin의 종료 사유 상위 10/나머지 10을 `series`로 해석했다. 기존 53개 지표·P5·설치·세션·S1-3·저장/삭제 및 비용 상위 그룹도 통과했고 오류 응답은 없다. `result.json.verifiedCountTopN`에 범위를 기록한다. 쿼리를 추가할 때 테스트 요청이 12개 상한을 넘긴 실패는 요청을 분리하여 해결했다.
 - 검증한 작업 트리 부모는 `edc7507`, jar SHA-256은 `796b023f6dbfb79b535abd4fe329e64ea3bf7f4a424f02b80cef6d3be528e2b3`, frontend는 `52f7cb1`이다. 이후 서버 소스 변경은 주석 교정뿐이다. frontend 수정은 없다. 나머지 조회 명세·시나리오 실행 계획·ingest부터의 전체 E2E는 계속 남아 있다.
+
+
+## 비율 지표 상위 그룹 확장
+
+- `automation_ratio`, `integration_depth`, `command_prompt_ratio`, `tool_failure_rate`, `api_retry_attempts`, `auto_approval_ratio`, `api_error_rate`, `compaction_reduction`, `mcp_failure_ratio`, `rubber_stamp_ratio`, `edit_acceptance_rate`, `cache_read_ratio`, `input_output_ratio` 13개에 상위 N·`__other__`를 확장했다. 비용·합계·건수를 포함하면 현재 27개 지표가 이 처리를 지원한다.
+- 현재 기간의 분자 합계/분모 합계로 순위를 계산한다. 마스킹 대상·분모 0의 선택 점수는 0이며 결과의 null 의미는 유지한다. 나머지는 원본에서 분자·분모·인원을 다시 집계한다. 기존 비교 그룹 고정·시계열 정렬·권한 범위는 유지한다.
+- 실제 DB 테스트 2건을 추가했다. 도구 a의 일별 실패율 1/0(전체 0.1)과 b의 0.4/0.4(전체 0.4)를 비교해 b가 table/timeseries에서 모두 선택되는지 검증했다. 나머지 5/50=0.1, 미판정 호출의 분모 제외, 중복 제거 5명, 영 분모 null, 숨겨진 높은 비율의 순위 영향 배제와 나머지 전체 수치 마스킹도 확인했다. 테스트의 최초 action 차원 요청은 명세상 불가하여 tool_name으로 수정했다.
+- dashboard 테스트 139건 통과(실패·오류·skip 0). 구현 커밋 `75a7a1c`. 실제 frontend E2E에서 owner/admin의 API 오류율 상위 1과 나머지 0(분자 0/분모 10)이 정상 해석됐다. 기존 비용·건수 상위 그룹과 53개 지표·설정·설치·세션·S1-3·저장/삭제 검증도 오류 응답 없이 통과했다.
+- `result.json.verifiedRatioTopN`에 실제 클라이언트 검증을 기록한다. 검증 작업 트리 부모 `ca5be37`, jar SHA-256 `0da535fa5d831655154285eadc42640bfe1cf745a1f7e735b6901b400a34c0bb`, frontend `52f7cb1`. frontend 변경은 없다. 별도 비용/인원 계산·백분위·코호트 등 나머지 조회 명세, 시나리오 실행 확장과 ingest부터의 전체 E2E는 남아 있다.

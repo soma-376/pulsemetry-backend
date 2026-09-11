@@ -364,9 +364,11 @@ try {
       const top = await client.request('/query', { method: 'POST', body: JSON.stringify({
         from: 'now-1d', to: 'now', queries: [
           { ref_id: 'M', metric_id: 'llm_stop_reasons', frame_type: 'table', group_by: ['stop_reason'], limit: 1 },
+          { ref_id: 'N', metric_id: 'api_error_rate', frame_type: 'table', group_by: ['status_code'], limit: 1 },
         ],
       }) });
       response.results.M = top.results.M;
+      response.results.N = top.results.N;
       return Object.fromEntries(Object.entries(response.results).map(([ref, result]) => [ref, series(result)]));
     });
     for (const result of Object.values(mcp)) assert.equal(result.state, 'success');
@@ -378,6 +380,10 @@ try {
     assert.equal(mcp.C.points.length, 3);
     assert.deepEqual(Object.fromEntries(mcp.M.points.map(p => [p.labels.stop_reason, p.value.value])),
       { '': 10, '__other__': 10 });
+    assert.deepEqual(Object.fromEntries(mcp.N.points.filter(p => p.key === 'value').map(p => [p.labels.status_code, p.value.value])),
+      { '429': 1, '__other__': 0 });
+    assert.deepEqual(Object.fromEntries(mcp.N.points.filter(p => p.labels.status_code === '__other__').map(p => [p.key, p.value.value])),
+      { value: 0, numerator: 0, denominator: 10 });
     assert.deepEqual(Object.fromEntries(mcp.C.points.map(p => [p.labels.stop_reason, p.value.value])),
       { end_turn: 5, refusal: 5, '': 10 });
     assert.ok(mcp.C.points.every(p => p.labels.model === 'claude-e2e'));
@@ -776,6 +782,7 @@ try {
     await context.close();
   }
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+    verifiedRatioTopN: { metric: 'api_error_rate', actualFrontendClient: true, roles: ['owner', 'admin'], top: 1, other: 0, otherDenominator: 10 },
     verifiedCountTopN: { metric: 'llm_stop_reasons', actualFrontendClient: true, roles: ['owner', 'admin'], top: 10, other: 10 },
     verifiedCostTopN: { actualFrontendClient: true, admin: true, top: 50, other: 25 },
     verifiedInstallations: { count: 5, pages: 3, audited: true, actualFrontendCard: false },

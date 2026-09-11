@@ -89,3 +89,10 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 비용에 더해 `sessions`, `active_time`, `lines_of_code`, `commits`, `pull_requests`, `tool_calls`, `rate_limit_events`, `tool_rejections`, `usage_heatmap`, `compactions`, `mcp_connections`, `llm_stop_reasons`, `hook_blocking`도 상위 N과 `__other__`를 지원한다. 현재 기간 합계로 선택하고, 현재 또는 비교 기간에 마스킹된 그룹은 순위 점수 0을 사용한다. 복수 차원은 조합 단위로 선택하며 비교 기간에도 같은 조합을 유지한다.
 
 누적 포인트 제외·도구 성공 필터·인원 중복 제거는 나머지 원본 재집계에도 적용한다. 히트맵의 weekday/hour 기본 168칸은 유지하며, limit=100을 명시하면 최대 100칸과 나머지 합계 한 그룹을 반환한다. 비율·백분위·고유 인원 등 다른 지표의 나머지 처리는 아직 미구현이다.
+
+
+## 비율 그룹 상위 N
+
+`automation_ratio`, `integration_depth`, `command_prompt_ratio`, `tool_failure_rate`, `api_retry_attempts`, `auto_approval_ratio`, `api_error_rate`, `compaction_reduction`, `mcp_failure_ratio`, `rubber_stamp_ratio`, `edit_acceptance_rate`, `cache_read_ratio`, `input_output_ratio`에도 상위 N·`__other__`를 지원한다.
+
+선택 기준은 현재 기간의 분자 합계 ÷ 분모 합계다. 일별 비율을 단순 합산하거나 평균하지 않는다. 분모가 0이거나 현재/비교 기간 마스킹 대상인 그룹의 순위 점수는 0이다. 결과의 영 분모는 기존처럼 null이며, 나머지는 원본을 합쳐 분자·분모와 보호 인원을 다시 계산한다. 비용/인원·비용/시간·백분위·코호트 등 별도 계산 지표는 아직 이 목록에 포함되지 않는다.
