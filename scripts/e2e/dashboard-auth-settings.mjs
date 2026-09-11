@@ -635,6 +635,15 @@ try {
       return (await scenarioApi.cancel(run.run_id)).run;
     });
     assert.equal(cancelled.status, 'cancelled');
+    const history = await page.evaluate(async () => {
+      const { scenarioApi } = await import('/src/api/scenarios.ts');
+      return scenarioApi.list();
+    });
+    assert.ok(history.items.some(row => row.run_id === scenarioRun.run.run_id && row.status === 'succeeded'));
+    assert.ok(history.items.some(row => row.run_id === cancelled.run_id && row.status === 'cancelled'));
+    assert.ok(history.items.every(row => !('result' in row) && !('params' in row)));
+    if (role === 'admin') assert.equal(history.items.length, 2);
+
     await page.evaluate(id => {
       window.history.pushState(null, '', `/runs/${id}`);
       window.dispatchEvent(new PopStateEvent('popstate'));
@@ -654,7 +663,7 @@ try {
   }
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedInstallations: { count: 5, pages: 3, audited: true, actualFrontendCard: false },
-    verifiedScenarios: { count: 46, actualFrontendClient: true, parameterFormValidation: true, actualCatalogUI: false, runs: { scenario: 'S1-3', completed: true, cancelled: true, actualResultUI: true } },
+    verifiedScenarios: { count: 46, actualFrontendClient: true, parameterFormValidation: true, actualCatalogUI: false, runs: { scenario: 'S1-3', completed: true, cancelled: true, actualResultUI: true, actualHistoryClient: true } },
     verifiedSessionEvents: { actualFrontendClient: true, paginated: true, audited: true, actualSessionSearchUI: false },
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },

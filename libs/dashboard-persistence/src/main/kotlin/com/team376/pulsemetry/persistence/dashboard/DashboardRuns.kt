@@ -29,6 +29,44 @@ class DashboardRuns(private val jdbc: JdbcClient, manager: PlatformTransactionMa
     fun get(tenant: UUID, id: UUID): DashboardRunRow? = jdbc.sql("SELECT * FROM dashboard.scenario_runs WHERE tenant_id=:tenant AND id=:id")
         .param("tenant",tenant).param("id",id).query { r, _ -> row(r) }.optional().orElse(null)
 
+    /** 인가와 필터를 페이지 절단 전에 적용하고 큰 결과 프레임은 읽지 않는다. */
+    fun list(tenant: UUID, member: UUID, owner: Boolean, teamsJson: String, scenario: String?, status: String?,
+        creator: UUID?, beforeTime: Instant?, beforeId: UUID?, limit: Int): List<Map<String,Any?>> {
+        val conditions = mutableListOf("r.tenant_id=:tenant")
+        val params = mutableMapOf<String,Any>("tenant" to tenant,"limit" to limit)
+        if (!owner) {
+            conditions += """r.created_by_member_id=:member AND r.execution->>'actor_role'='admin'
+                AND r.execution->'organization_scope'='false'::jsonb
+                AND jsonb_array_length(r.execution->'team_ids')>0
+                AND r.execution->'team_ids' <@ CAST(:teams AS jsonb)"""
+            params["member"]=member; params["teams"]=teamsJson
+        }
+        scenario?.let { conditions += "r.scenario_id=:scenario"; params["scenario"]=it }
+        status?.let { conditions += "r.status::text=:status"; params["status"]=it }
+        creator?.let { conditions += "r.created_by_member_id=:creator"; params["creator"]=it }
+        beforeTime?.let {
+            conditions += "(r.created_at,r.id)<(:beforeTime,:beforeId)"
+            params["beforeTime"]=java.sql.Timestamp.from(it); params["beforeId"]=requireNotNull(beforeId)
+        }
+        return jdbc.sql("""SELECT r.id,r.scenario_id,r.status::text,r.created_at,r.finished_at,
+            r.resolved_from,r.resolved_to,r.created_by_member_id,m.display_name,
+            (SELECT count(*) FROM jsonb_array_elements(r.result->'findings') f WHERE f->>'severity'='info') AS info_count,
+            (SELECT count(*) FROM jsonb_array_elements(r.result->'findings') f WHERE f->>'severity'='warning') AS warning_count,
+            (SELECT count(*) FROM jsonb_array_elements(r.result->'findings') f WHERE f->>'severity'='anomaly') AS anomaly_count,
+            (SELECT s.id FROM dashboard.saved_reports s WHERE s.tenant_id=r.tenant_id AND s.run_id=r.id
+                ORDER BY s.created_at DESC,s.id DESC LIMIT 1) AS saved_id
+            FROM dashboard.scenario_runs r JOIN enrollment.members m ON m.id=r.created_by_member_id AND m.tenant_id=r.tenant_id
+            WHERE ${conditions.joinToString(" AND ")} ORDER BY r.created_at DESC,r.id DESC LIMIT :limit""")
+            .params(params).query { r, _ -> mapOf<String,Any?>(
+                "run_id" to r.getObject("id",UUID::class.java),"scenario_id" to r.getString("scenario_id"),
+                "status" to r.getString("status"),"created_at" to r.getTimestamp("created_at").toInstant().toString(),
+                "finished_at" to r.getTimestamp("finished_at")?.toInstant()?.toString(),
+                "params_summary" to "${r.getTimestamp("resolved_from").toInstant()} ~ ${r.getTimestamp("resolved_to").toInstant()}",
+                "created_by" to mapOf("member_id" to r.getObject("created_by_member_id",UUID::class.java),"display_name" to r.getString("display_name")),
+                "findings_count" to mapOf("info" to r.getLong("info_count"),"warning" to r.getLong("warning_count"),"anomaly" to r.getLong("anomaly_count")),
+                "saved_id" to r.getObject("saved_id",UUID::class.java)) }.list()
+    }
+
     fun claim(): DashboardRunRow? = tx.execute {
         jdbc.sql("""UPDATE dashboard.scenario_runs SET status='failed',finished_at=now(),lease_until=NULL,claim_token=NULL,
             error='{"error":"worker_lease_expired","message":"워커 lease가 만료되었습니다"}'::jsonb

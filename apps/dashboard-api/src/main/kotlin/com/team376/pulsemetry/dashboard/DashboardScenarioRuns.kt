@@ -62,6 +62,30 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
         return row
     }
 
+    fun list(user: UserIdentity, scenario: String?, status: String?, creator: UUID?, limit: Int, cursor: String?): Map<String,Any?> {
+        require(limit in 1..500)
+        require(scenario==null || scenario.matches(Regex("S[1-8]-[1-9][0-9]?")))
+        require(status==null || status in setOf("queued","running","succeeded","failed","cancelled"))
+        if (user.role !in setOf("owner","admin")) throw UserAuthException("forbidden",403)
+        val teams = access.teamIds(user).map { it.toString() }.sorted()
+        val scope = mapper.writeValueAsString(listOf("run-list-v1",user.tenantId,user.memberId,user.role,teams,scenario,status,creator))
+        val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(scope.toByteArray()).joinToString("") { "%02x".format(it) }
+        val after = cursor?.takeIf { it.isNotEmpty() }?.let {
+            require(it.length<=2048)
+            try {
+                val decoded = mapper.readTree(java.util.Base64.getUrlDecoder().decode(it))
+                require(decoded["scope"].asString()==fingerprint)
+                java.time.Instant.parse(decoded["at"].asString()) to UUID.fromString(decoded["id"].asString())
+            } catch (e: Exception) { throw IllegalArgumentException("invalid_cursor") }
+        }
+        val rows = runs.list(user.tenantId,user.memberId,user.role=="owner",mapper.writeValueAsString(teams),scenario,status,creator,
+            after?.first,after?.second,limit+1)
+        val page = rows.take(limit)
+        val next = if (rows.size>limit) encodeCursor(mapper.writeValueAsString(mapOf(
+            "scope" to fingerprint,"at" to page.last()["created_at"],"id" to page.last()["run_id"]))) else null
+        return mapOf("items" to page,"next_cursor" to next,"total" to null)
+    }
+
     fun cancel(id: UUID, user: UserIdentity): DashboardRunRow {
         get(id,user)
         if (!runs.cancel(user.tenantId,id)) throw UserAuthException("conflict",409)
@@ -152,6 +176,12 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
 @RestController
 @RequestMapping("/v1")
 class DashboardRunController(private val service: DashboardScenarioRuns) {
+    @GetMapping("/scenario-runs")
+    fun list(@AuthenticationPrincipal user: UserIdentity,
+        @RequestParam(name="scenario_id",required=false) scenario: String?, @RequestParam(required=false) status: String?,
+        @RequestParam(name="created_by",required=false) creator: String?, @RequestParam(defaultValue="50") limit: String,
+        @RequestParam(required=false) cursor: String?) = service.list(user,scenario,status,creator?.let(::runId),requireNotNull(limit.toIntOrNull()),cursor)
+
     @PostMapping("/scenarios/{scenarioId}/runs")
     fun start(@PathVariable scenarioId: String, @RequestBody body: JsonNode, @AuthenticationPrincipal user: UserIdentity,
         @RequestHeader(value="X-Audit-Reason",required=false) audit: String?, @RequestParam(defaultValue="false") wait: String): ResponseEntity<*> {

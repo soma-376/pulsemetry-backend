@@ -2297,6 +2297,74 @@ class DashboardAuthTest {
     private fun readRun(id: String, bearer: String) = mapper.readTree(mvc.perform(get("/v1/scenario-runs/$id")
         .header("Authorization", "Bearer $bearer")).andExpect(status().isOk).andReturn().response.contentAsString)
 
+    private fun runList(bearer: String, cursor: String? = null, limit: Int = 2, state: String? = null) =
+        mvc.perform(get("/v1/scenario-runs").header("Authorization","Bearer $bearer").param("limit",limit.toString())
+            .apply { cursor?.let { param("cursor",it) }; state?.let { param("status",it) } })
+
+    @Test fun `실행 목록은 같은 시각의 ID 순서로 누락 중복 없이 요약을 페이지 처리한다`() {
+        val bearer = token()
+        val ids = (1..5).map {
+            val id = mapper.readTree(startRun(bearer).andReturn().response.contentAsString)["run_id"].asString()
+            mvc.perform(post("/v1/scenario-runs/$id/cancel").header("Authorization","Bearer $bearer")).andExpect(status().isOk)
+            id
+        }
+        jdbc.sql("UPDATE dashboard.scenario_runs SET created_at='2026-09-01T00:00:00Z'").update()
+        val found = mutableListOf<String>()
+        var cursor: String? = null
+        do {
+            val page = mapper.readTree(runList(bearer,cursor).andExpect(status().isOk).andReturn().response.contentAsString)
+            page["items"].forEach {
+                found += it["run_id"].asString()
+                assertThat(it.has("result")).isFalse()
+                assertThat(it.has("params")).isFalse()
+                assertThat(it["findings_count"]["info"].asInt()).isZero()
+                assertThat(it["created_by"]["member_id"].asString()).isEqualTo(member.toString())
+            }
+            cursor = page["next_cursor"].takeUnless { it.isNull }?.asString()
+        } while (cursor!=null)
+        assertThat(found).containsExactlyElementsOf(ids.sortedDescending())
+        val empty = mapper.readTree(runList(bearer,state="succeeded").andReturn().response.contentAsString)
+        assertThat(empty["items"].size()).isZero()
+        val filtered = mapper.readTree(mvc.perform(get("/v1/scenario-runs").header("Authorization","Bearer $bearer")
+            .param("scenario_id","S1-3").param("created_by",member.toString()).param("status","cancelled"))
+            .andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(filtered["items"].size()).isEqualTo(5)
+        val foreign = com.team376.pulsemetry.security.user.UserIdentity(member,UUID.randomUUID(),"owner",UUID.randomUUID(),null,"web")
+        assertThat(scenarioRuns.list(foreign,null,null,null,50,null)["items"] as List<*>).isEmpty()
+    }
+
+    @Test fun `실행 목록 커서는 필터와 사용자 범위에 묶이고 잘못된 요청은 거부한다`() {
+        val bearer = token()
+        repeat(2) { startRun(bearer).andExpect(status().isAccepted) }
+        val cursor = mapper.readTree(runList(bearer,limit=1).andReturn().response.contentAsString)["next_cursor"].asString()
+        runList(bearer,cursor,state="queued").andExpect(status().isBadRequest)
+        runList(bearer,"not-a-cursor").andExpect(status().isBadRequest)
+        runList(bearer,limit=0).andExpect(status().isBadRequest)
+        runList(bearer,limit=501).andExpect(status().isBadRequest)
+        runList(bearer,state="unknown").andExpect(status().isBadRequest)
+        mvc.perform(get("/v1/scenario-runs").header("Authorization","Bearer $bearer").param("limit","abc")).andExpect(status().isBadRequest)
+        mvc.perform(get("/v1/scenario-runs")).andExpect(status().isUnauthorized)
+        mvc.perform(get("/v1/scenario-runs").header("Authorization","Bearer $bearer").param("created_by","invalid")).andExpect(status().isBadRequest)
+    }
+
+    @Test fun `admin 실행 목록은 본인 실행과 현재 팀 권한을 페이지 절단 전에 적용한다`() {
+        val ownerToken = token()
+        startRun(ownerToken).andExpect(status().isAccepted)
+        val team = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,'실행 팀')").param("id",team).param("tenant",tenant).update()
+        jdbc.sql("INSERT INTO enrollment.team_memberships(team_id,member_id) VALUES (:team,:member)").param("team",team).param("member",member).update()
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        val bearer = token()
+        val own = mapper.readTree(startRun(bearer).andReturn().response.contentAsString)["run_id"].asString()
+        val page = mapper.readTree(runList(bearer,limit=1).andReturn().response.contentAsString)
+        assertThat(page["items"].size()).isEqualTo(1)
+        assertThat(page["items"][0]["run_id"].asString()).isEqualTo(own)
+        assertThat(page["next_cursor"].isNull).isTrue()
+        jdbc.sql("UPDATE enrollment.team_memberships SET left_at=now() WHERE member_id=:member").param("member",member).update()
+        val denied = mapper.readTree(runList(bearer).andReturn().response.contentAsString)
+        assertThat(denied["items"].size()).isZero()
+    }
+
     @Test fun `실제 비용 시나리오는 큐 워커 결과 조회까지 연결된다`() {
         val team = UUID.randomUUID()
         jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,'실행 팀')").param("id",team).param("tenant",tenant).update()
