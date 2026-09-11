@@ -469,3 +469,11 @@
 - 저장·두 삭제 경로는 같은 원본 실행 행의 FOR UPDATE 잠금을 먼저 획득한다. 동시 저장/실행 삭제는 저장 201 + 삭제 409 또는 삭제 204 + 저장 404로 종료해 참조가 끊기지 않는다. 스키마 변경 없이 기존 dashboard 테이블을 사용한다.
 - 실제 DB 테스트 4건을 추가했다. 고정/상대 저장·페이지·요약 saved_id·원본 보존·입력/상태 오류·현재 팀 권한·타인 저장 항목 삭제 403·동시 저장/삭제를 검증했고 dashboard 테스트 133건이 통과했다(실패·오류·skip 0).
 - 구현 커밋은 `7fe5c3a`다. 커밋 전 작업 트리의 실제 frontend E2E가 통과했다(부모 backend `7b214e0`, jar SHA-256 `c17ac8c13ca1c346043d022071fab7ebd0d86517150f12b228d5ef91726eb7ce`, frontend `52f7cb1`). owner/admin 저장 대화상자·이력 화면·고정 열기·상대 모드 새 실행과 실제 클라이언트 삭제를 확인했다. 기존 53개 지표·P5·설치·세션·실행 결과 검증에도 오류 응답이 없었다. `owner-history.png`, `admin-history.png`에 화면을 보관한다. 삭제 확인 대화상자 자체의 클릭 검증과 ingest부터의 전체 E2E는 별도다.
+
+
+## 저장 리포트·실행 삭제 화면 검증
+
+- owner/admin 각각 실제 이력 화면의 저장 리포트 삭제 및 실행 이력 삭제 대화상자를 클릭했다. 각 대화상자에서 취소 시 DELETE 요청이 없고 행이 유지되며, 확인 시 지정한 URL로 DELETE가 정확히 한 번 발생하고 목록 행이 사라지는 것을 검증한다.
+- 고정·상대 저장 항목을 삭제한 뒤 원본 실행이 succeeded이며 결과 전체가 저장 전과 동일한지 확인했다. 이어 상대 재실행과 원본 실행을 화면에서 삭제하고, 별도의 취소된 실행은 목록에 남는지 실제 API로 확인했다.
+- 2026-09-11 실제 frontend E2E 통과: backend `c0702a3`, jar SHA-256 `c17ac8c13ca1c346043d022071fab7ebd0d86517150f12b228d5ef91726eb7ce`, frontend `52f7cb1`. 기존 53개 지표·설정·설치·세션·S1-3 결과·저장 흐름도 통과했으며 오류 응답은 없다. frontend 및 서버 구현은 변경하지 않았다.
+- `build/e2e/auth-settings/{owner,admin}-history-deleted.png`에 삭제 후 목록을 보관한다. `result.json`의 actualDeleteDialogs, deleteCancelledWithoutRequest, savedDeletionPreservesResult로 검증 범위를 기록한다. 이 검증은 삭제 화면 공백을 해소하며, 나머지 시나리오 실행 계획·조회 명세 보완·ingest부터의 전체 E2E는 여전히 남아 있다.

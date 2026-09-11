@@ -696,15 +696,52 @@ try {
       window.dispatchEvent(new PopStateEvent('popstate'));
     });
     await page.getByRole('row').filter({ hasText: `${role} 비용 리포트` }).waitFor();
-    await page.evaluate(async ({ fixed, relative, rerun, original }) => {
+    const deleteRequests = [];
+    const recordDelete = request => {
+      if (request.method() === 'DELETE') deleteRequests.push(new URL(request.url()).pathname);
+    };
+    page.on('request', recordDelete);
+    // 취소는 DELETE를 보내지 않고, 확인은 해당 행 하나만 지워야 한다.
+    async function deleteThroughDialog(row, title) {
+      await row.getByRole('button', { name: '삭제', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: title, exact: true });
+      await dialog.waitFor();
+      const before = deleteRequests.length;
+      await dialog.getByRole('button', { name: '취소', exact: true }).click();
+      await dialog.waitFor({ state: 'hidden' });
+      assert.equal(deleteRequests.length, before);
+      await row.waitFor();
+      await row.getByRole('button', { name: '삭제', exact: true }).click();
+      await dialog.getByRole('button', { name: '삭제', exact: true }).click();
+      await dialog.waitFor({ state: 'hidden' });
+      await row.waitFor({ state: 'detached' });
+      assert.equal(deleteRequests.length, before + 1);
+    }
+    await deleteThroughDialog(reportRow, '저장 리포트 삭제');
+    await deleteThroughDialog(page.getByRole('row').filter({ hasText: '상대 기간 E2E' }), '저장 리포트 삭제');
+    const original = await page.evaluate(async id => {
       const { scenarioApi } = await import('/src/api/scenarios.ts');
-      await scenarioApi.removeSaved(fixed);
-      await scenarioApi.removeSaved(relative);
-      await scenarioApi.remove(rerun);
-      await scenarioApi.remove(original);
-      const reports = await scenarioApi.saved();
-      if (reports.items.some(item => item.saved_id === fixed || item.saved_id === relative)) throw new Error('저장 리포트 삭제가 반영되지 않았습니다');
-    }, { fixed: fixedReport.saved_id, relative: relativeReport.saved_id, rerun: rerunId, original: scenarioRun.run.run_id });
+      return (await scenarioApi.get(id)).run;
+    }, scenarioRun.run.run_id);
+    assert.equal(original.status, 'succeeded');
+    assert.deepEqual(original.result, scenarioRun.run.result);
+    for (const id of [rerunId, scenarioRun.run.run_id]) {
+      const row = page.getByRole('row').filter({ has: page.locator(`a[href^="/runs/${id}"]`) });
+      await deleteThroughDialog(row, '실행 이력 삭제');
+    }
+    assert.deepEqual(deleteRequests, [
+      `/v1/saved-reports/${fixedReport.saved_id}`, `/v1/saved-reports/${relativeReport.saved_id}`,
+      `/v1/scenario-runs/${rerunId}`, `/v1/scenario-runs/${scenarioRun.run.run_id}`,
+    ]);
+    page.off('request', recordDelete);
+    const remaining = await page.evaluate(async () => {
+      const { scenarioApi } = await import('/src/api/scenarios.ts');
+      return { reports: await scenarioApi.saved(), runs: await scenarioApi.list() };
+    });
+    assert.ok(!remaining.reports.items.some(item => [fixedReport.saved_id, relativeReport.saved_id].includes(item.saved_id)));
+    assert.ok(!remaining.runs.items.some(item => [rerunId, scenarioRun.run.run_id].includes(item.run_id)));
+    assert.ok(remaining.runs.items.some(item => item.run_id === cancelled.run_id));
+    await page.screenshot({ path: resolve(artifacts, `${role}-history-deleted.png`), fullPage: true });
 
 
     await page.screenshot({ path: resolve(artifacts, `${role}.png`), fullPage: true });
@@ -713,7 +750,7 @@ try {
   }
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedInstallations: { count: 5, pages: 3, audited: true, actualFrontendCard: false },
-    verifiedScenarios: { count: 46, actualFrontendClient: true, parameterFormValidation: true, actualCatalogUI: false, runs: { scenario: 'S1-3', completed: true, cancelled: true, actualResultUI: true, actualHistoryClient: true, actualHistoryUI: true, savedFixedOpened: true, savedRelativeRerun: true, savedAndRunDeleted: true } },
+    verifiedScenarios: { count: 46, actualFrontendClient: true, parameterFormValidation: true, actualCatalogUI: false, runs: { scenario: 'S1-3', completed: true, cancelled: true, actualResultUI: true, actualHistoryClient: true, actualHistoryUI: true, savedFixedOpened: true, savedRelativeRerun: true, savedAndRunDeleted: true, actualDeleteDialogs: true, deleteCancelledWithoutRequest: true, savedDeletionPreservesResult: true } },
     verifiedSessionEvents: { actualFrontendClient: true, paginated: true, audited: true, actualSessionSearchUI: false },
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
