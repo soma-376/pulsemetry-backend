@@ -365,7 +365,14 @@
         ],
         "additionalProperties": false
       },
-      "findings_rules": [],
+      "findings_rules": [
+        {
+          "rule_id": "high_io_ratio",
+          "severity": "info",
+          "when": "input_output_ratio.value > io_ratio_threshold",
+          "message": "입력/출력 토큰 비율이 임계값을 초과했습니다. 컨텍스트 첨부 여부는 관측하지 못합니다."
+        }
+      ],
       "actions": []
     },
     {

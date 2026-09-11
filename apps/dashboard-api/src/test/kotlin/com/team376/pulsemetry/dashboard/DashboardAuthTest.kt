@@ -2682,6 +2682,48 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `컨텍스트 시나리오는 세 지표와 임계값 초과 판정을 실행한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(tokenEvent(it,200,10,0,0),compactionEvent(it,100,25)) })
+        val bearer = token()
+        for (threshold in listOf(10,20,30)) {
+            val id = mapper.readTree(startRun(bearer,"S1-5",
+                """{"from":"2026-09-01","to":"2026-09-02","io_ratio_threshold":$threshold}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+            val result = run["result"]
+            assertThat(result["target_page"].asString()).isEqualTo("P2")
+            assertThat(result["frames"].propertyNames()).containsExactlyInAnyOrder("input_output_ratio","compactions","compaction_reduction")
+            assertThat(result["findings"].size()).isEqualTo(if(threshold==10) 1 else 0)
+            if(threshold==10) {
+                assertThat(result["findings"][0]["rule_id"].asString()).isEqualTo("high_io_ratio")
+                assertThat(result["findings"][0]["evidence"]["ratio"].asDouble()).isEqualTo(20.0)
+            }
+            assertThat(result["frames"]["compactions"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+            assertThat(result["frames"]["compaction_reduction"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(.75)
+        }
+    }
+
+    @Test fun `컨텍스트 시나리오는 소집단과 분모 영을 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for (rows in listOf(ids.take(4).map { tokenEvent(it,200,1,0,0) },ids.map { tokenEvent(it,200,0,0,0) })) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S1-5","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["params"]["io_ratio_threshold"].asDouble()).isEqualTo(10.0)
+            assertThat(run["result"]["findings"].size()).isZero()
+            assertThat(run["result"]["frames"]["input_output_ratio"]["frames"][0]["data"]["values"][1][0].isNull).isTrue()
+        }
+    }
+
     @Test fun `실제 비용 시나리오는 큐 워커 결과 조회까지 연결된다`() {
         val team = UUID.randomUUID()
         jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,'실행 팀')").param("id",team).param("tenant",tenant).update()
