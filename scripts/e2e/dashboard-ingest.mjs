@@ -746,12 +746,38 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let shadowRun;
   let driftRun;
   let inactivityRun;
+  let probeRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
     await ownerPage.getByLabel('비밀번호', { exact: true }).fill('fixture-password-123');
     await ownerPage.getByRole('button', { name: '로그인', exact: true }).click();
     await ownerPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
+    probeRun = await ownerPage.evaluate(async from => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S5-5/runs', { method: 'POST', body: JSON.stringify({
+        params: { from, to: new Date(Date.now() + 1000).toISOString(), probe_window_min: 5, probe_count: 10 },
+      }) }, '반복 거부 응답 수집 결과 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, scenarioFrom);
+    assert.equal(probeRun.status, 'succeeded');
+    assert.equal(probeRun.progress.step, 4);
+    assert.equal(probeRun.progress.total, 4);
+    assert.deepEqual(Object.keys(probeRun.result.frames).sort(), ['hook_blocking', 'refusals', 'tool_rejections']);
+    assert.equal(probeRun.result.findings.length, 0);
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S5-5'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, probeRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(probeRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-probe-scenario.png'), fullPage: true });
     pressureRun = await ownerPage.evaluate(async from => {
       const { request } = await import('/src/api/client.ts');
       const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
@@ -1183,6 +1209,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
     championScenario: { id: 'S8-7', runId: championRun.run_id, admin: true, actualResultUI: true, windowWeeks: 4, promptsPerSession: 2 },
+    probeScenario: { id: 'S5-5', runId: probeRun.run_id, owner: true, audited: true, actualResultUI: true, probeWindowMin: 5, probeCount: 10, refusalFindings: 0 },
     inactivityScenario: { id: 'S1-7', runId: inactivityRun.run_id, owner: true, audited: true, actualResultUI: true, inactiveDays: 30, activeUsers: 5, inactivityFindings: 0 },
     driftScenario: { id: 'S6-3', runId: driftRun.run_id, owner: true, audited: true, actualResultUI: true, windowWeeks: 4, missingStopReasonEvents: 5 },
     acceptanceScenario: { id: 'S4-3', runId: acceptanceRun.run_id, admin: true, actualResultUI: true, language: 'kotlin', editsMissing: true },
