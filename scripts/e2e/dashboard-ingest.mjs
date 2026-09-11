@@ -558,6 +558,34 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, concentrationRun.run_id);
   await page.getByRole('heading', { name: '익명 사용량 집중도가 관측되었습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-concentration-scenario.png'), fullPage: true });
+  const premiumRun = await page.evaluate(async ({ from, scenarioModel }) => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    let { run } = await scenarioApi.start('S1-2', { params: {
+      from, to: new Date(Date.now() + 1000).toISOString(), premium_model_patterns: [scenarioModel],
+    } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return run;
+  }, { from: scenarioFrom, scenarioModel });
+  assert.equal(premiumRun.status, 'succeeded');
+  assert.equal(premiumRun.progress.step, 4);
+  assert.equal(premiumRun.progress.total, 4);
+  assert.deepEqual(Object.keys(premiumRun.result.frames).sort(), ['cost', 'prompts_per_session', 'tokens', 'tool_calls']);
+  assert.equal(premiumRun.result.findings.length, 1);
+  assert.equal(premiumRun.result.findings[0].evidence.model, scenarioModel);
+  assert.equal(premiumRun.result.findings[0].evidence.cost_usd, 15);
+  assert.deepEqual(premiumRun.result.applied_filters.model_filtered_metrics, ['cost', 'tokens']);
+  assert.deepEqual(premiumRun.result.applied_filters.context_metrics, ['prompts_per_session', 'tool_calls']);
+  assert.ok(premiumRun.result.frames.tokens.frames.some(f => f.data.values[0].includes(1050)));
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, premiumRun.run_id);
+  await page.getByRole('heading', { name: '지정한 모델 패턴의 비용이 관측되었습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-premium-scenario.png'), fullPage: true });
   const effortRun = await page.evaluate(async from => {
     const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
     let { run } = await scenarioApi.start('S1-6', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
@@ -1230,6 +1258,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     policyScenario: { id: 'S7-3', runId: policyRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionFindings: 0, gateWaitMs: 120000 },
     retryScenario: { id: 'S6-5', runId: retryRun.run_id, owner: true, audited: true, actualResultUI: true, retryRatio: 0.2, costUsd: 15 },
     pressureScenario: { id: 'S2-2', runId: pressureRun.run_id, owner: true, audited: true, actualResultUI: true, rateLimitFindings: 0 },
+    premiumScenario: { id: 'S1-2', runId: premiumRun.run_id, actualResultUI: true, costUsd: 15, tokens: 1050, model: scenarioModel },
     effortScenario: { id: 'S1-6', runId: effortRun.run_id, actualResultUI: true, costUsd: 15, effort: 'high', speed: 'fast', source: 'metrics' },
     concentrationScenario: { id: 'S3-2', runId: concentrationRun.run_id, actualResultUI: true, topDecileShare: 0.2, anonymousCurve: true },
     reportingScenario: { id: 'S8-1', runId: reportingRun.run.run_id, actualResultUI: true, sessions: 5, tokens: 1050, costPerActiveUserUsd: 3 },
