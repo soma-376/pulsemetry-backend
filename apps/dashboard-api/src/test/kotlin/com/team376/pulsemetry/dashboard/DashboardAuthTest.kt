@@ -3772,6 +3772,51 @@ class DashboardAuthTest {
         return row.toString()
     }
 
+    private fun premiumRun(bearer: String, patterns: List<String>) = startRun(bearer,"S1-2",
+        mapper.writeValueAsString(mapOf("from" to "2026-09-01","to" to "2026-09-02","premium_model_patterns" to patterns)))
+
+    @Test fun `프리미엄 패턴은 전체 이름 대소문자와 별표만 해석하고 모델 비용과 토큰을 선택한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(modelCost(it,"claude-opus",2.0),modelCost(it,"claude-sonnet",99.0),
+            tokenEvent(it,10,20,0,0),promptEvent(it),toolEvent(it,true)) })
+        val bearer = token()
+        for ((patterns,expected) in listOf(listOf("*opus*") to 1,listOf("opus") to 0,listOf("*OPUS*") to 0,
+            listOf("claude-opus","*opus*") to 1,listOf("*") to 2)) {
+            val id = mapper.readTree(premiumRun(bearer,patterns).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).withFailMessage(run.toString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+            assertThat(run["result"]["findings"].size()).isEqualTo(expected)
+            if(expected==1) assertThat(run["result"]["findings"].single()["evidence"]["cost_usd"].asDouble()).isEqualTo(10.0)
+            // 모델 정보가 없는 지표는 기간·팀 참고값으로 유지한다.
+            val prompts = run["result"]["frames"]["prompts_per_session"]["frames"].single()
+            assertThat(prompts["data"]["values"][0][0].asDouble()).isEqualTo(1.0)
+            if(patterns==listOf("*")) {
+                val tokens = run["result"]["frames"]["tokens"]["frames"].single { it["schema"]["fields"][0].path("labels").path("model").asString("")=="test" }
+                assertThat(tokens["data"]["values"][0][0].asDouble()).isEqualTo(150.0)
+            }
+        }
+    }
+
+    @Test fun `프리미엄 패턴은 SQL 특수문자를 문자로 처리하고 소집단을 숨긴다`() {
+        val ids = installations(5)
+        val literal = "opus_%'model"
+        seedPoints(ids.flatMap { listOf(modelCost(it,literal,2.0),modelCost(it,"opusXanything'model",99.0)) })
+        val bearer = token()
+        val id = mapper.readTree(premiumRun(bearer,listOf(literal)).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).withFailMessage(run.toString()).isEqualTo("succeeded")
+        assertThat(run["result"]["findings"].single()["evidence"]["cost_usd"].asDouble()).isEqualTo(10.0)
+        seedPoints(ids.take(4).map { modelCost(it,literal,2.0) })
+        val small = mapper.readTree(premiumRun(bearer,listOf(literal)).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        assertThat(readRun(small,bearer)["result"]["findings"].size()).isZero()
+        premiumRun(bearer,emptyList()).andExpect(status().isBadRequest)
+        premiumRun(bearer,listOf("a".repeat(201))).andExpect(status().isBadRequest)
+    }
+
     @Test fun `모델 effort 시나리오는 delta 비용 차원과 토큰 세션을 제공한다`() {
         val ids = installations(5)
         seedPoints(ids.flatMap { listOf(effortCost(it,2.0,"high","fast"),effortCost(it,3.0,"low","normal"),
@@ -4477,7 +4522,7 @@ class DashboardAuthTest {
             .contentType("application/json").content("""{"params":{}}""")).andExpect(status().isBadRequest)
 
         startRun(bearer,"S5-1", "{}").andExpect(status().isConflict)
-        startRun(bearer,"S1-2", "{}").andExpect(status().isNotImplemented)
+        startRun(bearer,"S3-3", "{}").andExpect(status().isNotImplemented)
         startRun(bearer,"S9-1", "{}").andExpect(status().isNotFound)
         repeat(3) { startRun(bearer).andExpect(status().isAccepted) }
         startRun(bearer).andExpect(status().isTooManyRequests)

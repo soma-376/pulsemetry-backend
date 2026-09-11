@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S1-7·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-3·S4-4·S4-5·S4-6·S4-8·S5-2·S5-4·S5-5·S5-6·S5-7·S6-1·S6-3·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-3·S8-4·S8-5·S8-6·S8-7의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-2·S1-3·S1-4·S1-5·S1-6·S1-7·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-3·S4-4·S4-5·S4-6·S4-8·S5-2·S5-4·S5-5·S5-6·S5-7·S6-1·S6-3·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-3·S8-4·S8-5·S8-6·S8-7의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -358,3 +358,10 @@ S1-7의 수집 E2E는 `verifiedIngest.inactivityScenario`에 기록한다. 최�
 ### S5-5 반복 거부 관측
 
 `probe_window_min`과 `probe_count`는 UTC epoch 정렬 고정 창의 전사 거부 합계에 적용한다. 횟수 이상이면서 거부 구성원 5명 이상인 창만 info 판정으로 표시한다. 조회는 `[from,to)`이고 잘린 창의 실제 관측 범위를 evidence에 제공한다. 이동 창·개인별 반복·공격 의도·탈옥 성공 판정은 지원하지 않는다. owner와 감사 사유가 필요하며 설치 5000개 또는 판정 창 1000개를 초과하면 `query_too_wide`로 실패한다.
+
+## S1-2 지정 모델 패턴 관측
+
+- 사용자가 확정한 `premium_model_patterns` 문법: 모델명 전체 매칭, 대소문자 구분, `*`만 임의 문자열. `%`·`_`·정규식 문자는 문자 그대로 처리한다. 1~100개, 각 1~200자로 제한한다.
+- 비용·토큰은 SQL 바인딩 패턴 필터를 집계 전에 적용하고 모델별 표로 반환한다. 상위 100개 밖은 기존 QRY의 기타 합계·마스킹을 유지하며 개별 판정하지 않는다. 공개 QRY 입력 계약은 변경하지 않는다.
+- 프롬프트·도구 호출은 모델 귀속 정보가 없어 같은 기간·팀 참고값이다. 적용 결과에 `model_filtered_metrics`와 `context_metrics`를 구분해 제공한다.
+- info 판정은 선택한 모델의 양수 비용 관측이다. 모델 티어·작업 난이도·품질·대체 모델 비용 근거가 없어 미스매치나 절감액을 판정하지 않는다. admin의 현재 팀 범위와 기존 소집단 마스킹을 유지한다.

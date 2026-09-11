@@ -91,8 +91,15 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return execute(user, body, null, "application/json", before)
     }
 
+    /** S1-2만 사용하는 모델 패턴 필터. 공개 QRY 필터 계약은 유지한다. */
+    internal fun premiumScenario(user: UserIdentity, body: DashboardQueryRequest, patterns: List<String>): ResponseEntity<*> {
+        require(patterns.size in 1..100 && patterns.all { it.length in 1..200 })
+        require(body.compare=="none" && body.queries.all { it.metricId in setOf("cost","tokens") })
+        return execute(user,body,null,"application/json",null,patterns)
+    }
+
     private fun execute(user: UserIdentity, body: DashboardQueryRequest, audit: String?, accept: String,
-        before: Pair<Instant, Instant>?): ResponseEntity<*> {
+        before: Pair<Instant, Instant>?, premiumPatterns: List<String> = emptyList()): ResponseEntity<*> {
         val deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos()
         require(body.queries.size in 1..12 && body.maxDataPoints in 1..1000)
         require(body.queries.map { it.refId }.distinct().size == body.queries.size)
@@ -138,7 +145,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             if (f.teamIds.isNotEmpty() || f.memberIds.isNotEmpty() || f.products.isNotEmpty() || f.models.isNotEmpty())
                 throw UserAuthException("contract_scope_required",403)
         }
-        val scopes = filters.associateWith { scope(user, it) }
+        val scopes = filters.associateWith { scope(user, it).let { scope ->
+            scope.copy(parameters=scope.parameters + ("premium_patterns" to array(premiumPatterns.map(DashboardPremiumModels::sqlPattern))))
+        } }
         val id = UUID.randomUUID().toString()
         val results = linkedMapOf<String, Any>()
         body.queries.forEach { q ->
@@ -275,7 +284,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val installationCount = selected.count { it["installation_status"]=="active" && it["member_id"] in scopedMemberIds }
         val map = selected.joinToString(",", "{", "}") { "'${it["id"]}':'${it["member_id"]}'" }
         return Scope(mapOf("tenant" to user.tenantId.toString(), "teams" to array(teams.map { it.toString() }),
-            "unrestricted" to if (unrestricted) "1" else "0", "products" to array(f.products), "models" to array(f.models),
+            "unrestricted" to if (unrestricted) "1" else "0", "products" to array(f.products), "models" to array(f.models), "premium_patterns" to "[]",
             "emails" to selected.joinToString(",","{","}") { "${quoted(it["id"].toString())}:${quoted(it["registered_email"].toString())}" },
             "created" to selected.joinToString(",","{","}") { "'${it["id"]}':${it["created_epoch"]}" },
             "platforms" to selected.joinToString(",","{","}") { "'${it["id"]}':'${it["platform"]}'" },
@@ -298,6 +307,10 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         AND (empty({products:Array(String)}) OR has({products:Array(String)},product))
         AND (empty({models:Array(String)}) OR has({models:Array(String)},
             coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model'))))
+        AND (empty({premium_patterns:Array(String)}) OR
+            (notEmpty(coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),JSONExtractString(raw_json,'point','attrs','model')))
+            AND arrayExists(pattern -> like(coalesce(nullIf(JSONExtractString(raw_json,'payload','model'),''),
+                JSONExtractString(raw_json,'point','attrs','model')),pattern),{premium_patterns:Array(String)})))
         AND ({personal:UInt8}=0 OR mapContains({members:Map(String,String)},installation_id))"""
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long,
         retained: List<List<String>>? = null): Rows {

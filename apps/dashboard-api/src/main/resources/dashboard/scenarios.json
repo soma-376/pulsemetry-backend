@@ -162,9 +162,13 @@
           },
           "premium_model_patterns": {
             "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "모델명 전체에 대소문자를 구분해 매칭합니다. *만 임의 문자열이며 다른 문자는 문자 그대로입니다.",
             "items": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "maxLength": 200
             }
           }
         },
