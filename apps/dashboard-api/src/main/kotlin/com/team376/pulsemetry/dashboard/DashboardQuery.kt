@@ -162,8 +162,25 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 val scope = scopes.getValue(q.filters?.merge(body.filters) ?: body.filters)
                 val calculation = q.copy(priceBasis=if (q.metricId=="contract_commitment_burn") "contract" else q.priceBasis ?: body.priceBasis)
                 try {
-                    val current = read(calculation, scope, from, to, zone, interval, deadline)
-                    val previous = comparison?.let { read(calculation, scope, it.first, it.second, zone, interval, deadline) }
+                    var current = read(calculation, scope, from, to, zone, interval, deadline)
+                    var previous = comparison?.let { read(calculation, scope, it.first, it.second, zone, interval, deadline) }
+                    if (q.metricId=="cost" && q.groupBy.isNotEmpty()) {
+                        fun key(row: JsonNode) = q.groupBy.indices.map { row["g$it"].asString() }
+                        val grouped = current.data.groupBy(::key)
+                        val priorGroups = previous?.data?.groupBy(::key).orEmpty()
+                        val keys = (grouped.keys+priorGroups.keys).distinct()
+                        if (keys.size>groupLimit(q)) {
+                            // 소집단의 숨겨진 비용이 상위 그룹의 선택이나 순서에 영향을 주지 않는다.
+                            val retained = keys.filter { "__other__" !in it }.sortedWith(
+                                compareByDescending<List<String>> { key ->
+                                    val rows = grouped[key].orEmpty()
+                                    if ((rows+priorGroups[key].orEmpty()).any { it["people"].asLong()<5 }) 0.0
+                                    else rows.sumOf { it["value"].asDouble(0.0) }
+                                }.thenBy { mapper.writeValueAsString(it) }).take(groupLimit(q))
+                            current = readCost(calculation,scope,from,to,zone,interval,deadline,retained=retained)
+                            previous = comparison?.let { readCost(calculation,scope,it.first,it.second,zone,interval,deadline,retained=retained) }
+                        }
+                    }
                     results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="contract_commitment_burn") calculation.copy(groupBy=listOf("contract_id")) else if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else if (q.metricId=="onboarding_retention") q.copy(groupBy=q.groupBy+listOf("cohort_index","week_index")) else calculation, definition, current, previous, interval, ticks, comparison?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
                         tick.minus(Duration.between(from,to)) else tick.atZone(time.zone).minusWeeks(1).toInstant(), interval) } }, scope.teamNames))
                 } catch (e: DashboardReadException) { results[q.refId] = error(id, e.status, e.code) }
@@ -469,7 +486,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return Rows(result,daily.sql)
     }
     private fun readCost(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
-        zone: String, interval: String, deadline: Long, membership: String? = null): Rows {
+        zone: String, interval: String, deadline: Long, membership: String? = null, retained: List<List<String>>? = null): Rows {
         val unitPrice = q.metricId=="model_unit_price"
         val perUser = q.metricId=="cost_per_active_user"
         val perHour = q.metricId=="cost_per_user_hour"
@@ -478,8 +495,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val contract = q.priceBasis=="contract"
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
         val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
-        val dimensions = q.groupBy.mapIndexed { index, dim ->
-            val expression = when (dim) {
+        val expressions = q.groupBy.map { dim ->
+            when (dim) {
                 "query_source" -> if (metrics) "JSONExtractString(raw_json,'point','attrs','query_source')" else "JSONExtractString(raw_json,'payload','source')"
                 "agent_name","skill_name","plugin_name" -> "JSONExtractString(raw_json,'point','attrs','${dim.substringBefore('_')}.name')"
                 "mcp_server" -> if (metrics) "JSONExtractString(raw_json,'point','attrs','mcp_server.name')" else dimension(dim)
@@ -487,7 +504,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 "effort" -> if (metrics) "JSONExtractString(raw_json,'point','attrs','effort')" else "JSONExtractString(raw_json,'payload','reasoning_effort')"
                 else -> dimension(dim)
             }
-            "$expression AS g$index"
+        }
+        val dimensions = expressions.mapIndexed { index, expression ->
+            val grouped = if (retained==null) expression else
+                "if(has(JSONExtract({retained:String},'Array(Array(String))'),[${expressions.joinToString(",")}]), $expression, '__other__')"
+            "$grouped AS g$index"
         }
         val groups = (listOf("bucket")+q.groupBy.indices.map { "g$it" }).joinToString(",")
         val source = if (metrics) "signal='metric' AND product='claude_code' AND JSONExtractString(raw_json,'point','name')='claude_code.cost.usage'"
@@ -520,7 +541,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
             GROUP BY $groups ORDER BY $groups"""
         val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone,
-            "discounts" to if (contract) discounts(scope) else "[]", "commitments" to (membership ?: "[]"))
+            "discounts" to if (contract) discounts(scope) else "[]", "commitments" to (membership ?: "[]"),
+            "retained" to mapper.writeValueAsString(retained.orEmpty()))
         val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
             .filter { it["points"].asLong()>0 || it["cumulative"].asLong()>0 }
         if (rows.any { it["conflicts"].asLong()>0 }) throw DashboardReadException("contract_overlap",422)
@@ -940,7 +962,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val groups = current.data.groupBy(::key)
         val comparisons = previous?.data?.groupBy(::key).orEmpty()
         val keys = (groups.keys + comparisons.keys).distinct()
-        if (keys.size > groupLimit(q)) throw DashboardReadException("query_too_wide", 422)
+        if (keys.size > groupLimit(q)+(if (q.metricId=="cost" && keys.any { it.all { value -> value=="__other__" } }) 1 else 0)) throw DashboardReadException("query_too_wide", 422)
         val frameType = q.frameType ?: definition.defaultFrameType
         val frames = keys.flatMap { group ->
             val rows = groups[group].orEmpty()

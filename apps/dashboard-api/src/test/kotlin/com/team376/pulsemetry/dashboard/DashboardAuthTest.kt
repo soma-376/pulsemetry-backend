@@ -1628,6 +1628,43 @@ class DashboardAuthTest {
             "model" to "claude-test","cost_usd" to cost,"cost_source" to "reported"))))
         return mapper.writeValueAsString(row)
     }
+    private fun modelCost(id: UUID, model: String, cost: Double, at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(costEvent(id,cost,at)) as tools.jackson.databind.node.ObjectNode
+        val raw = mapper.readTree(row["raw_json"].asString())
+        (raw["payload"] as tools.jackson.databind.node.ObjectNode).put("model",model)
+        row.put("raw_json",raw.toString())
+        return row.toString()
+    }
+    @Test fun `비용 상위 그룹과 나머지를 원본에서 집계하고 비교 그룹을 고정한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { id -> listOf(modelCost(id,"top",10.0),modelCost(id,"second",3.0),modelCost(id,"third",2.0),
+            modelCost(id,"top",1.0,"2026-08-31T12:00:00Z"),modelCost(id,"second",20.0,"2026-08-31T12:00:00Z")) })
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost","group_by" to listOf("model"),
+            "frame_type" to "table","limit" to 1),mapOf("compare" to "previous_period")))
+            .andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val frames = result["frames"].toList().associateBy { it["schema"]["fields"][0]["labels"]["model"].asString() }
+        assertThat(frames.keys).containsExactlyInAnyOrder("top","__other__")
+        assertThat(frames.getValue("top")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(50.0,5.0)
+        assertThat(frames.getValue("__other__")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(25.0,100.0)
+        assertThat(frames.getValue("__other__")["schema"]["fields"][0]["config"]["group_size"].asLong()).isEqualTo(5)
+    }
+    @Test fun `소집단의 숨겨진 비용은 상위 선택에 쓰지 않고 나머지 집단도 마스킹한다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { modelCost(it,"public",1.0) }+ids.take(4).flatMap {
+            listOf(modelCost(it,"hidden-a",100.0),modelCost(it,"hidden-b",200.0)) })
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost","group_by" to listOf("model"),
+            "frame_type" to "timeseries","interval" to "1d","limit" to 1)))
+            .andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val frames = result["frames"].toList().associateBy { it["schema"]["fields"][1]["labels"]["model"].asString() }
+        assertThat(frames.keys).containsExactlyInAnyOrder("public","__other__")
+        assertThat(frames.getValue("public")["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+        val other = frames.getValue("__other__")
+        assertThat(other["data"]["values"][1][0].isNull).isTrue()
+        assertThat(other["schema"]["fields"][1]["config"]["suppressed"].asBoolean()).isTrue()
+        assertThat(other["schema"]["fields"][1]["config"]["group_size"].isNull).isTrue()
+    }
     private fun costPoint(id: UUID, value: Double, cumulative: Boolean = false): String {
         val row = mapper.readTree(point(id,value,cumulative=cumulative)) as tools.jackson.databind.node.ObjectNode
         row.put("raw_json",mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.cost.usage",
