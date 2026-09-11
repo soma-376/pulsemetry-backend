@@ -687,3 +687,7 @@
 - P3 시나리오로 owner와 10~500자 감사 사유를 요구한다. 시작 시 `scenario_run` 감사를 기록하며 worker는 각 조회 전 현재 역할·팀 범위를 재검증한다.
 - `rate_limit_events`·`tokens`·`api_retry_attempts`를 일 시계열로 제공한다. 공개 가능한 양수 제한 이벤트에 정보 판정을 제공하되 retries_exhausted가 없어 상시 도달·작업 중단·한도 소진을 확정하지 않는다.
 - dashboard 테스트 179건 통과. 실제 DB에서 429 이벤트 집계, 토큰 값, 감사 누락·admin 거부, 실행 전 역할 변경 실패, 소집단·미관측·정상 응답의 판정 제외를 검증했다.
+- frontend의 일반 시나리오 실행 폼/API 래퍼에는 감사 사유 전달이 없어 P3 실행 버튼만으로는 시작할 수 없다. E2E는 실제 owner 로그인 후 frontend 공통 `request` 클라이언트의 감사 사유 인자를 사용한다. backend의 감사 요구를 완화하지 않으며 frontend 소스도 변경하지 않았다.
+- 실제 OTLP 수집→owner 웹 로그인→감사 사유 포함 실행→P3 결과 UI E2E 통과. fixture의 제한 이벤트는 0건이며 판정도 0건, 토큰 1050·재시도 비율 0.2와 감사 행 1건을 확인했다. 양수 429 판정은 실제 DB 테스트로 검증했다. 실행 가능한 시나리오는 18개다.
+- 현재 frontend는 `rate_limit_events`를 W3.3에 매핑하지 않아 빈 위젯 안내가 남는다. 일반 차트의 제한 이벤트 0과 토큰·재시도 결과 표시는 확인했다.
+- 증거: `build/e2e/auth-settings/result.json`, `owner-ingest-pressure-scenario.png`. 전체 PROJ-156 수용 완료를 뜻하지 않는다.

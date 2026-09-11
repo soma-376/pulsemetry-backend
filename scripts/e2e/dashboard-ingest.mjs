@@ -585,8 +585,48 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, effortRun.run_id);
   await page.getByRole('heading', { name: '모델·effort·speed별 비용이 관측되었습니다', exact: true }).first().waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-effort-scenario.png'), fullPage: true });
+  const ownerPage = await page.context().newPage();
+  let pressureRun;
+  try {
+    await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
+    await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
+    await ownerPage.getByLabel('비밀번호', { exact: true }).fill('fixture-password-123');
+    await ownerPage.getByRole('button', { name: '로그인', exact: true }).click();
+    await ownerPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
+    pressureRun = await ownerPage.evaluate(async from => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S2-2/runs', { method: 'POST', body: JSON.stringify({
+        params: { from, to: new Date(Date.now() + 1000).toISOString() },
+      }) }, 'Rate Limit 수집 결과 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, scenarioFrom);
+    assert.equal(pressureRun.status, 'succeeded');
+    assert.equal(pressureRun.progress.step, 3);
+    assert.equal(pressureRun.progress.total, 3);
+    assert.equal(pressureRun.result.target_page, 'P3');
+    assert.deepEqual(Object.keys(pressureRun.result.frames).sort(), ['api_retry_attempts', 'rate_limit_events', 'tokens']);
+    assert.equal(pressureRun.result.findings.length, 0);
+    assert.ok(pressureRun.result.frames.tokens.frames.some(f => f.data.values[1].includes(1050)));
+    assert.ok(pressureRun.result.frames.api_retry_attempts.frames.some(f => f.data.values[1].includes(0.2)));
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S2-2'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, pressureRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(pressureRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-pressure-scenario.png'), fullPage: true });
+  } finally {
+    await ownerPage.close();
+  }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    pressureScenario: { id: 'S2-2', runId: pressureRun.run_id, owner: true, audited: true, actualResultUI: true, rateLimitFindings: 0 },
     effortScenario: { id: 'S1-6', runId: effortRun.run_id, actualResultUI: true, costUsd: 15, effort: 'high', speed: 'fast', source: 'metrics' },
     concentrationScenario: { id: 'S3-2', runId: concentrationRun.run_id, actualResultUI: true, topDecileShare: 0.2, anonymousCurve: true },
     reportingScenario: { id: 'S8-1', runId: reportingRun.run.run_id, actualResultUI: true, sessions: 5, tokens: 1050, costPerActiveUserUsd: 3 },
