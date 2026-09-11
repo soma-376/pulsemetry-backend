@@ -232,3 +232,5 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 `POST /v1/scenarios/S3-5/runs`는 from/to/team_ids를 받는다. mcp_connections·subagent_cost_ratio·command_prompt_ratio·tool_failure_rate를 일별로 조회하는 4단계이며 P2/W2.8·W2.10을 반환한다. 스킬·플러그인을 관측하지 못하는 partial 상태를 유지한다.
 
 양수 서브에이전트 비용 비율을 observed_subagent_cost 정보성 안내로 제공한다. query_source 메트릭의 비용 비율이며 스킬·플러그인 사용률이나 숙련도를 측정하지 않는다. 소집단·미관측·분모 0·비율 0은 안내에서 제외한다. 비용은 기존 delta 메트릭과 price_basis 계약을 적용하며 이벤트 비용과 합산하지 않는다.
+
+실제 수집 E2E의 `verifiedIngest.advancedScenario`, `admin-ingest-advanced-scenario.png`에 서브에이전트 비용 비율 1(15/15달러)·도구 실패율 0.2의 실행·화면 증거를 남긴다. MCP는 수집 fixture에 없어 미관측이며 현재 frontend의 W2.10 강조 연결은 누락되어 있다.

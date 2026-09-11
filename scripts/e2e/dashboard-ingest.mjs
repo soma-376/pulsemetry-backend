@@ -69,7 +69,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
         aggregationTemporality: temporality, isMonotonic: true, dataPoints: [{
           startTimeUnixNano: String(now - 1000000000n), timeUnixNano: String(now),
           asDouble: temporality === 1 ? index + 1 : 999,
-          attributes: [attr('session.id', `ingest-${installation}`), attr('model', model)],
+          attributes: [attr('session.id', `ingest-${installation}`), attr('model', model), attr('query_source', 'subagent')],
         }],
       } })).concat([{ name: 'claude_code.session.count', unit: 'count', sum: {
         aggregationTemporality: 1, isMonotonic: true, dataPoints: [{
@@ -457,8 +457,34 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, adoptionRun.run.run_id);
   await page.getByRole('heading', { name: '팀별 채택률이 관측되었습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-adoption-scenario.png'), fullPage: true });
+  const advancedRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S3-5', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, failures: series(run.result?.frames.tool_failure_rate) };
+  }, scenarioFrom);
+  assert.equal(advancedRun.run.status, 'succeeded');
+  assert.equal(advancedRun.run.progress.step, 4);
+  assert.equal(advancedRun.run.progress.total, 4);
+  assert.deepEqual(Object.keys(advancedRun.run.result.frames).sort(), ['command_prompt_ratio', 'mcp_connections', 'subagent_cost_ratio', 'tool_failure_rate']);
+  assert.ok(advancedRun.failures.points.some(p => p.value.value === 0.2));
+  assert.equal(advancedRun.run.result.findings.length, 1);
+  assert.equal(advancedRun.run.result.findings[0].rule_id, 'observed_subagent_cost');
+  assert.equal(advancedRun.run.result.findings[0].evidence.ratio, 1);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, advancedRun.run.run_id);
+  await page.getByRole('heading', { name: '서브에이전트 비용이 관측되었습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-advanced-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    advancedScenario: { id: 'S3-5', runId: advancedRun.run.run_id, actualResultUI: true, subagentCostRatio: 1, toolFailureRate: 0.2 },
     adoptionScenario: { id: 'S3-1', runId: adoptionRun.run.run_id, actualResultUI: true, activeUsers: 5, adoptionRate: 5 / 6, toolCalls: 5 },
     vendorScenario: { id: 'S8-4', runId: vendorRun.run.run_id, actualResultUI: true, product: 'claude_code', costUsd: 15, tokens: 1050 },
     teamUsageScenario: { id: 'S3-4', runId: teamUsageRun.run.run_id, actualResultUI: true, sessions: 5 },
