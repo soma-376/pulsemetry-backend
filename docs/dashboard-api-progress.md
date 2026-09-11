@@ -869,3 +869,14 @@
 - 모델별 QRY 마스킹을 유지한다. 한쪽 소집단·미관측 또는 동일 값은 차이 판정을 생성하지 않는다. 완료 기간의 유효한 양쪽 값만 observed_model_difference info로 제공한다. 비용·오류율은 value, 프롬프트·응답 시간은 p50을 비교하며 delta_b_minus_a는 B-A다.
 - 비용은 기간 합계이며 이용자·요청량·업무·배정을 통제하지 않는다. 무작위 A/B 실험, 모델 우열·유의성·인과 효과를 판정하지 않는다. 같은 이용자가 두 모델에 포함될 수 있다.
 - 실행 경로는 33개, 추가 실행 대상 9개, 명세상 unavailable 4개다.
+
+
+### S8-3 검증 결과
+
+- dashboard 테스트 212건, 실패·오류·skip 0건. 선택 모델 격리, 모델 라벨 순서, 동일 모델·과도한 모델명 거부, owner 감사 및 admin 거부, 소집단·미관측·동일 값 제외를 검증했다. 실제 DB의 비용 5→10, 정상 응답 p50 100→200ms, 오류율 0→0.5 차이를 확인했다.
+- 오류율은 HTTP 상태만으로 계산하지 않고 기존 QRY의 error_type 정의를 따른다. 실패 호출은 정상 응답 시간 집계에서 제외한다. 테스트 fixture도 두 원천을 구분했다.
+- 구현 `2e757ca`와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`의 실제 수집 E2E 통과. `unexpectedOrUnimplementedResponses=[]`, 연결 시나리오 33개다.
+- `verifiedIngest.modelComparisonScenario`: run `5e9412d6-afee-4a7d-aaa8-d644e11d93fc`, owner 감사 1건, 진행 4/4 완료. 모델 A 이벤트 비용 15달러·B 비용 미관측과 모델 라벨 보존, 판정 없음 및 결과 화면을 검증했다. `owner-ingest-model-comparison.png`를 확인했다.
+- 수집 fixture의 두 모델에는 같은 종류의 양수 이벤트 비용이 모두 존재하지 않는다. 양쪽 비용·시간·오류율 차이의 긍정 사례는 DB 통합 테스트가 담당한다. 모델명 없는 프롬프트와 현행 duration 원천 조건에 맞지 않는 이벤트는 미관측이다.
+- frontend는 여전히 비용 위젯 제목을 '팀별 비용'으로 표시하고 긴 모델 라벨을 잘라 보여준다. 모델 비교 전용 제목·라벨 및 일반 실행 폼의 감사 사유 전달은 후속 작업이다. 이번 E2E는 owner 로그인 후 공통 클라이언트 감사 경로를 사용했다.
+- 로그: `/tmp/proj156-model-ab-test.log`, `/tmp/proj156-model-ab-e2e.log`. frontend 소스는 변경하지 않았다.

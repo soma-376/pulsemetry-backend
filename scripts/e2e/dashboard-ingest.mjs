@@ -693,6 +693,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let qualityRun;
   let policyComparisonRun;
   let purposeRun;
+  let modelComparisonRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -1009,11 +1010,41 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, purposeRun.run_id);
     await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(purposeRun.run_id.slice(0, 8), { exact: false }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-purpose-scenario.png'), fullPage: true });
+    modelComparisonRun = await ownerPage.evaluate(async ({ from, a, b }) => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S8-3/runs', { method: 'POST', body: JSON.stringify({
+        params: { from, to: new Date().toISOString(), model_a: a, model_b: b },
+      }) }, '모델 A/B 관측 비교 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, { from: scenarioFrom, a: scenarioModel, b: model });
+    assert.equal(modelComparisonRun.status, 'succeeded');
+    assert.equal(modelComparisonRun.progress.step, 4);
+    assert.equal(modelComparisonRun.progress.total, 4);
+    assert.deepEqual(modelComparisonRun.result.applied_filters.filters.models, [scenarioModel, model]);
+    const abCost = modelComparisonRun.result.frames.cost.frames;
+    assert.equal(abCost.length, 1);
+    assert.equal(abCost[0].schema.fields[0].labels.model, scenarioModel);
+    assert.equal(abCost[0].data.values[0][0], 15);
+    assert.equal(modelComparisonRun.result.findings.length, 0);
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S8-3'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, modelComparisonRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(modelComparisonRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-model-comparison.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    modelComparisonScenario: { id: 'S8-3', runId: modelComparisonRun.run_id, owner: true, audited: true, actualResultUI: true, modelACost: 15, modelBCostMissing: true },
     purposeScenario: { id: 'S5-6', runId: purposeRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionEventsMissing: true },
     trainingComparisonScenario: { id: 'S4-4', runId: trainingRun.run_id, admin: true, actualResultUI: true, promptsPerSession: 2, beforeMissing: true },
     policyComparisonScenario: { id: 'S8-6', runId: policyComparisonRun.run_id, owner: true, audited: true, actualResultUI: true, gateWaitMs: 120000, beforeMissing: true },
