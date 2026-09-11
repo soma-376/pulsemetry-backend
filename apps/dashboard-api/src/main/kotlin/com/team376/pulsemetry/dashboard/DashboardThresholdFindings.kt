@@ -24,6 +24,8 @@ internal object DashboardThresholdFindings {
                 "연결 상태 이벤트와 세션별 읽기 도구 사용량입니다. 외부 전송 내용·목적지·승인 여부를 확인하지 않으므로 코드·문서 유출을 탐지하거나 확정하지 않습니다.")
             "S5-7" -> Rule("observed_fast_approvals","임계 시간 미만의 사용자 승인이 관측되었습니다","W3.3",
                 "유효 대기 시간이 있는 사용자 accept 중 threshold_ms 미만 비율입니다. 승인 내용의 검증 여부·실제 반출·PR과의 인과관계를 확인하지 않습니다.")
+            "S6-4" -> Rule("observed_first_token_latency","첫 토큰 응답 지연이 관측되었습니다","W3.1",
+                "선택한 모델의 첫 토큰 지연 p90입니다. 별도 SLA·장애 기준이나 원인 분석 없이 장애·품질 저하를 확정하지 않습니다.")
             "S6-5" -> Rule("observed_api_retries","API 재시도가 관측되었습니다","W3.1",
                 "전체 관측 호출 중 attempt가 1보다 큰 호출의 비율이며 attempt 미수집 호출도 분모에 포함됩니다. 재시도 고갈·스톰 여부를 확정하지 않으며 전체 관측 비용을 재시도 추가 비용으로 해석하지 않습니다.")
             "S7-3" -> Rule("observed_tool_rejections","도구 거절이 관측되었습니다","W3.3",
@@ -39,7 +41,7 @@ internal object DashboardThresholdFindings {
         val findings = mutableListOf<Map<String,Any>>()
         for (frame in result["frames"].toList()) {
             val fields = frame["schema"]["fields"].toList()
-            val value = fields.indexOfFirst { it["name"].asString()==if(scenario=="S4-1") "p50" else "value" }
+            val value = fields.indexOfFirst { it["name"].asString()==when(scenario) { "S4-1" -> "p50"; "S6-4" -> "p90"; else -> "value" } }
             val time = fields.indexOfFirst { it["type"].asString()=="time" }
             if(value<0 || time<0 || fields[value].path("config").path("suppressed").asBoolean(false)) continue
             frame["data"]["values"][value].toList().forEachIndexed { i, cell ->
@@ -47,7 +49,7 @@ internal object DashboardThresholdFindings {
                     "rule_id" to rule.id, "severity" to "info", "widget_id" to rule.widget,
                     "title" to rule.title,
                     "evidence" to (mapOf("date" to Instant.ofEpochMilli(frame["data"]["values"][time][i].asLong()).toString(),
-                        (when(scenario) { "S4-1" -> "p50"; "S2-1","S2-2","S5-2","S7-3","S8-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
+                        (when(scenario) { "S6-4" -> "p90_ms"; "S4-1" -> "p50"; "S2-1","S2-2","S5-2","S7-3","S8-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
                         "limitation" to rule.limitation) + details))
             }
         }

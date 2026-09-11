@@ -2682,6 +2682,56 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun latencyRun(bearer: String, models: List<String> = listOf("test"), audit: String? = "latency model review") =
+        mvc.perform(post("/v1/scenarios/S6-4/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content(mapper.writeValueAsString(mapOf("params" to
+                mapOf("from" to "2026-09-01","to" to "2026-09-02","models" to models)))))
+
+    @Test fun `레이턴시 시나리오는 모델 범위를 모든 지표와 결과 필터에 적용한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(ttftEvent(it,100,"request"),durationEvent(it,9999),llmEvent(it,1,500)) })
+        val bearer = token()
+        latencyRun(bearer,audit=null).andExpect(status().isForbidden)
+        latencyRun(bearer,listOf("x".repeat(201))).andExpect(status().isBadRequest)
+        latencyRun(bearer,(1..101).map { "m$it" }).andExpect(status().isBadRequest)
+        val id = mapper.readTree(latencyRun(bearer).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+        assertThat(run["result"]["applied_filters"]["filters"]["models"].toList().map { it.asString() }).containsExactly("test")
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrder("llm_duration_ms","llm_ttft_ms","api_error_rate","active_users")
+        assertThat(frames["llm_duration_ms"]["frames"].toList().all { f -> f["data"]["values"].toList().drop(1).all { values -> values.toList().all { it.isNull } } }).isTrue()
+        assertThat(frames["active_users"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+        val finding = run["result"]["findings"].single()
+        assertThat(finding["rule_id"].asString()).isEqualTo("observed_first_token_latency")
+        assertThat(finding["evidence"]["p90_ms"].asDouble()).isEqualTo(100.0)
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S6-4'")
+            .query(Long::class.java).single()).isEqualTo(1)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        latencyRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `레이턴시 시나리오는 소집단 미관측 모델과 영 지연을 장애로 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for((rows,models) in listOf(ids.take(4).map { ttftEvent(it,100,"a") } to listOf("test"),
+            ids.map { ttftEvent(it,100,"a") } to listOf("missing"),
+            ids.map { ttftEvent(it,0,"a") } to emptyList(), emptyList<String>() to emptyList())) {
+            seedPoints(rows)
+            val id = mapper.readTree(latencyRun(bearer,models).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun fastApprovalRun(bearer: String, threshold: Int? = null, audit: String? = "fast approval review") =
         mvc.perform(post("/v1/scenarios/S5-7/runs").header("Authorization","Bearer $bearer")
             .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
