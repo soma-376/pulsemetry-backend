@@ -1397,6 +1397,57 @@ class DashboardAuthTest {
             "attrs" to mapOf("type" to type,"agent.name" to "worker","query_source" to "subagent","model" to "test")))))
         return mapper.writeValueAsString(row)
     }
+    private fun namedTokens(id: UUID, model: String, input: Int, at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(tokenEvent(id,input,0,0,0,at)) as tools.jackson.databind.node.ObjectNode
+        val raw = mapper.readTree(row["raw_json"].asString()) as tools.jackson.databind.node.ObjectNode
+        (raw["payload"] as tools.jackson.databind.node.ObjectNode).put("model",model)
+        row.put("raw_json",raw.toString())
+        return row.toString()
+    }
+    @Test fun `토큰 상위 모델과 기타는 비교 집단을 고정하고 원본에서 합산한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(namedTokens(it,"top",10),namedTokens(it,"b",3),namedTokens(it,"c",2),
+            namedTokens(it,"top",1,"2026-08-30T12:00:00Z"),namedTokens(it,"b",20,"2026-08-30T12:00:00Z")) })
+        for(type in listOf("table","scalar","timeseries")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tokens","group_by" to listOf("model"),
+                "frame_type" to type,"interval" to "1d","limit" to 1),mapOf("compare" to "previous_period")))
+                .andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val offset = if(type=="timeseries") 1 else 0
+            val frames = result["frames"].toList().associateBy { it["schema"]["fields"][offset]["labels"]["model"].asString() }
+            assertThat(frames.keys).containsExactlyInAnyOrder("top","__other__")
+            assertThat(frames.getValue("top")["data"]["values"][offset][0].asDouble()).isEqualTo(50.0)
+            assertThat(frames.getValue("__other__")["data"]["values"][offset][0].asDouble()).isEqualTo(25.0)
+            assertThat(frames.getValue("__other__")["data"]["values"][offset+1][0].asDouble()).isEqualTo(100.0)
+            assertThat(frames.getValue("__other__")["schema"]["fields"][offset]["config"]["group_size"].asInt()).isEqualTo(5)
+        }
+    }
+    @Test fun `토큰 종류 상위는 누적 메트릭과 선택하지 않은 종류를 합산하지 않는다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(tokenPoint(it,"input",10),tokenPoint(it,"output",3),tokenPoint(it,"cacheRead",2),
+            tokenPoint(it,"cacheRead",999,true),tokenPoint(it,"cacheCreation",999)) })
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tokens","source" to "metrics",
+            "group_by" to listOf("model","type"),"frame_type" to "table","limit" to 1,
+            "params" to mapOf("types" to listOf("input","output","cache_read")))))
+            .andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+        val frames = result["frames"].toList().associateBy { it["schema"]["fields"][0]["labels"]["type"].asString() }
+        assertThat(frames.keys).containsExactlyInAnyOrder("input","__other__")
+        assertThat(frames.getValue("input")["data"]["values"][0][0].asDouble()).isEqualTo(50.0)
+        assertThat(frames.getValue("__other__")["data"]["values"][0][0].asDouble()).isEqualTo(25.0)
+        assertThat(frames.getValue("__other__")["schema"]["fields"][0]["labels"]["model"].asString()).isEqualTo("__other__")
+    }
+    @Test fun `토큰 상위 선택은 소집단 값을 사용하지 않고 기타도 마스킹한다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { namedTokens(it,"public",1) }+ids.take(4).flatMap { listOf(namedTokens(it,"a",999),namedTokens(it,"b",999)) })
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tokens","group_by" to listOf("model"),
+            "frame_type" to "table","limit" to 1))).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val frames = result["frames"].toList().associateBy { it["schema"]["fields"][0]["labels"]["model"].asString() }
+        assertThat(frames.keys).containsExactlyInAnyOrder("public","__other__")
+        assertThat(frames.getValue("public")["data"]["values"][0][0].asDouble()).isEqualTo(5.0)
+        assertThat(frames.getValue("__other__")["data"]["values"][0][0].isNull).isTrue()
+    }
     @Test fun `토큰은 원천을 섞지 않고 종류를 정규화하여 합산한다`() {
         val ids = installations(5)
         val rows = ids.flatMap { listOf(tokenEvent(it,100,50,200,100),tokenPoint(it,"input",10),
