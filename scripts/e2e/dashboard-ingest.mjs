@@ -407,8 +407,34 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, teamUsageRun.run.run_id);
   await page.getByRole('heading', { name: '팀별 세션 사용량이 관측되었습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-teamusage-scenario.png'), fullPage: true });
+  const vendorRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S8-4', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, tokens: series(run.result?.frames.tokens) };
+  }, scenarioFrom);
+  assert.equal(vendorRun.run.status, 'succeeded');
+  assert.equal(vendorRun.run.progress.step, 2);
+  assert.equal(vendorRun.run.progress.total, 2);
+  assert.deepEqual(Object.keys(vendorRun.run.result.frames).sort(), ['cost', 'tokens']);
+  assert.ok(vendorRun.tokens.points.some(p => p.labels.product === 'claude_code' && p.labels.model === scenarioModel && p.value.value === 1050));
+  assert.equal(vendorRun.run.result.findings.length, 1);
+  assert.equal(vendorRun.run.result.findings[0].evidence.product, 'claude_code');
+  assert.equal(vendorRun.run.result.findings[0].evidence.cost_usd, 15);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, vendorRun.run.run_id);
+  await page.getByRole('heading', { name: '제품별 비용이 관측되었습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-vendor-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    vendorScenario: { id: 'S8-4', runId: vendorRun.run.run_id, actualResultUI: true, product: 'claude_code', costUsd: 15, tokens: 1050 },
     teamUsageScenario: { id: 'S3-4', runId: teamUsageRun.run.run_id, actualResultUI: true, sessions: 5 },
     actionScenario: { id: 'S4-6', runId: actionRun.run.run_id, actualResultUI: true, action: 'other', calls: 5 },
     gateScenario: { id: 'S4-8', runId: gateRun.run_id, actualResultUI: true, p90Ms: 120000, thresholdMin: 1 },

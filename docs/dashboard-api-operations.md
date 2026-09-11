@@ -214,3 +214,5 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 `POST /v1/scenarios/S8-4/runs`는 from/to를 받는다. tokens는 product/model별, cost는 product별 기간 합계 표로 조회하는 2단계이며 P1/W1.4를 반환한다. owner는 조직, admin은 본인 팀 범위로 실행하며 partial 상태를 유지한다.
 
 양수 공개 비용을 observed_product_cost 정보성 안내로 제공한다. 비용만 관측된 모델의 토큰은 null로 유지한다. 소집단·미관측·0·잔여 그룹은 안내에서 제외한다. 제품과 모델 공급자를 동일시하지 않으며 계약·전환 비용·종속 위험·비용 비중을 추정하지 않는다. 요청한 price_basis에 따른 비용 조회 계약을 그대로 적용한다.
+
+실제 수집 E2E의 `verifiedIngest.vendorScenario`, `admin-ingest-vendor-scenario.png`에 claude_code 비용 15달러·모델 토큰 1,050의 실행·화면 증거를 남긴다. 현재 frontend 비용 카드 제목은 ‘팀별 비용’으로 고정되어 있으며 제품 이름은 판정 근거에서 확인한다.
