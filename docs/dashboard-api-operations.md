@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S3-4·S4-1·S4-2·S4-6·S4-8·S7-1·S8-4의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S3-1·S3-4·S4-1·S4-2·S4-6·S4-8·S7-1·S8-4의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -57,7 +57,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 워커는 기본 활성화이며 `pulsemetry.dashboard.worker-enabled=false`로 해당 인스턴스의 claim을 중단할 수 있다. 접수는 계속 가능하므로 유지보수 시 활성 실행 3개 상한에 유의한다. queued는 DB에 남고 running lease가 만료되면 다음 워커 claim 시 실패 처리된다. 재시도는 새 실행 요청으로 한다. 취소는 실행 중인 DB 조회의 즉시 중단을 보장하지 않으며 결과 저장을 차단한다.
 
-현재 S1-1, S1-3, S1-4, S1-5, S3-4, S4-1, S4-2, S4-6, S4-8, S7-1, S8-4를 실행할 수 있다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
+현재 S1-1, S1-3, S1-4, S1-5, S3-1, S3-4, S4-1, S4-2, S4-6, S4-8, S7-1, S8-4를 실행할 수 있다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
 
 E2E 스크립트는 각 외부 명령을 60초로 제한한다. `result.json`은 최신 시도의 상태이며 이전 성공은 `last-success.json`에 보관한다. S1-3 실행·폴링·취소와 실측 판정은 실제 frontend 클라이언트로 검증했다. 2026-09-11 Docker 재시작 후 backend `cd057dc` / frontend `52f7cb1`에서 owner/admin의 결과 화면 판정 표시까지 통과했다. 스크린샷은 `owner-scenario.png`, `admin-scenario.png`다. W1.3·W2.5의 결과 미연결 안내는 남아 있어 모든 위젯의 시각화 완료를 검증한 것은 아니다.
 
@@ -216,3 +216,10 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 양수 공개 비용을 observed_product_cost 정보성 안내로 제공한다. 비용만 관측된 모델의 토큰은 null로 유지한다. 소집단·미관측·0·잔여 그룹은 안내에서 제외한다. 제품과 모델 공급자를 동일시하지 않으며 계약·전환 비용·종속 위험·비용 비중을 추정하지 않는다. 요청한 price_basis에 따른 비용 조회 계약을 그대로 적용한다.
 
 실제 수집 E2E의 `verifiedIngest.vendorScenario`, `admin-ingest-vendor-scenario.png`에 claude_code 비용 15달러·모델 토큰 1,050의 실행·화면 증거를 남긴다. 현재 frontend 비용 카드 제목은 ‘팀별 비용’으로 고정되어 있으며 제품 이름은 판정 근거에서 확인한다.
+
+
+## S3-1 팀별 채택 현황
+
+`POST /v1/scenarios/S3-1/runs`는 from/to를 받는다. active_users·adoption_rate·prompts_per_session·tool_calls·mcp_connections를 팀별 기간 표로 조회하는 5단계이며 P1/W1.6·W1.1을 반환한다. owner는 조직, admin은 본인 팀 범위로 실행한다. 직군 데이터가 없어 팀을 대리 기준으로 사용하는 partial 상태다.
+
+공개 가능한 양수 채택률을 observed_team_adoption 정보성 안내로 제공한다. 직군 격차·팀 우열을 판정하지 않는다. 소집단·미관측·0·잔여 그룹은 안내에서 제외하며 활성 사용자 정의와 모집단은 원래 조회 계약을 유지한다.

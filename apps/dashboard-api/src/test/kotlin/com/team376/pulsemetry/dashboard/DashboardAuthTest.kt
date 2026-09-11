@@ -2682,6 +2682,47 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `채택 시나리오는 팀별 다섯 지표와 관측 채택률을 제공한다`() {
+        val team = costTeams().first()
+        val ids = installations(5,team)
+        seedPoints(ids.flatMap { id -> listOf(promptEvent(id,session="s"),promptEvent(id,session="s"),
+            toolEvent(id,true),mcpEvent(id,"connected")).map { inTeam(it,team) } })
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer,"S3-1","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(5)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(5)
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrder("active_users","adoption_rate","prompts_per_session","tool_calls","mcp_connections")
+        for(metric in listOf("active_users","tool_calls","mcp_connections"))
+            assertThat(frames[metric]["frames"][0]["data"]["values"][0][0].asDouble()).isEqualTo(5.0)
+        val prompts = frames["prompts_per_session"]["frames"][0]
+        val p50 = prompts["schema"]["fields"].toList().indexOfFirst { it["name"].asString()=="p50" }
+        assertThat(prompts["data"]["values"][p50][0].asDouble()).isEqualTo(2.0)
+        val findings = run["result"]["findings"]
+        assertThat(findings.size()).isEqualTo(1)
+        assertThat(findings[0]["evidence"]["team_id"].asString()).isEqualTo(team.toString())
+        assertThat(findings[0]["evidence"]["adoption_rate"].asDouble()).isEqualTo(1.0)
+    }
+
+    @Test fun `채택 시나리오는 소집단과 미관측에서 판정하지 않는다`() {
+        val team = costTeams().first()
+        val ids = installations(5,team)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { inTeam(promptEvent(it),team) },emptyList())) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S3-1","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     @Test fun `벤더 시나리오는 제품 모델 토큰과 제품 비용을 분리한다`() {
         val ids = installations(5)
         fun product(row: String, product: String): String = (mapper.readTree(row) as tools.jackson.databind.node.ObjectNode).put("product",product).toString()
