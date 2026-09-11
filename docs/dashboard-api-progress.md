@@ -830,3 +830,14 @@
 - 양쪽 값이 유효하고 기간이 종료된 경우에만 차이를 observed_period_change info로 제공한다. 기본 value, 프롬프트·승인 대기는 p50 차이다. 동일 값은 판정하지 않고 0 기준값도 차이만 반환한다. 교육·정책 인과 효과나 개선 여부는 판단하지 않는다.
 - S4-4는 owner 또는 현재 팀 범위 admin, S8-6은 owner + 감사 사유가 필요하다. 각 지표 조회와 결과 저장 직전에 현재 권한을 재검증한다.
 - 실행 경로는 31개이며 추가 실행 대상은 11개, 명세상 unavailable 4개는 유지한다. 앞 절의 29/13 대조는 이번 구현 전 기록이다.
+
+
+### S4-4·S8-6 검증 결과
+
+- dashboard 테스트 206건, 실패·오류·skip 0건. DST 현지 자정, 52주 독립 조회, 기준일·종료 경계, 증가·감소·0 기준값·동일 값, 소집단 합동 마스킹, 미관측·미완료 기간, owner 감사와 admin 거부를 검증했다.
+- 구현 커밋 `97637c9`의 JAR와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`로 실제 OTLP 수집 E2E가 통과했다. `unexpectedOrUnimplementedResponses=[]`이며 총 31개 연결 시나리오를 검증한다.
+- `verifiedIngest.trainingComparisonScenario`: S4-4 run `8c5eeb15-b8cc-4ce0-ae34-5479db71d352`, admin 현재 팀 범위, 프롬프트 p50=2·이전 값 null. `admin-ingest-training-comparison.png`에서 표와 결과 패널을 확인했다.
+- `verifiedIngest.policyComparisonScenario`: S8-6 run `409f3caf-cec7-47db-a3b1-5ad0424cc3a2`, owner 감사 기록 1건, 승인 대기 p50=120000ms·이전 값 null. `owner-ingest-policy-comparison.png`에서 표와 결과 패널을 확인했다.
+- 실제 수집 fixture는 당일 관측이므로 이전 기간은 미관측, 이후 기간은 미완료다. 변화 판정이 없는 것을 검증하며 양쪽 양수·증감 판정은 DB 통합 테스트가 담당한다. 정책 거절·훅 및 교육 편집·MCP 원천도 이번 ingest fixture에는 없다.
+- frontend 비교 선택기는 현재 '없음'으로 표시되지만 표에는 `_compare` 필드가 나온다. 비교 기간·observation_complete의 전용 안내와 S4-4 W2.0 강조 연결은 후속 frontend 작업이다. S8-6 시작은 owner 로그인 후 공통 API 클라이언트의 감사 사유 경로이며 일반 실행 폼은 아직 사유를 보내지 않는다.
+- 로그: `/tmp/proj156-comparison-test.log`, `/tmp/proj156-comparison-e2e.log`. 전체 백엔드 빌드 1,008건 기록은 이번 구현 이전 검증이며 이번 변경의 검증 범위는 dashboard 206건과 E2E다.

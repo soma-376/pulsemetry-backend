@@ -291,3 +291,6 @@ owner/admin이 from·to·sprint_dates를 지정한다. 요일·시간대 프롬�
 pivot_date와 window_weeks(기본 4, 1~52)를 받는다. 실행 시간대의 자정으로 전후 동일 주 수의 기간을 고정한다. 이후 기간이 resolved_from/to이며 이전 기간은 applied_filters.compare_from/compare_to다. 각 지표의 기간 전체 표에서 일반 필드는 이후, `_compare`는 이전 값이다. 공개 QRY 비교 파라미터는 변경하지 않았다.
 
 S4-4는 owner/admin의 현재 범위로 active_users·prompts_per_session·edit_acceptance_rate·mcp_connections를 조회한다. S8-6은 owner와 감사 사유를 요구하며 tool_rejections·hook_blocking·gate_wait_ms를 조회한다. 양쪽 소집단 마스킹을 유지하고 한쪽 미관측을 0으로 치환하지 않는다. 기간이 아직 끝나지 않았으면 observation_complete=false이며 변화 판정을 생성하지 않는다. 완료 기간의 유효한 값 차이만 info로 제공하고 인과 효과는 추정하지 않는다.
+
+
+실제 수집 E2E는 `verifiedIngest.trainingComparisonScenario`와 `policyComparisonScenario`에 기록한다. 당일 데이터로 이후 프롬프트 p50=2·승인 대기 p50=120000ms, 이전 값 null과 미완료 기간 판정 생략을 확인한다. 양쪽 기간의 증감·마스킹은 DB 통합 테스트로 검증한다. 현재 frontend 표는 비교 필드를 표시하지만 상단 비교 선택기와 기간 완료 안내는 연결되지 않았고, S4-4 W2.0 전용 강조는 미연결이다. S8-6의 일반 실행 폼 감사 사유 전달도 후속 대상이다.
