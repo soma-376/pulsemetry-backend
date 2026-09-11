@@ -38,6 +38,8 @@ internal object DashboardThresholdFindings {
                 "도구 호출 실패율이며 에이전트 태스크 완료 여부나 성공률을 직접 측정하지 않습니다.")
             "S4-1" -> Rule("multiple_prompts_per_session","세션별 프롬프트 수 중앙값이 1을 초과했습니다","W2.2",
                 "프롬프트 이벤트 수이며 원문 반복이나 재시도를 의미하지 않습니다. 정상적인 다중 대화일 수 있습니다.")
+            "S4-5" -> Rule("observed_command_prompts","명령 프롬프트가 관측되었습니다","W2.8",
+                "전체 프롬프트 중 선택한 command_name의 비율입니다. 명령명 미지정 시 모든 명령을 포함하며 스킬·템플릿 내용이나 생산성 향상을 측정하지 않습니다.")
             "S4-2" -> Rule("sessions_without_output","산출물이 관측되지 않은 세션이 있습니다","W2.2",
                 "조회 기간의 관측 산출만 비교합니다. 세션 종료나 사용자의 대화 포기를 확정하지 않습니다.")
             else -> error("unsupported_scenario")

@@ -2682,6 +2682,60 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun commandPrompt(id: UUID, name: String?): String {
+        val row = mapper.readTree(promptEvent(id)) as tools.jackson.databind.node.ObjectNode
+        val raw = mapper.readTree(row["raw_json"].asString()) as tools.jackson.databind.node.ObjectNode
+        (raw["payload"] as tools.jackson.databind.node.ObjectNode).put("command_name",name)
+        row.put("raw_json",raw.toString())
+        return row.toString()
+    }
+    private fun templateRun(bearer: String, names: List<String>? = null) =
+        mvc.perform(post("/v1/scenarios/S4-5/runs").header("Authorization","Bearer $bearer")
+            .contentType("application/json").content(mapper.writeValueAsString(mapOf("params" to
+                (mapOf("from" to "2026-09-01","to" to "2026-09-02") +
+                    if(names==null) emptyMap() else mapOf("command_names" to names))))))
+
+    @Test fun `템플릿 시나리오는 선택 명령만 분자에 포함하고 전체 프롬프트 분모를 유지한다`() {
+        val ids = installations(5)
+        val quoted = "/review'\\name"
+        seedPoints(ids.flatMap { listOf(commandPrompt(it,quoted),commandPrompt(it,"/plan"),commandPrompt(it,null)) })
+        val bearer = token()
+        templateRun(bearer,listOf("x".repeat(201))).andExpect(status().isBadRequest)
+        templateRun(bearer,(1..101).map { "c$it" }).andExpect(status().isBadRequest)
+        for ((names,expected) in listOf(listOf(quoted) to 1.0/3,null to 2.0/3,emptyList<String>() to 2.0/3)) {
+            val id = mapper.readTree(templateRun(bearer,names).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(2)
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(2)
+            assertThat(run["result"]["frames"].propertyNames()).containsExactlyInAnyOrder("command_prompt_ratio","prompts_per_session")
+            assertThat(run["result"]["findings"].single()["evidence"]["ratio"].asDouble()).isEqualTo(expected)
+            val frame = run["result"]["frames"]["command_prompt_ratio"]["frames"][0]
+            val denominator = frame["schema"]["fields"].toList().indexOfFirst { it["name"].asString()=="denominator" }
+            assertThat(frame["data"]["values"][denominator][0].asDouble()).isEqualTo(15.0)
+        }
+    }
+
+    @Test fun `명령 조회는 잘못된 필터를 거부하고 시나리오는 소집단과 불일치를 제외한다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for (names in listOf("invalid",listOf(1),listOf(""),listOf("x".repeat(201)))) {
+            queryResult(queryBody(mapOf("metric_id" to "command_prompt_ratio","params" to mapOf("command_names" to names))))
+                .andExpect(status().isBadRequest)
+        }
+        for(rows in listOf(ids.take(4).map { commandPrompt(it,"/review") },emptyList(),ids.map { commandPrompt(it,"/Review") })) {
+            seedPoints(rows)
+            val id = mapper.readTree(templateRun(bearer,listOf("/review")).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun governanceRun(bearer: String, audit: String? = "governance coverage review") =
         mvc.perform(post("/v1/scenarios/S7-4/runs").header("Authorization","Bearer $bearer")
             .also { if(audit!=null) it.header("X-Audit-Reason",audit) }

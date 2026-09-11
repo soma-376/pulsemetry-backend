@@ -265,7 +265,17 @@
     ],
     "params_schema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "command_names": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
       "additionalProperties": false
     },
     "sql_template_id": "Q5"

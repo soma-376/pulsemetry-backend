@@ -130,7 +130,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users","tokens","session_last_event","vendor_account_mismatch","cost")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId!="usage_concentration") || (q.metricId=="onboarding_retention" && q.frameType=="timeseries")) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
-                if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
+                if (q.metricId=="command_prompt_ratio") require(q.params.keys.all { it=="command_names" } &&
+                    q.params.values.all { it.isArray && it.size()<=100 && it.all { name -> name.isString && name.asString().length in 1..200 } })
+                else if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
                 else if (q.metricId=="mcp_connections") require(q.params.keys.all { it=="server_scope" } &&
                     q.params.values.all { it.isString && it.asString().length in 1..100 })
                 else if (q.metricId=="rubber_stamp_ratio") require(q.params.keys.all { it=="threshold_ms" } &&
@@ -363,7 +365,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             "tool_failure_rate" -> "countIf($valid AND $success=false)"
             "automation_ratio" -> "sumIf($pointValue,$valid AND $attrType='cli')"
             "integration_depth" -> "sumIf($pointValue,$valid AND $name IN ('claude_code.commit.count','claude_code.pull_request.count'))"
-            "command_prompt_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','command_name')!='')"
+            "command_prompt_ratio" -> "countIf($valid AND JSONExtractString(raw_json,'payload','command_name')!='' AND (empty({command_names:Array(String)}) OR has({command_names:Array(String)},JSONExtractString(raw_json,'payload','command_name'))))"
             else -> "sumIf($pointValue,$valid)"
         }
         val denominator = when (q.metricId) {
@@ -396,6 +398,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             ORDER BY ${if (groupNames.isEmpty()) "" else groupNames.joinToString(",")+","}bucket"""
         val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone, "metric" to pointMetrics[q.metricId].orEmpty(),
             "threshold" to (q.params["threshold_ms"]?.asInt() ?: 2000).toString(),
+            "command_names" to array(q.params["command_names"]?.toList()?.map { it.asString() }?.toSet().orEmpty()),
             "server_scope" to (q.params["server_scope"]?.asString() ?: ""),
             "success" to if (q.params["success"]?.asBoolean()==true) "1" else "0",
             "retained" to mapper.writeValueAsString(retained.orEmpty()).replace("\\", "\\\\"))
