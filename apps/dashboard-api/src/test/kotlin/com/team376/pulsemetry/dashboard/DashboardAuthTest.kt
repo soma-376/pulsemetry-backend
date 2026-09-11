@@ -2682,6 +2682,50 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun sprintRun(bearer: String, dates: List<String>, zone: String = "Asia/Seoul") =
+        mvc.perform(post("/v1/scenarios/S2-3/runs").header("Authorization","Bearer $bearer")
+            .contentType("application/json").content(mapper.writeValueAsString(mapOf("tz" to zone,"params" to
+                mapOf("from" to "2026-09-01","to" to "2026-09-03","sprint_dates" to dates)))))
+
+    @Test fun `스프린트 시나리오는 현지 날짜와 세션을 연결하고 시간대별 프롬프트를 제공한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(point(it,1.0,at="2026-09-01T16:00:00Z"),promptEvent(it,at="2026-09-01T16:00:00Z")) })
+        val bearer = token()
+        sprintRun(bearer,listOf("2026-02-30")).andExpect(status().isBadRequest)
+        for ((zone,date) in listOf("Asia/Seoul" to "2026-09-02","UTC" to "2026-09-01")) {
+            val id = mapper.readTree(sprintRun(bearer,listOf(date),zone).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+            val frames = run["result"]["frames"]
+            assertThat(frames.propertyNames()).containsExactlyInAnyOrder("usage_heatmap","sessions","llm_duration_ms","rate_limit_events")
+            val finding = run["result"]["findings"].single()
+            assertThat(finding["evidence"]["sprint_date"].asString()).isEqualTo(date)
+            assertThat(finding["evidence"]["tz"].asString()).isEqualTo(zone)
+            assertThat(finding["evidence"]["sessions"].asDouble()).isEqualTo(5.0)
+            assertThat(frames["usage_heatmap"]["frames"].size()).isPositive()
+        }
+    }
+
+    @Test fun `스프린트 시나리오는 다른 날짜 소집단과 빈 선택을 추정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for ((rows,dates) in listOf(ids.map { point(it,1.0) } to listOf("2026-09-02"),
+            ids.take(4).map { point(it,1.0) } to listOf("2026-09-01"),
+            ids.map { point(it,1.0) } to emptyList(),emptyList<String>() to listOf("2026-09-01"))) {
+            seedPoints(rows)
+            val id = mapper.readTree(sprintRun(bearer,dates).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun qualityRun(bearer: String, models: List<String> = listOf("claude-test"), audit: String? = "quality feedback review") =
         mvc.perform(post("/v1/scenarios/S6-1/runs").header("Authorization","Bearer $bearer")
             .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
