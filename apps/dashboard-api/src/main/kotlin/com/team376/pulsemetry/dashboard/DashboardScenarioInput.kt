@@ -30,6 +30,7 @@ class DashboardScenarioInputs(private val scenarios: DashboardScenarioCatalog, p
         if (user.role !in setOf("owner", "admin")) throw UserAuthException("forbidden", 403)
         if(scenarioId in setOf("S6-1","S6-4")) require(parsed.params.path("models").size()<=100 &&
             parsed.params.path("models").all { it.asString().length<=200 })
+        if(scenarioId=="S8-3") require(listOf("model_a","model_b").all { parsed.params[it].asString().length<=200 })
         if(scenarioId=="S4-5") require(parsed.params.path("command_names").size()<=100 &&
             parsed.params.path("command_names").all { it.asString().length<=200 })
         val requested = parsed.params.path("team_ids").toList().map { UUID.fromString(it.asString()) }.toSet()

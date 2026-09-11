@@ -2836,6 +2836,73 @@ class DashboardAuthTest {
         }
     }
 
+    private fun modelComparisonRun(bearer: String, a: String = "model-a", b: String = "model-b", audit: String? = "model comparison review") =
+        mvc.perform(post("/v1/scenarios/S8-3/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content(mapper.writeValueAsString(mapOf("params" to mapOf(
+                "from" to "2026-09-01","to" to "2026-09-02","model_a" to a,"model_b" to b)))))
+
+    private fun comparisonModelEvent(id: UUID, model: String, cost: Int, duration: Int, status: Int): String {
+        val row = mapper.readTree(llmEvent(id,1,status,model)) as tools.jackson.databind.node.ObjectNode
+        val raw = mapper.readTree(row["raw_json"].asString())
+        (raw["payload"] as tools.jackson.databind.node.ObjectNode).put("cost_usd",cost).put("duration_ms",duration)
+            .put("error_type",if(status>=400) "server_error" else "")
+        row.put("raw_json",raw.toString())
+        return row.toString()
+    }
+
+    @Test fun `모델 비교는 동일 기간에 두 모델을 독립 집계하고 모델 라벨을 보존한다`() {
+        val ids = installations(5)
+        val a = "model-a'quoted"
+        seedPoints(ids.flatMap { listOf(comparisonModelEvent(it,a,1,100,200),
+            comparisonModelEvent(it,"model-b",2,200,200),comparisonModelEvent(it,"model-b",0,0,500),comparisonModelEvent(it,"excluded",99,9999,500),promptEvent(it)) })
+        val bearer = token()
+        modelComparisonRun(bearer,audit=null).andExpect(status().isForbidden)
+        modelComparisonRun(bearer,"same","same").andExpect(status().isBadRequest)
+        modelComparisonRun(bearer,"x".repeat(201)).andExpect(status().isBadRequest)
+        val id = mapper.readTree(modelComparisonRun(bearer,a).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+        assertThat(run["result"]["applied_filters"]["filters"]["models"].toList().map { it.asString() }).containsExactly(a,"model-b")
+        val frames = run["result"]["frames"]["cost"]["frames"].toList()
+        assertThat(frames.map { it["schema"]["fields"][0]["labels"]["model"].asString() }).containsExactly(a,"model-b")
+        assertThat(frames.map { it["data"]["values"][0][0].asDouble() }).containsExactly(5.0,10.0)
+        val findings = run["result"]["findings"].toList().associateBy { it["evidence"]["metric_id"].asString() }
+        assertThat(findings.keys).containsExactlyInAnyOrder("cost","llm_duration_ms","api_error_rate")
+        assertThat(findings.getValue("cost")["evidence"]["delta_b_minus_a"].asDouble()).isEqualTo(5.0)
+        assertThat(findings.getValue("llm_duration_ms")["evidence"]["delta_b_minus_a"].asDouble()).isEqualTo(100.0)
+        assertThat(findings.getValue("api_error_rate")["evidence"]["delta_b_minus_a"].asDouble()).isEqualTo(0.5)
+        assertThat(run["result"]["frames"]["prompts_per_session"]["frames"].size()).isZero()
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        modelComparisonRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `모델 비교는 한쪽 소집단 미관측 동일값을 추정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for (rows in listOf(ids.map { comparisonModelEvent(it,"model-a",1,100,200) } +
+            ids.take(4).map { comparisonModelEvent(it,"model-b",2,200,500) },
+            ids.map { comparisonModelEvent(it,"model-a",1,100,200) },
+            ids.flatMap { listOf(comparisonModelEvent(it,"model-a",1,100,200),comparisonModelEvent(it,"model-b",1,100,200)) },
+            emptyList<String>())) {
+            seedPoints(rows)
+            val id = mapper.readTree(modelComparisonRun(bearer).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+            if(rows.size==9) {
+                val masked = run["result"]["frames"]["cost"]["frames"].toList().single { it["schema"]["fields"][0]["labels"]["model"].asString()=="model-b" }
+                assertThat(masked["data"]["values"][0][0].isNull).isTrue()
+            }
+        }
+    }
+
     private fun sprintRun(bearer: String, dates: List<String>, zone: String = "Asia/Seoul") =
         mvc.perform(post("/v1/scenarios/S2-3/runs").header("Authorization","Bearer $bearer")
             .contentType("application/json").content(mapper.writeValueAsString(mapOf("tz" to zone,"params" to
