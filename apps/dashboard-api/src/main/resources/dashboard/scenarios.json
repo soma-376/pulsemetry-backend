@@ -1842,7 +1842,14 @@
         ],
         "additionalProperties": false
       },
-      "findings_rules": [],
+      "findings_rules": [
+        {
+          "rule_id": "high_tool_failure_rate",
+          "severity": "info",
+          "when": "tool_failure_rate.value > failure_threshold",
+          "message": "도구 실패율이 임계값을 초과했습니다. 태스크 완료 여부는 직접 측정하지 않습니다."
+        }
+      ],
       "actions": []
     },
     {

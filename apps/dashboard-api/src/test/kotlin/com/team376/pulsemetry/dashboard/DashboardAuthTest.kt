@@ -2682,6 +2682,64 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `에이전트 시나리오는 실패율 임계값과 네 지표를 실행한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(toolEvent(it,true),toolEvent(it,false),toolEvent(it,null),costEvent(it,3.0)) })
+        val bearer = token()
+        for (threshold in listOf(0.1,0.5,0.9)) {
+            val id = mapper.readTree(startRun(bearer,"S7-1",
+                """{"from":"2026-09-01","to":"2026-09-02","failure_threshold":$threshold}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+            val result = run["result"]
+            assertThat(result["frames"].propertyNames()).containsExactlyInAnyOrder("tool_failure_rate","tool_calls","subagent_activity","cost")
+            assertThat(result["findings"].size()).isEqualTo(if(threshold==0.1) 1 else 0)
+            if(threshold==0.1) {
+                assertThat(result["findings"][0]["rule_id"].asString()).isEqualTo("high_tool_failure_rate")
+                assertThat(result["findings"][0]["evidence"]["ratio"].asDouble()).isEqualTo(.5)
+            }
+            assertThat(result["frames"]["tool_calls"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(15.0)
+            assertThat(result["frames"]["cost"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(15.0)
+        }
+        startRun(bearer,"S7-1","""{"failure_threshold":1.01}""").andExpect(status().isBadRequest)
+    }
+
+    @Test fun `에이전트 시나리오는 소집단과 성공 여부 미관측을 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { toolEvent(it,false) },ids.map { toolEvent(it,null) })) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S7-1","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["params"]["failure_threshold"].asDouble()).isEqualTo(.05)
+            assertThat(run["result"]["findings"].size()).isZero()
+            assertThat(run["result"]["frames"]["tool_failure_rate"]["frames"][0]["data"]["values"][1][0].isNull).isTrue()
+        }
+    }
+
+    @Test fun `에이전트 시나리오도 큐 대기 중 관리자 팀 권한 회수를 반영한다`() {
+        val team = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,'실행 팀')").param("id",team).param("tenant",tenant).update()
+        jdbc.sql("INSERT INTO enrollment.team_memberships(team_id,member_id) VALUES (:team,:member)").param("team",team).param("member",member).update()
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer,"S7-1","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        jdbc.sql("UPDATE enrollment.team_memberships SET left_at=now() WHERE member_id=:id").param("id",member).update()
+        scenarioRuns.runOne()
+        val row = runStore.get(tenant,UUID.fromString(id))!!
+        assertThat(row.status).isEqualTo("failed")
+        assertThat(row.result).isNull()
+        mvc.perform(get("/v1/scenario-runs/$id").header("Authorization","Bearer $bearer")).andExpect(status().isNotFound)
+    }
+
     @Test fun `컨텍스트 시나리오는 세 지표와 임계값 초과 판정을 실행한다`() {
         val ids = installations(5)
         seedPoints(ids.flatMap { listOf(tokenEvent(it,200,10,0,0),compactionEvent(it,100,25)) })

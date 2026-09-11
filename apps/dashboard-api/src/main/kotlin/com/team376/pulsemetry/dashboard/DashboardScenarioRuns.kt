@@ -35,7 +35,7 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
         val scenario = catalog.detail(id)
         if (scenario["availability"].asString()=="unavailable") throw UserAuthException("scenario_unavailable",409)
         // 실행 계획이 없는 시나리오를 일반 지표 조회만으로 성공 처리하지 않는다.
-        if (id !in setOf("S1-3","S1-5")) throw UserAuthException("scenario_not_implemented",501)
+        if (id !in setOf("S1-3","S1-5","S7-1")) throw UserAuthException("scenario_not_implemented",501)
         val zone = jdbc.sql("SELECT timezone FROM enrollment.tenants WHERE id=:tenant").param("tenant",user.tenantId)
             .query(String::class.java).single()
         val input = inputs.prepare(id,body,user,zone,clock.instant(),audit)
@@ -111,7 +111,7 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
     fun runOne() {
         val row = runs.claim() ?: return
         try {
-            if (row.scenario=="S1-5") { runContext(row); return }
+            if (row.scenario in setOf("S1-5","S7-1")) { runThresholdScenario(row); return }
             if (row.scenario!="S1-3") throw UserAuthException("scenario_not_implemented",501)
             val execution = mapper.readTree(row.execution)
             val params = mapper.readTree(row.params)
@@ -159,13 +159,15 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
         }
     }
 
-    /** 컨텍스트 첨부 자체는 관측하지 못한다. 입력/출력 비율과 압축 지표만 근거로 제공한다. */
-    private fun runContext(row: DashboardRunRow) {
+    /** 임계값 기반 시나리오는 명시한 지표만 순서대로 읽고 관측 한계를 판정에 포함한다. */
+    private fun runThresholdScenario(row: DashboardRunRow) {
         val execution = mapper.readTree(row.execution)
         val teams = execution["team_ids"].toList().map { UUID.fromString(it.asString()) }.toSet()
         val scope = if(execution["organization_scope"].asBoolean()) emptySet() else teams
         val frames = linkedMapOf<String,JsonNode>()
-        for ((index, metric) in listOf("input_output_ratio","compactions","compaction_reduction").withIndex()) {
+        val definition = catalog.detail(row.scenario)
+        val metricIds = definition["metric_ids"].toList().map { it.asString() }
+        for ((index, metric) in metricIds.withIndex()) {
             if (!runs.progress(row,index)) return
             val request = DashboardQueryRequest(row.from.toString(),row.to.toString(),execution["tz"].asString(),
                 filters=DashboardQueryFilters(teamIds=scope),priceBasis=execution["price_basis"].asString(),
@@ -174,11 +176,13 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
             if(result["status"].asInt()!=200) throw UserAuthException(result.path("error").path("error").asString("query_failed"),result["status"].asInt())
             frames[metric] = result
         }
-        val findings = DashboardContextFindings.evaluate(frames.getValue("input_output_ratio"),
-            mapper.readTree(row.params)["io_ratio_threshold"].asDouble())
+        val thresholdKey = if(row.scenario=="S1-5") "io_ratio_threshold" else "failure_threshold"
+        val findings = DashboardThresholdFindings.evaluate(row.scenario,frames.getValue(metricIds.first()),
+            mapper.readTree(row.params)[thresholdKey].asDouble())
         actor(row)
-        if (!runs.progress(row,3)) return
-        runs.finish(row,mapper.writeValueAsString(mapOf("target_page" to "P2","highlight_widgets" to listOf("W2.6","W2.9"),
+        if (!runs.progress(row,metricIds.size)) return
+        runs.finish(row,mapper.writeValueAsString(mapOf("target_page" to definition["target_page"].asString(),
+            "highlight_widgets" to definition["highlight_widgets"].toList().map { it.asString() },
             "applied_filters" to mapOf("from" to row.from.toString(),"to" to row.to.toString(),"tz" to execution["tz"].asString(),
                 "price_basis" to execution["price_basis"].asString(),"filters" to mapOf("team_ids" to scope)),
             "frames" to frames,"findings" to findings)),null)
