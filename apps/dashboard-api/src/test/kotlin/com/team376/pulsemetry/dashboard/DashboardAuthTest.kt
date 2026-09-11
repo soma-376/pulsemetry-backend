@@ -208,6 +208,30 @@ class DashboardAuthTest {
         "team_ids_as_of" to listOfNotNull(team?.toString()),"enrichment_json" to "{}",
         "raw_json" to mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.session.count", "value" to value,
             "aggregation_temporality" to if (cumulative) 2 else 1,"attrs" to mapOf("start_type" to "fresh"))))))
+    @Test fun `세션 상위 그룹 재집계는 누적값을 제외하고 비교 기간과 빈 버킷을 유지한다`() {
+        val ids = installations(5)
+        fun session(id: UUID, kind: String, value: Double, cumulative: Boolean = false, at: String = "2026-09-01T12:00:00Z"): String {
+            val row = mapper.readTree(point(id,value,at,cumulative)) as tools.jackson.databind.node.ObjectNode
+            val raw = mapper.readTree(row["raw_json"].asString())
+            (raw["point"]["attrs"] as tools.jackson.databind.node.ObjectNode).put("start_type",kind)
+            row.put("raw_json",raw.toString())
+            return row.toString()
+        }
+        seedPoints(ids.flatMap { id -> listOf(session(id,"fresh",10.0),session(id,"resume",3.0),session(id,"fork",2.0),
+            session(id,"resume",9999.0,true),session(id,"fresh",1.0,at="2026-08-30T12:00:00Z"),
+            session(id,"resume",20.0,at="2026-08-30T12:00:00Z")) })
+        val result = mapper.readTree(queryResult(queryBody(mapOf("group_by" to listOf("start_type"),"limit" to 1),
+            mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val frames = result["frames"].toList().associateBy { it["schema"]["fields"][1]["labels"]["start_type"].asString() }
+        assertThat(frames.keys).containsExactlyInAnyOrder("fresh","__other__")
+        val other = frames.getValue("__other__")
+        assertThat(other["data"]["values"][1][0].asDouble()).isEqualTo(25.0)
+        assertThat(other["data"]["values"][2][0].asDouble()).isEqualTo(100.0)
+        assertThat(other["data"]["values"][1][1].isNull).isTrue()
+        assertThat(other["schema"]["fields"][1]["config"]["group_size"].asLong()).isEqualTo(5)
+        assertThat(frames.getValue("fresh")["data"]["values"][1][0].asDouble()).isEqualTo(50.0)
+    }
     private fun seedPoints(rows: List<String>) {
         val writer = com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient("http://${clickhouse.host}:${clickhouse.getMappedPort(8123)}")
         com.team376.pulsemetry.persistence.telemetry.ClickHouseSchemaMigrator(writer).apply()
@@ -504,6 +528,23 @@ class DashboardAuthTest {
                 "tool_name" to "Read", "tool_kind" to "function", "action" to action,"error_type" to "io_error","mcp_server" to "files"))))
         return mapper.writeValueAsString(row)
     }
+    @Test fun `도구 상위 조합은 필터와 특수문자 키를 보존하고 나머지 인원을 중복 제거한다`() {
+        val ids = installations(5)
+        val selected = "read'한글\""
+        seedPoints(ids.flatMap { id -> listOf(toolEvent(id,true,selected),toolEvent(id,true,selected),
+            toolEvent(id,true,"write"),toolEvent(id,true,"search"))+(1..5).map { toolEvent(id,false,"search") } })
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tool_calls","frame_type" to "table",
+            "group_by" to listOf("tool_name","action"),"limit" to 1,"params" to mapOf("success" to true))))
+            .andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val frames = result["frames"].toList().associateBy { it["schema"]["fields"][0]["labels"]["action"].asString() }
+        assertThat(frames.keys).containsExactlyInAnyOrder(selected,"__other__")
+        assertThat(frames.getValue(selected)["data"]["values"][0][0].asDouble()).isEqualTo(10.0)
+        val other = frames.getValue("__other__")
+        assertThat(other["data"]["values"][0][0].asDouble()).isEqualTo(10.0)
+        assertThat(other["schema"]["fields"][0]["labels"]["tool_name"].asString()).isEqualTo("__other__")
+        assertThat(other["schema"]["fields"][0]["config"]["group_size"].asLong()).isEqualTo(5)
+    }
     @Test fun `도구 호출은 성공 미판정을 실패로 세지 않고 boolean 필터와 payload 차원을 적용한다`() {
         val ids = installations(5)
         val rows = ids.flatMap { listOf(toolEvent(it,true),toolEvent(it,false),toolEvent(it,null)) }
@@ -697,8 +738,12 @@ class DashboardAuthTest {
         assertThat(labels.map { it["weekday"].asString() }.toSet()).hasSize(7)
         assertThat(labels.map { it["hour"].asString() }.toSet()).hasSize(24)
         val limited = mapper.readTree(queryResult(queryBody(query+mapOf("limit" to 100),range))
-            .andReturn().response.contentAsString)["results"]["A"]["status"]
-        assertThat(limited.asInt()).isEqualTo(422)
+            .andReturn().response.contentAsString)["results"]["A"]
+        assertThat(limited["status"].asInt()).isEqualTo(200)
+        assertThat(limited["frames"].size()).isEqualTo(101)
+        val other = limited["frames"].single { it["schema"]["fields"][0]["labels"]["hour"].asString()=="__other__" }
+        assertThat(other["data"]["values"][0][0].asDouble()).isEqualTo(340.0)
+        assertThat(other["schema"]["fields"][0]["config"]["group_size"].asLong()).isEqualTo(5)
         queryResult(queryBody(query+mapOf("limit" to 169),range)).andExpect(status().isBadRequest)
         seedPoints(rows.drop(1))
         val masked = mapper.readTree(queryResult(queryBody(query,range)).andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
