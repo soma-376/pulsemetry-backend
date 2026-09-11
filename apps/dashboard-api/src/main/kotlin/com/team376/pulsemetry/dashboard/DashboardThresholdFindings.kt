@@ -6,7 +6,7 @@ import java.time.Instant
 /** 명시한 시나리오의 운영 규칙: 임계값 초과를 검토 신호로 제공한다. 판정식 문자열은 실행하지 않는다. */
 internal object DashboardThresholdFindings {
     private data class Rule(val id: String, val title: String, val widget: String, val limitation: String)
-    fun evaluate(scenario: String, result: JsonNode, threshold: Double): List<Map<String,Any>> {
+    fun evaluate(scenario: String, result: JsonNode, threshold: Double, details: Map<String,Any> = emptyMap()): List<Map<String,Any>> {
         val rule = when(scenario) {
             "S1-4" -> Rule("no_cache_reads","유효 토큰 요청에서 캐시 읽기가 관측되지 않았습니다","W2.6",
                 "프롬프트 원문 유사도와 반복 여부는 측정하지 않습니다. 캐싱 가능성이나 절감 효과를 보장하지 않습니다.")
@@ -22,6 +22,8 @@ internal object DashboardThresholdFindings {
                 "query_source 메트릭의 비용 비율입니다. 스킬·플러그인 사용률이나 고급 기능 숙련도를 측정하지 않습니다.")
             "S5-2" -> Rule("observed_mcp_connections","MCP 연결 이벤트가 관측되었습니다","W3.2",
                 "연결 상태 이벤트와 세션별 읽기 도구 사용량입니다. 외부 전송 내용·목적지·승인 여부를 확인하지 않으므로 코드·문서 유출을 탐지하거나 확정하지 않습니다.")
+            "S5-7" -> Rule("observed_fast_approvals","임계 시간 미만의 사용자 승인이 관측되었습니다","W3.3",
+                "유효 대기 시간이 있는 사용자 accept 중 threshold_ms 미만 비율입니다. 승인 내용의 검증 여부·실제 반출·PR과의 인과관계를 확인하지 않습니다.")
             "S6-5" -> Rule("observed_api_retries","API 재시도가 관측되었습니다","W3.1",
                 "전체 관측 호출 중 attempt가 1보다 큰 호출의 비율이며 attempt 미수집 호출도 분모에 포함됩니다. 재시도 고갈·스톰 여부를 확정하지 않으며 전체 관측 비용을 재시도 추가 비용으로 해석하지 않습니다.")
             "S7-3" -> Rule("observed_tool_rejections","도구 거절이 관측되었습니다","W3.3",
@@ -44,9 +46,9 @@ internal object DashboardThresholdFindings {
                 if(cell.isNumber && cell.asDouble().isFinite() && (if(scenario=="S1-4") cell.asDouble()==0.0 else cell.asDouble()>threshold)) findings += mapOf(
                     "rule_id" to rule.id, "severity" to "info", "widget_id" to rule.widget,
                     "title" to rule.title,
-                    "evidence" to mapOf("date" to Instant.ofEpochMilli(frame["data"]["values"][time][i].asLong()).toString(),
+                    "evidence" to (mapOf("date" to Instant.ofEpochMilli(frame["data"]["values"][time][i].asLong()).toString(),
                         (when(scenario) { "S4-1" -> "p50"; "S2-1","S2-2","S5-2","S7-3","S8-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
-                        "limitation" to rule.limitation))
+                        "limitation" to rule.limitation) + details))
             }
         }
         return findings

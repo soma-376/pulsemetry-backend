@@ -2682,6 +2682,55 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun fastApprovalRun(bearer: String, threshold: Int? = null, audit: String? = "fast approval review") =
+        mvc.perform(post("/v1/scenarios/S5-7/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content(mapper.writeValueAsString(mapOf("params" to
+                (mapOf("from" to "2026-09-01","to" to "2026-09-02") +
+                    if(threshold==null) emptyMap() else mapOf("threshold_ms" to threshold))))))
+
+    @Test fun `즉시 승인 시나리오는 지정 임계값과 엄격 경계를 적용하고 감사한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(gateEvent(it,1999),gateEvent(it,2000),gateEvent(it,3000),
+            gateEvent(it,null),gateEvent(it,0,"reject"),gateEvent(it,0,by="config")) })
+        val bearer = token()
+        fastApprovalRun(bearer,audit=null).andExpect(status().isForbidden)
+        for (invalid in listOf(0,60001)) fastApprovalRun(bearer,invalid).andExpect(status().isBadRequest)
+        for ((threshold,expected) in listOf(null to 1.0/3,2001 to 2.0/3)) {
+            val id = mapper.readTree(fastApprovalRun(bearer,threshold).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+            assertThat(run["result"]["frames"].propertyNames()).containsExactlyInAnyOrder("rubber_stamp_ratio","auto_approval_ratio","pull_requests")
+            val finding = run["result"]["findings"].single()
+            assertThat(finding["rule_id"].asString()).isEqualTo("observed_fast_approvals")
+            assertThat(finding["evidence"]["ratio"].asDouble()).isCloseTo(expected,org.assertj.core.data.Offset.offset(0.000001))
+            assertThat(finding["evidence"]["threshold_ms"].asInt()).isEqualTo(threshold ?: 2000)
+        }
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S5-7'")
+            .query(Long::class.java).single()).isEqualTo(2)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        fastApprovalRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `즉시 승인 시나리오는 소집단 결측과 임계값 이상 승인에서 판정을 만들지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { gateEvent(it,0) },emptyList(),ids.map { gateEvent(it,2000) },
+            ids.map { gateEvent(it,0,"reject") })) {
+            seedPoints(rows)
+            val id = mapper.readTree(fastApprovalRun(bearer).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun externalAccessRun(bearer: String, audit: String? = "external access review") =
         mvc.perform(post("/v1/scenarios/S5-2/runs").header("Authorization","Bearer $bearer")
             .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
