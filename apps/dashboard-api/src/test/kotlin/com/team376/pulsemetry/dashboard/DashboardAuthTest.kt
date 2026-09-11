@@ -2682,6 +2682,40 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `대기 시나리오는 분 임계값과 p90을 비교하고 경계값을 제외한다`() {
+        val ids = installations(5)
+        val bearer = token()
+        seedPoints(ids.flatMap { listOf(gateEvent(it,120000),promptEvent(it)) })
+        val id = mapper.readTree(startRun(bearer,"S4-8","""{"from":"2026-09-01","to":"2026-09-02","wait_thresholds_min":[3,1,2]}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        assertThat(run["result"]["frames"].propertyNames()).containsExactlyInAnyOrder("gate_wait_ms","tool_rejections","usage_heatmap")
+        val findings = run["result"]["findings"]
+        assertThat(findings.size()).isEqualTo(1)
+        assertThat(findings[0]["evidence"]["p90_ms"].asDouble()).isEqualTo(120000.0)
+        assertThat(findings[0]["evidence"]["threshold_min"].asDouble()).isEqualTo(1.0)
+        startRun(bearer,"S4-8","""{"wait_thresholds_min":[-1]}""").andExpect(status().isBadRequest)
+    }
+
+    @Test fun `대기 시나리오는 소집단 미관측과 빈 임계값에서 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for((rows, thresholds) in listOf(ids.take(4).map { gateEvent(it,120000) } to "[0]",
+            emptyList<String>() to "[0]", ids.map { gateEvent(it,120000) } to "[]")) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S4-8","""{"from":"2026-09-01","to":"2026-09-02","wait_thresholds_min":$thresholds}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     @Test fun `프롬프트 시나리오는 중앙값 초과와 토큰을 함께 제공한다`() {
         val ids = installations(5)
         val bearer = token()
