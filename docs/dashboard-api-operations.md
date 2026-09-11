@@ -321,3 +321,6 @@ S8-3 수집 E2E는 `verifiedIngest.modelComparisonScenario`에 기록한다. 모
 owner가 from/to와 감사 사유로 실행한다. 429 이벤트·일별 벤더 불일치·MCP 연결·활성 사용자를 반환한다. 불일치는 설치의 일별 마지막 비어 있지 않은 로그/스팬 계정과 현재 등록 계정의 대소문자 무시 비교이며 주소는 응답하지 않는다. 양수 불일치 설치 수만 info로 제공하며 비인가 사용을 확정하지 않는다.
 
 검증한 사유는 S5-4의 내부 execution.audit_reason에 저장되며 시작 감사와 워커의 vendor_account_mismatch query 감사에 동일하게 기록된다. 퍼센트·더하기 문자를 보존하고 사유 누락 또는 권한 변경은 실패 처리한다. 실행 응답에는 사유를 노출하지 않는다.
+
+
+S5-4 수집 E2E 증거는 `verifiedIngest.shadowScenario`와 `owner-ingest-shadow-scenario.png`다. 활성 사용자 5명, 벤더 이메일 미관측 및 시작·조회 각각의 감사를 확인한다. 양수 불일치는 DB 통합 테스트로 검증하며 미관측을 정상 사용으로 간주하지 않는다. 일반 frontend 실행 폼의 감사 사유 전달은 후속 작업이다.

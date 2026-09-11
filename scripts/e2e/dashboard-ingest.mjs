@@ -694,6 +694,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let policyComparisonRun;
   let purposeRun;
   let modelComparisonRun;
+  let shadowRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -1039,11 +1040,40 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, modelComparisonRun.run_id);
     await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(modelComparisonRun.run_id.slice(0, 8), { exact: false }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-model-comparison.png'), fullPage: true });
+    shadowRun = await ownerPage.evaluate(async from => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S5-4/runs', { method: 'POST', body: JSON.stringify({
+        params: { from, to: new Date().toISOString() },
+      }) }, '섀도우 계정 관측 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, scenarioFrom);
+    assert.equal(shadowRun.status, 'succeeded');
+    assert.equal(shadowRun.progress.step, 4);
+    assert.equal(shadowRun.progress.total, 4);
+    assert.equal(shadowRun.result.findings.length, 0);
+    assert.equal(shadowRun.result.frames.vendor_account_mismatch.frames.length, 0);
+    assert.ok(shadowRun.result.frames.active_users.frames.some(f => f.data.values[1].includes(5)));
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S5-4'"), '1');
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='query' AND target='vendor_account_mismatch' AND reason='섀도우 계정 관측 E2E 점검'"), '1');
+    assert.ok(!JSON.stringify(shadowRun).includes('audit_reason'));
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, shadowRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(shadowRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-shadow-scenario.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    shadowScenario: { id: 'S5-4', runId: shadowRun.run_id, owner: true, audited: true, queryAudited: true, actualResultUI: true, vendorEmailMissing: true, activeUsers: 5 },
     modelComparisonScenario: { id: 'S8-3', runId: modelComparisonRun.run_id, owner: true, audited: true, actualResultUI: true, modelACost: 15, modelBCostMissing: true },
     purposeScenario: { id: 'S5-6', runId: purposeRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionEventsMissing: true },
     trainingComparisonScenario: { id: 'S4-4', runId: trainingRun.run_id, admin: true, actualResultUI: true, promptsPerSession: 2, beforeMissing: true },

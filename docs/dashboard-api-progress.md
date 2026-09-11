@@ -889,3 +889,13 @@
 - 저장 사유가 누락되면 감사 검사에서 실패한다. 실행 응답·판정에는 저장 사유와 벤더·등록 이메일을 포함하지 않는다. QRY의 owner·감사 경계를 우회하지 않는다.
 - 일별·설치별 마지막 비어 있지 않은 로그/스팬 이메일과 현재 등록 이메일을 대소문자 구분 없이 비교한다. 양수 불일치 설치 수를 observed_vendor_mismatch info로 제공한다. 소집단·일치·미관측은 불일치 판정하지 않는다.
 - 실제 비인가 사용·개인 계정·섀도우 AI 여부를 확정하지 않는다. 카탈로그 partial 상태는 유지한다. 실행 경로 34개, 추가 실행 대상 8개, 명세상 unavailable 4개다.
+
+
+### S5-4 검증 결과
+
+- dashboard 테스트 215건, 실패·오류·skip 0건. 등록 이메일의 대소문자 무시와 마지막 값 선택, 불일치 2건, 주소·사유 응답 비노출, 일치·미관측·소집단 판정 제외를 검증했다.
+- 감사 사유의 퍼센트·더하기·%2F 문자가 시작/조회 로그에서 정확히 보존된다. 내부 사유 누락 시 audit_reason_required로 실패하고, 큐 등록 후 owner→admin 변경 시 조회 감사 없이 실패한다.
+- 구현 `cd1de45`와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`의 실제 수집 E2E 통과. `unexpectedOrUnimplementedResponses=[]`, 연결 시나리오 34개다.
+- `verifiedIngest.shadowScenario`: run `c5502d47-f757-4383-a2c5-de3cf5821111`, owner 시작 감사 1건·같은 사유의 vendor_account_mismatch query 감사 1건, 진행 4/4 완료. 활성 사용자 5명과 벤더 이메일 미관측 및 판정 없음을 확인했다. `owner-ingest-shadow-scenario.png`를 확인했다.
+- 실제 ingest fixture에 벤더 이메일은 없으므로 빈 프레임 경로를 검증한다. 불일치 양수·일치·소집단은 DB 통합 테스트가 담당한다. 일반 frontend 실행 폼의 감사 사유 입력은 여전히 후속 대상이며 이번 검증은 owner 로그인 후 공통 클라이언트 감사 경로다.
+- 로그: `/tmp/proj156-shadow-test.log`, `/tmp/proj156-shadow-e2e.log`. frontend 소스는 변경하지 않았다.
