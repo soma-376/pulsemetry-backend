@@ -799,6 +799,15 @@ try {
       assert.equal(hookTop.state, 'success');
       assert.deepEqual(Object.fromEntries(hookTop.points.filter(p => p.labels.hook_event === '__other__').map(p => [p.key, p.value.value])),
         { value: 10, ratio: 1, numerator: 5, denominator: 5 });
+      const sessionTeams = [randomUUID(), randomUUID(), randomUUID()];
+      sessionTeams.forEach((team, index) => sql(`INSERT INTO enrollment.teams(id,tenant_id,name) VALUES ('${team}','${tenant}','세션 상위 E2E ${index}')`));
+      const sessionEvents = installations.flatMap(p => sessionTeams.flatMap((team, index) =>
+        Array.from({ length: [5, 3, 1][index] }, () => ['user_prompt', 'tool_call'].map(type => JSON.stringify({
+          ...p, event_id: randomUUID(), signal: 'log', team_ids_as_of: [team], raw_json: JSON.stringify({
+            type, envelope: { session_id: team }, payload: { model: 'session-top-e2e', action: 'read', tool_name: 'Read' },
+          }),
+        }))).flat()));
+      run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], sessionEvents.join('\n'));
       const securityContext = await browser.newContext();
       try {
         const ownerPage = await securityContext.newPage();
@@ -816,6 +825,21 @@ try {
           }) });
           return series(response.results.A);
         });
+        const sessionTop = await ownerPage.evaluate(async () => {
+          const { request } = await import('/src/api/client.ts');
+          const { series } = await import('/src/widgets/model.ts');
+          const response = await request('/query', { method: 'POST', body: JSON.stringify({
+            from: 'now-1d', to: 'now', filters: { models: ['session-top-e2e'] },
+            queries: [{ ref_id: 'A', metric_id: 'prompts_per_session', group_by: ['team'], frame_type: 'table', limit: 1 },
+              { ref_id: 'B', metric_id: 'read_tool_density', group_by: ['team'], frame_type: 'table', limit: 1 }],
+          }) });
+          return [series(response.results.A), series(response.results.B)];
+        });
+        for (const result of sessionTop) {
+          assert.equal(result.state, 'success');
+          assert.deepEqual(result.points.filter(p => p.key === 'p50').map(p => p.value.value).sort(), [3, 5]);
+          assert.deepEqual(Object.fromEntries(result.points.filter(p => p.labels.team === '__other__').map(p => [p.key, p.value.value])), { p50: 3, p90: 3 });
+        }
         assert.equal(refusalTop.state, 'success');
         assert.deepEqual(Object.fromEntries(refusalTop.points.map(p => [p.labels.category, p.value.value])), { A: 10, '__other__': 10 });
       } finally { await securityContext.close(); }
@@ -847,6 +871,7 @@ try {
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
+    verifiedSessionTopN: { actualFrontendClient: true, owner: true, metrics: ['prompts_per_session', 'read_tool_density'], topMedian: 5, otherMedian: 3, otherP90: 3 },
     verifiedSecurityTopN: { actualFrontendClient: true, hookAdmin: true, refusalOwner: true, otherExecutions: 10, otherSessions: 5, otherSessionRatio: 1, otherRefusals: 10 },
     verifiedTokensTopN: { actualFrontendClient: true, admin: true, top: 5, other: 10, tiedTop: 'top-e2e-a' },
     verifiedDurationAndUsersTopN: { actualFrontendClient: true, admin: true, topMedian: 10, otherMedian: 3, otherUsers: 5 },
