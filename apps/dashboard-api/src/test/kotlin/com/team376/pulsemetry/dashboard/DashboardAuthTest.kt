@@ -2682,6 +2682,45 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `벤더 시나리오는 제품 모델 토큰과 제품 비용을 분리한다`() {
+        val ids = installations(5)
+        fun product(row: String, product: String): String = (mapper.readTree(row) as tools.jackson.databind.node.ObjectNode).put("product",product).toString()
+        seedPoints(ids.flatMap { id -> listOf(tokenEvent(id,100,50,0,0),costEvent(id,2.0),
+            product(tokenEvent(id,10,20,0,0),"codex"),product(costEvent(id,3.0),"codex")) })
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer,"S8-4","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(2)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(2)
+        assertThat(run["result"]["frames"].propertyNames()).containsExactlyInAnyOrder("tokens","cost")
+        val findings = run["result"]["findings"].toList()
+        assertThat(findings.map { it["evidence"]["product"].asString() }).containsExactly("claude_code","codex")
+        assertThat(findings.map { it["evidence"]["cost_usd"].asDouble() }).containsExactly(10.0,15.0)
+        val tokenFrames = run["result"]["frames"]["tokens"]["frames"].toList()
+        val observed = tokenFrames.filter { it["schema"]["fields"][0]["labels"]["model"].asString()=="test" }
+        val missing = tokenFrames.filter { it["schema"]["fields"][0]["labels"]["model"].asString()=="claude-test" }
+        assertThat(observed.map { it["data"]["values"][0][0].asDouble() }).containsExactlyInAnyOrder(750.0,150.0)
+        assertThat(missing).hasSize(2)
+        assertThat(missing.all { it["data"]["values"][0][0].isNull }).isTrue()
+    }
+
+    @Test fun `벤더 시나리오는 소집단 미관측 영 비용을 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { costEvent(it,3.0) },emptyList(),ids.map { costEvent(it,0.0) })) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S8-4","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     @Test fun `팀 활용 시나리오는 네 지표의 팀별 기간 합계를 제공한다`() {
         val teams = costTeams().take(2)
         val rows = teams.flatMapIndexed { index, team -> installations(5,team).flatMap { id ->
