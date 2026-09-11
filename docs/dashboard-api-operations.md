@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-5·S4-6·S4-8·S5-2·S5-7·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-4의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-5·S4-6·S4-8·S5-2·S5-7·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-4·S8-5의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -272,3 +272,7 @@ owner가 감사 사유와 함께 실행한다. 커버리지는 기간 내 관측
 ### S4-5 명령 프롬프트 활용
 
 owner/admin이 실행한다. command_names(최대 100개, 각 1~200자)를 지정하면 대소문자를 구분한 정확한 명령명 일치만 분자에 포함한다. 전체 유효 프롬프트 분모는 유지하며 생략·빈 배열은 모든 명령을 포함한다. 같은 파라미터를 QRY command_prompt_ratio에서도 사용할 수 있다. 양수 비율을 info로 제공하며 스킬·템플릿 내용이나 생산성은 측정하지 않는다.
+
+### S8-5 도구 통합 검토
+
+owner/admin이 실행한다. 제품별 활성 사용자 표와 전체 범위의 사용자당 비용·도구 호출 일 시계열을 제공한다. 제품별 사용자는 중복될 수 있어 합산하지 않는다. 전체 범위 비용을 특정 제품 비용으로 해석하지 않으며, 중복 사용자 수·통합 절감액은 계산하지 않는다.

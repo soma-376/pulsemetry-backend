@@ -607,6 +607,31 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, templateRun.run_id);
   await page.getByRole('heading', { name: '명령 프롬프트가 관측되었습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-template-scenario.png'), fullPage: true });
+  const consolidationRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    let { run } = await scenarioApi.start('S8-5', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return run;
+  }, scenarioFrom);
+  assert.equal(consolidationRun.status, 'succeeded');
+  assert.equal(consolidationRun.progress.step, 3);
+  assert.equal(consolidationRun.progress.total, 3);
+  assert.deepEqual(Object.keys(consolidationRun.result.frames).sort(), ['active_users', 'cost_per_active_user', 'tool_calls']);
+  assert.equal(consolidationRun.result.findings.length, 1);
+  assert.equal(consolidationRun.result.findings[0].evidence.product, 'claude_code');
+  assert.equal(consolidationRun.result.findings[0].evidence.active_users, 5);
+  assert.ok(consolidationRun.result.frames.cost_per_active_user.frames.some(f => f.data.values[1].includes(3)));
+  assert.ok(consolidationRun.result.frames.tool_calls.frames.some(f => f.data.values[1].includes(5)));
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, consolidationRun.run_id);
+  await page.getByRole('heading', { name: '제품별 활성 사용자가 관측되었습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-consolidation-scenario.png'), fullPage: true });
   const ownerPage = await page.context().newPage();
   let pressureRun;
   let retryRun;
@@ -853,6 +878,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    consolidationScenario: { id: 'S8-5', runId: consolidationRun.run_id, admin: true, actualResultUI: true, product: 'claude_code', activeUsers: 5, costPerActiveUser: 3, toolCalls: 5 },
     templateScenario: { id: 'S4-5', runId: templateRun.run_id, admin: true, actualResultUI: true, commandNames: ['/review'], ratio: 0.5 },
     governanceScenario: { id: 'S7-4', runId: governanceRun.run_id, owner: true, audited: true, actualResultUI: true, observedInstallations: 5, coverage: governanceRun.result.findings[0].evidence.ratio },
     readDensityScenario: { id: 'S7-2', runId: readDensityRun.run_id, owner: true, audited: true, actualResultUI: true, threshold: 0, p90CallsPerSession: 0 },
