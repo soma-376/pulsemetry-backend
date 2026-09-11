@@ -59,7 +59,11 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
       { key: 'attempt', value: { intValue: index === 0 ? '2' : '1' } },
       ...[['input_tokens', 200], ['output_tokens', 10], ['cache_read_tokens', 0], ['cache_creation_tokens', 0]]
         .map(([key, value]) => ({ key, value: { intValue: String(value) } })),
-    ] }] }] }] });
+    ] }, ...[0, 1].map(sequence => ({ timeUnixNano: String(now),
+      body: { stringValue: 'claude_code.user_prompt' }, attributes: [attr('session.id', `ingest-${installation}`),
+        { key: 'event.sequence', value: { intValue: String(sequence) } },
+        { key: 'prompt_length', value: { intValue: '42' } }],
+    }))] }] }] });
     const metrics = JSON.stringify({ resourceMetrics: [{ resource, scopeMetrics: [{ metrics:
       [1, 2].map(temporality => ({ name: 'claude_code.cost.usage', unit: 'USD', sum: {
         aggregationTemporality: temporality, isMonotonic: true, dataPoints: [{
@@ -108,13 +112,13 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   assert.equal(quantiles.p90, 500);
 
   const response = await fetch(`http://127.0.0.1:${chPort}/?query=${encodeURIComponent(
-    `SELECT tenant_id, installation_id, signal, team_ids_as_of FROM enriched_events FINAL WHERE JSONExtractString(raw_json, 'payload', 'tool_name') = '${tool}' OR JSONExtractString(raw_json, 'payload', 'model') = '${model}' OR JSONExtractString(raw_json, 'point', 'attrs', 'model') = '${model}' OR JSONExtractString(raw_json, 'payload', 'model') = '${scenarioModel}' FORMAT JSONEachRow`)}`);
+    `SELECT tenant_id, installation_id, signal, team_ids_as_of FROM enriched_events FINAL WHERE JSONExtractString(raw_json, 'payload', 'tool_name') = '${tool}' OR JSONExtractString(raw_json, 'payload', 'model') = '${model}' OR JSONExtractString(raw_json, 'point', 'attrs', 'model') = '${model}' OR JSONExtractString(raw_json, 'payload', 'model') = '${scenarioModel}' OR JSONExtractString(raw_json, 'type') = 'user_prompt' FORMAT JSONEachRow`)}`);
   assert.equal(response.status, 200);
   const rows = (await response.text()).trim().split('\n').map(JSON.parse);
-  assert.equal(rows.length, 25);
+  assert.equal(rows.length, 35);
   assert.ok(rows.every(row => row.tenant_id === tenant));
   assert.ok(rows.every(row => row.team_ids_as_of.includes('00000000-0000-0000-0000-000000000010')));
-  for (const [signal, count] of [['log', 2], ['metric', 2], ['span', 1]]) {
+  for (const [signal, count] of [['log', 4], ['metric', 2], ['span', 1]]) {
     assert.deepEqual(rows.filter(row => row.signal === signal).map(row => row.installation_id).sort(),
       installations.flatMap(id => Array(count).fill(id)).sort());
   }
@@ -294,8 +298,34 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, cacheRun.run.run_id);
   await page.getByRole('heading', { name: '유효 토큰 요청에서 캐시 읽기가 관측되지 않았습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-cache-scenario.png'), fullPage: true });
+  const promptRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S4-1', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, prompts: series(run.result?.frames.prompts_per_session), tokens: series(run.result?.frames.tokens) };
+  }, scenarioFrom);
+  assert.equal(promptRun.run.status, 'succeeded');
+  assert.equal(promptRun.run.progress.step, 2);
+  assert.equal(promptRun.run.progress.total, 2);
+  assert.ok(promptRun.prompts.points.some(p => p.value.state === 'value' && p.value.value === 2));
+  assert.ok(promptRun.tokens.points.some(p => p.value.state === 'value' && p.value.value === 1050));
+  assert.equal(promptRun.run.result.findings.length, 1);
+  assert.equal(promptRun.run.result.findings[0].rule_id, 'multiple_prompts_per_session');
+  assert.equal(promptRun.run.result.findings[0].evidence.p50, 2);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, promptRun.run.run_id);
+  await page.getByRole('heading', { name: '세션별 프롬프트 수 중앙값이 1을 초과했습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-prompts-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
-    authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 25,
+    authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 35,
+    promptScenario: { id: 'S4-1', runId: promptRun.run.run_id, actualResultUI: true, p50: 2, tokens: 1050 },
     cacheScenario: { id: 'S1-4', runId: cacheRun.run.run_id, actualResultUI: true, cacheRatio: 0, tokens: 1050 },
     abandonedScenario: { id: 'S4-2', runId: abandonedRun.run.run_id, actualResultUI: true, ratio: 1 },
     budgetScenario: { id: 'S1-1', actualResultUI: true, costUsd: 15, tokens: 1050, runs: budgetEvidence },
