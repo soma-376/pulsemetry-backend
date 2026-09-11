@@ -3091,6 +3091,58 @@ class DashboardAuthTest {
         }
     }
 
+    private fun probeRun(bearer: String, minutes: Int = 5, count: Int = 10, audit: String? = "repeated refusal review") =
+        mvc.perform(post("/v1/scenarios/S5-5/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content("""{"params":{"from":"2026-09-01T12:01:00Z","to":"2026-09-01T12:06:00Z","probe_window_min":$minutes,"probe_count":$count}}"""))
+
+    @Test fun `반복 거부 창은 조회 경계와 고정 창 및 최소 횟수를 적용한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { id -> listOf("12:00:59","12:01:00","12:04:59","12:05:00","12:06:00")
+            .map { refusalEvent(id,null,at="2026-09-01T${it}Z") } +
+            listOf(refusalEvent(id,null,reason="end_turn",at="2026-09-01T12:02:00Z"),
+                refusalEvent(id,null,type="llm_call",at="2026-09-01T12:02:00Z")) })
+        val bearer = token()
+        probeRun(bearer,audit=null).andExpect(status().isForbidden)
+        for ((minutes,count,expected) in listOf(Triple(5,10,1),Triple(5,11,0),Triple(1,5,3))) {
+            val id = mapper.readTree(probeRun(bearer,minutes,count).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).withFailMessage(run.toString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+            val findings = run["result"]["findings"]
+            assertThat(findings.size()).isEqualTo(expected)
+            if(minutes==5 && count==10) {
+                val evidence = findings.single()["evidence"]
+                assertThat(evidence["refusals"].asLong()).isEqualTo(10)
+                assertThat(evidence["window_start"].asString()).isEqualTo("2026-09-01T12:00:00Z")
+                assertThat(evidence["observed_from"].asString()).isEqualTo("2026-09-01T12:01:00Z")
+                assertThat(evidence["observed_to"].asString()).isEqualTo("2026-09-01T12:05:00Z")
+                assertThat(findings.single()["severity"].asString()).isEqualTo("info")
+            }
+            ids.forEach { assertThat(run.toString()).doesNotContain(it.toString()) }
+        }
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        probeRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `반복 거부 창은 구성원 소집단과 단일 구성원의 여러 설치를 숨긴다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for (mode in listOf("small","same_member")) {
+            seedPoints((if(mode=="small") ids.take(4) else ids).flatMap { id ->
+                listOf("12:01:00","12:02:00","12:03:00").map { refusalEvent(id,null,at="2026-09-01T${it}Z") } })
+            if(mode=="same_member") jdbc.sql("UPDATE enrollment.installations SET member_id=(SELECT member_id FROM enrollment.installations WHERE id=:id) WHERE tenant_id=:tenant")
+                .param("id",ids.first()).param("tenant",tenant).update()
+            val id = mapper.readTree(probeRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).withFailMessage(run.toString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun inactivityRun(bearer: String, audit: String? = "inactive installation review") =
         mvc.perform(post("/v1/scenarios/S1-7/runs").header("Authorization","Bearer $bearer")
             .also { if(audit!=null) it.header("X-Audit-Reason",audit) }

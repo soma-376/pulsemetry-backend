@@ -354,3 +354,7 @@ owner가 감사 사유와 as_of(기본 now), inactive_days(1~365, 기본 30)를 
 
 
 S1-7의 수집 E2E는 `verifiedIngest.inactivityScenario`에 기록한다. 최근 활성 사용자 5명과 무활동 판정 없음, owner 감사를 확인한다. 무활동 양수·생성일·경계·소집단은 DB 통합 테스트로 검증한다. frontend 일별 표의 길이와 W3.2 전용 위젯·일반 폼 감사 사유는 후속 작업이다.
+
+### S5-5 반복 거부 관측
+
+`probe_window_min`과 `probe_count`는 UTC epoch 정렬 고정 창의 전사 거부 합계에 적용한다. 횟수 이상이면서 거부 구성원 5명 이상인 창만 info 판정으로 표시한다. 조회는 `[from,to)`이고 잘린 창의 실제 관측 범위를 evidence에 제공한다. 이동 창·개인별 반복·공격 의도·탈옥 성공 판정은 지원하지 않는다. owner와 감사 사유가 필요하며 설치 5000개 또는 판정 창 1000개를 초과하면 `query_too_wide`로 실패한다.
