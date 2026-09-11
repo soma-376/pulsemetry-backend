@@ -77,3 +77,8 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 `GET /v1/saved-reports`는 limit(기본 50, 최대 500)과 cursor로 최신순 목록을 반환한다. admin은 원본 실행에 대한 현재 팀 권한이 필요하다. `DELETE /v1/saved-reports/{saved_id}`는 현재 실행 조회 권한을 가진 저장자 또는 owner에게 허용하며 원본 실행은 유지한다. `DELETE /v1/scenario-runs/{id}`는 queued/running 또는 저장 항목이 연결된 실행에 409를 반환한다. 저장 항목을 먼저 삭제한 후 종료된 실행을 삭제할 수 있다. 삭제 성공은 204다.
 
 실제 frontend smoke는 owner/admin의 저장 대화상자·이력 화면·고정 결과 열기·상대 기간 새 실행·삭제 대화상자를 확인한다. 삭제 취소 시 요청 없음, 확인 시 단일 DELETE와 행 제거, 저장 항목 삭제 후 원본 결과 보존도 검증한다. 화면은 `build/e2e/auth-settings/{owner,admin}-history.png` 및 `{owner,admin}-history-deleted.png`에 남는다. ingest 전체 경로는 이 검증에 포함하지 않는다.
+
+
+## 비용 그룹 상위 N
+
+`/v1/query`의 `cost` 쿼리에 `group_by`와 `limit`을 지정하면 그룹 초과 시 상위 N 및 `__other__`를 받는다. 예: `{"ref_id":"A","metric_id":"cost","group_by":["model"],"frame_type":"table","limit":5}`는 최대 6개 그룹을 반환한다. 현재 기간의 공개 가능한 비용 합계로 선택하며, 마스킹 대상 그룹은 순위 점수 0을 사용한다. 비교 기간도 같은 그룹 구성을 사용한다. 나머지 인원과 비용은 원본에서 다시 계산하므로 나머지가 5명 미만이면 수치가 null이다. 다른 지표에는 아직 이 동작을 적용하지 않았다.
