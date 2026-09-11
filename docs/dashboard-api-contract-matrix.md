@@ -53,9 +53,9 @@
 | llm_ttft_ms | distribution | 연결 | 연결 | 연결 |
 | llm_duration_ms | distribution | 연결 | 연결 | 연결 |
 | llm_stop_reasons | table | 연결 | 501 | 연결 |
-| hook_executions | timeseries | 연결 | 501 | 미연결 |
+| hook_executions | timeseries | 연결 | 501 | 연결 |
 | hook_blocking | timeseries | 연결 | 501 | 연결 |
-| refusals | timeseries | 연결 | 501 | 미연결 |
+| refusals | timeseries | 연결 | 501 | 연결 |
 | vendor_account_mismatch | scalar | 연결 | 501 | 미연결 |
 | usage_heatmap | table | 연결 | 501 | 연결 |
 | usage_concentration | table | 연결 | 연결 | 미연결 |
@@ -66,7 +66,7 @@
 
 ## 상위 N 검증 기준
 
-- 기타 재집계 지원 지표는 37개다. 현재 기간 값으로 상위 그룹을 선택하고 비교 기간에 같은 선택을 적용한다. 숨겨진 수치는 순위 선택에 사용하지 않는다.
+- 기타 재집계 지원 지표는 39개다. 현재 기간 값으로 상위 그룹을 선택하고 비교 기간에 같은 선택을 적용한다. 숨겨진 수치는 순위 선택에 사용하지 않는다.
 - 합산 불가 비율·고유 인원·백분위수는 원본 재집계를 유지한다. 나머지 지표의 상위 N은 자동 합산으로 대체하지 않는다.
 - 이번 토큰 검증: table/scalar/timeseries 비교, 두 차원(model/type), metrics 원천·누적 제외·종류 필터, 소집단과 기타 마스킹, frontend 동률 선택·기타 합계.
 
@@ -76,3 +76,5 @@
 - distribution은 지표별 분포 정의가 필요하다. 현재 501 분기를 모든 숫자 지표에 임의 히스토그램을 붙여 대체하지 않는다.
 - onboarding_retention의 timeseries 표현, 366일을 넘는 계약 기간, W3.3 주소 테이블과 개인정보 감사 흐름은 추가 대조가 필요하다.
 - 22개 operation과 46개 시나리오의 상세 수용 조건·운영 복구 추적표는 별도 보완 대상이다.
+
+- 거부·훅 추가 검증: 거부 owner 인가·두 차원 기타, 훅 table/scalar/timeseries 비교·전체 세션 분모·기타 세션 중복 제거, 두 지표의 소집단 마스킹과 frontend 클라이언트 변환.

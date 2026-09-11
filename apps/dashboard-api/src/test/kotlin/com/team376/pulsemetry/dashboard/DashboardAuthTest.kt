@@ -1271,6 +1271,61 @@ class DashboardAuthTest {
         assertThat(frame["schema"]["fields"].size()).isEqualTo(8)
         assertThat(frame["data"]["values"].toList().all { it[0].isNull }).isTrue()
     }
+    @Test fun `훅 상위 기타는 전체 세션 분모를 유지하고 중복 세션을 합치며 비교 그룹을 고정한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(hookSession(it,"same","A"),hookSession(it,"same","A"),
+            hookSession(it,"same","B"),hookSession(it,"same","C"),promptEvent(it,session="no-hook"),
+            hookSession(it,"old","B",at="2026-08-30T12:00:00Z"),hookSession(it,"old","C",at="2026-08-30T12:00:00Z")) })
+        for(type in listOf("table","scalar","timeseries")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "hook_executions","group_by" to listOf("hook_event"),
+                "frame_type" to type,"limit" to 1),mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val offset = if(type=="timeseries") 1 else 0
+            val frames = result["frames"].toList().associateBy { it["schema"]["fields"][offset]["labels"]["hook_event"].asString() }
+            assertThat(frames.keys).containsExactlyInAnyOrder("A","__other__")
+            val other = frames.getValue("__other__")
+            fun value(name: String) = other["data"]["values"][other["schema"]["fields"].toList().indexOfFirst { it["name"].asString()==name }][0].asDouble()
+            assertThat(value("value")).isEqualTo(10.0)
+            assertThat(value("numerator")).isEqualTo(5.0)
+            assertThat(value("denominator")).isEqualTo(10.0)
+            assertThat(value("ratio")).isEqualTo(0.5)
+            assertThat(value("value_compare")).isEqualTo(10.0)
+            assertThat(value("ratio_compare")).isEqualTo(1.0)
+            assertThat(other["schema"]["fields"][offset]["config"]["group_size"].asInt()).isEqualTo(5)
+        }
+    }
+
+    @Test fun `거부 상위 범주는 현재와 비교 기간의 기타를 집계하고 owner만 허용한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(refusalEvent(it,"A"),refusalEvent(it,"A"),refusalEvent(it,"B"),refusalEvent(it,"C"),
+            refusalEvent(it,"B",at="2026-08-30T12:00:00Z")) })
+        val request = queryBody(mapOf("metric_id" to "refusals","group_by" to listOf("category","model"),
+            "frame_type" to "table","limit" to 1),mapOf("compare" to "previous_period"))
+        val result = mapper.readTree(queryResult(request).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+        val frames = result["frames"].toList().associateBy { it["schema"]["fields"][0]["labels"]["category"].asString() }
+        assertThat(frames.keys).containsExactlyInAnyOrder("A","__other__")
+        assertThat(frames.getValue("__other__")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(10.0,5.0)
+        assertThat(frames.getValue("__other__")["schema"]["fields"][0]["labels"]["model"].asString()).isEqualTo("__other__")
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        queryResult(request).andExpect(status().isForbidden)
+    }
+
+    @Test fun `거부와 훅 상위 선택은 숨겨진 수치를 사용하지 않고 기타 소집단을 마스킹한다`() {
+        val ids = installations(5)
+        for (metric in listOf("refusals","hook_executions")) {
+            fun event(id: UUID, category: String) = if(metric=="refusals") refusalEvent(id,category) else hookSession(id,"same",category)
+            seedPoints(ids.map { event(it,"public") }+ids.take(4).flatMap { id -> (1..3).flatMap { listOf(event(id,"a"),event(id,"b")) } })
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "table","limit" to 1,
+                "group_by" to listOf(if(metric=="refusals") "category" else "hook_event")))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).isEqualTo(200)
+            val frames = result["frames"].toList().associateBy { it["schema"]["fields"][0]["labels"].properties().first().value.asString() }
+            assertThat(frames.keys).containsExactlyInAnyOrder("public","__other__")
+            assertThat(frames.getValue("public")["data"]["values"][0][0].asDouble()).isEqualTo(5.0)
+            assertThat(frames.getValue("__other__")["data"]["values"].toList().all { it[0].isNull }).isTrue()
+        }
+    }
+
     private fun refusalEvent(id: UUID, category: String?, reason: String = "refusal", type: String = "llm_response",
         at: String = "2026-09-01T12:00:00Z"): String {
         val row = mapper.readTree(promptEvent(id,at=at)) as tools.jackson.databind.node.ObjectNode

@@ -64,7 +64,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
     private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
     private val topPeriodMetrics = topCostRatioMetrics + setOf("model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
-    private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("cost","tokens","tool_calls","rate_limit_events","tool_rejections",
+    private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
     private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio", "cost_per_active_user", "cost_per_user_hour", "model_unit_price", "cost_anomaly", "contract_commitment_burn")
@@ -346,7 +346,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (q.metricId=="session_last_event") return readLastEvent(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="abandoned_session_ratio") return readAbandoned(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="tokens") return readTokens(q,scope,from,to,zone,interval,deadline,retained)
-        if (q.metricId=="hook_executions") return readHookExecutions(q,scope,from,to,zone,interval,deadline)
+        if (q.metricId=="hook_executions") return readHookExecutions(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId in durationMetrics) return readDuration(q, scope, from, to, zone, interval, deadline,retained)
         if (q.metricId in sessionMetrics) return readSessionDistribution(q, scope, from, to, zone, interval, deadline)
         if (q.metricId in populationMetrics) return readPopulation(q, scope, from, to, zone, interval, deadline)
@@ -873,9 +873,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return Rows(rows,sql)
     }
     private fun readHookExecutions(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
-        zone: String, interval: String, deadline: Long): Rows {
+        zone: String, interval: String, deadline: Long, retained: List<List<String>>? = null): Rows {
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
-        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val dimensions = groupDimensions(q.groupBy.map(::dimension),retained)
         val groupSql = (listOf("bucket")+q.groupBy.indices.map { "g$it" }).joinToString(",")
         val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
         // 훅 종류를 나누기 전의 전체 관측 세션을 분모로 사용한다.
@@ -896,11 +896,10 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             FROM observed GROUP BY $groupSql
         ) SELECT stats.*, totals.denominator, numerator/nullIf(denominator,0) AS ratio, 0 AS cumulative
             FROM stats INNER JOIN totals USING (bucket) ORDER BY $groupSql"""
-        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
+        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone,
+            "retained" to mapper.writeValueAsString(retained.orEmpty()).replace("\\", "\\\\"))
         val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
             .filter { it["points"].asLong()>0 }
-        if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size>groupLimit(q))
-            throw DashboardReadException("query_too_wide",422)
         return Rows(rows,sql)
     }
     private fun readDuration(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
