@@ -63,3 +63,8 @@ E2E 스크립트는 각 외부 명령을 60초로 제한한다. `result.json`은
 
 
 S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 모델별 일 시계열과 팀별 기간 합계 table 프레임을 함께 반환한다. W1.3의 실제 막대그래프와 데이터 표는 owner/admin E2E에서 확인했다. W2.5의 frontend 매핑은 아직 미연결이다.
+
+
+## 실행 이력 조회
+
+`GET /v1/scenario-runs`는 `scenario_id`, `status`, `created_by`, `limit`(1~500, 기본 50), `cursor`를 지원한다. 최신순이며 owner는 tenant 내 실행, admin은 현재 팀 권한으로 읽을 수 있는 본인 실행만 반환한다. 다음 페이지에는 같은 필터를 유지한다. 팀 권한·사용자·필터가 바뀌면 커서를 버리고 첫 페이지부터 조회한다. 응답은 결과 프레임 없는 요약이며 total은 null이다. 실제 frontend 이력 화면 전체는 저장 리포트 API 연결 후 검증한다.
