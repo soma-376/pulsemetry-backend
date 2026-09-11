@@ -591,6 +591,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let policyRun;
   let externalRun;
   let fastApprovalRun;
+  let latencyRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -736,11 +737,41 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, fastApprovalRun.run_id);
     await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(fastApprovalRun.run_id.slice(0, 8), { exact: false }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-fast-approval-scenario.png'), fullPage: true });
+    latencyRun = await ownerPage.evaluate(async ({ from, model }) => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S6-4/runs', { method: 'POST', body: JSON.stringify({
+        params: { from, to: new Date(Date.now() + 1000).toISOString(), models: [model] },
+      }) }, '선택 모델 레이턴시 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, { from: scenarioFrom, model });
+    assert.equal(latencyRun.status, 'succeeded');
+    assert.deepEqual(latencyRun.result.applied_filters.filters.models, [model]);
+    assert.equal(latencyRun.progress.step, 4);
+    assert.equal(latencyRun.progress.total, 4);
+    assert.equal(latencyRun.result.target_page, 'P3');
+    assert.deepEqual(Object.keys(latencyRun.result.frames).sort(), ['active_users', 'api_error_rate', 'llm_duration_ms', 'llm_ttft_ms']);
+    assert.equal(latencyRun.result.findings.length, 1);
+    assert.equal(latencyRun.result.findings[0].evidence.p90_ms, 500);
+    assert.ok(latencyRun.result.frames.active_users.frames.some(f => f.data.values[1].includes(5)));
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S6-4'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, latencyRun.run_id);
+    await ownerPage.getByRole('heading', { name: '첫 토큰 응답 지연이 관측되었습니다', exact: true }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-latency-scenario.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    latencyScenario: { id: 'S6-4', runId: latencyRun.run_id, owner: true, audited: true, actualResultUI: true, model, p90Ms: 500, activeUsers: 5 },
     fastApprovalScenario: { id: 'S5-7', runId: fastApprovalRun.run_id, owner: true, audited: true, actualResultUI: true, thresholdMs: 60000, ratio: 0 },
     externalScenario: { id: 'S5-2', runId: externalRun.run_id, owner: true, audited: true, actualResultUI: true, mcpFindings: 0, readDensity: 0 },
     policyScenario: { id: 'S7-3', runId: policyRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionFindings: 0, gateWaitMs: 120000 },
