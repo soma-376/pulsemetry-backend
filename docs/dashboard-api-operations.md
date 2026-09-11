@@ -205,3 +205,5 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 `POST /v1/scenarios/S3-4/runs`는 from/to를 받는다. sessions·active_time·lines_of_code·adoption_rate를 팀별 기간 합계 표로 조회하는 4단계이며 P1/W1.6·W1.5를 반환한다. owner는 조직, admin은 본인 소속 팀 범위로 실행한다.
 
 공개 가능한 양수 세션 수를 observed_team_usage 정보성 안내로 제공한다. 팀 규모·수집 범위 보정이나 활용 우열·생산성 격차 판정은 하지 않는다. 소집단·미관측·0·잔여 그룹은 안내에서 제외한다. 지표별 모집단과 마스킹 상태는 원래 조회 계약을 유지한다.
+
+실제 OTLP session.count 5건을 수집해 `verifiedIngest.teamUsageScenario`와 `admin-ingest-teamusage-scenario.png`에 실행·화면 증거를 남긴다. 활동 시간·코드 변경량은 해당 수집 fixture에 없어 미관측이며 팀별 산출은 DB 통합 테스트로 검증한다.

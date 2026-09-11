@@ -71,7 +71,12 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
           asDouble: temporality === 1 ? index + 1 : 999,
           attributes: [attr('session.id', `ingest-${installation}`), attr('model', model)],
         }],
-      } })),
+      } })).concat([{ name: 'claude_code.session.count', unit: 'count', sum: {
+        aggregationTemporality: 1, isMonotonic: true, dataPoints: [{
+          startTimeUnixNano: String(now - 1000000000n), timeUnixNano: String(now), asDouble: 1,
+          attributes: [attr('session.id', `ingest-${installation}`), attr('start_type', 'fresh')],
+        }],
+      } }]),
     }] }] });
     const traces = JSON.stringify({ resourceSpans: [{ resource, scopeSpans: [{ spans: [{
       traceId: randomUUID().replaceAll('-', ''), spanId: randomUUID().replaceAll('-', '').slice(0, 16),
@@ -117,13 +122,13 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   assert.equal(quantiles.p90, 500);
 
   const response = await fetch(`http://127.0.0.1:${chPort}/?query=${encodeURIComponent(
-    `SELECT tenant_id, installation_id, signal, team_ids_as_of FROM enriched_events FINAL WHERE JSONExtractString(raw_json, 'payload', 'tool_name') = '${tool}' OR JSONExtractString(raw_json, 'payload', 'model') = '${model}' OR JSONExtractString(raw_json, 'point', 'attrs', 'model') = '${model}' OR JSONExtractString(raw_json, 'payload', 'model') = '${scenarioModel}' OR JSONExtractString(raw_json, 'type') IN ('user_prompt','tool_gate') FORMAT JSONEachRow`)}`);
+    `SELECT tenant_id, installation_id, signal, team_ids_as_of FROM enriched_events FINAL WHERE JSONExtractString(raw_json, 'payload', 'tool_name') = '${tool}' OR JSONExtractString(raw_json, 'payload', 'model') = '${model}' OR JSONExtractString(raw_json, 'point', 'attrs', 'model') = '${model}' OR JSONExtractString(raw_json, 'payload', 'model') = '${scenarioModel}' OR JSONExtractString(raw_json, 'type') IN ('user_prompt','tool_gate') OR JSONExtractString(raw_json, 'point', 'name') = 'claude_code.session.count' FORMAT JSONEachRow`)}`);
   assert.equal(response.status, 200);
   const rows = (await response.text()).trim().split('\n').map(JSON.parse);
-  assert.equal(rows.length, 40);
+  assert.equal(rows.length, 45);
   assert.ok(rows.every(row => row.tenant_id === tenant));
   assert.ok(rows.every(row => row.team_ids_as_of.includes('00000000-0000-0000-0000-000000000010')));
-  for (const [signal, count] of [['log', 4], ['metric', 2], ['span', 2]]) {
+  for (const [signal, count] of [['log', 4], ['metric', 3], ['span', 2]]) {
     assert.deepEqual(rows.filter(row => row.signal === signal).map(row => row.installation_id).sort(),
       installations.flatMap(id => Array(count).fill(id)).sort());
   }
@@ -378,8 +383,33 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, actionRun.run.run_id);
   await page.getByRole('heading', { name: '도구 action별 호출이 관측되었습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-action-scenario.png'), fullPage: true });
+  const teamUsageRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S3-4', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, sessions: series(run.result?.frames.sessions) };
+  }, scenarioFrom);
+  assert.equal(teamUsageRun.run.status, 'succeeded');
+  assert.equal(teamUsageRun.run.progress.step, 4);
+  assert.equal(teamUsageRun.run.progress.total, 4);
+  assert.deepEqual(Object.keys(teamUsageRun.run.result.frames).sort(), ['active_time', 'adoption_rate', 'lines_of_code', 'sessions']);
+  assert.ok(teamUsageRun.sessions.points.some(p => p.labels.team === '00000000-0000-0000-0000-000000000010' && p.value.value === 5));
+  assert.equal(teamUsageRun.run.result.findings.length, 1);
+  assert.equal(teamUsageRun.run.result.findings[0].evidence.sessions, 5);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, teamUsageRun.run.run_id);
+  await page.getByRole('heading', { name: '팀별 세션 사용량이 관측되었습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-teamusage-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
-    authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 40,
+    authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    teamUsageScenario: { id: 'S3-4', runId: teamUsageRun.run.run_id, actualResultUI: true, sessions: 5 },
     actionScenario: { id: 'S4-6', runId: actionRun.run.run_id, actualResultUI: true, action: 'other', calls: 5 },
     gateScenario: { id: 'S4-8', runId: gateRun.run_id, actualResultUI: true, p90Ms: 120000, thresholdMin: 1 },
     promptScenario: { id: 'S4-1', runId: promptRun.run.run_id, actualResultUI: true, p50: 2, tokens: 1050 },
