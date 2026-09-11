@@ -2682,6 +2682,53 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun effortCost(id: UUID, value: Double, effort: String, speed: String, cumulative: Boolean = false): String {
+        val row = mapper.readTree(subagentCost(id,value,"main",cumulative=cumulative)) as tools.jackson.databind.node.ObjectNode
+        val raw = mapper.readTree(row["raw_json"].asString())
+        (raw["point"]["attrs"] as tools.jackson.databind.node.ObjectNode).put("effort",effort).put("speed",speed)
+        row.put("raw_json",raw.toString())
+        return row.toString()
+    }
+
+    @Test fun `모델 effort 시나리오는 delta 비용 차원과 토큰 세션을 제공한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(effortCost(it,2.0,"high","fast"),effortCost(it,3.0,"low","normal"),
+            effortCost(it,999.0,"high","fast",true),costEvent(it,9999.0),tokenEvent(it,100,50,0,0),point(it,1.0)) })
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer,"S1-6","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrder("cost","tokens","sessions")
+        assertThat(frames["tokens"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(750.0)
+        assertThat(frames["sessions"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+        val findings = run["result"]["findings"].toList()
+        assertThat(findings).hasSize(4)
+        assertThat(findings.map { it["evidence"]["cost_usd"].asDouble() }).containsExactlyInAnyOrder(10.0,15.0,10.0,15.0)
+        assertThat(findings.map { it["evidence"]["effort"].asString() }).containsExactlyInAnyOrder("high","low","","")
+        assertThat(findings.map { it["evidence"]["speed"].asString() }).containsExactlyInAnyOrder("fast","normal","","")
+        assertThat(findings.all { it["severity"].asString()=="info" }).isTrue()
+    }
+
+    @Test fun `모델 effort 시나리오는 소집단과 영 비용에서 낭비를 추정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { effortCost(it,100.0,"high","fast") },emptyList(),
+            ids.map { effortCost(it,0.0,"high","fast") })) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S1-6","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     @Test fun `집중도 시나리오는 익명 요약과 로렌츠 곡선을 제공한다`() {
         val ids = installations(5)
         seedPoints(ids.mapIndexed { index,id -> tokenEvent(id,(index+1)*10,0,0,0) } + ids.map { toolEvent(it,true) })

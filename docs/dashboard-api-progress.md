@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S2-1·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S7-1·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S7-1·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -672,3 +672,9 @@
 - 실제 인증 OTLP 수집→admin S3-2 실행→frontend 결과 화면 E2E 통과. 5인 균등 사용에서 상위 점유율 0.2, 곡선 인구·사용 비율 0~1, 설치 ID 비노출을 검증했다. 실행 가능한 시나리오는 16개다.
 - frontend 소스는 변경하지 않았다. 현재 로렌츠 좌표는 일반 표로 표시되며 `usage_concentration`의 W2.5 매핑이 없어 해당 위젯은 빈 안내로 남는다. 정보 판정과 요약·곡선 표는 표시된다.
 - 증거: `build/e2e/auth-settings/result.json`, `admin-ingest-concentration-scenario.png`. 전체 PROJ-156 수용 완료를 뜻하지 않는다.
+
+## S1-6 모델·effort 비용 실행
+
+- 비용은 `source=metrics`로 고정해 모델·effort와 모델·speed 두 표를 반환한다. 최대 2개 그룹 차원 계약을 지키며 두 표는 같은 비용의 다른 분류이므로 합산하지 않는다. 토큰·세션 일 시계열까지 총 4단계다.
+- 공개 가능한 양수 비용에는 정보 판정을 제공한다. 명세의 판정 수식이 비어 있어 작업 난이도·품질·대체 비용 없이 낭비나 절감액을 추정하지 않는다.
+- dashboard 테스트 177건 통과. 실제 DB에서 두 분류, delta 원천 선택과 cumulative·logs 비용 제외, 소집단·미관측·영 비용의 판정 제외를 검증했다.

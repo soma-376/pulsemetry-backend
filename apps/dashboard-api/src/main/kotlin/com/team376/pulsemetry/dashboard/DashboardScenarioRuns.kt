@@ -35,7 +35,7 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
         val scenario = catalog.detail(id)
         if (scenario["availability"].asString()=="unavailable") throw UserAuthException("scenario_unavailable",409)
         // 실행 계획이 없는 시나리오를 일반 지표 조회만으로 성공 처리하지 않는다.
-        if (id !in setOf("S1-1","S1-3","S1-4","S1-5","S2-1","S3-1","S3-2","S3-4","S3-5","S4-1","S4-2","S4-6","S4-8","S7-1","S8-1","S8-4")) throw UserAuthException("scenario_not_implemented",501)
+        if (id !in setOf("S1-1","S1-3","S1-4","S1-5","S1-6","S2-1","S3-1","S3-2","S3-4","S3-5","S4-1","S4-2","S4-6","S4-8","S7-1","S8-1","S8-4")) throw UserAuthException("scenario_not_implemented",501)
         val zone = jdbc.sql("SELECT timezone FROM enrollment.tenants WHERE id=:tenant").param("tenant",user.tenantId)
             .query(String::class.java).single()
         val input = inputs.prepare(id,body,user,zone,clock.instant(),audit)
@@ -111,7 +111,7 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
     fun runOne() {
         val row = runs.claim() ?: return
         try {
-            if (row.scenario in setOf("S1-1","S1-4","S1-5","S2-1","S3-1","S3-2","S3-4","S3-5","S4-1","S4-2","S4-6","S4-8","S7-1","S8-1","S8-4")) { runCatalogScenario(row); return }
+            if (row.scenario in setOf("S1-1","S1-4","S1-5","S1-6","S2-1","S3-1","S3-2","S3-4","S3-5","S4-1","S4-2","S4-6","S4-8","S7-1","S8-1","S8-4")) { runCatalogScenario(row); return }
             if (row.scenario!="S1-3") throw UserAuthException("scenario_not_implemented",501)
             val execution = mapper.readTree(row.execution)
             val params = mapper.readTree(row.params)
@@ -167,20 +167,26 @@ class DashboardScenarioRuns(private val runs: DashboardRuns, private val catalog
             else if(execution["organization_scope"].asBoolean()) emptySet() else teams
         val frames = linkedMapOf<String,JsonNode>()
         val definition = catalog.detail(row.scenario)
-        val metricIds = definition["metric_ids"].toList().map { it.asString() }
+        val metricIds = if(row.scenario=="S1-6") listOf("cost","cost","tokens","sessions") else definition["metric_ids"].toList().map { it.asString() }
         for ((index, metric) in metricIds.withIndex()) {
             if (!runs.progress(row,index)) return
             val request = DashboardQueryRequest(row.from.toString(),row.to.toString(),execution["tz"].asString(),
                 filters=DashboardQueryFilters(teamIds=scope),priceBasis=execution["price_basis"].asString(),
-                queries=listOf(DashboardQueryItem("A",metric,frameType=if(row.scenario=="S3-2" && metric=="usage_concentration") "distribution" else if(row.scenario in setOf("S1-1","S3-1","S3-4","S4-6","S8-4") || (row.scenario=="S2-1" && metric=="usage_heatmap")) "table" else "timeseries",
-                    groupBy=when { row.scenario=="S2-1" && metric=="usage_heatmap" -> listOf("weekday","hour"); row.scenario in setOf("S1-1","S3-1","S3-4") -> listOf("team"); row.scenario=="S4-6" && metric=="tool_calls" -> listOf("action"); row.scenario=="S8-4" -> if(metric=="tokens") listOf("product","model") else listOf("product"); else -> emptyList() },interval="1d",limit=if(row.scenario=="S2-1" && metric=="usage_heatmap") null else 100)))
+                queries=listOf(DashboardQueryItem("A",metric,source=if(row.scenario=="S1-6" && metric=="cost") "metrics" else null,frameType=if(row.scenario=="S1-6" && metric=="cost") "table" else if(row.scenario=="S3-2" && metric=="usage_concentration") "distribution" else if(row.scenario in setOf("S1-1","S3-1","S3-4","S4-6","S8-4") || (row.scenario=="S2-1" && metric=="usage_heatmap")) "table" else "timeseries",
+                    groupBy=when { row.scenario=="S1-6" && metric=="cost" -> listOf("model",if(index==0) "effort" else "speed"); row.scenario=="S2-1" && metric=="usage_heatmap" -> listOf("weekday","hour"); row.scenario in setOf("S1-1","S3-1","S3-4") -> listOf("team"); row.scenario=="S4-6" && metric=="tool_calls" -> listOf("action"); row.scenario=="S8-4" -> if(metric=="tokens") listOf("product","model") else listOf("product"); else -> emptyList() },interval="1d",limit=if(row.scenario=="S2-1" && metric=="usage_heatmap") null else 100)))
             val result = mapper.valueToTree<JsonNode>(query.query(actor(row),request,null,"application/json").body)["results"]["A"]
             if(result["status"].asInt()!=200) throw UserAuthException(result.path("error").path("error").asString("query_failed"),result["status"].asInt())
-            frames[metric] = result
+            if(row.scenario=="S1-6" && metric=="cost" && frames.containsKey(metric)) {
+                // 같은 비용의 두 분류이며 합산하지 않는다. 각 필드 라벨로 분류 축을 보존한다.
+                val combined = frames.getValue(metric).deepCopy() as tools.jackson.databind.node.ObjectNode
+                (combined["frames"] as tools.jackson.databind.node.ArrayNode).addAll(result["frames"] as tools.jackson.databind.node.ArrayNode)
+                frames[metric] = combined
+            } else frames[metric] = result
         }
         val thresholdKey = if(row.scenario=="S1-5") "io_ratio_threshold" else "failure_threshold"
         val findings = if(row.scenario=="S1-1") DashboardBudgetFindings.evaluate(frames,mapper.readTree(row.params)["budget_by_team"])
             else if(row.scenario=="S8-4") DashboardVendorFindings.evaluate(frames.getValue("cost"))
+            else if(row.scenario=="S1-6") DashboardModelEffortFindings.evaluate(frames.getValue("cost"))
             else if(row.scenario=="S3-2") DashboardConcentrationFindings.evaluate(frames.getValue("usage_concentration"))
             else if(row.scenario=="S3-1") DashboardAdoptionFindings.evaluate(frames.getValue("adoption_rate"))
             else if(row.scenario=="S3-4") DashboardTeamUsageFindings.evaluate(frames.getValue("sessions"))
