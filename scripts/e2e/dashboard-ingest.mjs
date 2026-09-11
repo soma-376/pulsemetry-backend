@@ -745,6 +745,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let modelComparisonRun;
   let shadowRun;
   let driftRun;
+  let inactivityRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -1149,12 +1150,40 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, driftRun.run_id);
     await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(driftRun.run_id.slice(0, 8), { exact: false }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-drift-scenario.png'), fullPage: true });
+    inactivityRun = await ownerPage.evaluate(async () => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S1-7/runs', { method: 'POST', body: JSON.stringify({
+        params: { as_of: new Date().toISOString(), inactive_days: 30 },
+      }) }, '유휴 설치 관측 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    });
+    assert.equal(inactivityRun.status, 'succeeded');
+    assert.equal(inactivityRun.progress.step, 4);
+    assert.equal(inactivityRun.progress.total, 4);
+    assert.equal(inactivityRun.resolved_to, inactivityRun.params.as_of);
+    assert.equal(inactivityRun.result.findings.length, 0);
+    assert.deepEqual(Object.keys(inactivityRun.result.frames).sort(), ['active_users', 'cost_per_active_user', 'telemetry_coverage']);
+    assert.ok(inactivityRun.result.frames.active_users.frames.some(f => f.data.values[1].includes(5)));
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S1-7'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, inactivityRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(inactivityRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-inactivity-scenario.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
     championScenario: { id: 'S8-7', runId: championRun.run_id, admin: true, actualResultUI: true, windowWeeks: 4, promptsPerSession: 2 },
+    inactivityScenario: { id: 'S1-7', runId: inactivityRun.run_id, owner: true, audited: true, actualResultUI: true, inactiveDays: 30, activeUsers: 5, inactivityFindings: 0 },
     driftScenario: { id: 'S6-3', runId: driftRun.run_id, owner: true, audited: true, actualResultUI: true, windowWeeks: 4, missingStopReasonEvents: 5 },
     acceptanceScenario: { id: 'S4-3', runId: acceptanceRun.run_id, admin: true, actualResultUI: true, language: 'kotlin', editsMissing: true },
     shadowScenario: { id: 'S5-4', runId: shadowRun.run_id, owner: true, audited: true, queryAudited: true, actualResultUI: true, vendorEmailMissing: true, activeUsers: 5 },

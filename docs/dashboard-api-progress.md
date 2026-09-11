@@ -948,3 +948,13 @@
 - 마지막 관측이 cutoff 이하인 설치, 또는 보존된 관측이 없고 생성 시점이 cutoff 이하인 설치를 집계한다. 신규·최근 활동·폐기 설치는 제외한다. 무활동 집계가 실제 구성원 5명 이상일 때만 observed_inactive_installations info를 제공하며 설치·구성원 식별자를 응답하지 않는다.
 - 현재 상태를 사용하므로 과거 활성 상태·라이선스를 복원하지 않는다. 수집 누락·이력 삭제·실제 사용·좌석 회수·절감액은 판단하지 않는다. 보조 커버리지 등은 기존 QRY의 현재 분모 정의를 유지하고, 무활동 후보의 생성 시점 제한과 구별한다.
 - 실행 경로 38개, 추가 실행 대상 4개(S1-2·S3-3·S5-5·S8-2), 명세상 unavailable 4개다.
+
+
+### S1-7 검증 결과
+
+- dashboard 테스트 225건, 실패·오류·skip 0건. 기준 시점 이후 이벤트 제외, 정확한 경과일 경계, 미래 기준 거부, 미관측 생성일, 신규·최근 활동·폐기 설치 제외, owner 감사 및 실제 구성원 수 마스킹을 검증했다. 한 사람의 설치 5개로는 판정을 생성하지 않는다.
+- 구현 `3aa6b15`와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`의 실제 수집 E2E 통과. `unexpectedOrUnimplementedResponses=[]`, 연결 시나리오 38개다.
+- `verifiedIngest.inactivityScenario`: run `c1e248b0-4e89-4f26-9994-507c21018c79`, owner 감사 1건·4/4 완료, inactive_days=30과 고정 as_of, 최근 활성 사용자 5명에 무활동 판정 0건. `owner-ingest-inactivity-scenario.png`를 확인했다.
+- 실제 ingest fixture는 최근 생성·활동한 설치이므로 무활동 양수 판정은 DB 통합 테스트가 담당한다. 화면에서는 당일 커버리지 100%·사용자당 비용 3달러와 이전 날들의 미관측을 확인했다.
+- frontend는 커버리지·비용의 일별 프레임을 긴 일반 표로 렌더링하고 W3.2 전용 강조 위젯은 미연결이다. 일반 P3 실행 폼의 감사 사유 입력도 후속 대상이며 이번 검증은 owner 로그인 후 공통 클라이언트 감사 경로다.
+- 로그: `/tmp/proj156-inactivity-test.log`, `/tmp/proj156-inactivity-e2e.log`. frontend 소스는 변경하지 않았다.
