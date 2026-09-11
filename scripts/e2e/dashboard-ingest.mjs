@@ -589,6 +589,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let pressureRun;
   let retryRun;
   let policyRun;
+  let externalRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -679,11 +680,39 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, policyRun.run_id);
     await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(policyRun.run_id.slice(0, 8), { exact: false }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-policy-scenario.png'), fullPage: true });
+    externalRun = await ownerPage.evaluate(async from => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S5-2/runs', { method: 'POST', body: JSON.stringify({
+        params: { from, to: new Date(Date.now() + 1000).toISOString() },
+      }) }, 'MCP 및 읽기 도구 사용 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, scenarioFrom);
+    assert.equal(externalRun.status, 'succeeded');
+    assert.equal(externalRun.progress.step, 2);
+    assert.equal(externalRun.progress.total, 2);
+    assert.equal(externalRun.result.target_page, 'P3');
+    assert.deepEqual(Object.keys(externalRun.result.frames).sort(), ['mcp_connections', 'read_tool_density']);
+    assert.equal(externalRun.result.findings.length, 0);
+    assert.ok(externalRun.result.frames.read_tool_density.frames.some(f => f.data.values[1].includes(0)));
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S5-2'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, externalRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(externalRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-external-scenario.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    externalScenario: { id: 'S5-2', runId: externalRun.run_id, owner: true, audited: true, actualResultUI: true, mcpFindings: 0, readDensity: 0 },
     policyScenario: { id: 'S7-3', runId: policyRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionFindings: 0, gateWaitMs: 120000 },
     retryScenario: { id: 'S6-5', runId: retryRun.run_id, owner: true, audited: true, actualResultUI: true, retryRatio: 0.2, costUsd: 15 },
     pressureScenario: { id: 'S2-2', runId: pressureRun.run_id, owner: true, audited: true, actualResultUI: true, rateLimitFindings: 0 },

@@ -714,3 +714,6 @@
 
 - owner·감사 사유 필수 P3 실행에 `mcp_connections`·`read_tool_density` 일 시계열을 연결했다. 양수 MCP 연결 상태 이벤트에는 정보 판정을 제공하며 실제 외부 전송·목적지·승인을 확인하지 못하므로 유출 탐지로 해석하지 않는다.
 - dashboard 테스트 185건 통과. 실제 DB에서 MCP 이벤트 5건·읽기 밀도 p50=2, 감사 기록, admin·감사 누락 거부, 소집단·미관측 및 읽기만 관측된 경우의 판정 제외를 검증했다.
+- 실제 OTLP 수집→owner 로그인→감사 실행→P3 결과 UI E2E 통과. 읽기 밀도 p50/p90=0, MCP 미관측, 판정 0건 및 감사 행 1건을 확인했다. MCP 양수 결과는 실제 DB 테스트로 검증했다. 실행 가능한 시나리오는 21개다.
+- frontend 소스는 변경하지 않았다. 일반 실행 폼의 감사 사유 전달은 없어 공통 `request` 클라이언트로 시작했다. W3.2 MCP 카드와 일반 읽기 밀도 표를 확인했다.
+- 증거: `build/e2e/auth-settings/result.json`, `owner-ingest-external-scenario.png`. 전체 PROJ-156 수용 완료를 뜻하지 않는다.
