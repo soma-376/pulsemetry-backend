@@ -774,9 +774,10 @@ try {
           queries: [{ ref_id: 'A', metric_id: 'cost', group_by: ['model'], frame_type: 'table', limit: 1 },
             { ref_id: 'B', metric_id: 'model_unit_price', group_by: ['model'], frame_type: 'table', limit: 1 },
             { ref_id: 'C', metric_id: 'llm_duration_ms', group_by: ['model'], frame_type: 'table', limit: 1 },
-            { ref_id: 'D', metric_id: 'model_users', group_by: ['model'], frame_type: 'table', limit: 1 }],
+            { ref_id: 'D', metric_id: 'model_users', group_by: ['model'], frame_type: 'table', limit: 1 },
+            { ref_id: 'E', metric_id: 'tokens', group_by: ['model'], frame_type: 'table', limit: 1 }],
         }) });
-        return { cost: series(response.results.A), unit: series(response.results.B), duration: series(response.results.C), users: series(response.results.D) };
+        return { cost: series(response.results.A), unit: series(response.results.B), duration: series(response.results.C), users: series(response.results.D), tokens: series(response.results.E) };
       });
       assert.equal(topCost.cost.state, 'success');
       assert.deepEqual(Object.fromEntries(topCost.cost.points.map(p => [p.labels.model, p.value.value])),
@@ -789,6 +790,9 @@ try {
       assert.equal(topCost.duration.state, 'success');
       assert.deepEqual(Object.fromEntries(topCost.duration.points.filter(p => p.key === 'p50').map(p => [p.labels.model, p.value.value])),
         { 'top-e2e-a': 10, '__other__': 3 });
+      assert.equal(topCost.tokens.state, 'success');
+      assert.deepEqual(Object.fromEntries(topCost.tokens.points.map(p => [p.labels.model, p.value.value])),
+        { 'top-e2e-a': 5, '__other__': 10 });
       assert.equal(topCost.users.state, 'success');
       assert.deepEqual(Object.fromEntries(topCost.users.points.map(p => [p.labels.model, p.value.value])),
         { 'top-e2e-a': 5, '__other__': 5 });
@@ -803,6 +807,7 @@ try {
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
+    verifiedTokensTopN: { actualFrontendClient: true, admin: true, top: 5, other: 10, tiedTop: 'top-e2e-a' },
     verifiedDurationAndUsersTopN: { actualFrontendClient: true, admin: true, topMedian: 10, otherMedian: 3, otherUsers: 5 },
     verifiedUnitPriceTopN: { actualFrontendClient: true, admin: true, top: 10, other: 2.5, otherCost: 25, otherTokens: 10 },
     verifiedRatioTopN: { metric: 'api_error_rate', actualFrontendClient: true, roles: ['owner', 'admin'], top: 1, other: 0, otherDenominator: 10 },
