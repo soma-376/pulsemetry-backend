@@ -545,6 +545,50 @@ class DashboardAuthTest {
         assertThat(other["schema"]["fields"][0]["labels"]["tool_name"].asString()).isEqualTo("__other__")
         assertThat(other["schema"]["fields"][0]["config"]["group_size"].asLong()).isEqualTo(5)
     }
+    private fun namedToolEvent(id: UUID, success: Boolean?, name: String, at: String = "2026-09-01T12:00:00Z"): String {
+        val row = mapper.readTree(toolEvent(id,success,at=at)) as tools.jackson.databind.node.ObjectNode
+        val raw = mapper.readTree(row["raw_json"].asString())
+        (raw["payload"] as tools.jackson.databind.node.ObjectNode).put("tool_name",name)
+        row.put("raw_json",raw.toString())
+        return row.toString()
+    }
+    @Test fun `상위 비율은 일별 비율 합이 아닌 전체 분자 분모로 선택하고 나머지도 재계산한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { id ->
+            listOf(namedToolEvent(id,false,"a")) + List(9) { namedToolEvent(id,true,"a","2026-09-02T12:00:00Z") } +
+                listOf("2026-09-01T12:00:00Z","2026-09-02T12:00:00Z").flatMap { at ->
+                    List(2) { namedToolEvent(id,false,"b",at) }+List(3) { namedToolEvent(id,true,"b",at) }+namedToolEvent(id,null,"c",at)
+                }
+        })
+        fun frames(type: String) = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tool_failure_rate",
+            "group_by" to listOf("tool_name"),"frame_type" to type,"limit" to 1)))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        val totals = frames("table").associateBy { it["schema"]["fields"][0]["labels"]["tool_name"].asString() }
+        assertThat(totals.keys).containsExactlyInAnyOrder("b","__other__")
+        assertThat(totals.getValue("b")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.4,20.0,50.0)
+        assertThat(totals.getValue("__other__")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.1,5.0,50.0)
+        assertThat(totals.getValue("__other__")["schema"]["fields"][0]["config"]["group_size"].asLong()).isEqualTo(5)
+        val daily = frames("timeseries").associateBy { it["schema"]["fields"][1]["labels"]["tool_name"].asString() }
+        assertThat(daily.keys).containsExactlyInAnyOrder("b","__other__")
+        assertThat(daily.getValue("b")["data"]["values"][1].toList().map { it.asDouble() }).containsExactly(0.4,0.4)
+        assertThat(daily.getValue("__other__")["data"]["values"][1].toList().map { it.asDouble() }).containsExactly(1.0,0.0)
+    }
+    @Test fun `나머지 비율은 영 분모의 null과 소집단 마스킹을 유지한다`() {
+        val ids = installations(5)
+        fun frames() = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tool_failure_rate",
+            "group_by" to listOf("tool_name"),"frame_type" to "table","limit" to 1)))
+            .andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"].toList()
+        seedPoints(ids.flatMap { listOf(namedToolEvent(it,null,"a"),namedToolEvent(it,null,"b")) })
+        val empty = frames()
+        assertThat(empty).hasSize(2)
+        assertThat(empty.all { it["data"]["values"][0][0].isNull && it["data"]["values"][2][0].asDouble()==0.0 }).isTrue()
+        seedPoints(ids.flatMap { listOf(namedToolEvent(it,false,"public"),namedToolEvent(it,true,"public")) }+
+            ids.take(4).flatMap { listOf(namedToolEvent(it,false,"hidden-a"),namedToolEvent(it,false,"hidden-b")) })
+        val protected = frames().associateBy { it["schema"]["fields"][0]["labels"]["tool_name"].asString() }
+        assertThat(protected.keys).containsExactlyInAnyOrder("public","__other__")
+        assertThat(protected.getValue("public")["data"]["values"][0][0].asDouble()).isEqualTo(0.5)
+        assertThat(protected.getValue("__other__")["data"]["values"].toList().all { it[0].isNull }).isTrue()
+    }
     @Test fun `도구 호출은 성공 미판정을 실패로 세지 않고 boolean 필터와 payload 차원을 적용한다`() {
         val ids = installations(5)
         val rows = ids.flatMap { listOf(toolEvent(it,true),toolEvent(it,false),toolEvent(it,null)) }

@@ -59,7 +59,10 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private val pointMetrics = mapOf("sessions" to "claude_code.session.count",
         "active_time" to "claude_code.active_time.total", "lines_of_code" to "claude_code.lines_of_code.count",
         "commits" to "claude_code.commit.count", "pull_requests" to "claude_code.pull_request.count")
-    private val topGroupMetrics = pointMetrics.keys + setOf("cost","tool_calls","rate_limit_events","tool_rejections",
+    private val topRatioMetrics = setOf("automation_ratio","integration_depth","command_prompt_ratio","tool_failure_rate",
+        "api_retry_attempts","auto_approval_ratio","api_error_rate","compaction_reduction","mcp_failure_ratio",
+        "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
+    private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + setOf("cost","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
     private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio", "cost_per_active_user", "cost_per_user_hour", "model_unit_price", "cost_anomaly", "contract_commitment_burn")
@@ -177,7 +180,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                                 compareByDescending<List<String>> { key ->
                                     val rows = grouped[key].orEmpty()
                                     if ((rows+priorGroups[key].orEmpty()).any { it["people"].asLong()<5 }) 0.0
-                                    else rows.sumOf { it["value"].asDouble(0.0) }
+                                    else if (q.metricId in topRatioMetrics) {
+                                        // 일별 비율의 합계가 아니라 관측량으로 가중한 전체 기간 비율을 사용한다.
+                                        val denominator = rows.sumOf { it["denominator"].asDouble(0.0) }
+                                        if (denominator==0.0) 0.0 else rows.sumOf { it["numerator"].asDouble(0.0) }/denominator
+                                    } else rows.sumOf { it["value"].asDouble(0.0) }
                                 }.thenBy { mapper.writeValueAsString(it) }).take(groupLimit(q))
                             current = read(calculation,scope,from,to,zone,interval,deadline,retained)
                             previous = comparison?.let { read(calculation,scope,it.first,it.second,zone,interval,deadline,retained) }
