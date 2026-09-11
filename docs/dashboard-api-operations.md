@@ -96,3 +96,10 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 `automation_ratio`, `integration_depth`, `command_prompt_ratio`, `tool_failure_rate`, `api_retry_attempts`, `auto_approval_ratio`, `api_error_rate`, `compaction_reduction`, `mcp_failure_ratio`, `rubber_stamp_ratio`, `edit_acceptance_rate`, `cache_read_ratio`, `input_output_ratio`에도 상위 N·`__other__`를 지원한다.
 
 선택 기준은 현재 기간의 분자 합계 ÷ 분모 합계다. 일별 비율을 단순 합산하거나 평균하지 않는다. 분모가 0이거나 현재/비교 기간 마스킹 대상인 그룹의 순위 점수는 0이다. 결과의 영 분모는 기존처럼 null이며, 나머지는 원본을 합쳐 분자·분모와 보호 인원을 다시 계산한다. 비용/인원·비용/시간·백분위·코호트 등 별도 계산 지표는 아직 이 목록에 포함되지 않는다.
+
+
+## 비용 파생 지표 상위 N
+
+`cost_per_active_user`, `cost_per_user_hour`, `model_unit_price`, `subagent_cost_ratio`에도 상위 N·`__other__`를 지원한다. 순위는 현재 기간 전체의 비용/사용자, 비용/시간, 비용/토큰, 서브에이전트 비용/전체 비용으로 정한다. 시계열 요청도 기간 전체를 별도로 집계하여 사용자 수를 중복 제거하므로 일별 사용자 수나 단가를 단순 합산하지 않는다.
+
+나머지는 원본에서 동일 가격 기준·팀 범위로 다시 집계한다. 비교 기간은 같은 상위 그룹을 사용하며 마스킹 및 영 분모 null은 유지한다. 시계열 상위 선택용 조회도 기존 요청 시간 예산 안에서 실행한다. 고유 인원·백분위·코호트 등 나머지 지표는 아직 별도 확장이 필요하다.

@@ -762,26 +762,33 @@ try {
       const installations = [...new Map(points.map(JSON.parse).map(p => [p.installation_id, p])).values()];
       const costs = installations.flatMap(p => [['top-e2e-a', 10], ['top-e2e-b', 3], ['top-e2e-c', 2]]
         .map(([model, cost]) => JSON.stringify({ ...p, event_id: randomUUID(), signal: 'log',
-          raw_json: JSON.stringify({ type: 'llm_call', payload: { model, cost_usd: cost } }) })));
+          raw_json: JSON.stringify({ type: 'llm_call', payload: { model, cost_usd: cost, tokens: { input: 1, output: 0, cache_read: 0, cache_create: 0 } } }) })));
       run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], costs.join('\n'));
       const topCost = await page.evaluate(async () => {
         const { request } = await import('/src/api/client.ts');
         const { series } = await import('/src/widgets/model.ts');
         const response = await request('/query', { method: 'POST', body: JSON.stringify({
           from: 'now-1d', to: 'now', filters: { models: ['top-e2e-a', 'top-e2e-b', 'top-e2e-c'] },
-          queries: [{ ref_id: 'A', metric_id: 'cost', group_by: ['model'], frame_type: 'table', limit: 1 }],
+          queries: [{ ref_id: 'A', metric_id: 'cost', group_by: ['model'], frame_type: 'table', limit: 1 },
+            { ref_id: 'B', metric_id: 'model_unit_price', group_by: ['model'], frame_type: 'table', limit: 1 }],
         }) });
-        return series(response.results.A);
+        return { cost: series(response.results.A), unit: series(response.results.B) };
       });
-      assert.equal(topCost.state, 'success');
-      assert.deepEqual(Object.fromEntries(topCost.points.map(p => [p.labels.model, p.value.value])),
+      assert.equal(topCost.cost.state, 'success');
+      assert.deepEqual(Object.fromEntries(topCost.cost.points.map(p => [p.labels.model, p.value.value])),
         { 'top-e2e-a': 50, '__other__': 25 });
+      assert.equal(topCost.unit.state, 'success');
+      assert.deepEqual(Object.fromEntries(topCost.unit.points.filter(p => p.key === 'value').map(p => [p.labels.model, p.value.value])),
+        { 'top-e2e-a': 10, '__other__': 2.5 });
+      assert.deepEqual(Object.fromEntries(topCost.unit.points.filter(p => p.labels.model === '__other__').map(p => [p.key, p.value.value])),
+        { value: 2.5, numerator: 25, denominator: 10 });
     }
     await page.screenshot({ path: resolve(artifacts, `${role}.png`), fullPage: true });
     await Promise.all(responseReads);
     await context.close();
   }
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
+    verifiedUnitPriceTopN: { actualFrontendClient: true, admin: true, top: 10, other: 2.5, otherCost: 25, otherTokens: 10 },
     verifiedRatioTopN: { metric: 'api_error_rate', actualFrontendClient: true, roles: ['owner', 'admin'], top: 1, other: 0, otherDenominator: 10 },
     verifiedCountTopN: { metric: 'llm_stop_reasons', actualFrontendClient: true, roles: ['owner', 'admin'], top: 10, other: 10 },
     verifiedCostTopN: { actualFrontendClient: true, admin: true, top: 50, other: 25 },
