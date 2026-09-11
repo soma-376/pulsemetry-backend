@@ -532,8 +532,35 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, reportingRun.run.run_id);
   await page.getByRole('heading', { name: '경영 보고용 세션 사용량이 관측되었습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-reporting-scenario.png'), fullPage: true });
+  const concentrationRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    let { run } = await scenarioApi.start('S3-2', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return run;
+  }, scenarioFrom);
+  assert.equal(concentrationRun.status, 'succeeded');
+  assert.equal(concentrationRun.progress.step, 3);
+  assert.equal(concentrationRun.progress.total, 3);
+  assert.deepEqual(Object.keys(concentrationRun.result.frames).sort(), ['tokens', 'tool_calls', 'usage_concentration']);
+  assert.equal(concentrationRun.result.findings.length, 1);
+  assert.equal(concentrationRun.result.findings[0].evidence.top_decile_share, 0.2);
+  const curve = concentrationRun.result.frames.usage_concentration.frames.find(f => f.schema.fields[0].name === 'population_share');
+  assert.deepEqual(curve.data.values[0], [0, 0.2, 0.4, 0.6, 0.8, 1]);
+  assert.deepEqual(curve.data.values[2], [0, 0.2, 0.4, 0.6, 0.8, 1]);
+  for (const installation of installations) assert.ok(!JSON.stringify(concentrationRun.result).includes(installation));
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, concentrationRun.run_id);
+  await page.getByRole('heading', { name: '익명 사용량 집중도가 관측되었습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-concentration-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    concentrationScenario: { id: 'S3-2', runId: concentrationRun.run_id, actualResultUI: true, topDecileShare: 0.2, anonymousCurve: true },
     reportingScenario: { id: 'S8-1', runId: reportingRun.run.run_id, actualResultUI: true, sessions: 5, tokens: 1050, costPerActiveUserUsd: 3 },
     hourlyScenario: { id: 'S2-1', runId: hourlyRun.run.run_id, actualResultUI: true, prompts: 10, zone: 'Asia/Seoul', rateLimitFindings: 0 },
     advancedScenario: { id: 'S3-5', runId: advancedRun.run.run_id, actualResultUI: true, subagentCostRatio: 1, toolFailureRate: 0.2 },
