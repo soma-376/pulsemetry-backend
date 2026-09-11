@@ -2682,6 +2682,54 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun policyRun(bearer: String, audit: String? = "policy scenario review") =
+        mvc.perform(post("/v1/scenarios/S7-3/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content("""{"params":{"from":"2026-09-01","to":"2026-09-02"}}"""))
+
+    @Test fun `정책 시나리오는 감사 후 거절 차단 대기를 제공한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(decisionEvent(it,"hook","reject"),gateEvent(it,120000),hookEvent(it,"2")) })
+        val bearer = token()
+        policyRun(bearer,null).andExpect(status().isForbidden)
+        val id = mapper.readTree(policyRun(bearer).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        assertThat(run["result"]["target_page"].asString()).isEqualTo("P3")
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrder("tool_rejections","hook_blocking","gate_wait_ms")
+        assertThat(frames["tool_rejections"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+        assertThat(frames["hook_blocking"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(10.0)
+        assertThat(frames["gate_wait_ms"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(120000.0)
+        val findings = run["result"]["findings"]
+        assertThat(findings.size()).isEqualTo(1)
+        assertThat(findings[0]["rule_id"].asString()).isEqualTo("observed_tool_rejections")
+        assertThat(findings[0]["severity"].asString()).isEqualTo("info")
+        assertThat(findings[0]["evidence"]["count"].asDouble()).isEqualTo(5.0)
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S7-3'")
+            .query(Long::class.java).single()).isEqualTo(1)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        policyRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `정책 시나리오는 소집단과 승인에서 위반을 추정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { decisionEvent(it,"user","reject") },emptyList(),ids.map { decisionEvent(it,"user","accept") })) {
+            seedPoints(rows)
+            val id = mapper.readTree(policyRun(bearer).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun retryStormRun(bearer: String, audit: String? = "retry scenario review") =
         mvc.perform(post("/v1/scenarios/S6-5/runs").header("Authorization","Bearer $bearer")
             .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
