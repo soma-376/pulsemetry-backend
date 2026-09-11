@@ -54,6 +54,8 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
       attr('session.id', `ingest-${installation}`), attr('model', scenarioModel),
       attr('request_id', randomUUID()), { key: 'cost_usd', value: { doubleValue: index + 1 } },
       { key: 'attempt', value: { intValue: index === 0 ? '2' : '1' } },
+      ...[['input_tokens', 200], ['output_tokens', 10], ['cache_read_tokens', 0], ['cache_creation_tokens', 0]]
+        .map(([key, value]) => ({ key, value: { intValue: String(value) } })),
     ] }] }] }] });
     const metrics = JSON.stringify({ resourceMetrics: [{ resource, scopeMetrics: [{ metrics:
       [1, 2].map(temporality => ({ name: 'claude_code.cost.usage', unit: 'USD', sum: {
@@ -152,8 +154,32 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   await teamWidget.locator('summary').click();
   assert.ok((await teamWidget.innerText()).includes('$15.00'));
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-scenario.png'), fullPage: true });
+  const contextRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S1-5', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, ratio: series(run.result?.frames.input_output_ratio) };
+  }, scenarioFrom);
+  assert.equal(contextRun.run.status, 'succeeded');
+  assert.equal(contextRun.run.progress.step, 3);
+  assert.equal(contextRun.run.progress.total, 3);
+  assert.ok(contextRun.ratio.points.some(p => p.value.state === 'value' && p.value.value === 20));
+  assert.equal(contextRun.run.result.findings[0].rule_id, 'high_io_ratio');
+  assert.equal(contextRun.run.result.findings[0].evidence.ratio, 20);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, contextRun.run.run_id);
+  await page.getByRole('heading', { name: '입력/출력 토큰 비율이 임계값을 초과했습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-context-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 25,
+    contextScenario: { id: 'S1-5', runId: contextRun.run.run_id, actualResultUI: true, ratio: 20, threshold: 10 },
     scenario: { id: 'S1-3', runId: scenario.run.run_id, actualResultUI: true, costUsd: 15, retryRatio: 0.2 },
     toolCalls: 5, deltaCostUsd: 15, cumulativeCostExcluded: true, ttftMs: quantiles };
 }

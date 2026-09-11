@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-3 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-3·S1-5 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -549,3 +549,11 @@
 - 실제 frontend 클라이언트로 S1-3 비동기 실행, 모델·팀 비용 15 USD, 재시도 비율 0.2, retry_cost 판정과 실제 결과 화면의 W1.3 $15.00을 검증한다. 증거는 `verifiedIngest.scenario` 및 `admin-ingest-scenario.png`다.
 - 시나리오 실행 확장(S1-3 외), 잔여 조회 명세, 실제 수집 시계열의 급증·모델 비중 변화 및 다른 화면 흐름 검증은 남아 있다.
 - 최종 E2E 통과(예상하지 않은 API 오류 0건), 스크린샷에서 비용 추세 점·팀 비용 막대/$15.00·재시도 20% 판정을 확인했다. 기존 W2.5 frontend 매핑 누락으로 재시도 프레임은 별도 표에 표시되며 해당 위젯은 미연결 상태다. frontend 코드는 변경하지 않았다.
+
+
+## S1-5 실행 확장
+
+- 실행 가능한 시나리오를 S1-3과 S1-5 두 개로 확장했다. S1-5는 input_output_ratio→compactions→compaction_reduction의 3단계이며 P2/W2.6/W2.9와 고정 실행 필터를 반환한다. 기존 lease·취소·현재 권한 재검증·결과 저장을 사용한다.
+- 상세 판정식이 없는 첨부 명세를 보완해 `input_output_ratio > io_ratio_threshold`를 정보성 검토 규칙으로 명시했다. 기본 임계값 10, 동률·미달·마스킹·분모 0은 판정하지 않는다. partial 상태와 컨텍스트 첨부 여부를 관측하지 못한다는 한계를 유지한다.
+- DB 통합 테스트 2건을 추가했다. 토큰 비율 20과 임계값 10/20/30, 압축 5회/감소율 0.75, 4명 마스킹·분모 0과 기본값을 검증했다. dashboard 테스트 146건 통과(실패·오류·skip 0), bootJar 빌드 성공.
+- 실제 OTLP 데이터의 S1-5 비동기 완료·비율 20·임계값 10·판정 화면 E2E와 기존 smoke가 통과했다(API 오류 0건). 화면의 W2.6 매핑 누락 및 비율 20을 표에서 2,000으로 표시하는 frontend 포맷 문제는 남아 있다. 판정 근거는 올바르게 20으로 표시된다. frontend 코드는 변경하지 않았다.

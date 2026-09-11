@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 S1-3 서버 입력 검증에서 공통으로 사용한다. S1-3 외 판정 규칙·실행 계획과 실행 목록·저장 API는 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-3·S1-5의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -57,7 +57,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 워커는 기본 활성화이며 `pulsemetry.dashboard.worker-enabled=false`로 해당 인스턴스의 claim을 중단할 수 있다. 접수는 계속 가능하므로 유지보수 시 활성 실행 3개 상한에 유의한다. queued는 DB에 남고 running lease가 만료되면 다음 워커 claim 시 실패 처리된다. 재시도는 새 실행 요청으로 한다. 취소는 실행 중인 DB 조회의 즉시 중단을 보장하지 않으며 결과 저장을 차단한다.
 
-현재 S1-3만 실행 가능하다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
+현재 S1-3과 S1-5를 실행할 수 있다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
 
 E2E 스크립트는 각 외부 명령을 60초로 제한한다. `result.json`은 최신 시도의 상태이며 이전 성공은 `last-success.json`에 보관한다. S1-3 실행·폴링·취소와 실측 판정은 실제 frontend 클라이언트로 검증했다. 2026-09-11 Docker 재시작 후 backend `cd057dc` / frontend `52f7cb1`에서 owner/admin의 결과 화면 판정 표시까지 통과했다. 스크린샷은 `owner-scenario.png`, `admin-scenario.png`다. W1.3·W2.5의 결과 미연결 안내는 남아 있어 모든 위젯의 시각화 완료를 검증한 것은 아니다.
 
@@ -120,3 +120,14 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 ## 실제 수집 데이터의 S1-3 실행
 
 기존 smoke가 끝난 후 이번 실행 전용 ClickHouse 테이블을 비워 직접 주입 데이터를 제거한다. 이후 OTLP로만 도구 호출·비용 로그, 비용 metrics, TTFT traces를 전송한다. 비용 로그는 5명이 1~5 USD씩 사용하고 1명만 attempt=2인 고정 데이터다. 실제 frontend 클라이언트로 S1-3을 시작하고 queued→succeeded, 모델·팀 비용 각각 15 USD, 재시도 비율 0.2와 retry_cost 판정을 확인한다. `/runs/{id}` 화면의 판정 제목과 W1.3 팀별 비용 $15.00을 검증하고 `admin-ingest-scenario.png`를 저장한다. `result.json.verifiedIngest.scenario`가 실행 ID와 검증 범위를 담는다. 이동평균 급증과 모델 비중 변화의 실제 수집 시계열, 다른 시나리오와 저장·재실행의 수집 기반 확장은 아직 범위 밖이다.
+
+
+## S1-5 컨텍스트 사용 검토
+
+`POST /v1/scenarios/S1-5/runs`는 from/to/team_ids와 `io_ratio_threshold`(기본 10)를 받는다. 입력/출력 토큰 비율, 압축 횟수, 압축 감소율을 일별 시계열로 조회하는 3단계 실행이다. P2와 W2.6/W2.9를 반환한다. 현재 역할·팀 권한을 각 조회와 결과 저장 전에 재검증하며 기존 큐·취소·저장 API를 공유한다.
+
+첨부 명세에는 지표·임계값 입력만 있고 상세 판정식은 없으므로 다음 운영 규칙을 명시적으로 채택했다: 유효 입력/출력 비율이 임계값을 **초과**하면 `high_io_ratio` 정보 판정을 만든다. 임계값과 같거나 이하, 분모 0, 결측, 마스킹에서는 판정하지 않는다. 모든 판정에 관측 한계를 포함하며 `availability=partial`을 유지한다. 첨부량·@멘션·원문은 관측하지 않으므로 과다 첨부 사실이나 낭비로 단정하지 않는다.
+
+실제 OTLP api_request의 입력 200/출력 10을 5명에게 수집한 E2E는 비율 20, 기본 임계값 10, 비동기 완료 및 실제 frontend 판정 화면을 확인한다. 압축 지표 값과 임계값 경계·소집단·분모 0은 DB 통합 테스트에서 검증한다. 증거는 `verifiedIngest.contextScenario`와 `admin-ingest-context-scenario.png`다.
+
+현재 frontend는 input_output_ratio를 W2.6에 연결하지 않아 별도 표를 표시한다. 또한 표의 ratio 단위 포맷이 20을 2,000으로 표시한다. 판정 근거 ratio=20은 정상이며 이 E2E는 모든 위젯·숫자 포맷의 완성을 의미하지 않는다.
