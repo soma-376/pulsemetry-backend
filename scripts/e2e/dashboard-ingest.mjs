@@ -607,6 +607,29 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, templateRun.run_id);
   await page.getByRole('heading', { name: '명령 프롬프트가 관측되었습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-template-scenario.png'), fullPage: true });
+  const sprintRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    let { run } = await scenarioApi.start('S2-3', { params: { from, to: new Date(Date.now() + 1000).toISOString(), sprint_dates: [new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date())] } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return run;
+  }, scenarioFrom);
+  assert.equal(sprintRun.status, 'succeeded');
+  assert.equal(sprintRun.progress.step, 4);
+  assert.equal(sprintRun.progress.total, 4);
+  assert.deepEqual(Object.keys(sprintRun.result.frames).sort(), ['llm_duration_ms', 'rate_limit_events', 'sessions', 'usage_heatmap']);
+  assert.equal(sprintRun.result.findings.length, 1);
+  assert.equal(sprintRun.result.findings[0].evidence.sessions, 5);
+  assert.equal(sprintRun.result.findings[0].evidence.sprint_date, sprintRun.params.sprint_dates[0]);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, sprintRun.run_id);
+  await page.getByRole('heading', { name: '지정한 스프린트 날짜에 세션이 관측되었습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-sprint-scenario.png'), fullPage: true });
   const consolidationRun = await page.evaluate(async from => {
     const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
     let { run } = await scenarioApi.start('S8-5', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
@@ -906,6 +929,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    sprintScenario: { id: 'S2-3', runId: sprintRun.run_id, admin: true, actualResultUI: true, sprintDate: sprintRun.params.sprint_dates[0], sessions: 5 },
     qualityScenario: { id: 'S6-1', runId: qualityRun.run_id, owner: true, audited: true, actualResultUI: true, refusalFindings: 0, promptsPerSession: 2 },
     consolidationScenario: { id: 'S8-5', runId: consolidationRun.run_id, admin: true, actualResultUI: true, product: 'claude_code', activeUsers: 5, costPerActiveUser: 3, toolCalls: 5 },
     templateScenario: { id: 'S4-5', runId: templateRun.run_id, admin: true, actualResultUI: true, commandNames: ['/review'], ratio: 0.5 },
