@@ -223,3 +223,5 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 `POST /v1/scenarios/S3-1/runs`는 from/to를 받는다. active_users·adoption_rate·prompts_per_session·tool_calls·mcp_connections를 팀별 기간 표로 조회하는 5단계이며 P1/W1.6·W1.1을 반환한다. owner는 조직, admin은 본인 팀 범위로 실행한다. 직군 데이터가 없어 팀을 대리 기준으로 사용하는 partial 상태다.
 
 공개 가능한 양수 채택률을 observed_team_adoption 정보성 안내로 제공한다. 직군 격차·팀 우열을 판정하지 않는다. 소집단·미관측·0·잔여 그룹은 안내에서 제외하며 활성 사용자 정의와 모집단은 원래 조회 계약을 유지한다.
+
+실제 수집 E2E의 `verifiedIngest.adoptionScenario`, `admin-ingest-adoption-scenario.png`에 활성 사용자 5명·채택률 5/6·도구 호출 5건의 실행·화면 증거를 남긴다. MCP 연결은 수집 fixture에 없어 미관측이다. 현재 frontend는 S3-1 채택률을 W1.1에 연결해 W1.6 강조는 빈 안내를 표시하며, 실제 값은 채택률 카드에서 확인한다.

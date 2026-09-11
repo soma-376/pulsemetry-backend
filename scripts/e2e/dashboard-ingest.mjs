@@ -432,8 +432,34 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, vendorRun.run.run_id);
   await page.getByRole('heading', { name: '제품별 비용이 관측되었습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-vendor-scenario.png'), fullPage: true });
+  const adoptionRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S3-1', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, users: series(run.result?.frames.active_users), calls: series(run.result?.frames.tool_calls) };
+  }, scenarioFrom);
+  assert.equal(adoptionRun.run.status, 'succeeded');
+  assert.equal(adoptionRun.run.progress.step, 5);
+  assert.equal(adoptionRun.run.progress.total, 5);
+  assert.deepEqual(Object.keys(adoptionRun.run.result.frames).sort(), ['active_users', 'adoption_rate', 'mcp_connections', 'prompts_per_session', 'tool_calls']);
+  assert.ok(adoptionRun.users.points.some(p => p.labels.team === '00000000-0000-0000-0000-000000000010' && p.value.value === 5));
+  assert.ok(adoptionRun.calls.points.some(p => p.value.value === 5));
+  assert.equal(adoptionRun.run.result.findings.length, 1);
+  assert.ok(Math.abs(adoptionRun.run.result.findings[0].evidence.adoption_rate - 5 / 6) < 1e-10);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, adoptionRun.run.run_id);
+  await page.getByRole('heading', { name: '팀별 채택률이 관측되었습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-adoption-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    adoptionScenario: { id: 'S3-1', runId: adoptionRun.run.run_id, actualResultUI: true, activeUsers: 5, adoptionRate: 5 / 6, toolCalls: 5 },
     vendorScenario: { id: 'S8-4', runId: vendorRun.run.run_id, actualResultUI: true, product: 'claude_code', costUsd: 15, tokens: 1050 },
     teamUsageScenario: { id: 'S3-4', runId: teamUsageRun.run.run_id, actualResultUI: true, sessions: 5 },
     actionScenario: { id: 'S4-6', runId: actionRun.run.run_id, actualResultUI: true, action: 'other', calls: 5 },
