@@ -105,7 +105,14 @@
         ],
         "additionalProperties": false
       },
-      "findings_rules": [],
+      "findings_rules": [
+        {
+          "rule_id": "budget_exceeded",
+          "severity": "warning",
+          "when": "observed_team_usage > supplied_team_budget",
+          "message": "관측 사용량이 입력한 팀 예산을 초과했습니다. USD 또는 백만 토큰 단위로 비교합니다."
+        }
+      ],
       "actions": []
     },
     {

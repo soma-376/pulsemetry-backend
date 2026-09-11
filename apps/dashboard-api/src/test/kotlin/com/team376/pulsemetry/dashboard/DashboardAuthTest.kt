@@ -2682,6 +2682,57 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `예산 시나리오는 USD와 백만 토큰을 각 팀의 관측 합계와 비교한다`() {
+        val teams = costTeams()
+        val rows = teams.flatMap { team -> installations(5,team).flatMap {
+            listOf(costEvent(it,3.0,team=team),inTeam(tokenEvent(it,100,100,0,0),team))
+        } }
+        seedPoints(rows)
+        val bearer = token()
+        for (scale in listOf(1,2,3)) {
+            val params = """{"from":"2026-09-01","to":"2026-09-02","budget_by_team":{"${teams[0]}":{"usd":${7.5*scale}},"${teams[1]}":{"tokens_m":${0.0005*scale}}}}"""
+            val id = mapper.readTree(startRun(bearer,"S1-1",params).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+            val result = run["result"]
+            assertThat(result["target_page"].asString()).isEqualTo("P1")
+            assertThat(result["applied_filters"]["filters"]["team_ids"].toList().map { it.asString() })
+                .containsExactlyInAnyOrder(teams[0].toString(),teams[1].toString())
+            assertThat(result["frames"].propertyNames()).containsExactlyInAnyOrder("tokens","cost","adoption_rate")
+            assertThat(result["frames"]["cost"]["frames"].size()).isEqualTo(2)
+            assertThat(result["findings"].size()).isEqualTo(if(scale==1) 2 else 0)
+            if(scale==1) {
+                val findings = result["findings"].toList()
+                assertThat(findings.map { it["evidence"]["ratio"].asDouble() }).containsOnly(2.0)
+                assertThat(findings.map { it["evidence"]["unit"].asString() }).containsExactlyInAnyOrder("USD","million_tokens")
+                assertThat(findings.map { it["rule_id"].asString() }).containsOnly("budget_exceeded")
+            }
+        }
+    }
+
+    @Test fun `예산 시나리오는 소집단 미관측을 경고하지 않고 다른 팀 예산을 거부한다`() {
+        val teams = costTeams()
+        val ids = installations(4,teams[0])
+        seedPoints(ids.map { costEvent(it,100.0,team=teams[0]) })
+        val bearer = token()
+        val params = """{"from":"2026-09-01","to":"2026-09-02","budget_by_team":{"${teams[0]}":{"usd":1},"${teams[1]}":{"tokens_m":1}}}"""
+        val id = mapper.readTree(startRun(bearer,"S1-1",params).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["result"]["findings"].size()).isZero()
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        jdbc.sql("INSERT INTO enrollment.team_memberships(team_id,member_id) VALUES (:team,:member)")
+            .param("team",teams[0]).param("member",member).update()
+        startRun(token(),"S1-1",params).andExpect(status().isForbidden)
+        startRun(token(),"S1-1","""{"budget_by_team":{"${teams[0]}":{"usd":0}}}""").andExpect(status().isBadRequest)
+    }
+
     @Test fun `에이전트 시나리오는 실패율 임계값과 네 지표를 실행한다`() {
         val ids = installations(5)
         seedPoints(ids.flatMap { listOf(toolEvent(it,true),toolEvent(it,false),toolEvent(it,null),costEvent(it,3.0)) })
@@ -2832,7 +2883,7 @@ class DashboardAuthTest {
             .contentType("application/json").content("""{"params":{}}""")).andExpect(status().isBadRequest)
 
         startRun(bearer,"S5-1", "{}").andExpect(status().isConflict)
-        startRun(bearer,"S1-1", "{}").andExpect(status().isNotImplemented)
+        startRun(bearer,"S1-2", "{}").andExpect(status().isNotImplemented)
         startRun(bearer,"S9-1", "{}").andExpect(status().isNotFound)
         repeat(3) { startRun(bearer).andExpect(status().isAccepted) }
         startRun(bearer).andExpect(status().isTooManyRequests)
