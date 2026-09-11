@@ -62,7 +62,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private val topRatioMetrics = setOf("automation_ratio","integration_depth","command_prompt_ratio","tool_failure_rate",
         "api_retry_attempts","auto_approval_ratio","api_error_rate","compaction_reduction","mcp_failure_ratio",
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
-    private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + setOf("cost","tool_calls","rate_limit_events","tool_rejections",
+    private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
+    private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topCostRatioMetrics + setOf("cost","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
     private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio", "cost_per_active_user", "cost_per_user_hour", "model_unit_price", "cost_anomaly", "contract_commitment_burn")
@@ -175,11 +176,16 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                         val priorGroups = previous?.data?.groupBy(::key).orEmpty()
                         val keys = (grouped.keys+priorGroups.keys).distinct()
                         if (keys.size>groupLimit(q)) {
+                            // 사용자 수처럼 더할 수 없는 분모도 기간 전체에서 중복 제거해 순위를 계산한다.
+                            val period = if (q.metricId in topCostRatioMetrics && timeseries)
+                                read(calculation.copy(frameType="scalar"),scope,from,to,zone,interval,deadline) else current
+                            val periodGroups = period.data.associateBy(::key)
                             // 소집단의 숨겨진 수치가 상위 그룹의 선택이나 순서에 영향을 주지 않는다.
                             val retained = keys.filter { "__other__" !in it }.sortedWith(
                                 compareByDescending<List<String>> { key ->
                                     val rows = grouped[key].orEmpty()
                                     if ((rows+priorGroups[key].orEmpty()).any { it["people"].asLong()<5 }) 0.0
+                                    else if (q.metricId in topCostRatioMetrics) periodGroups[key]?.get("value")?.asDouble(0.0) ?: 0.0
                                     else if (q.metricId in topRatioMetrics) {
                                         // 일별 비율의 합계가 아니라 관측량으로 가중한 전체 기간 비율을 사용한다.
                                         val denominator = rows.sumOf { it["denominator"].asDouble(0.0) }

@@ -1869,6 +1869,71 @@ class DashboardAuthTest {
             "value" to seconds,"aggregation_temporality" to if (cumulative) 2 else 1,"attrs" to mapOf("type" to type)))))
         return mapper.writeValueAsString(row)
     }
+    private fun costTeams(): List<UUID> = (1..3).map { index -> UUID.randomUUID().also { id ->
+        jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,:name)")
+            .param("id",id).param("tenant",tenant).param("name","비용 팀 $index").update()
+    } }
+    private fun inTeam(json: String, team: UUID): String {
+        val row = mapper.readTree(json) as tools.jackson.databind.node.ObjectNode
+        row.putArray("team_ids_as_of").add(team.toString())
+        return row.toString()
+    }
+    private fun topCostFrames(metric: String, group: String, type: String = "table") =
+        mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"group_by" to listOf(group),
+            "frame_type" to type,"limit" to 1))).andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]["frames"].toList().associateBy {
+                it["schema"]["fields"][if(type=="timeseries") 1 else 0]["labels"][group].asString()
+            }
+    @Test fun `사용자당 비용의 상위 선택과 나머지는 기간 전체 사용자를 중복 제거한다`() {
+        val teams = costTeams()
+        val ids = installations(10)
+        seedPoints(listOf("2026-09-01T12:00:00Z","2026-09-02T12:00:00Z").flatMapIndexed { day, at ->
+            ids.take(5).flatMap { listOf(costEvent(it,5.0,at,teams[0]),costEvent(it,2.0,at,teams[2])) }+
+                ids.drop(day*5).take(5).map { costEvent(it,6.0,at,teams[1]) }
+        })
+        val totals = topCostFrames("cost_per_active_user","team")
+        assertThat(totals.keys).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
+        assertThat(totals.getValue(teams[0].toString())["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(10.0,50.0,5.0)
+        assertThat(totals.getValue("__other__")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(8.0,80.0,10.0)
+        val daily = topCostFrames("cost_per_active_user","team","timeseries")
+        assertThat(daily.keys).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
+        assertThat(daily.getValue("__other__")["data"]["values"][1].toList().map { it.asDouble() }).containsExactly(8.0,4.0)
+    }
+    @Test fun `시간당 비용과 서브에이전트 나머지는 각 원천의 분모를 재집계한다`() {
+        val teams = costTeams()
+        val ids = installations(5)
+        fun source(id: UUID, amount: Double, subagent: Boolean, team: UUID): String {
+            val row = mapper.readTree(costPoint(id,amount)) as tools.jackson.databind.node.ObjectNode
+            val raw = mapper.readTree(row["raw_json"].asString())
+            (raw["point"]["attrs"] as tools.jackson.databind.node.ObjectNode).put("query_source",if(subagent) "subagent" else "main")
+            row.put("raw_json",raw.toString())
+            return inTeam(row.toString(),team)
+        }
+        seedPoints(ids.flatMap { id -> teams.flatMapIndexed { i, team ->
+            val sub = listOf(8.0,1.0,1.0)[i]
+            val all = listOf(10.0,2.0,8.0)[i]
+            listOf(costEvent(id,sub,team=team),inTeam(userTime(id,if(i==2) 32400.0 else 3600.0),team),
+                source(id,sub,true,team),source(id,all-sub,false,team))
+        } })
+        for (metric in listOf("cost_per_user_hour","subagent_cost_ratio")) {
+            val frames = topCostFrames(metric,"team")
+            assertThat(frames.keys).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
+            assertThat(frames.getValue("__other__")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.2,10.0,50.0)
+        }
+    }
+    @Test fun `모델 단가 나머지는 모델 단가 평균이 아닌 비용과 토큰 합계로 계산한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { id -> listOf(Triple("a",10.0,5),Triple("b",1.0,1),Triple("c",9.0,99)).map { (model,cost,tokens) ->
+            val row = mapper.readTree(pricedTokens(id,cost,tokens)) as tools.jackson.databind.node.ObjectNode
+            val raw = mapper.readTree(row["raw_json"].asString())
+            (raw["payload"] as tools.jackson.databind.node.ObjectNode).put("model",model)
+            row.put("raw_json",raw.toString())
+            row.toString()
+        } })
+        val frames = topCostFrames("model_unit_price","model")
+        assertThat(frames.keys).containsExactlyInAnyOrder("a","__other__")
+        assertThat(frames.getValue("a")["data"]["values"][0][0].asDouble()).isEqualTo(2.0)
+        assertThat(frames.getValue("__other__")["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.1,50.0,500.0)
+    }
     @Test fun `사용자 비용은 사람을 중복 제거하고 시간 비용은 사용자 시간만 합산한다`() {
         val ids = installations(5)
         val extra = UUID.randomUUID()
