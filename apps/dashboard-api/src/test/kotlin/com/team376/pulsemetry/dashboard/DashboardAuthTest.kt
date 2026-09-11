@@ -266,6 +266,60 @@ class DashboardAuthTest {
         val fractional = mapper.readTree(queryResult(after).andExpect(status().isOk).andReturn().response.contentAsString)
         assertThat(fractional["results"]["A"]["frames"].size()).isZero()
     }
+    @Test fun `활성 사용자 상위는 기간 고유 인원으로 선택하고 기타 팀의 중복 인원을 제거한다`() {
+        val teams = costTeams(); val top = installations(6); val shared = installations(5)
+        seedPoints(top.map { point(it,1.0,team=teams[0]) }+shared.flatMap { id ->
+            listOf("2026-09-01T12:00:00Z","2026-09-02T12:00:00Z").map { at ->
+                val row = mapper.readTree(point(id,1.0,at=at)) as tools.jackson.databind.node.ObjectNode
+                row.set("team_ids_as_of",mapper.valueToTree(teams.drop(1).map { it.toString() }))
+                row.toString()
+            } }+shared.map { point(it,1.0,at="2026-08-30T12:00:00Z",team=teams[1]) })
+        for(type in listOf("table","scalar","timeseries")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "active_users","group_by" to listOf("team"),
+                "frame_type" to type,"limit" to 1),mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val offset = if(type=="timeseries") 1 else 0
+            val frames = result["frames"].toList().associateBy { it["schema"]["fields"][offset]["labels"]["team"].asString() }
+            assertThat(frames.keys).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
+            assertThat(frames.getValue(teams[0].toString())["data"]["values"][offset][0].asDouble()).isEqualTo(6.0)
+            assertThat(frames.getValue("__other__")["data"]["values"][offset][0].asDouble()).isEqualTo(5.0)
+            assertThat(frames.getValue("__other__")["data"]["values"][offset+1][0].asDouble()).isEqualTo(5.0)
+        }
+    }
+    @Test fun `커버리지 상위는 날짜를 가로질러 설치를 중복 제거하고 전체 설치 분모를 유지한다`() {
+        val ids = installations(6)
+        seedPoints(ids.map { promptEvent(it,product="claude_code") }+ids.take(5).flatMap { id ->
+            listOf("2026-09-01T12:00:00Z","2026-09-02T12:00:00Z").map { promptEvent(id,product="codex",at=it) } })
+        for(type in listOf("table","timeseries")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "telemetry_coverage","group_by" to listOf("product"),
+                "frame_type" to type,"limit" to 1))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val offset = if(type=="timeseries") 1 else 0
+            val frames = result["frames"].toList().associateBy { it["schema"]["fields"][offset]["labels"]["product"].asString() }
+            assertThat(frames.keys).containsExactlyInAnyOrder("claude_code","__other__")
+            val other = frames.getValue("__other__")
+            assertThat(other["data"]["values"][offset][0].asDouble()).isEqualTo(5.0/6.0)
+            assertThat(other["data"]["values"][offset+1][0].asDouble()).isEqualTo(5.0)
+            assertThat(other["data"]["values"][offset+2][0].asDouble()).isEqualTo(6.0)
+        }
+    }
+    @Test fun `활성 사용자 기타의 다중 팀 시간 중복으로 비활성자가 활성화되지 않는다`() {
+        val teams = costTeams(); val top = installations(5); val hidden = installations(4)
+        fun activity(id: UUID, value: Double, membership: List<UUID>): String {
+            val row = mapper.readTree(point(id,value)) as tools.jackson.databind.node.ObjectNode
+            row.set("team_ids_as_of",mapper.valueToTree(membership.map { it.toString() }))
+            row.put("raw_json",mapper.writeValueAsString(mapOf("point" to mapOf("name" to "claude_code.active_time.total",
+                "value" to value,"aggregation_temporality" to 1,"attrs" to mapOf("type" to "user")))))
+            return row.toString()
+        }
+        seedPoints(top.map { activity(it,1.0,listOf(teams[0])) }+hidden.map { activity(it,1.0,teams.drop(1)) }+
+            listOf(activity(top[0],1.0,teams.drop(1)),activity(top[0],-1.0,listOf(teams[1]))))
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "active_users","group_by" to listOf("team"),
+            "frame_type" to "table","limit" to 1))).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val other = result["frames"].single { it["schema"]["fields"][0]["labels"]["team"].asString()=="__other__" }
+        assertThat(other["data"]["values"][0][0].isNull).isTrue()
+    }
     @Test fun `한 사람의 여러 설치는 마스킹 인원을 늘리지 않고 CSV와 커버리지도 억제한다`() {
         val ids = installations(4)
         val duplicate = UUID.randomUUID()

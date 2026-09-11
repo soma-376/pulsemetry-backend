@@ -63,7 +63,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "api_retry_attempts","auto_approval_ratio","api_error_rate","compaction_reduction","mcp_failure_ratio",
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
     private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
-    private val topPeriodMetrics = topCostRatioMetrics + setOf("prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
+    private val topPeriodMetrics = topCostRatioMetrics + setOf("active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
     private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
@@ -349,7 +349,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (q.metricId=="hook_executions") return readHookExecutions(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId in durationMetrics) return readDuration(q, scope, from, to, zone, interval, deadline,retained)
         if (q.metricId in sessionMetrics) return readSessionDistribution(q, scope, from, to, zone, interval, deadline,retained)
-        if (q.metricId in populationMetrics) return readPopulation(q, scope, from, to, zone, interval, deadline)
+        if (q.metricId in populationMetrics) return readPopulation(q, scope, from, to, zone, interval, deadline,retained)
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
         val dimensions = groupDimensions(q.groupBy.map(::dimension),retained)
         val groupNames = q.groupBy.indices.map { "g$it" }
@@ -981,18 +981,22 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return Rows(rows,sql)
     }
     private fun readPopulation(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
-        zone: String, interval: String, deadline: Long): Rows {
+        zone: String, interval: String, deadline: Long, retained: List<List<String>>? = null): Rows {
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
-        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val dimensions = groupDimensions(q.groupBy.map(::dimension),retained)
         val groups = q.groupBy.indices.map { "g$it" }
         val suffix = if (groups.isEmpty()) "" else ","+groups.joinToString(",")
         val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
         // 설치 여러 개를 같은 사람으로 합친 뒤 활성 시간 합계로 활성 여부를 판정한다.
-        val sql = """SELECT bucket$suffix, sum(observations) AS points, sum(cumulative_points) AS cumulative,
+        val sql = """WITH observed AS (
+            SELECT DISTINCT ts,event_id,installation_id,product,signal,raw_json${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")}
+            FROM (SELECT * $base)
+            ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
+        ) SELECT bucket$suffix, sum(observations) AS points, sum(cumulative_points) AS cumulative,
             sum(active_points)>0 AS active_time_definition,
             if(sum(active_points)>0,countIf(member_known AND active_value>0),countIf(member_known)) AS people,
             sum(installations) AS observed_installations
-            FROM (SELECT $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
+            FROM (SELECT $bucket AS bucket$suffix,
                 $person AS member_key, $known AS member_known, count() AS observations,
                 countIf($activePoint) AS active_points,
                 countIf(signal='metric' AND product='claude_code'
@@ -1000,11 +1004,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                     AND JSONExtractInt(raw_json,'point','aggregation_temporality')=2) AS cumulative_points,
                 sumIf(JSONExtract(raw_json,'point','value','Nullable(Float64)'),$activePoint) AS active_value,
                 uniqExactIf(installation_id,installation_id!='') AS installations
-                FROM (SELECT * $base)
-                ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
+                FROM observed
                 GROUP BY bucket$suffix,member_key,member_known)
             GROUP BY bucket$suffix ORDER BY bucket$suffix"""
-        val params = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone)
+        val params = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone,
+            "retained" to mapper.writeValueAsString(retained.orEmpty()).replace("\\", "\\\\"))
         val rows = mapper.readTree(reader.query(sql,params,remaining(deadline)))["data"].toList().map { row ->
             val node = row as tools.jackson.databind.node.ObjectNode
             val numerator = if (q.metricId=="telemetry_coverage") row["observed_installations"].asDouble() else row["people"].asDouble()
