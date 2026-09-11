@@ -2682,6 +2682,43 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `캐싱 시나리오는 토큰과 프롬프트 분포를 조회하고 캐시 영을 안내한다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for (read in listOf(0,100)) {
+            seedPoints(ids.flatMap { listOf(tokenEvent(it,100,50,read,0),promptEvent(it,session="s"),promptEvent(it,session="s")) })
+            val id = mapper.readTree(startRun(bearer,"S1-4","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+            val result = run["result"]
+            assertThat(result["frames"].propertyNames()).containsExactlyInAnyOrder("tokens","cache_read_ratio","prompts_per_session")
+            assertThat(result["findings"].size()).isEqualTo(if(read==0) 1 else 0)
+            if(read==0) assertThat(result["findings"][0]["rule_id"].asString()).isEqualTo("no_cache_reads")
+            val prompts = result["frames"]["prompts_per_session"]["frames"][0]
+            val index = prompts["schema"]["fields"].toList().indexOfFirst { it["name"].asString()=="p50" }
+            assertThat(prompts["data"]["values"][index][0].asDouble()).isEqualTo(2.0)
+        }
+    }
+
+    @Test fun `캐싱 시나리오는 마스킹 영 분모와 불완전 토큰에서 안내하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { tokenEvent(it,100,50,0,0) },ids.map { tokenEvent(it,0,0,0,0) },
+            ids.map { tokenEvent(it,null,50,0,0) })) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S1-4","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     @Test fun `대화 시나리오는 산출 없는 세션 비율과 마지막 이벤트를 연결한다`() {
         val ids = installations(5)
         seedPoints(ids.flatMap { listOf(promptEvent(it,session="output"),promptEvent(it,session="no-output"),

@@ -8,6 +8,8 @@ internal object DashboardThresholdFindings {
     private data class Rule(val id: String, val title: String, val widget: String, val limitation: String)
     fun evaluate(scenario: String, result: JsonNode, threshold: Double): List<Map<String,Any>> {
         val rule = when(scenario) {
+            "S1-4" -> Rule("no_cache_reads","유효 토큰 요청에서 캐시 읽기가 관측되지 않았습니다","W2.6",
+                "프롬프트 원문 유사도와 반복 여부는 측정하지 않습니다. 캐싱 가능성이나 절감 효과를 보장하지 않습니다.")
             "S1-5" -> Rule("high_io_ratio","입력/출력 토큰 비율이 임계값을 초과했습니다","W2.6",
                 "컨텍스트 첨부 여부는 관측하지 못합니다. 입력 토큰 사용을 검토하세요.")
             "S7-1" -> Rule("high_tool_failure_rate","도구 실패율이 임계값을 초과했습니다","W2.10",
@@ -23,7 +25,7 @@ internal object DashboardThresholdFindings {
             val time = fields.indexOfFirst { it["type"].asString()=="time" }
             if(value<0 || time<0 || fields[value].path("config").path("suppressed").asBoolean(false)) continue
             frame["data"]["values"][value].toList().forEachIndexed { i, cell ->
-                if(cell.isNumber && cell.asDouble().isFinite() && cell.asDouble()>threshold) findings += mapOf(
+                if(cell.isNumber && cell.asDouble().isFinite() && (if(scenario=="S1-4") cell.asDouble()==0.0 else cell.asDouble()>threshold)) findings += mapOf(
                     "rule_id" to rule.id, "severity" to "info", "widget_id" to rule.widget,
                     "title" to rule.title,
                     "evidence" to mapOf("date" to Instant.ofEpochMilli(frame["data"]["values"][time][i].asLong()).toString(),

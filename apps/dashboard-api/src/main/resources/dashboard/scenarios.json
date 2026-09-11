@@ -314,7 +314,14 @@
         ],
         "additionalProperties": false
       },
-      "findings_rules": [],
+      "findings_rules": [
+        {
+          "rule_id": "no_cache_reads",
+          "severity": "info",
+          "when": "cache_read_ratio.value == 0 with positive denominator",
+          "message": "유효 토큰 요청에서 캐시 읽기가 관측되지 않았습니다. 반복 여부와 캐싱 효과는 판정하지 않습니다."
+        }
+      ],
       "actions": []
     },
     {
