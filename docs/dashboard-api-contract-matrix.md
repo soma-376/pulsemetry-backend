@@ -16,7 +16,7 @@
 | sessions | timeseries | 연결 | 501 | 연결 |
 | active_time | timeseries | 연결 | 501 | 연결 |
 | automation_ratio | scalar | 연결 | 501 | 연결 |
-| prompts_per_session | distribution | 연결 | 연결 | 미연결 |
+| prompts_per_session | distribution | 연결 | 연결 | 연결 |
 | command_prompt_ratio | scalar | 연결 | 501 | 연결 |
 | lines_of_code | timeseries | 연결 | 501 | 연결 |
 | commits | timeseries | 연결 | 501 | 연결 |
@@ -48,7 +48,7 @@
 | rate_limit_events | timeseries | 연결 | 501 | 연결 |
 | tool_calls | timeseries | 연결 | 501 | 연결 |
 | tool_failure_rate | scalar | 연결 | 501 | 연결 |
-| read_tool_density | distribution | 연결 | 연결 | 미연결 |
+| read_tool_density | distribution | 연결 | 연결 | 연결 |
 | turn_duration_ms | distribution | 연결 | 연결 | 연결 |
 | llm_ttft_ms | distribution | 연결 | 연결 | 연결 |
 | llm_duration_ms | distribution | 연결 | 연결 | 연결 |
@@ -66,7 +66,7 @@
 
 ## 상위 N 검증 기준
 
-- 기타 재집계 지원 지표는 39개다. 현재 기간 값으로 상위 그룹을 선택하고 비교 기간에 같은 선택을 적용한다. 숨겨진 수치는 순위 선택에 사용하지 않는다.
+- 기타 재집계 지원 지표는 41개다. 현재 기간 값으로 상위 그룹을 선택하고 비교 기간에 같은 선택을 적용한다. 숨겨진 수치는 순위 선택에 사용하지 않는다.
 - 합산 불가 비율·고유 인원·백분위수는 원본 재집계를 유지한다. 나머지 지표의 상위 N은 자동 합산으로 대체하지 않는다.
 - 이번 토큰 검증: table/scalar/timeseries 비교, 두 차원(model/type), metrics 원천·누적 제외·종류 필터, 소집단과 기타 마스킹, frontend 동률 선택·기타 합계.
 
@@ -78,3 +78,5 @@
 - 22개 operation과 46개 시나리오의 상세 수용 조건·운영 복구 추적표는 별도 보완 대상이다.
 
 - 거부·훅 추가 검증: 거부 owner 인가·두 차원 기타, 훅 table/scalar/timeseries 비교·전체 세션 분모·기타 세션 중복 제거, 두 지표의 소집단 마스킹과 frontend 클라이언트 변환.
+
+- 세션 분포 추가 검증: 기간 전체 p50 순위, 기타 p50/p90·히스토그램 원본 재계산, 비교 그룹 고정, 다중 팀 같은 이벤트 중복 제거, 무관한 이벤트로 소집단 해제 방지.

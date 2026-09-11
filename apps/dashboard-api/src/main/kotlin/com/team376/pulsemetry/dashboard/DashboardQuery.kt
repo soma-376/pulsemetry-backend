@@ -63,7 +63,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "api_retry_attempts","auto_approval_ratio","api_error_rate","compaction_reduction","mcp_failure_ratio",
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
     private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
-    private val topPeriodMetrics = topCostRatioMetrics + setOf("model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
+    private val topPeriodMetrics = topCostRatioMetrics + setOf("prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
     private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
@@ -348,7 +348,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (q.metricId=="tokens") return readTokens(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId=="hook_executions") return readHookExecutions(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId in durationMetrics) return readDuration(q, scope, from, to, zone, interval, deadline,retained)
-        if (q.metricId in sessionMetrics) return readSessionDistribution(q, scope, from, to, zone, interval, deadline)
+        if (q.metricId in sessionMetrics) return readSessionDistribution(q, scope, from, to, zone, interval, deadline,retained)
         if (q.metricId in populationMetrics) return readPopulation(q, scope, from, to, zone, interval, deadline)
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
         val dimensions = groupDimensions(q.groupBy.map(::dimension),retained)
@@ -942,21 +942,24 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return Rows(rows,sql)
     }
     private fun readSessionDistribution(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
-        zone: String, interval: String, deadline: Long): Rows {
+        zone: String, interval: String, deadline: Long, retained: List<List<String>>? = null): Rows {
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
-        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val dimensions = groupDimensions(q.groupBy.map(::dimension),retained)
         val groups = listOf("bucket") + q.groupBy.indices.map { "g$it" }
         val groupSql = groups.joinToString(",")
         val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
         val eventType = if (q.metricId=="read_tool_density") "tool_call" else "user_prompt"
-        val count = if (q.metricId=="read_tool_density") "countIf(JSONExtractString(raw_json,'payload','action') IN ('read','search','fetch'))" else "count()"
+        val count = if (q.metricId=="read_tool_density") "uniqExactIf(tuple(ts,event_id,signal),JSONExtractString(raw_json,'payload','action') IN ('read','search','fetch'))" else "uniqExact(tuple(ts,event_id,signal))"
         // 설치·제품별 세션을 구분한다. 읽기 밀도는 읽기 0회인 도구 호출 세션도 포함한다.
         val sql = """WITH observed AS (
             SELECT *, $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")}
             FROM (SELECT * $base)
             ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
         ), privacy AS (
-            SELECT $groupSql, $people AS people, countIf($activePoint)>0 AS active_time_definition
+            SELECT $groupSql, least($people,uniqExactIf($person,$known AND signal IN ('log','span')
+                AND JSONExtractString(raw_json,'type')={event_type:String}
+                AND JSONExtractString(raw_json,'envelope','session_id') NOT IN ('','(unknown)'))) AS people,
+                countIf($activePoint)>0 AS active_time_definition
             FROM observed GROUP BY $groupSql
         ), sessions AS (
             SELECT $groupSql, installation_id, product, JSONExtractString(raw_json,'envelope','session_id') AS session_id,
@@ -972,10 +975,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             FROM sessions GROUP BY $groupSql
         ) SELECT stats.*, privacy.people, privacy.active_time_definition, 0 AS cumulative, p50 AS value
             FROM stats INNER JOIN privacy USING ($groupSql) ORDER BY $groupSql"""
-        val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone, "event_type" to eventType)
+        val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone, "event_type" to eventType,
+            "retained" to mapper.writeValueAsString(retained.orEmpty()).replace("\\", "\\\\"))
         val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
-        if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size>groupLimit(q))
-            throw DashboardReadException("query_too_wide",422)
         return Rows(rows,sql)
     }
     private fun readPopulation(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,

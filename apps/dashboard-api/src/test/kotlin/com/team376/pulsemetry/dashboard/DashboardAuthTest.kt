@@ -464,6 +464,65 @@ class DashboardAuthTest {
             "envelope" to mapOf("session_id" to session),"payload" to emptyMap<String,String>())))
         return mapper.writeValueAsString(row)
     }
+    private fun groupedSessionEvent(id: UUID, metric: String, teams: List<UUID>, session: String,
+        at: String = "2026-09-01T12:00:00Z", read: Boolean = true): String {
+        val row = mapper.readTree(if(metric=="prompts_per_session") promptEvent(id,session=session,at=at)
+            else toolEvent(id,true,action=if(read) "read" else "write",at=at)) as tools.jackson.databind.node.ObjectNode
+        row.set("team_ids_as_of",mapper.valueToTree(teams.map { it.toString() }))
+        val raw = mapper.readTree(row["raw_json"].asString()) as tools.jackson.databind.node.ObjectNode
+        (raw["envelope"] as tools.jackson.databind.node.ObjectNode).put("session_id",session)
+        row.put("raw_json",raw.toString())
+        return row.toString()
+    }
+    @Test fun `세션 분포 상위와 기타는 분위수와 히스토그램을 원본 세션으로 재계산한다`() {
+        val ids = installations(5); val teams = costTeams()
+        for(metric in listOf("prompts_per_session","read_tool_density")) {
+            seedPoints(ids.flatMap { id -> teams.zip(listOf(5,3,1)).flatMap { (team,count) ->
+                (1..count).map { groupedSessionEvent(id,metric,listOf(team),team.toString()) } }+
+                (1..3).map { groupedSessionEvent(id,metric,listOf(teams[1]),"second-day",at="2026-09-02T12:00:00Z") } })
+            for(type in listOf("table","scalar","timeseries","distribution")) {
+                val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"group_by" to listOf("team"),
+                    "frame_type" to type,"limit" to 1))).andReturn().response.contentAsString)["results"]["A"]
+                assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+                val offset = if(type=="timeseries") 1 else 0
+                val summaries = result["frames"].filter { it["schema"]["fields"][offset]["name"].asString()=="p50" }
+                val other = summaries.single { it["schema"]["fields"][offset]["labels"]["team"].asString()=="__other__" }
+                assertThat(other["data"]["values"][offset][0].asDouble()).isEqualTo(3.0)
+                assertThat(other["data"]["values"][offset+1][0].asDouble()).isEqualTo(3.0)
+                assertThat(summaries.single { it!=other }["data"]["values"][offset][0].asDouble()).isEqualTo(5.0)
+                if(type=="distribution" && metric=="prompts_per_session") {
+                    val histogram = result["frames"].single { it["schema"]["fields"][0]["name"].asString()=="bucket" &&
+                        it["schema"]["fields"][1]["labels"]["team"].asString()=="__other__" }
+                    assertThat(histogram["data"]["values"][1].toList().map { it.asInt() }).containsExactly(5,10,0,0,0)
+                }
+            }
+        }
+    }
+    @Test fun `기타의 다중 팀 이벤트를 중복하지 않고 비교 기간 그룹을 유지한다`() {
+        val ids = installations(5); val teams = costTeams()
+        seedPoints(ids.flatMap { id -> (1..10).map { groupedSessionEvent(id,"prompts_per_session",listOf(teams[0]),"top") }+
+            (1..3).map { groupedSessionEvent(id,"prompts_per_session",teams.drop(1),"shared") }+
+            (1..2).map { groupedSessionEvent(id,"prompts_per_session",teams.drop(1),"old",at="2026-08-30T12:00:00Z") } })
+        val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "prompts_per_session","group_by" to listOf("team"),
+            "frame_type" to "table","limit" to 1),mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val other = result["frames"].single { it["schema"]["fields"][0]["labels"]["team"].asString()=="__other__" }
+        assertThat(other["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(3.0,2.0,3.0,2.0)
+        assertThat(other["schema"]["fields"][0]["config"]["group_size"].asInt()).isEqualTo(5)
+    }
+    @Test fun `세션 분포 기타의 다른 이벤트로 소집단 마스킹을 해제하지 않는다`() {
+        val ids = installations(5); val teams = costTeams()
+        for(metric in listOf("prompts_per_session","read_tool_density")) {
+            seedPoints(ids.flatMap { id -> (1..10).map { groupedSessionEvent(id,metric,listOf(teams[0]),"top") } }+
+                ids.take(4).flatMap { id -> teams.drop(1).map { groupedSessionEvent(id,metric,listOf(it),it.toString()) } }+
+                ids.map { groupedSessionEvent(it,if(metric=="prompts_per_session") "read_tool_density" else "prompts_per_session",teams.drop(1),"unrelated") })
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"group_by" to listOf("team"),
+                "frame_type" to "table","limit" to 1))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).isEqualTo(200)
+            val other = result["frames"].single { it["schema"]["fields"][0]["labels"]["team"].asString()=="__other__" }
+            assertThat(other["data"]["values"].all { it[0].isNull }).isTrue()
+        }
+    }
     @Test fun `프롬프트 분포는 설치와 제품별 세션을 구분하고 버킷과 정확 분위수를 반환한다`() {
         val ids = installations(5)
         val rows = ids.zip(listOf(1,2,4,8,16)).flatMap { (id,count) -> (1..count).map { promptEvent(id) } }
