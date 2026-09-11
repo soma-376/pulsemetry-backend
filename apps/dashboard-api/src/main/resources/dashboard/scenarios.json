@@ -994,7 +994,14 @@
         ],
         "additionalProperties": false
       },
-      "findings_rules": [],
+      "findings_rules": [
+        {
+          "rule_id": "sessions_without_output",
+          "severity": "info",
+          "when": "abandoned_session_ratio.value > 0",
+          "message": "산출물이 관측되지 않은 세션이 있습니다. 세션 종료나 대화 포기를 확정하지 않습니다."
+        }
+      ],
       "actions": []
     },
     {

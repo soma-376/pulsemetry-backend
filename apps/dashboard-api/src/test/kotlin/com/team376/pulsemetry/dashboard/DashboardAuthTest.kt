@@ -2682,6 +2682,41 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `대화 시나리오는 산출 없는 세션 비율과 마지막 이벤트를 연결한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(promptEvent(it,session="output"),promptEvent(it,session="no-output"),
+            sessionOutput(it,"output","claude_code.commit.count")) })
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer,"S4-2","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        val result = run["result"]
+        assertThat(result["frames"].propertyNames()).containsExactlyInAnyOrder("abandoned_session_ratio","session_last_event","api_error_rate")
+        assertThat(result["findings"].size()).isEqualTo(1)
+        assertThat(result["findings"][0]["rule_id"].asString()).isEqualTo("sessions_without_output")
+        assertThat(result["findings"][0]["evidence"]["ratio"].asDouble()).isEqualTo(.5)
+        assertThat(result["frames"]["session_last_event"]["frames"][0]["data"]["values"][1][0].asInt()).isEqualTo(10)
+    }
+
+    @Test fun `대화 시나리오는 산출 존재 소집단 미관측에서 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.flatMap { listOf(promptEvent(it,session="s"),sessionOutput(it,"s","claude_code.commit.count")) },
+            ids.take(4).map { promptEvent(it,session="s") },emptyList())) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S4-2","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     @Test fun `예산 시나리오는 USD와 백만 토큰을 각 팀의 관측 합계와 비교한다`() {
         val teams = costTeams()
         val rows = teams.flatMap { team -> installations(5,team).flatMap {
