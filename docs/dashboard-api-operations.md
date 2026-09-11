@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S2-1·S3-1·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S7-1·S8-4의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-4·S1-5·S2-1·S3-1·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S7-1·S8-1·S8-4의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -57,7 +57,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 워커는 기본 활성화이며 `pulsemetry.dashboard.worker-enabled=false`로 해당 인스턴스의 claim을 중단할 수 있다. 접수는 계속 가능하므로 유지보수 시 활성 실행 3개 상한에 유의한다. queued는 DB에 남고 running lease가 만료되면 다음 워커 claim 시 실패 처리된다. 재시도는 새 실행 요청으로 한다. 취소는 실행 중인 DB 조회의 즉시 중단을 보장하지 않으며 결과 저장을 차단한다.
 
-현재 S1-1, S1-3, S1-4, S1-5, S2-1, S3-1, S3-4, S3-5, S4-1, S4-2, S4-6, S4-8, S7-1, S8-4를 실행할 수 있다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
+현재 S1-1, S1-3, S1-4, S1-5, S2-1, S3-1, S3-4, S3-5, S4-1, S4-2, S4-6, S4-8, S7-1, S8-1, S8-4를 실행할 수 있다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
 
 E2E 스크립트는 각 외부 명령을 60초로 제한한다. `result.json`은 최신 시도의 상태이며 이전 성공은 `last-success.json`에 보관한다. S1-3 실행·폴링·취소와 실측 판정은 실제 frontend 클라이언트로 검증했다. 2026-09-11 Docker 재시작 후 backend `cd057dc` / frontend `52f7cb1`에서 owner/admin의 결과 화면 판정 표시까지 통과했다. 스크린샷은 `owner-scenario.png`, `admin-scenario.png`다. W1.3·W2.5의 결과 미연결 안내는 남아 있어 모든 위젯의 시각화 완료를 검증한 것은 아니다.
 
@@ -243,3 +243,10 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 양수 Rate Limit 건수를 observed_rate_limits 정보성 안내로 제공한다. 소집단·미관측·0은 판정하지 않으며 시간대 변동의 원인이나 작업 중단을 확정하지 않는다. 요청 tz 또는 tenant 시간대를 적용한다.
 
 실제 수집 E2E의 `verifiedIngest.hourlyScenario`, `admin-ingest-hourly-scenario.png`에 프롬프트 10건·서울 시간대·제한 판정 없음의 실행·화면 증거를 남긴다. 양수 429 판정은 DB 통합 테스트로 검증한다. 현재 frontend는 weekday/hour 라벨을 히트맵으로 렌더링하지 않고 일반 막대 차트로 표시한다.
+
+
+## S8-1 경영 보고 관측
+
+`POST /v1/scenarios/S8-1/runs`는 from/to를 받는다. sessions·tokens·active_time·lines_of_code·commits·pull_requests·cost_per_active_user를 일별로 조회하는 7단계이며 P1/W1.1·W1.5·W1.2를 반환한다. owner는 조직, admin은 본인 팀 범위로 실행한다.
+
+양수 세션 수를 observed_reporting_usage 정보성 안내로 제공한다. 재무 조인 없는 partial 상태이며 ROI·절감액·생산성 향상을 계산하거나 보장하지 않는다. 소집단·미관측·0은 판정하지 않으며 비용과 활성 사용자 정의는 기존 조회 계약을 유지한다.

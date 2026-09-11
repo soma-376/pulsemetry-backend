@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S2-1·S3-1·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S7-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S2-1·S3-1·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S7-1·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -655,3 +655,10 @@
 - 상세 판정식 공백은 양수 Rate Limit 이벤트 건수의 정보성 안내로 보완한다. 오전·오후 변동의 원인이나 작업 중단을 확정하지 않는다. 소집단·미관측·0은 안내에서 제외한다.
 - DB 통합 테스트 2건 추가: 168개 구간 각 5건, 현지 요일·시간, 서울 날짜 경계의 제한 이벤트 5건·3단계 결과, 소집단·빈 데이터·제한 없음. dashboard 171건 통과(실패·오류·skip 0), bootJar 빌드 성공.
 - 실제 수집 E2E 통과(API 오류 0건): 서울 시간대 weekday/hour 라벨·프롬프트 총 10건·Rate Limit 판정 0건과 결과 화면을 확인했다. 기존 13개 시나리오도 통과했다. 429 양수 판정은 DB 통합 테스트로 검증했다. 현재 frontend는 시간대 표를 일반 막대 차트/value 축으로 표시하며 히트맵 렌더링은 하지 않는다. backend 라벨은 보존하고 frontend 코드는 변경하지 않았다.
+
+
+## S8-1 경영 보고 실행 확장
+
+- 열다섯 번째 실행 시나리오 S8-1을 추가했다. sessions·tokens·active_time·lines_of_code·commits·pull_requests·cost_per_active_user를 일별 시계열로 조회하는 7단계이며 P1/W1.1·W1.5·W1.2를 반환한다. partial(재무 조인 없음)을 유지한다.
+- 상세 판정식 공백은 양수 세션 수의 정보성 관측 안내로 보완한다. 재무 데이터가 연결되지 않은 사용량이며 ROI·절감액·생산성 향상을 계산하거나 보장하지 않는다. 소집단·미관측·0은 안내에서 제외한다.
+- DB 통합 테스트 2건 추가: 세션 5건·토큰 750·활동 시간 300초·코드 50줄·커밋 10건·PR 5건·활성 사용자당 비용 3달러·7단계 결과, 소집단·미관측·0. dashboard 173건 통과(실패·오류·skip 0), bootJar 빌드 성공.

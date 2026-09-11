@@ -2682,6 +2682,42 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `경영 보고 시나리오는 일곱 지표와 사용자당 비용을 제공한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(point(it,1.0),tokenEvent(it,100,50,0,0),userTime(it,60.0),costEvent(it,3.0),
+            sessionOutput(it,"s","claude_code.lines_of_code.count",10.0),sessionOutput(it,"s","claude_code.commit.count",2.0),
+            sessionOutput(it,"s","claude_code.pull_request.count",1.0)) })
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer,"S8-1","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(7)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(7)
+        val expected = mapOf("sessions" to 5.0,"tokens" to 750.0,"active_time" to 300.0,"lines_of_code" to 50.0,
+            "commits" to 10.0,"pull_requests" to 5.0,"cost_per_active_user" to 3.0)
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrderElementsOf(expected.keys)
+        for((metric,value) in expected) assertThat(frames[metric]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(value)
+        assertThat(run["result"]["findings"].size()).isEqualTo(1)
+        assertThat(run["result"]["findings"][0]["evidence"]["count"].asDouble()).isEqualTo(5.0)
+    }
+
+    @Test fun `경영 보고 시나리오는 소집단과 미관측에서 ROI를 추정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { point(it,1.0) },emptyList(),ids.map { point(it,0.0) })) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S8-1","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     @Test fun `시간대 시나리오는 현지 요일 시간의 168칸과 제한 이벤트를 제공한다`() {
         val ids = installations(5)
         jdbc.sql("UPDATE enrollment.tenants SET timezone='Asia/Seoul' WHERE id=:tenant").param("tenant",tenant).update()
