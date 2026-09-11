@@ -270,8 +270,33 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     throw error;
   }
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-abandoned-scenario.png'), fullPage: true });
+  const cacheRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S1-4', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, cache: series(run.result?.frames.cache_read_ratio), tokens: series(run.result?.frames.tokens) };
+  }, scenarioFrom);
+  assert.equal(cacheRun.run.status, 'succeeded');
+  assert.equal(cacheRun.run.progress.step, 3);
+  assert.equal(cacheRun.run.progress.total, 3);
+  assert.ok(cacheRun.cache.points.some(p => p.value.state === 'value' && p.value.value === 0));
+  assert.ok(cacheRun.tokens.points.some(p => p.value.state === 'value' && p.value.value === 1050));
+  assert.equal(cacheRun.run.result.findings.length, 1);
+  assert.equal(cacheRun.run.result.findings[0].rule_id, 'no_cache_reads');
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, cacheRun.run.run_id);
+  await page.getByRole('heading', { name: '유효 토큰 요청에서 캐시 읽기가 관측되지 않았습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-cache-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 25,
+    cacheScenario: { id: 'S1-4', runId: cacheRun.run.run_id, actualResultUI: true, cacheRatio: 0, tokens: 1050 },
     abandonedScenario: { id: 'S4-2', runId: abandonedRun.run.run_id, actualResultUI: true, ratio: 1 },
     budgetScenario: { id: 'S1-1', actualResultUI: true, costUsd: 15, tokens: 1050, runs: budgetEvidence },
     agentScenario: { id: 'S7-1', runId: agentRun.run.run_id, actualResultUI: true, failureRate: 0.2, calls: 5, costUsd: 15 },
