@@ -3772,6 +3772,32 @@ class DashboardAuthTest {
         return row.toString()
     }
 
+    @Test fun `비용 예측은 90일 실측의 일정 평균과 선형 추세를 구분한다`() {
+        val ids = installations(5)
+        val start = java.time.LocalDate.parse("2026-06-01")
+        val rows = ids.flatMap { id -> (0 until 90).map { day -> modelCost(id,"forecast-model",day+1.0,
+            "${start.plusDays(day.toLong())}T12:00:00Z") } }
+        seedPoints(rows)
+        val bearer = token()
+        for ((model,expected) in listOf("constant" to 6825.0,"linear" to 15825.0)) {
+            val id = mapper.readTree(mvc.perform(post("/v1/scenarios/S8-2/runs").header("Authorization","Bearer $bearer")
+                .contentType("application/json").content("""{"tz":"UTC","params":{"from":"2026-06-01","to":"2026-08-30","growth_model":"$model"}}"""))
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).withFailMessage(run.toString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(6)
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(6)
+            val forecast = run["result"]["forecast"]
+            assertThat(forecast["status"].asString()).isEqualTo("ready")
+            assertThat(forecast["projected_cost_usd"].asDouble()).isCloseTo(expected,org.assertj.core.api.Assertions.within(0.001))
+            assertThat(forecast["observed_days"].asInt()).isEqualTo(90)
+            assertThat(forecast["daily"].size()).isEqualTo(30)
+            assertThat(forecast["forecast_from"].asString()).isEqualTo("2026-08-30")
+            assertThat(run["result"]["findings"].single()["rule_id"].asString()).isEqualTo("projected_cost")
+        }
+    }
+
     private fun onboardingRun(bearer: String, reason: String? = "onboarding cohort review") =
         mvc.perform(post("/v1/scenarios/S3-3/runs").header("Authorization","Bearer $bearer")
             .also { if(reason!=null) it.header("X-Audit-Reason",reason) }.contentType("application/json")
@@ -4569,7 +4595,7 @@ class DashboardAuthTest {
             .contentType("application/json").content("""{"params":{}}""")).andExpect(status().isBadRequest)
 
         startRun(bearer,"S5-1", "{}").andExpect(status().isConflict)
-        startRun(bearer,"S8-2", "{}").andExpect(status().isNotImplemented)
+        startRun(bearer,"S8-2", """{"from":"now-1d"}""").andExpect(status().isBadRequest)
         startRun(bearer,"S9-1", "{}").andExpect(status().isNotFound)
         repeat(3) { startRun(bearer).andExpect(status().isAccepted) }
         startRun(bearer).andExpect(status().isTooManyRequests)

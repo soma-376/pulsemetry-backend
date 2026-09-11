@@ -13,6 +13,14 @@ class DashboardScenarioInputTest {
     private fun input(id: String = "S1-3", json: String = """{"params":{}}""", zone: String = "Asia/Seoul") =
         ScenarioParameterValidator.validate(scenarios.detail(id), mapper.readTree(json), zone, now)
 
+    @Test fun `비용 예측은 90일 이상 과거 조회만 허용한다`() {
+        val result = input("S8-2","""{"params":{}}""")
+        assertThat(result.times["to"]).isEqualTo(now)
+        for (json in listOf("""{"params":{"from":"now-89d"}}""",
+            """{"params":{"from":"now-90d","to":"2027-01-01"}}"""))
+            assertThatThrownBy { input("S8-2",json) }.isInstanceOf(IllegalArgumentException::class.java)
+    }
+
     @Test fun `온보딩은 요청 시점을 관측 종료로 고정하고 미래와 과도한 추적 범위를 거부한다`() {
         val result = input("S3-3","""{"params":{"cohort_from":"2026-09-01","cohort_to":"2026-09-02"}}""")
         assertThat(result.times["from"]).isEqualTo(Instant.parse("2026-08-31T15:00:00Z"))
