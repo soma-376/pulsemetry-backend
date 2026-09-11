@@ -69,7 +69,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
         aggregationTemporality: temporality, isMonotonic: true, dataPoints: [{
           startTimeUnixNano: String(now - 1000000000n), timeUnixNano: String(now),
           asDouble: temporality === 1 ? index + 1 : 999,
-          attributes: [attr('session.id', `ingest-${installation}`), attr('model', model), attr('query_source', 'subagent')],
+          attributes: [attr('session.id', `ingest-${installation}`), attr('model', model), attr('query_source', 'subagent'), attr('effort', 'high'), attr('speed', 'fast')],
         }],
       } })).concat([{ name: 'claude_code.session.count', unit: 'count', sum: {
         aggregationTemporality: 1, isMonotonic: true, dataPoints: [{
@@ -558,8 +558,36 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, concentrationRun.run_id);
   await page.getByRole('heading', { name: '익명 사용량 집중도가 관측되었습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-concentration-scenario.png'), fullPage: true });
+  const effortRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    let { run } = await scenarioApi.start('S1-6', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return run;
+  }, scenarioFrom);
+  assert.equal(effortRun.status, 'succeeded');
+  assert.equal(effortRun.progress.step, 4);
+  assert.equal(effortRun.progress.total, 4);
+  assert.deepEqual(Object.keys(effortRun.result.frames).sort(), ['cost', 'sessions', 'tokens']);
+  assert.equal(effortRun.result.findings.length, 2);
+  for (const finding of effortRun.result.findings) {
+    assert.equal(finding.evidence.model, model);
+    assert.equal(finding.evidence.cost_usd, 15);
+  }
+  assert.deepEqual(effortRun.result.frames.cost.frames.map(f => f.schema.fields[0].labels),
+    [{ model, effort: 'high' }, { model, speed: 'fast' }]);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, effortRun.run_id);
+  await page.getByRole('heading', { name: '모델·effort·speed별 비용이 관측되었습니다', exact: true }).first().waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-effort-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    effortScenario: { id: 'S1-6', runId: effortRun.run_id, actualResultUI: true, costUsd: 15, effort: 'high', speed: 'fast', source: 'metrics' },
     concentrationScenario: { id: 'S3-2', runId: concentrationRun.run_id, actualResultUI: true, topDecileShare: 0.2, anonymousCurve: true },
     reportingScenario: { id: 'S8-1', runId: reportingRun.run.run_id, actualResultUI: true, sessions: 5, tokens: 1050, costPerActiveUserUsd: 3 },
     hourlyScenario: { id: 'S2-1', runId: hourlyRun.run.run_id, actualResultUI: true, prompts: 10, zone: 'Asia/Seoul', rateLimitFindings: 0 },

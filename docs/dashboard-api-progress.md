@@ -678,3 +678,6 @@
 - 비용은 `source=metrics`로 고정해 모델·effort와 모델·speed 두 표를 반환한다. 최대 2개 그룹 차원 계약을 지키며 두 표는 같은 비용의 다른 분류이므로 합산하지 않는다. 토큰·세션 일 시계열까지 총 4단계다.
 - 공개 가능한 양수 비용에는 정보 판정을 제공한다. 명세의 판정 수식이 비어 있어 작업 난이도·품질·대체 비용 없이 낭비나 절감액을 추정하지 않는다.
 - dashboard 테스트 177건 통과. 실제 DB에서 두 분류, delta 원천 선택과 cumulative·logs 비용 제외, 소집단·미관측·영 비용의 판정 제외를 검증했다.
+- 실제 OTLP 비용 메트릭에 effort=high·speed=fast를 넣어 수집→admin 실행→frontend 결과 UI E2E를 통과했다. 모델·effort와 모델·speed 각각 $15이고 누적값 999는 제외됐다. 실행 가능한 시나리오는 17개다.
+- frontend 소스는 변경하지 않았다. 비용 차트 제목은 `팀별 비용`이며 두 분류가 같은 모델 이름의 막대로 표시되어 차트에서 effort/speed 축을 구분하기 어렵다. 결과 필드의 라벨과 정보 판정은 두 축 및 중복 합산 금지를 제공한다.
+- 증거: `build/e2e/auth-settings/result.json`, `admin-ingest-effort-scenario.png`. 전체 PROJ-156 수용 완료를 뜻하지 않는다.
