@@ -2682,6 +2682,53 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun governanceRun(bearer: String, audit: String? = "governance coverage review") =
+        mvc.perform(post("/v1/scenarios/S7-4/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content("""{"params":{"from":"2026-09-01","to":"2026-09-02"}}"""))
+
+    @Test fun `감사 거버넌스 시나리오는 활성 설치 대비 관측 커버리지를 제공한다`() {
+        val ids = installations(6)
+        seedPoints(ids.take(5).flatMap { listOf(hookEvent(it,"1"),mcpEvent(it,"connected")) })
+        val bearer = token()
+        governanceRun(bearer,null).andExpect(status().isForbidden)
+        val id = mapper.readTree(governanceRun(bearer).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrder("telemetry_coverage","hook_executions","mcp_connections")
+        val finding = run["result"]["findings"].single()
+        assertThat(finding["rule_id"].asString()).isEqualTo("observed_telemetry_coverage")
+        assertThat(finding["severity"].asString()).isEqualTo("info")
+        assertThat(finding["evidence"]["ratio"].asDouble()).isEqualTo(5.0/6.0)
+        assertThat(frames["hook_executions"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+        assertThat(frames["mcp_connections"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S7-4'")
+            .query(Long::class.java).single()).isEqualTo(1)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        governanceRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `감사 거버넌스 시나리오는 소집단 빈 데이터와 비활성 분모를 정상으로 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for ((rows,revoke) in listOf(ids.take(4).map { point(it,1.0) } to false,
+            emptyList<String>() to false,ids.map { point(it,1.0) } to true)) {
+            seedPoints(rows)
+            if(revoke) jdbc.sql("UPDATE enrollment.installations SET status='revoked' WHERE tenant_id=:tenant").param("tenant",tenant).update()
+            val id = mapper.readTree(governanceRun(bearer).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun readDensityRun(bearer: String, threshold: Double = 10.0, audit: String? = "read density review") =
         mvc.perform(post("/v1/scenarios/S7-2/runs").header("Authorization","Bearer $bearer")
             .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
