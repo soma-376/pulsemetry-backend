@@ -948,7 +948,14 @@
         ],
         "additionalProperties": false
       },
-      "findings_rules": [],
+      "findings_rules": [
+        {
+          "rule_id": "multiple_prompts_per_session",
+          "severity": "info",
+          "when": "prompts_per_session.p50 > 1",
+          "message": "세션별 프롬프트 수 중앙값이 1을 초과했습니다. 원문 반복이나 재시도를 판정하지 않습니다."
+        }
+      ],
       "actions": []
     },
     {

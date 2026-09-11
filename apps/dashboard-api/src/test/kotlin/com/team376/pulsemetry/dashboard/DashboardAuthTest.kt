@@ -2682,6 +2682,43 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `프롬프트 시나리오는 중앙값 초과와 토큰을 함께 제공한다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(count in listOf(1,2)) {
+            seedPoints(ids.flatMap { id -> (1..count).map { promptEvent(id,session="s") } + tokenEvent(id,100,50,0,0) })
+            val id = mapper.readTree(startRun(bearer,"S4-1","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(2)
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(2)
+            val result = run["result"]
+            assertThat(result["frames"].propertyNames()).containsExactlyInAnyOrder("prompts_per_session","tokens")
+            assertThat(result["findings"].size()).isEqualTo(if(count==2) 1 else 0)
+            if(count==2) {
+                assertThat(result["findings"][0]["rule_id"].asString()).isEqualTo("multiple_prompts_per_session")
+                assertThat(result["findings"][0]["evidence"]["p50"].asDouble()).isEqualTo(2.0)
+            }
+            assertThat(result["frames"]["tokens"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(750.0)
+        }
+    }
+
+    @Test fun `프롬프트 시나리오는 마스킹과 미관측에서 판정하지 않는다`() {
+        val ids = installations(4)
+        val bearer = token()
+        for(rows in listOf(ids.flatMap { id -> (1..3).map { promptEvent(id,session="s") } },emptyList())) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S4-1","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     @Test fun `캐싱 시나리오는 토큰과 프롬프트 분포를 조회하고 캐시 영을 안내한다`() {
         val ids = installations(5)
         val bearer = token()

@@ -14,6 +14,8 @@ internal object DashboardThresholdFindings {
                 "컨텍스트 첨부 여부는 관측하지 못합니다. 입력 토큰 사용을 검토하세요.")
             "S7-1" -> Rule("high_tool_failure_rate","도구 실패율이 임계값을 초과했습니다","W2.10",
                 "도구 호출 실패율이며 에이전트 태스크 완료 여부나 성공률을 직접 측정하지 않습니다.")
+            "S4-1" -> Rule("multiple_prompts_per_session","세션별 프롬프트 수 중앙값이 1을 초과했습니다","W2.2",
+                "프롬프트 이벤트 수이며 원문 반복이나 재시도를 의미하지 않습니다. 정상적인 다중 대화일 수 있습니다.")
             "S4-2" -> Rule("sessions_without_output","산출물이 관측되지 않은 세션이 있습니다","W2.2",
                 "조회 기간의 관측 산출만 비교합니다. 세션 종료나 사용자의 대화 포기를 확정하지 않습니다.")
             else -> error("unsupported_scenario")
@@ -21,7 +23,7 @@ internal object DashboardThresholdFindings {
         val findings = mutableListOf<Map<String,Any>>()
         for (frame in result["frames"].toList()) {
             val fields = frame["schema"]["fields"].toList()
-            val value = fields.indexOfFirst { it["name"].asString()=="value" }
+            val value = fields.indexOfFirst { it["name"].asString()==if(scenario=="S4-1") "p50" else "value" }
             val time = fields.indexOfFirst { it["type"].asString()=="time" }
             if(value<0 || time<0 || fields[value].path("config").path("suppressed").asBoolean(false)) continue
             frame["data"]["values"][value].toList().forEachIndexed { i, cell ->
@@ -29,7 +31,7 @@ internal object DashboardThresholdFindings {
                     "rule_id" to rule.id, "severity" to "info", "widget_id" to rule.widget,
                     "title" to rule.title,
                     "evidence" to mapOf("date" to Instant.ofEpochMilli(frame["data"]["values"][time][i].asLong()).toString(),
-                        "ratio" to cell.asDouble(), "threshold" to threshold,
+                        (if(scenario=="S4-1") "p50" else "ratio") to cell.asDouble(), "threshold" to threshold,
                         "limitation" to rule.limitation))
             }
         }
