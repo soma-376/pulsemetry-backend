@@ -341,3 +341,6 @@ owner/admin이 from/to·team_ids와 선택 language를 지정한다. language는
 사용자 확정에 따라 pivot_date 현지 자정의 전후 각각 4주를 조회한다. 입력 스키마에는 기간 변경 옵션이 없으며 applied_filters.window_weeks=4와 비교 시간을 제공한다. 아직 끝나지 않은 이후 기간은 observation_complete=false이고 변화 판정은 없다.
 
 S6-3은 owner + 감사 사유가 필요하다. models는 최대 100개·각 1~200자이며 생략·빈 배열은 전체 모델이다. 종료 사유를 stop_reason별로 비교하고 빈 사유는 빈 라벨로 보존한다. S8-7은 owner/admin의 현재 팀 범위에서 도입률·프롬프트·집중도를 비교하며 개인 명단을 반환하지 않는다. 양쪽 유효 관측값의 차이만 제공하고 소집단·미관측·인과 효과는 추정하지 않는다.
+
+
+수집 E2E는 `verifiedIngest.championScenario`와 `driftScenario`에 기록한다. 당일 프롬프트 p50=2, 선택 모델의 종료 사유 미기록 이벤트 5건, 이전 기간 미관측과 이후 4주 미완료 판정 생략을 확인한다. 전후 양수 변화는 DB 통합 테스트로 검증한다. frontend 비교 기간 안내·종료 사유 표시·W2.0 강조 및 P3 일반 폼 감사 사유 입력은 후속 작업이다.

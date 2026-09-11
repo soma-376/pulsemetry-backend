@@ -928,3 +928,14 @@
 - S8-7은 owner/admin의 현재 팀 범위에서 도입률·프롬프트·사용 집중도를 3단계로 비교한다. 집계와 분포만 반환하며 개인 챔피언 명단은 제공하지 않는다. 카탈로그 partial 상태를 유지한다.
 - 기존 QRY 합동 마스킹과 미관측 null을 유지한다. 완료 기간의 유효한 값 차이만 info이며, 종료 사유별 판정 evidence.dimensions에 사유 라벨을 보존한다. 모델 드리프트·챔피언 프로그램의 인과 효과나 개선 여부는 판정하지 않는다.
 - 실행 경로 37개, 추가 실행 대상 5개(S1-2·S1-7·S3-3·S5-5·S8-2), 명세상 unavailable 4개다.
+
+
+### S6-3·S8-7 검증 결과
+
+- dashboard 테스트 221건, 실패·오류·skip 0건. 확정된 4주 현지 자정과 DST, 모델 선택·종료 사유별 전후 5→10건, 프롬프트 p50 1→2, 사용 집중도 변화, 개인 식별자 비노출, owner 감사·admin 거부 및 소집단·미관측·미완료 기간을 검증했다.
+- 구현 `a6e0b95`와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`의 실제 수집 E2E 통과. `unexpectedOrUnimplementedResponses=[]`, 연결 시나리오 37개다.
+- `verifiedIngest.championScenario`: run `02ad1c1f-f2dc-423c-90bc-ec213dfaae68`, admin 팀 범위·3/3 완료, 현재 프롬프트 p50=2와 이전 null. `admin-ingest-champion-scenario.png`에서 결과 표와 판정 없음 패널을 확인했다.
+- `verifiedIngest.driftScenario`: run `70752d9b-bc45-45bb-a431-ebd39eb6e9f3`, owner 감사 1건·선택 모델·4/4 완료, 종료 사유가 없는 이벤트 5건을 빈 라벨로 보존했다. `owner-ingest-drift-scenario.png`를 확인했다.
+- 당일 데이터의 이후 4주는 미완료여서 두 시나리오 모두 변화 판정이 없다. 양쪽 유효 관측 차이의 긍정 사례는 DB 통합 테스트가 담당한다. 수집 fixture의 모델명 없는 도구·프롬프트는 S6-3 선택 모델 결과에서 제외된다.
+- frontend의 상단 비교 선택기는 '없음'이며 이전 기간·완료 여부 전용 안내는 미연결이다. 종료 사유 미기록은 일반 막대의 value 축으로 나타나고 S8-7 W2.0 강조 매핑도 누락돼 있다. 일반 P3 실행 폼의 감사 사유 입력은 후속 대상이며 이번 S6-3 검증은 owner 로그인 후 공통 클라이언트 감사 경로다.
+- 로그: `/tmp/proj156-fixed-comparison-test.log`, `/tmp/proj156-fixed-comparison-e2e.log`. frontend 소스는 변경하지 않았다.

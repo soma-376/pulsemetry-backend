@@ -679,6 +679,32 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, acceptanceRun.run_id);
   await page.locator('aside[aria-label="시나리오 판정"]').getByText(acceptanceRun.run_id.slice(0, 8), { exact: false }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-acceptance-scenario.png'), fullPage: true });
+  const championRun = await page.evaluate(async () => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const pivot = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
+    let { run } = await scenarioApi.start('S8-7', { params: { pivot_date: pivot } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return run;
+  });
+  assert.equal(championRun.status, 'succeeded');
+  assert.equal(championRun.progress.step, 3);
+  assert.equal(championRun.progress.total, 3);
+  assert.equal(championRun.result.applied_filters.window_weeks, 4);
+  assert.equal(championRun.result.applied_filters.observation_complete, false);
+  assert.equal(championRun.result.findings.length, 0);
+  const championPrompt = championRun.result.frames.prompts_per_session.frames[0];
+  assert.equal(championPrompt.data.values[championPrompt.schema.fields.findIndex(f => f.name === 'p50')][0], 2);
+  assert.equal(championPrompt.data.values[championPrompt.schema.fields.findIndex(f => f.name === 'p50_compare')][0], null);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, championRun.run_id);
+  await page.locator('aside[aria-label="시나리오 판정"]').getByText(championRun.run_id.slice(0, 8), { exact: false }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-champion-scenario.png'), fullPage: true });
   const consolidationRun = await page.evaluate(async from => {
     const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
     let { run } = await scenarioApi.start('S8-5', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
@@ -718,6 +744,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let purposeRun;
   let modelComparisonRun;
   let shadowRun;
+  let driftRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -1091,11 +1118,44 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, shadowRun.run_id);
     await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(shadowRun.run_id.slice(0, 8), { exact: false }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-shadow-scenario.png'), fullPage: true });
+    driftRun = await ownerPage.evaluate(async selected => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      const pivot = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
+      let run = await request('/scenarios/S6-3/runs', { method: 'POST', body: JSON.stringify({
+        params: { pivot_date: pivot, models: [selected] },
+      }) }, '모델 드리프트 전후 관측 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, scenarioModel);
+    assert.equal(driftRun.status, 'succeeded');
+    assert.equal(driftRun.progress.step, 4);
+    assert.equal(driftRun.progress.total, 4);
+    assert.equal(driftRun.result.applied_filters.window_weeks, 4);
+    assert.equal(driftRun.result.applied_filters.observation_complete, false);
+    assert.deepEqual(driftRun.result.applied_filters.filters.models, [scenarioModel]);
+    assert.equal(driftRun.result.findings.length, 0);
+    const driftStop = driftRun.result.frames.llm_stop_reasons.frames[0];
+    assert.equal(driftStop.schema.fields[0].labels.stop_reason, '');
+    assert.equal(driftStop.data.values[driftStop.schema.fields.findIndex(f => f.name === 'value')][0], 5);
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S6-3'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, driftRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(driftRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-drift-scenario.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    championScenario: { id: 'S8-7', runId: championRun.run_id, admin: true, actualResultUI: true, windowWeeks: 4, promptsPerSession: 2 },
+    driftScenario: { id: 'S6-3', runId: driftRun.run_id, owner: true, audited: true, actualResultUI: true, windowWeeks: 4, missingStopReasonEvents: 5 },
     acceptanceScenario: { id: 'S4-3', runId: acceptanceRun.run_id, admin: true, actualResultUI: true, language: 'kotlin', editsMissing: true },
     shadowScenario: { id: 'S5-4', runId: shadowRun.run_id, owner: true, audited: true, queryAudited: true, actualResultUI: true, vendorEmailMissing: true, activeUsers: 5 },
     modelComparisonScenario: { id: 'S8-3', runId: modelComparisonRun.run_id, owner: true, audited: true, actualResultUI: true, modelACost: 15, modelBCostMissing: true },
