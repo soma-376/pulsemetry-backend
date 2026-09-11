@@ -203,8 +203,41 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, agentRun.run.run_id);
   await page.getByRole('heading', { name: '도구 실패율이 임계값을 초과했습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-agent-scenario.png'), fullPage: true });
+  const budgetEvidence = [];
+  for (const budget of [{ usd: 7.5 }, { tokens_m: 0.0005 }]) {
+    const budgetRun = await page.evaluate(async ({ from, budget }) => {
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      const { series } = await import('/src/widgets/model.ts');
+      let { run } = await scenarioApi.start('S1-1', { params: { from, to: new Date(Date.now() + 1000).toISOString(),
+        budget_by_team: { '00000000-0000-0000-0000-000000000010': budget } } });
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return { run, cost: series(run.result?.frames.cost), tokens: series(run.result?.frames.tokens) };
+    }, { from: scenarioFrom, budget });
+    assert.equal(budgetRun.run.status, 'succeeded');
+    assert.equal(budgetRun.run.progress.step, 3);
+    assert.equal(budgetRun.run.progress.total, 3);
+    assert.ok(budgetRun.cost.points.some(p => p.value.state === 'value' && p.value.value === 15));
+    assert.ok(budgetRun.tokens.points.some(p => p.value.state === 'value' && p.value.value === 1050));
+    assert.equal(budgetRun.run.result.findings.length, 1);
+    const finding = budgetRun.run.result.findings[0];
+    assert.equal(finding.rule_id, 'budget_exceeded');
+    assert.equal(finding.evidence.unit, budget.usd ? 'USD' : 'million_tokens');
+    assert.ok(Math.abs(finding.evidence.ratio - (budget.usd ? 2 : 2.1)) < 1e-10);
+    await page.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, budgetRun.run.run_id);
+    await page.getByRole('heading', { name: '관측 사용량이 입력한 팀 예산을 초과했습니다', exact: true }).waitFor();
+    await page.screenshot({ path: resolve(artifacts, `admin-ingest-budget-${budget.usd ? 'usd' : 'tokens'}.png`), fullPage: true });
+    budgetEvidence.push({ runId: budgetRun.run.run_id, unit: finding.evidence.unit, ratio: finding.evidence.ratio });
+  }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 25,
+    budgetScenario: { id: 'S1-1', actualResultUI: true, costUsd: 15, tokens: 1050, runs: budgetEvidence },
     agentScenario: { id: 'S7-1', runId: agentRun.run.run_id, actualResultUI: true, failureRate: 0.2, calls: 5, costUsd: 15 },
     contextScenario: { id: 'S1-5', runId: contextRun.run.run_id, actualResultUI: true, ratio: 20, threshold: 10 },
     scenario: { id: 'S1-3', runId: scenario.run.run_id, actualResultUI: true, costUsd: 15, retryRatio: 0.2 },

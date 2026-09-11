@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-3·S1-5·S7-1의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-5·S7-1의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -57,7 +57,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 워커는 기본 활성화이며 `pulsemetry.dashboard.worker-enabled=false`로 해당 인스턴스의 claim을 중단할 수 있다. 접수는 계속 가능하므로 유지보수 시 활성 실행 3개 상한에 유의한다. queued는 DB에 남고 running lease가 만료되면 다음 워커 claim 시 실패 처리된다. 재시도는 새 실행 요청으로 한다. 취소는 실행 중인 DB 조회의 즉시 중단을 보장하지 않으며 결과 저장을 차단한다.
 
-현재 S1-3, S1-5, S7-1을 실행할 수 있다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
+현재 S1-1, S1-3, S1-5, S7-1을 실행할 수 있다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
 
 E2E 스크립트는 각 외부 명령을 60초로 제한한다. `result.json`은 최신 시도의 상태이며 이전 성공은 `last-success.json`에 보관한다. S1-3 실행·폴링·취소와 실측 판정은 실제 frontend 클라이언트로 검증했다. 2026-09-11 Docker 재시작 후 backend `cd057dc` / frontend `52f7cb1`에서 owner/admin의 결과 화면 판정 표시까지 통과했다. 스크린샷은 `owner-scenario.png`, `admin-scenario.png`다. W1.3·W2.5의 결과 미연결 안내는 남아 있어 모든 위젯의 시각화 완료를 검증한 것은 아니다.
 
@@ -140,3 +140,14 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 첨부 명세에 상세 판정식이 없어 `tool_failure_rate > failure_threshold`를 정보성 검토 규칙으로 명시했다. 동률·미달·소집단·성공 여부 미관측은 판정하지 않는다. `high_tool_failure_rate` 근거에 실제 비율, 임계값과 관측 한계를 담는다. 도구 호출의 실패는 에이전트 태스크 완료·성공률을 직접 측정하지 않으며, 원래 카탈로그의 available 상태와 제목을 유지하되 이 한계를 응답에 명시한다.
 
 실제 OTLP 도구 호출 5건(실패 1건, agent_id 부여)과 비용 15 USD로 실행한다. 실제 frontend 클라이언트와 결과 화면에서 실패율 0.2·호출 5건·비용 15 USD·판정 제목을 검증하고 `verifiedIngest.agentScenario`, `admin-ingest-agent-scenario.png`에 기록한다.
+
+
+## S1-1 팀별 예산 비교
+
+`POST /v1/scenarios/S1-1/runs`는 from/to/team_ids와 필수 `budget_by_team`을 받는다. 예: `{"params":{"from":"now-28d","to":"now","budget_by_team":{"팀 UUID":{"usd":100}}}}`. 각 팀은 양수 `usd` 또는 `tokens_m` 중 정확히 하나를 지정한다. 예산은 요청 조회 기간 전체에 해당한다고 해석하며 일할 계산하지 않는다.
+
+예산이 입력된 팀만 대상으로 tokens, cost, adoption_rate의 기간 전체 table을 조회하는 3단계다. 현재 팀 접근 권한과 선택 범위를 검증하며 다른 팀 예산은 거부한다. 결과 필터에도 실제 비교 팀만 반영한다. tokens는 이벤트 원천의 input/output/cache_read/cache_create 관측 합계, cost는 실행 가격 기준을 적용한 이벤트 비용이며 metrics를 더하지 않는다.
+
+첨부의 상세 판정식 공백을 보완해 관측 사용량이 입력 예산을 초과하면 `budget_exceeded` warning을 만든다. USD는 비용, tokens_m은 토큰 합계/1,000,000과 비교한다. 근거에 팀·단위·관측량·예산·비율을 담는다. 비율이 표현 범위를 넘으면 ratio만 null이고 초과 판정은 유지한다. 동률·미달·미관측·마스킹은 경고하지 않으며 미관측을 0이나 미사용 예산으로 추정하지 않는다. 실제 청구액, 예산 배분 적정성, 조직 내 불균형을 단정하지 않는다.
+
+실제 수집 E2E는 비용 15 USD/예산 7.5 USD=2배, 토큰 1,050/예산 0.0005백만 토큰=2.1배를 실행·결과 화면에서 확인한다. `verifiedIngest.budgetScenario`와 `admin-ingest-budget-{usd,tokens}.png`가 증거다.
