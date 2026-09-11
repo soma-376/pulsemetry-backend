@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-4·S4-5·S4-6·S4-8·S5-2·S5-7·S6-1·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-4·S8-5·S8-6 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-4·S4-5·S4-6·S4-8·S5-2·S5-6·S5-7·S6-1·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-4·S8-5·S8-6 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -49,14 +49,14 @@
 1. QRY 보완: 53개 지표의 기본 계산은 연결했다. 미지원 frame 형식과 상위 N의 `__other__`, W3.3 주소 테이블 등 남은 명세를 보완한다.
 2. 계약 기반 파생 지표 검토: 약정 소진율도 연결했다. 현재 366일 조회 제한보다 긴 계약의 전체 기간 조회는 후속 보완 대상이다.
 3. 설치·세션 API는 구현했다. 기존 frontend 설치 카드의 감사 사유 전달 및 P3 전체 UI 검증은 후속 보완 대상이다.
-4. 46개 시나리오: 31개 실행 경로가 연결되었다. 추가 구현 대상은 11개이며, 명세상 unavailable 4개는 409 거부를 유지한다. 연결된 실행도 관측 한계를 유지하며 시나리오 제목이 암시하는 인과 분석 전체를 구현한 것은 아니다.
+4. 46개 시나리오: 32개 실행 경로가 연결되었다. 추가 구현 대상은 10개이며, 명세상 unavailable 4개는 409 거부를 유지한다. 연결된 실행도 관측 한계를 유지하며 시나리오 제목이 암시하는 인과 분석 전체를 구현한 것은 아니다.
 5. 실행 워커·조회·취소·목록·삭제는 연결했다. 추가 운영·복구 검증을 보완한다.
 6. 저장 리포트: 저장·목록·삭제, 접근 범위 재검증, fixed/relative와 active·linked 삭제 409를 연결했다.
 7. 실제 ingest → ClickHouse → dashboard → frontend 전체 E2E 및 operation/metric/scenario 추적표.
 
 ## 알려진 한계
 
-- QRY의 일부 frame 형식·상위 N 처리와 11개 시나리오 실행 계획이 남아 있다. 실행·조회·취소·목록·저장·삭제 API는 연결되어 있으며, 실행 계획이 없는 available/partial 시나리오는 501로 거부한다.
+- QRY의 일부 frame 형식·상위 N 처리와 10개 시나리오 실행 계획이 남아 있다. 실행·조회·취소·목록·저장·삭제 API는 연결되어 있으며, 실행 계획이 없는 available/partial 시나리오는 501로 거부한다.
 - telemetry_coverage 계산은 연결되었다. 약정 소진율도 owner 전사 범위에서 연결했다. 모든 frame 형식과 전체 수용 조건을 충족한 것은 아니다.
 - 전체 계획 완료나 운영 배포 가능 상태로 판정하지 않는다.
 
@@ -841,3 +841,12 @@
 - 실제 수집 fixture는 당일 관측이므로 이전 기간은 미관측, 이후 기간은 미완료다. 변화 판정이 없는 것을 검증하며 양쪽 양수·증감 판정은 DB 통합 테스트가 담당한다. 정책 거절·훅 및 교육 편집·MCP 원천도 이번 ingest fixture에는 없다.
 - frontend 비교 선택기는 현재 '없음'으로 표시되지만 표에는 `_compare` 필드가 나온다. 비교 기간·observation_complete의 전용 안내와 S4-4 W2.0 강조 연결은 후속 frontend 작업이다. S8-6 시작은 owner 로그인 후 공통 API 클라이언트의 감사 사유 경로이며 일반 실행 폼은 아직 사유를 보내지 않는다.
 - 로그: `/tmp/proj156-comparison-test.log`, `/tmp/proj156-comparison-e2e.log`. 전체 백엔드 빌드 1,008건 기록은 이번 구현 이전 검증이며 이번 변경의 검증 범위는 dashboard 206건과 E2E다.
+
+
+## S5-6 정책 용도 전후 관측
+
+- S5-6 실행을 연결했다. from/to 범위 내부의 pivot_date 현지 자정으로 `[from,pivot)`와 `[pivot,to)`를 나눈다. 기준일이 범위 밖이거나 양끝과 같으면 400이다. 기존 전체 기간 366일 제한은 유지한다.
+- tool_rejections의 config·hook 결정만 전후 기간 전체 표로 조회한다. 한 단계 실행이며 이후 value와 이전 value_compare를 반환한다. 원래 params.from/to는 보존하고 resolved_from/to는 이후 기간, applied_filters.compare_from/compare_to는 이전 기간이다.
+- QRY tool_rejections의 decided_by 배열 파라미터를 추가했다. config/hook/user 중 중복 없이 최대 3개이며 생략·빈 배열은 기존 전체 주체 집계다. SQL 명명 파라미터로 전달하며 잘못된 타입·주체·중복을 거부한다.
+- owner와 감사 사유가 필수다. 양쪽 소집단은 기존 비교 마스킹으로 처리한다. 미관측·미완료 기간은 변화 판정을 만들지 않는다. 양쪽 유효 값의 차이만 W3.3 info로 제공하며 기간 길이 차이와 인과 효과·발생률 해석의 한계를 명시한다.
+- 실행 경로 32개, 추가 실행 대상 10개, 명세상 unavailable 4개다.

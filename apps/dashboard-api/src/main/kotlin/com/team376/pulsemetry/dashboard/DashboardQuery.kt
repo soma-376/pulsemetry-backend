@@ -148,6 +148,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             } else {
                 if (q.metricId=="command_prompt_ratio") require(q.params.keys.all { it=="command_names" } &&
                     q.params.values.all { it.isArray && it.size()<=100 && it.all { name -> name.isString && name.asString().length in 1..200 } })
+                else if (q.metricId=="tool_rejections") require(q.params.keys.all { it=="decided_by" } &&
+                    q.params.values.all { it.isArray && it.size()<=3 && it.toList().distinct().size==it.size() &&
+                        it.all { source -> source.isString && source.asString() in setOf("config","hook","user") } })
                 else if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
                 else if (q.metricId=="mcp_connections") require(q.params.keys.all { it=="server_scope" } &&
                     q.params.values.all { it.isString && it.asString().length in 1..100 })
@@ -346,7 +349,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 " AND JSONExtractString(raw_json,'payload','attrs','server_scope')={server_scope:String}" else ""
             "compactions", "compaction_reduction" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='lifecycle' AND JSONExtractString(raw_json,'payload','kind')='compaction'"
             "usage_heatmap" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='user_prompt'"
-            "auto_approval_ratio", "tool_rejections" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='tool_decision'"
+            "auto_approval_ratio", "tool_rejections" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='tool_decision'" +
+                if(q.metricId=="tool_rejections") " AND (empty({decided_by:Array(String)}) OR has({decided_by:Array(String)},JSONExtractString(raw_json,'payload','decided_by')))" else ""
             "api_retry_attempts", "rate_limit_events", "api_error_rate" -> llm
             "tool_calls" -> tool + if (q.params.containsKey("success")) " AND $success={success:Bool}" else ""
             "tool_failure_rate" -> tool
@@ -414,6 +418,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             ORDER BY ${if (groupNames.isEmpty()) "" else groupNames.joinToString(",")+","}bucket"""
         val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone, "metric" to pointMetrics[q.metricId].orEmpty(),
             "threshold" to (q.params["threshold_ms"]?.asInt() ?: 2000).toString(),
+            "decided_by" to array(q.params["decided_by"]?.toList()?.map { it.asString() }?.toSet().orEmpty()),
             "command_names" to array(q.params["command_names"]?.toList()?.map { it.asString() }?.toSet().orEmpty()),
             "server_scope" to (q.params["server_scope"]?.asString() ?: ""),
             "success" to if (q.params["success"]?.asBoolean()==true) "1" else "0",
@@ -1087,6 +1092,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             if (q.metricId in tokenRatios) quality += "llm_call 이벤트 원천; 필요한 토큰 값이 모두 있는 호출의 합계 비율, 누락·음수 호출 제외"
             if (q.metricId=="llm_ttft_ms") quality += "조회 기간 내 설치·제품·요청별 유효 로그 우선, 없으면 스팬; 요청 ID 누락은 세션·모델별 소스 선택"
             if (q.metricId=="llm_stop_reasons") quality += "llm_call·llm_response 관측 이벤트 수; 사유 누락은 빈 라벨"
+            if (q.metricId=="tool_rejections" && q.params["decided_by"]?.size()?.let { it>0 }==true)
+                quality += "선택한 결정 주체만 포함: " + q.params.getValue("decided_by").toList().joinToString(",") { it.asString() }
             if (q.metricId=="api_error_rate") quality += "호출 시도 단위 오류율이며 최종 재시도 실패율이 아님"
             if (cumulative>0) quality += if (suppressed) "누적 temporality 포인트 제외" else "누적 temporality 포인트 ${cumulative}개 제외"
             if (q.metricId=="api_retry_attempts" && unknownAttempts>0) quality += if (suppressed)

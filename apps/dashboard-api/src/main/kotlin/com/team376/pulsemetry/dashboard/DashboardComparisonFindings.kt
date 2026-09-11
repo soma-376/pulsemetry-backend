@@ -21,12 +21,12 @@ internal object DashboardComparisonFindings {
             val delta = after.asDouble()-before.asDouble()
             if (!delta.isFinite() || delta==0.0) return@mapNotNull null
             mapOf("rule_id" to "observed_period_change","severity" to "info",
-                "widget_id" to if(scenario=="S8-6") "W3.3" else when(metric) {
+                "widget_id" to if(scenario in setOf("S5-6","S8-6")) "W3.3" else when(metric) {
                     "active_users" -> "W2.0"; "prompts_per_session" -> "W2.2"; else -> "W2.8" },
                 "title" to "기준일 전후의 관측값 차이가 있습니다",
                 "evidence" to (periods + mapOf("metric_id" to metric,"statistic" to name,
                     "before" to before.asDouble(),"after" to after.asDouble(),"delta" to delta,
-                    "limitation" to "기간 전체의 관측 집계 차이입니다. 구성원 변화·수집 누락을 통제하지 않으며 교육 또는 정책의 인과 효과나 개선 여부를 판정하지 않습니다.")))
+                    "limitation" to (if(scenario=="S5-6") "config·hook 결정만 포함합니다. 전후 기간 길이가 다를 수 있어 건수 차이를 발생률 변화로 해석하지 않습니다. " else "") + "기간 전체의 관측 집계 차이입니다. 구성원 변화·수집 누락을 통제하지 않으며 교육 또는 정책의 인과 효과나 개선 여부를 판정하지 않습니다.")))
         } }
     }
 }

@@ -1221,7 +1221,21 @@
     ],
     "params_schema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "decided_by": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "config",
+              "hook",
+              "user"
+            ]
+          }
+        }
+      },
       "additionalProperties": false
     },
     "sql_template_id": "Q11"

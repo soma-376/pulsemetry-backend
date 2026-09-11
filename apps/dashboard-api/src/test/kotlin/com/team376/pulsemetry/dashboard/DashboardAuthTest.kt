@@ -2778,6 +2778,64 @@ class DashboardAuthTest {
         assertThat(readRun(id,bearer)["status"].asString()).isEqualTo("succeeded")
     }
 
+    private fun policyPurposeRun(bearer: String, audit: String? = "policy purpose review") =
+        mvc.perform(post("/v1/scenarios/S5-6/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content("""{"params":{"from":"2026-08-25","to":"2026-09-03","pivot_date":"2026-09-01"}}"""))
+
+    @Test fun `정책 용도 비교는 config hook만 집계하고 owner 감사와 기간을 보존한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(decisionEvent(it,"config","reject",at="2026-08-25T12:00:00Z"),
+            decisionEvent(it,"config","reject",at="2026-08-31T15:00:00Z"),decisionEvent(it,"hook","reject"),
+            decisionEvent(it,"user","reject"),decisionEvent(it,null,"reject")) })
+        val bearer = token()
+        policyPurposeRun(bearer,null).andExpect(status().isForbidden)
+        val id = mapper.readTree(policyPurposeRun(bearer).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(1)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(1)
+        assertThat(run["params"]["from"].asString()).isEqualTo("2026-08-25")
+        assertThat(run["resolved_from"].asString()).isEqualTo("2026-08-31T15:00:00Z")
+        val finding = run["result"]["findings"].single()
+        assertThat(finding["widget_id"].asString()).isEqualTo("W3.3")
+        assertThat(finding["evidence"]["before"].asDouble()).isEqualTo(5.0)
+        assertThat(finding["evidence"]["after"].asDouble()).isEqualTo(10.0)
+        assertThat(finding["evidence"]["limitation"].asString()).contains("기간 길이")
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        policyPurposeRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `거절 결정 주체 파라미터는 빈 선택 호환성과 타입을 검증한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(decisionEvent(it,"config","reject"),decisionEvent(it,"hook","reject"),decisionEvent(it,"user","reject")) })
+        for ((sources,expected) in listOf(emptyList<String>() to 15.0,listOf("config","hook") to 10.0,listOf("user") to 5.0)) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "tool_rejections","frame_type" to "table",
+                "params" to mapOf("decided_by" to sources)))).andExpect(status().isOk).andReturn().response.contentAsString)
+            assertThat(result["results"]["A"]["frames"].single()["data"]["values"][0][0].asDouble()).isEqualTo(expected)
+        }
+        for (invalid in listOf("config",listOf("config","config"),listOf("invalid"),listOf(1)))
+            queryResult(queryBody(mapOf("metric_id" to "tool_rejections","params" to mapOf("decided_by" to invalid))))
+                .andExpect(status().isBadRequest)
+    }
+
+    @Test fun `정책 용도 비교는 소집단과 사용자 결정만 있는 기간을 추정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for (rows in listOf(ids.take(4).map { decisionEvent(it,"config","reject",at="2026-08-25T12:00:00Z") } +
+            ids.map { decisionEvent(it,"hook","reject") },ids.map { decisionEvent(it,"user","reject") },emptyList<String>())) {
+            seedPoints(rows)
+            val id = mapper.readTree(policyPurposeRun(bearer).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun sprintRun(bearer: String, dates: List<String>, zone: String = "Asia/Seoul") =
         mvc.perform(post("/v1/scenarios/S2-3/runs").header("Authorization","Bearer $bearer")
             .contentType("application/json").content(mapper.writeValueAsString(mapOf("tz" to zone,"params" to

@@ -80,6 +80,16 @@ class DashboardScenarioInputTest {
         }
     }
 
+    @Test fun `정책 용도 비교는 선택 범위 안의 기준일만 허용한다`() {
+        val result = input("S5-6","""{"params":{"from":"2026-08-25","to":"2026-09-03","pivot_date":"2026-09-01"}}""")
+        assertThat(result.times["from"]).isEqualTo(Instant.parse("2026-08-31T15:00:00Z"))
+        assertThat(result.times["compare_from"]).isEqualTo(Instant.parse("2026-08-24T15:00:00Z"))
+        assertThat(result.params["from"].asString()).isEqualTo("2026-08-25")
+        for (pivot in listOf("2026-08-24","2026-08-25","2026-09-03","2026-09-04"))
+            assertThatThrownBy { input("S5-6","""{"params":{"from":"2026-08-25","to":"2026-09-03","pivot_date":"$pivot"}}""") }
+                .isInstanceOf(IllegalArgumentException::class.java)
+    }
+
     @Test fun `모든 카탈로그 파라미터 스키마에 타입에 맞는 입력을 적용할 수 있다`() {
         val examples = mapOf("pivot_date" to "2026-09-01", "cohort_from" to "2026-08-01", "cohort_to" to "2026-09-01",
             "model_a" to "model-a", "model_b" to "model-b")
