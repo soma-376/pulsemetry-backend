@@ -2297,6 +2297,95 @@ class DashboardAuthTest {
     private fun readRun(id: String, bearer: String) = mapper.readTree(mvc.perform(get("/v1/scenario-runs/$id")
         .header("Authorization", "Bearer $bearer")).andExpect(status().isOk).andReturn().response.contentAsString)
 
+    private fun completedReportRun(bearer: String): String {
+        val id = mapper.readTree(startRun(bearer,params="""{"from":"now-1d","to":"now"}""").andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        val row = requireNotNull(runStore.claim())
+        assertThat(row.id.toString()).isEqualTo(id)
+        assertThat(runStore.finish(row,"""{"frames":{},"findings":[]}""",null)).isTrue()
+        return id
+    }
+    private fun saveReport(id: String, bearer: String, body: String = """{"name":"비용 보고서"}""") = mvc.perform(
+        post("/v1/scenario-runs/$id/save").header("Authorization","Bearer $bearer").contentType("application/json").content(body))
+    private fun savedList(bearer: String, cursor: String? = null) = mvc.perform(get("/v1/saved-reports")
+        .header("Authorization","Bearer $bearer").param("limit","1").apply { cursor?.let { param("cursor",it) } })
+
+    @Test fun `저장 리포트는 고정 상대 모드와 페이지 및 원본 참조 삭제 조건을 보존한다`() {
+        val bearer = token()
+        val run = completedReportRun(bearer)
+        val fixed = mapper.readTree(saveReport(run,bearer).andExpect(status().isCreated).andReturn().response.contentAsString)
+        val relative = mapper.readTree(saveReport(run,bearer,"""{"name":"상대 보고서","note":"첫 줄\n둘째 줄","time_mode":"relative"}""")
+            .andExpect(status().isCreated).andReturn().response.contentAsString)
+        assertThat(fixed["time_mode"].asString()).isEqualTo("fixed")
+        assertThat(relative["time_mode"].asString()).isEqualTo("relative")
+        assertThat(fixed["share_path"].asString()).isEqualTo("/runs/$run")
+        val first = mapper.readTree(savedList(bearer).andExpect(status().isOk).andReturn().response.contentAsString)
+        val second = mapper.readTree(savedList(bearer,first["next_cursor"].asString()).andExpect(status().isOk).andReturn().response.contentAsString)
+        assertThat(listOf(first["items"][0]["saved_id"].asString(),second["items"][0]["saved_id"].asString()))
+            .containsExactly(relative["saved_id"].asString(),fixed["saved_id"].asString())
+        assertThat(second["next_cursor"].isNull).isTrue()
+        val listed = mapper.readTree(runList(bearer).andReturn().response.contentAsString)["items"][0]
+        assertThat(listed["saved_id"].asString()).isEqualTo(relative["saved_id"].asString())
+        mvc.perform(delete("/v1/scenario-runs/$run").header("Authorization","Bearer $bearer")).andExpect(status().isConflict)
+        for (report in listOf(fixed,relative)) mvc.perform(delete("/v1/saved-reports/${report["saved_id"].asString()}")
+            .header("Authorization","Bearer $bearer")).andExpect(status().isNoContent)
+        assertThat(readRun(run,bearer)["status"].asString()).isEqualTo("succeeded")
+        mvc.perform(delete("/v1/scenario-runs/$run").header("Authorization","Bearer $bearer")).andExpect(status().isNoContent)
+        mvc.perform(get("/v1/scenario-runs/$run").header("Authorization","Bearer $bearer")).andExpect(status().isNotFound)
+    }
+
+    @Test fun `저장 입력과 실행 상태 오류를 400 409로 구분한다`() {
+        val bearer = token()
+        val run = mapper.readTree(startRun(bearer).andReturn().response.contentAsString)["run_id"].asString()
+        saveReport(run,bearer).andExpect(status().isConflict)
+        mvc.perform(delete("/v1/scenario-runs/$run").header("Authorization","Bearer $bearer")).andExpect(status().isConflict)
+        for (body in listOf("{}","""{"name":" "}""","""{"name":2}""","""{"name":"ok","time_mode":"bad"}""",
+            """{"name":"ok","extra":true}""",mapper.writeValueAsString(mapOf("name" to "x".repeat(101))),
+            mapper.writeValueAsString(mapOf("name" to "ok","note" to "x".repeat(2001)))))
+            saveReport(run,bearer,body).andExpect(status().isBadRequest)
+        savedList(bearer,"bad-cursor").andExpect(status().isBadRequest)
+        mvc.perform(get("/v1/saved-reports").header("Authorization","Bearer $bearer").param("limit","bad")).andExpect(status().isBadRequest)
+        mvc.perform(get("/v1/saved-reports")).andExpect(status().isUnauthorized)
+        saveReport(UUID.randomUUID().toString(),bearer).andExpect(status().isNotFound)
+    }
+
+    @Test fun `저장 리포트 목록과 삭제는 현재 실행 권한을 재검증한다`() {
+        val team = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.teams(id,tenant_id,name) VALUES (:id,:tenant,'실행 팀')").param("id",team).param("tenant",tenant).update()
+        jdbc.sql("INSERT INTO enrollment.team_memberships(team_id,member_id) VALUES (:team,:member)").param("team",team).param("member",member).update()
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        val bearer = token()
+        val run = completedReportRun(bearer)
+        val saved = mapper.readTree(saveReport(run,bearer).andExpect(status().isCreated).andReturn().response.contentAsString)["saved_id"].asString()
+        assertThat(mapper.readTree(savedList(bearer).andReturn().response.contentAsString)["items"].size()).isEqualTo(1)
+        val other = UUID.randomUUID()
+        jdbc.sql("INSERT INTO enrollment.members(id,tenant_id,email,role) VALUES (:id,:tenant,'report-owner@example.com','owner')")
+            .param("id",other).param("tenant",tenant).update()
+        val ownerSaved = UUID.randomUUID()
+        jdbc.sql("""INSERT INTO dashboard.saved_reports(id,tenant_id,run_id,name,time_mode,created_by_member_id)
+            VALUES (:id,:tenant,:run,'owner 저장','fixed',:creator)""")
+            .param("id",ownerSaved).param("tenant",tenant).param("run",UUID.fromString(run)).param("creator",other).update()
+        mvc.perform(delete("/v1/saved-reports/$ownerSaved").header("Authorization","Bearer $bearer")).andExpect(status().isForbidden)
+
+        jdbc.sql("UPDATE enrollment.team_memberships SET left_at=now() WHERE member_id=:id").param("id",member).update()
+        assertThat(mapper.readTree(savedList(bearer).andReturn().response.contentAsString)["items"].size()).isZero()
+        saveReport(run,bearer).andExpect(status().isNotFound)
+        mvc.perform(delete("/v1/saved-reports/$saved").header("Authorization","Bearer $bearer")).andExpect(status().isNotFound)
+        mvc.perform(delete("/v1/scenario-runs/$run").header("Authorization","Bearer $bearer")).andExpect(status().isNotFound)
+    }
+
+    @Test fun `동시 저장과 실행 삭제는 참조를 원자적으로 보존한다`() {
+        val bearer = token()
+        val run = completedReportRun(bearer)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+        val barrier = java.util.concurrent.CyclicBarrier(2)
+        try {
+            val save = pool.submit<Int> { barrier.await(); saveReport(run,bearer).andReturn().response.status }
+            val remove = pool.submit<Int> { barrier.await(); mvc.perform(delete("/v1/scenario-runs/$run").header("Authorization","Bearer $bearer")).andReturn().response.status }
+            val pair = save.get(10,java.util.concurrent.TimeUnit.SECONDS) to remove.get(10,java.util.concurrent.TimeUnit.SECONDS)
+            assertThat(pair).isIn(201 to 409,404 to 204)
+        } finally { pool.shutdownNow() }
+    }
+
     private fun runList(bearer: String, cursor: String? = null, limit: Int = 2, state: String? = null) =
         mvc.perform(get("/v1/scenario-runs").header("Authorization","Bearer $bearer").param("limit",limit.toString())
             .apply { cursor?.let { param("cursor",it) }; state?.let { param("status",it) } })
