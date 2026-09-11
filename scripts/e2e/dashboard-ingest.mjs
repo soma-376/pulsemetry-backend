@@ -692,6 +692,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let governanceRun;
   let qualityRun;
   let policyComparisonRun;
+  let purposeRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -980,11 +981,40 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, policyComparisonRun.run_id);
     await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(policyComparisonRun.run_id.slice(0, 8), { exact: false }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-policy-comparison.png'), fullPage: true });
+    purposeRun = await ownerPage.evaluate(async () => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      const pivot = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
+      let run = await request('/scenarios/S5-6/runs', { method: 'POST', body: JSON.stringify({
+        params: { from: 'now-7d', to: new Date().toISOString(), pivot_date: pivot },
+      }) }, '정책 용도 전후 비교 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    });
+    assert.equal(purposeRun.status, 'succeeded');
+    assert.equal(purposeRun.progress.step, 1);
+    assert.equal(purposeRun.progress.total, 1);
+    assert.equal(purposeRun.result.findings.length, 0);
+    assert.equal(purposeRun.result.applied_filters.observation_complete, true);
+    assert.equal(purposeRun.result.applied_filters.compare_to, purposeRun.resolved_from);
+    assert.equal(purposeRun.result.frames.tool_rejections.frames.length, 0);
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S5-6'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, purposeRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(purposeRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-purpose-scenario.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    purposeScenario: { id: 'S5-6', runId: purposeRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionEventsMissing: true },
     trainingComparisonScenario: { id: 'S4-4', runId: trainingRun.run_id, admin: true, actualResultUI: true, promptsPerSession: 2, beforeMissing: true },
     policyComparisonScenario: { id: 'S8-6', runId: policyComparisonRun.run_id, owner: true, audited: true, actualResultUI: true, gateWaitMs: 120000, beforeMissing: true },
     sprintScenario: { id: 'S2-3', runId: sprintRun.run_id, admin: true, actualResultUI: true, sprintDate: sprintRun.params.sprint_dates[0], sessions: 5 },

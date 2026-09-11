@@ -850,3 +850,13 @@
 - QRY tool_rejections의 decided_by 배열 파라미터를 추가했다. config/hook/user 중 중복 없이 최대 3개이며 생략·빈 배열은 기존 전체 주체 집계다. SQL 명명 파라미터로 전달하며 잘못된 타입·주체·중복을 거부한다.
 - owner와 감사 사유가 필수다. 양쪽 소집단은 기존 비교 마스킹으로 처리한다. 미관측·미완료 기간은 변화 판정을 만들지 않는다. 양쪽 유효 값의 차이만 W3.3 info로 제공하며 기간 길이 차이와 인과 효과·발생률 해석의 한계를 명시한다.
 - 실행 경로 32개, 추가 실행 대상 10개, 명세상 unavailable 4개다.
+
+
+### S5-6 검증 결과
+
+- dashboard 테스트 210건, 실패·오류·skip 0건. 기준일 내부 조건과 원본 범위 보존, config/hook 전후 5→10건, user·주체 누락 제외, 감사 사유·owner 인가, 소집단·미관측, QRY 빈 선택 호환성과 잘못된 주체·타입·중복 거부를 검증했다.
+- 구현 `886ff22`와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`의 실제 수집 E2E가 통과했다. `unexpectedOrUnimplementedResponses=[]`, 연결 시나리오 32개다.
+- `verifiedIngest.purposeScenario`: run `c33ee76e-64a7-4be9-bf59-c041841484d2`, owner 감사 기록 1건, 진행 1/1 완료. `owner-ingest-purpose-scenario.png`에서 W3.3 미관측 카드와 판정 없음 패널을 확인했다.
+- 실제 ingest fixture에는 tool_decision 거절 원천이 없어 빈 프레임을 검증한다. 전후 양수 건수와 결정 주체 필터의 긍정 사례는 DB 통합 테스트가 담당한다. 이벤트 부재를 거절 0건이나 정책 준수로 판정하지 않는다.
+- 일반 frontend 실행 폼은 여전히 감사 사유를 보내지 않는다. 이번 검증은 owner 로그인 후 공통 클라이언트의 감사 사유 전달 경로다. 상단 비교 선택기와 이전 기간의 전용 안내도 미연결 상태다.
+- 로그: `/tmp/proj156-purpose-test.log`, `/tmp/proj156-purpose-e2e.log`. frontend 소스는 변경하지 않았다.

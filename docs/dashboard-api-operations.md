@@ -301,3 +301,6 @@ S4-4는 owner/admin의 현재 범위로 active_users·prompts_per_session·edit_
 owner가 감사 사유와 함께 from/to 및 pivot_date를 지정한다. 기준일 현지 자정은 범위 내부여야 한다. config·hook의 tool_decision reject만 집계하고 사용자 결정과 주체 누락은 제외한다. 기간 전체 표의 value는 이후, value_compare는 이전 건수다. 길이가 다른 기간의 건수 차이이며 발생률 변화나 정책 효과로 해석하지 않는다. 미관측·소집단·미완료 기간은 판정하지 않는다.
 
 QRY tool_rejections에도 decided_by 배열(config/hook/user 중 중복 없는 선택, 최대 3개)을 사용할 수 있다. 생략·빈 배열은 기존 전체 주체 집계를 유지한다. 다른 거절 시나리오의 기본 집계는 변경하지 않았다.
+
+
+S5-6의 수집 E2E 증거는 `verifiedIngest.purposeScenario`와 `owner-ingest-purpose-scenario.png`다. owner 감사 기록과 완료 응답, 거절 원천 미관측 표시를 확인한다. 실제 config/hook 양수 비교는 DB 통합 테스트로 검증한다. 일반 실행 폼의 감사 사유 및 상단 비교 기간 안내는 frontend 후속 작업이다.
