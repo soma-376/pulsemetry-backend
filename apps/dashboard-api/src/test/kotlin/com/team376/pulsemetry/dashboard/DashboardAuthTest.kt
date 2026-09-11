@@ -2682,6 +2682,47 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `시간대 시나리오는 현지 요일 시간의 168칸과 제한 이벤트를 제공한다`() {
+        val ids = installations(5)
+        jdbc.sql("UPDATE enrollment.tenants SET timezone='Asia/Seoul' WHERE id=:tenant").param("tenant",tenant).update()
+        val start = java.time.Instant.parse("2026-08-31T00:00:00Z")
+        seedPoints((0..167).flatMap { hour -> ids.map { promptEvent(it,at=start.plusSeconds(hour*3600L).toString()) } } +
+            ids.map { llmEvent(it,1,429) })
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer,"S2-1","""{"from":"2026-08-31T00:00:00Z","to":"2026-09-07T00:00:00Z"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrder("usage_heatmap","rate_limit_events","session_last_event")
+        val heatmap = frames["usage_heatmap"]["frames"].toList()
+        assertThat(heatmap).hasSize(168)
+        assertThat(heatmap.all { it["data"]["values"][0][0].asDouble()==5.0 }).isTrue()
+        assertThat(heatmap.map { it["schema"]["fields"][0]["labels"]["hour"].asString() }.toSet()).hasSize(24)
+        assertThat(heatmap.map { it["schema"]["fields"][0]["labels"]["weekday"].asString() }.toSet()).hasSize(7)
+        val findings = run["result"]["findings"]
+        assertThat(findings.size()).isEqualTo(1)
+        assertThat(findings[0]["evidence"]["count"].asDouble()).isEqualTo(5.0)
+        assertThat(findings[0]["evidence"]["date"].asString()).isEqualTo("2026-08-31T15:00:00Z")
+    }
+
+    @Test fun `시간대 시나리오는 소집단과 미관측 제한을 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { llmEvent(it,1,429) },emptyList(),ids.map { llmEvent(it,1,200) })) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S2-1","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     @Test fun `고급 기능 시나리오는 서브에이전트 비용과 보조 지표를 제공한다`() {
         val ids = installations(5)
         seedPoints(ids.flatMap { listOf(subagentCost(it,2.0,"subagent"),subagentCost(it,6.0,"main"),

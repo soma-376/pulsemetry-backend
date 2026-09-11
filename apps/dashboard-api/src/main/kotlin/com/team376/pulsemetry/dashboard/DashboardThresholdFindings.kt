@@ -12,6 +12,8 @@ internal object DashboardThresholdFindings {
                 "프롬프트 원문 유사도와 반복 여부는 측정하지 않습니다. 캐싱 가능성이나 절감 효과를 보장하지 않습니다.")
             "S1-5" -> Rule("high_io_ratio","입력/출력 토큰 비율이 임계값을 초과했습니다","W2.6",
                 "컨텍스트 첨부 여부는 관측하지 못합니다. 입력 토큰 사용을 검토하세요.")
+            "S2-1" -> Rule("observed_rate_limits","Rate Limit 이벤트가 관측되었습니다","W2.3",
+                "시간대별 프롬프트 수와 관측 제한 이벤트입니다. 오전·오후 변동의 원인이나 작업 중단을 확정하지 않습니다.")
             "S3-5" -> Rule("observed_subagent_cost","서브에이전트 비용이 관측되었습니다","W2.8",
                 "query_source 메트릭의 비용 비율입니다. 스킬·플러그인 사용률이나 고급 기능 숙련도를 측정하지 않습니다.")
             "S7-1" -> Rule("high_tool_failure_rate","도구 실패율이 임계값을 초과했습니다","W2.10",
@@ -33,7 +35,7 @@ internal object DashboardThresholdFindings {
                     "rule_id" to rule.id, "severity" to "info", "widget_id" to rule.widget,
                     "title" to rule.title,
                     "evidence" to mapOf("date" to Instant.ofEpochMilli(frame["data"]["values"][time][i].asLong()).toString(),
-                        (if(scenario=="S4-1") "p50" else "ratio") to cell.asDouble(), "threshold" to threshold,
+                        (when(scenario) { "S4-1" -> "p50"; "S2-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
                         "limitation" to rule.limitation))
             }
         }
