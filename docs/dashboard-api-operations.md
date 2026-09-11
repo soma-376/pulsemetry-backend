@@ -68,3 +68,12 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 ## 실행 이력 조회
 
 `GET /v1/scenario-runs`는 `scenario_id`, `status`, `created_by`, `limit`(1~500, 기본 50), `cursor`를 지원한다. 최신순이며 owner는 tenant 내 실행, admin은 현재 팀 권한으로 읽을 수 있는 본인 실행만 반환한다. 다음 페이지에는 같은 필터를 유지한다. 팀 권한·사용자·필터가 바뀌면 커서를 버리고 첫 페이지부터 조회한다. 응답은 결과 프레임 없는 요약이며 total은 null이다. 실제 frontend 이력 화면 전체는 저장 리포트 API 연결 후 검증한다.
+
+
+## 저장 리포트와 삭제
+
+`POST /v1/scenario-runs/{id}/save`에 `{"name":"비용 분석","note":"메모","time_mode":"fixed"}`를 보내 완료된 실행을 보관한다. name은 1~100자, note는 최대 2,000자다. relative 모드는 원래 params에 now 상대식이 있어야 하며 frontend에서 열 때 새 실행을 요청한다. fixed는 기존 결과를 연다.
+
+`GET /v1/saved-reports`는 limit(기본 50, 최대 500)과 cursor로 최신순 목록을 반환한다. admin은 원본 실행에 대한 현재 팀 권한이 필요하다. `DELETE /v1/saved-reports/{saved_id}`는 현재 실행 조회 권한을 가진 저장자 또는 owner에게 허용하며 원본 실행은 유지한다. `DELETE /v1/scenario-runs/{id}`는 queued/running 또는 저장 항목이 연결된 실행에 409를 반환한다. 저장 항목을 먼저 삭제한 후 종료된 실행을 삭제할 수 있다. 삭제 성공은 204다.
+
+실제 frontend smoke는 저장 대화상자·이력 화면·고정 결과 열기·상대 기간 새 실행과 실제 API 클라이언트 삭제까지 확인한다. 화면은 `build/e2e/auth-settings/{owner,admin}-history.png`에 남는다. 삭제 확인 대화상자 클릭과 ingest 전체 경로는 이 검증에 포함하지 않는다.

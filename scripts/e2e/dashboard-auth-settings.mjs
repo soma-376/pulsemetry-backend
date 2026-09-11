@@ -656,6 +656,56 @@ try {
     await teamCostWidget.locator('summary').click();
     assert.ok((await teamCostWidget.innerText()).includes('$30.00'));
     await page.screenshot({ path: resolve(artifacts, `${role}-scenario.png`), fullPage: true });
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const saveDialog = page.getByRole('dialog');
+    await saveDialog.getByLabel('이름', { exact: true }).fill(`${role} 비용 리포트`);
+    await saveDialog.getByRole('button', { name: '저장', exact: true }).click();
+    await page.getByText('리포트를 저장했습니다.', { exact: false }).waitFor();
+    const savedReports = await page.evaluate(async () => {
+      const { scenarioApi } = await import('/src/api/scenarios.ts');
+      return scenarioApi.saved();
+    });
+    const fixedReport = savedReports.items.find(item => item.name === `${role} 비용 리포트`);
+    assert.equal(fixedReport.run_id, scenarioRun.run.run_id);
+    assert.equal(fixedReport.time_mode, 'fixed');
+    await page.evaluate(() => {
+      window.history.pushState(null, '', '/scenarios/history');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    const reportRow = page.getByRole('row').filter({ hasText: `${role} 비용 리포트` });
+    await reportRow.getByRole('button', { name: '열기', exact: true }).waitFor();
+    await page.screenshot({ path: resolve(artifacts, `${role}-history.png`), fullPage: true });
+    await reportRow.getByRole('button', { name: '열기', exact: true }).click();
+    await page.getByLabel('시나리오 판정', { exact: true }).waitFor();
+    assert.ok(page.url().includes(scenarioRun.run.run_id));
+    const relativeReport = await page.evaluate(async id => {
+      const { scenarioApi } = await import('/src/api/scenarios.ts');
+      return scenarioApi.save(id, { name: '상대 기간 E2E', time_mode: 'relative' });
+    }, scenarioRun.run.run_id);
+    await page.evaluate(() => {
+      window.history.pushState(null, '', '/scenarios/history');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await page.getByRole('row').filter({ hasText: '상대 기간 E2E' }).getByRole('button', { name: '열기', exact: true }).click();
+    await page.getByLabel('시나리오 판정', { exact: true }).waitFor({ timeout: 60000 });
+    const rerunId = new URL(page.url()).pathname.split('/runs/')[1];
+    assert.match(rerunId, /^[0-9a-f-]{36}$/);
+    assert.notEqual(rerunId, scenarioRun.run.run_id);
+    await page.evaluate(() => {
+      window.history.pushState(null, '', '/scenarios/history');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await page.getByRole('row').filter({ hasText: `${role} 비용 리포트` }).waitFor();
+    await page.evaluate(async ({ fixed, relative, rerun, original }) => {
+      const { scenarioApi } = await import('/src/api/scenarios.ts');
+      await scenarioApi.removeSaved(fixed);
+      await scenarioApi.removeSaved(relative);
+      await scenarioApi.remove(rerun);
+      await scenarioApi.remove(original);
+      const reports = await scenarioApi.saved();
+      if (reports.items.some(item => item.saved_id === fixed || item.saved_id === relative)) throw new Error('저장 리포트 삭제가 반영되지 않았습니다');
+    }, { fixed: fixedReport.saved_id, relative: relativeReport.saved_id, rerun: rerunId, original: scenarioRun.run.run_id });
+
 
     await page.screenshot({ path: resolve(artifacts, `${role}.png`), fullPage: true });
     await Promise.all(responseReads);
@@ -663,7 +713,7 @@ try {
   }
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; ingest 및 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedInstallations: { count: 5, pages: 3, audited: true, actualFrontendCard: false },
-    verifiedScenarios: { count: 46, actualFrontendClient: true, parameterFormValidation: true, actualCatalogUI: false, runs: { scenario: 'S1-3', completed: true, cancelled: true, actualResultUI: true, actualHistoryClient: true } },
+    verifiedScenarios: { count: 46, actualFrontendClient: true, parameterFormValidation: true, actualCatalogUI: false, runs: { scenario: 'S1-3', completed: true, cancelled: true, actualResultUI: true, actualHistoryClient: true, actualHistoryUI: true, savedFixedOpened: true, savedRelativeRerun: true, savedAndRunDeleted: true } },
     verifiedSessionEvents: { actualFrontendClient: true, paginated: true, audited: true, actualSessionSearchUI: false },
     verifiedMetrics: [...metricFixtures.map(([metric, , value]) => ({ metric, expected: value*5 })),
       { metric: 'active_users', expected: 5 }, { metric: 'adoption_rate', owner: 5/7, admin: 5/6 },
