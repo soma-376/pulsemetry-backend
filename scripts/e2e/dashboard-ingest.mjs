@@ -62,7 +62,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     ] }, ...[0, 1].map(sequence => ({ timeUnixNano: String(now),
       body: { stringValue: 'claude_code.user_prompt' }, attributes: [attr('session.id', `ingest-${installation}`),
         { key: 'event.sequence', value: { intValue: String(sequence) } },
-        { key: 'prompt_length', value: { intValue: '42' } }],
+        { key: 'prompt_length', value: { intValue: '42' } }, attr('command_name', sequence === 0 ? '/review' : '/plan')],
     }))] }] }] });
     const metrics = JSON.stringify({ resourceMetrics: [{ resource, scopeMetrics: [{ metrics:
       [1, 2].map(temporality => ({ name: 'claude_code.cost.usage', unit: 'USD', sum: {
@@ -585,6 +585,28 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, effortRun.run_id);
   await page.getByRole('heading', { name: '모델·effort·speed별 비용이 관측되었습니다', exact: true }).first().waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-effort-scenario.png'), fullPage: true });
+  const templateRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    let { run } = await scenarioApi.start('S4-5', { params: { from, to: new Date(Date.now() + 1000).toISOString(), command_names: ['/review'] } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return run;
+  }, scenarioFrom);
+  assert.equal(templateRun.status, 'succeeded');
+  assert.equal(templateRun.progress.step, 2);
+  assert.equal(templateRun.progress.total, 2);
+  assert.deepEqual(Object.keys(templateRun.result.frames).sort(), ['command_prompt_ratio', 'prompts_per_session']);
+  assert.equal(templateRun.result.findings.length, 1);
+  assert.equal(templateRun.result.findings[0].evidence.ratio, 0.5);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, templateRun.run_id);
+  await page.getByRole('heading', { name: '명령 프롬프트가 관측되었습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-template-scenario.png'), fullPage: true });
   const ownerPage = await page.context().newPage();
   let pressureRun;
   let retryRun;
@@ -831,6 +853,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    templateScenario: { id: 'S4-5', runId: templateRun.run_id, admin: true, actualResultUI: true, commandNames: ['/review'], ratio: 0.5 },
     governanceScenario: { id: 'S7-4', runId: governanceRun.run_id, owner: true, audited: true, actualResultUI: true, observedInstallations: 5, coverage: governanceRun.result.findings[0].evidence.ratio },
     readDensityScenario: { id: 'S7-2', runId: readDensityRun.run_id, owner: true, audited: true, actualResultUI: true, threshold: 0, p90CallsPerSession: 0 },
     latencyScenario: { id: 'S6-4', runId: latencyRun.run_id, owner: true, audited: true, actualResultUI: true, model, p90Ms: 500, activeUsers: 5 },
