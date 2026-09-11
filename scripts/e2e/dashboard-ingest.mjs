@@ -558,6 +558,31 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, concentrationRun.run_id);
   await page.getByRole('heading', { name: '익명 사용량 집중도가 관측되었습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-concentration-scenario.png'), fullPage: true });
+  const forecastRun = await page.evaluate(async () => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    let { run } = await scenarioApi.start('S8-2', { params: { growth_model: 'linear' } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return run;
+  });
+  assert.equal(forecastRun.status, 'succeeded');
+  assert.equal(forecastRun.progress.step, 6);
+  assert.equal(forecastRun.progress.total, 6);
+  assert.deepEqual(Object.keys(forecastRun.result.frames).sort(), ['cache_read_ratio', 'cost', 'model_unit_price', 'onboarding_retention', 'tokens']);
+  assert.equal(forecastRun.result.forecast.status, 'insufficient_data');
+  assert.equal(forecastRun.result.forecast.reason, 'complete_daily_cost_required');
+  assert.equal(forecastRun.result.forecast.horizon_days, 30);
+  assert.ok(!('projected_cost_usd' in forecastRun.result.forecast));
+  assert.equal(forecastRun.result.findings[0].rule_id, 'cost_forecast_unavailable');
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, forecastRun.run_id);
+  await page.getByRole('heading', { name: '비용 예측에 필요한 관측 이력이 부족합니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-forecast-scenario.png'), fullPage: true });
   const premiumRun = await page.evaluate(async ({ from, scenarioModel }) => {
     const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
     let { run } = await scenarioApi.start('S1-2', { params: {
@@ -1296,6 +1321,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     policyScenario: { id: 'S7-3', runId: policyRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionFindings: 0, gateWaitMs: 120000 },
     retryScenario: { id: 'S6-5', runId: retryRun.run_id, owner: true, audited: true, actualResultUI: true, retryRatio: 0.2, costUsd: 15 },
     pressureScenario: { id: 'S2-2', runId: pressureRun.run_id, owner: true, audited: true, actualResultUI: true, rateLimitFindings: 0 },
+    forecastScenario: { id: 'S8-2', runId: forecastRun.run_id, actualResultUI: true, forecastStatus: 'insufficient_data', horizonDays: 30 },
     premiumScenario: { id: 'S1-2', runId: premiumRun.run_id, actualResultUI: true, costUsd: 15, tokens: 1050, model: scenarioModel },
     effortScenario: { id: 'S1-6', runId: effortRun.run_id, actualResultUI: true, costUsd: 15, effort: 'high', speed: 'fast', source: 'metrics' },
     concentrationScenario: { id: 'S3-2', runId: concentrationRun.run_id, actualResultUI: true, topDecileShare: 0.2, anonymousCurve: true },
