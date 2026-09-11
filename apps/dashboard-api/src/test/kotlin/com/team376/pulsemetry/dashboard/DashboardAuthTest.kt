@@ -2682,6 +2682,45 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun consolidationRun(bearer: String) =
+        mvc.perform(post("/v1/scenarios/S8-5/runs").header("Authorization","Bearer $bearer")
+            .contentType("application/json").content("""{"params":{"from":"2026-09-01","to":"2026-09-02"}}"""))
+
+    @Test fun `도구 통합 시나리오는 제품별 사용자를 별도로 제공하고 전체 비용을 합산하지 않는다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(promptEvent(it,product="claude_code"),promptEvent(it,product="codex"),costEvent(it,3.0),toolEvent(it,true)) })
+        val bearer = token()
+        val id = mapper.readTree(consolidationRun(bearer).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrder("active_users","cost_per_active_user","tool_calls")
+        val findings = run["result"]["findings"].toList()
+        assertThat(findings.map { it["evidence"]["product"].asString() }).containsExactly("claude_code","codex")
+        assertThat(findings.map { it["evidence"]["active_users"].asDouble() }).containsExactly(5.0,5.0)
+        assertThat(frames["cost_per_active_user"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(3.0)
+        assertThat(frames["tool_calls"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
+    }
+
+    @Test fun `도구 통합 시나리오는 제품별 소집단과 미관측을 제외한다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.map { promptEvent(it) }+ids.take(4).map { promptEvent(it,product="codex") },emptyList())) {
+            seedPoints(rows)
+            val id = mapper.readTree(consolidationRun(bearer).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            val products = run["result"]["findings"].toList().map { it["evidence"]["product"].asString() }
+            assertThat(products).containsExactlyElementsOf(if(rows.isEmpty()) emptyList() else listOf("claude_code"))
+        }
+    }
+
     private fun commandPrompt(id: UUID, name: String?): String {
         val row = mapper.readTree(promptEvent(id)) as tools.jackson.databind.node.ObjectNode
         val raw = mapper.readTree(row["raw_json"].asString()) as tools.jackson.databind.node.ObjectNode
