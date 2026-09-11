@@ -1315,7 +1315,8 @@ class DashboardAuthTest {
         val ids = installations(5)
         for (metric in listOf("refusals","hook_executions")) {
             fun event(id: UUID, category: String) = if(metric=="refusals") refusalEvent(id,category) else hookSession(id,"same",category)
-            seedPoints(ids.map { event(it,"public") }+ids.take(4).flatMap { id -> (1..3).flatMap { listOf(event(id,"a"),event(id,"b")) } })
+            seedPoints(ids.map { event(it,"public") }+ids.take(4).flatMap { id -> (1..3).flatMap { listOf(event(id,"a"),event(id,"b")) } }+
+                ids.map { promptEvent(it) })
             val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to metric,"frame_type" to "table","limit" to 1,
                 "group_by" to listOf(if(metric=="refusals") "category" else "hook_event")))).andReturn().response.contentAsString)["results"]["A"]
             assertThat(result["status"].asInt()).isEqualTo(200)

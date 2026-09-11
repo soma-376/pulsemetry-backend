@@ -446,7 +446,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             "coalesce($numerator,0) AS numerator, coalesce($denominator,0) AS denominator, numerator/nullIf(denominator,0) AS value"
             else "$numerator AS value"
         // 언어 선택으로 분모가 좁아지면 선택 언어의 유효 관측 인원으로 마스킹한다.
-        val selectedPeople = if(q.metricId=="edit_acceptance_rate" && q.params.containsKey("language"))
+        val selectedPeople = if(q.metricId=="refusals" || (q.metricId=="edit_acceptance_rate" && q.params.containsKey("language")))
             "uniqExactIf($person,$known AND $valid)" else people
         val sql = """SELECT $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
             $selectedPeople AS people, countIf($activePoint)>0 AS active_time_definition,
@@ -890,7 +890,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             SELECT bucket, uniqExactIf(session_key,valid_session) AS denominator
             FROM observed GROUP BY bucket
         ), stats AS (
-            SELECT $groupSql, $people AS people, countIf($activePoint)>0 AS active_time_definition,
+            SELECT $groupSql, uniqExactIf($person,$known AND is_hook) AS people, countIf($activePoint)>0 AS active_time_definition,
                 countIf(is_hook) AS points, countIf(is_hook) AS value,
                 uniqExactIf(session_key,valid_session AND is_hook) AS numerator
             FROM observed GROUP BY $groupSql
