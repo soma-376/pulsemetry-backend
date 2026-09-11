@@ -2682,6 +2682,55 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun qualityRun(bearer: String, models: List<String> = listOf("claude-test"), audit: String? = "quality feedback review") =
+        mvc.perform(post("/v1/scenarios/S6-1/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content(mapper.writeValueAsString(mapOf("params" to
+                mapOf("from" to "2026-09-01","to" to "2026-09-02","models" to models)))))
+
+    @Test fun `품질 피드백 시나리오는 P2에서도 owner 감사와 모델 범위를 적용한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(refusalEvent(it,"policy"),promptEvent(it)) })
+        val bearer = token()
+        qualityRun(bearer,audit=null).andExpect(status().isForbidden)
+        qualityRun(bearer,listOf("x".repeat(201))).andExpect(status().isBadRequest)
+        val id = mapper.readTree(qualityRun(bearer).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        assertThat(run["result"]["target_page"].asString()).isEqualTo("P2")
+        assertThat(run["result"]["applied_filters"]["filters"]["models"].toList().map { it.asString() }).containsExactly("claude-test")
+        val frames = run["result"]["frames"]
+        assertThat(frames.propertyNames()).containsExactlyInAnyOrder("refusals","edit_acceptance_rate","prompts_per_session")
+        val finding = run["result"]["findings"].single()
+        assertThat(finding["rule_id"].asString()).isEqualTo("observed_quality_refusals")
+        assertThat(finding["evidence"]["count"].asDouble()).isEqualTo(5.0)
+        assertThat(frames["prompts_per_session"]["frames"].toList().all { f -> f["data"]["values"].toList().drop(1).all { values -> values.toList().all { it.isNull } } }).isTrue()
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S6-1'")
+            .query(Long::class.java).single()).isEqualTo(1)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        qualityRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `품질 피드백 시나리오는 소집단 다른 모델과 정상 종료를 거부로 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for ((rows,models) in listOf(ids.take(4).map { refusalEvent(it,"policy") } to listOf("claude-test"),
+            ids.map { refusalEvent(it,"policy") } to listOf("missing"),
+            ids.map { refusalEvent(it,null,reason="end_turn") } to emptyList(),emptyList<String>() to emptyList())) {
+            seedPoints(rows)
+            val id = mapper.readTree(qualityRun(bearer,models).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun consolidationRun(bearer: String) =
         mvc.perform(post("/v1/scenarios/S8-5/runs").header("Authorization","Bearer $bearer")
             .contentType("application/json").content("""{"params":{"from":"2026-09-01","to":"2026-09-02"}}"""))

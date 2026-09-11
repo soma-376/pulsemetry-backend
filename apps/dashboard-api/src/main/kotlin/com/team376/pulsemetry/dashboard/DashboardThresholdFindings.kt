@@ -24,6 +24,8 @@ internal object DashboardThresholdFindings {
                 "연결 상태 이벤트와 세션별 읽기 도구 사용량입니다. 외부 전송 내용·목적지·승인 여부를 확인하지 않으므로 코드·문서 유출을 탐지하거나 확정하지 않습니다.")
             "S5-7" -> Rule("observed_fast_approvals","임계 시간 미만의 사용자 승인이 관측되었습니다","W3.3",
                 "유효 대기 시간이 있는 사용자 accept 중 threshold_ms 미만 비율입니다. 승인 내용의 검증 여부·실제 반출·PR과의 인과관계를 확인하지 않습니다.")
+            "S6-1" -> Rule("observed_quality_refusals","모델 거부 응답이 관측되었습니다","W2.7",
+                "선택 모델의 거부 응답 수입니다. 모델명이 없는 원본은 모델 선택 시 제외됩니다. 설문·품질 점수·거부의 적절성이나 사용자 만족도를 측정하지 않습니다.")
             "S6-4" -> Rule("observed_first_token_latency","첫 토큰 응답 지연이 관측되었습니다","W3.1",
                 "선택한 모델의 첫 토큰 지연 p90입니다. 별도 SLA·장애 기준이나 원인 분석 없이 장애·품질 저하를 확정하지 않습니다.")
             "S6-5" -> Rule("observed_api_retries","API 재시도가 관측되었습니다","W3.1",
@@ -55,7 +57,7 @@ internal object DashboardThresholdFindings {
                     "rule_id" to rule.id, "severity" to "info", "widget_id" to rule.widget,
                     "title" to rule.title,
                     "evidence" to (mapOf("date" to Instant.ofEpochMilli(frame["data"]["values"][time][i].asLong()).toString(),
-                        (when(scenario) { "S7-2" -> "p90_calls_per_session"; "S6-4" -> "p90_ms"; "S4-1" -> "p50"; "S2-1","S2-2","S5-2","S7-3","S8-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
+                        (when(scenario) { "S7-2" -> "p90_calls_per_session"; "S6-4" -> "p90_ms"; "S4-1" -> "p50"; "S2-1","S2-2","S5-2","S6-1","S7-3","S8-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
                         "limitation" to rule.limitation) + details))
             }
         }

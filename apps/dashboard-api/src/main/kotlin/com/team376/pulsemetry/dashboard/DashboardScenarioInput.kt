@@ -28,7 +28,7 @@ class DashboardScenarioInputs(private val scenarios: DashboardScenarioCatalog, p
         if (scenario["availability"].asString() == "unavailable") throw UserAuthException("scenario_unavailable", 409)
         val parsed = ScenarioParameterValidator.validate(scenario, body, tenantZone, now)
         if (user.role !in setOf("owner", "admin")) throw UserAuthException("forbidden", 403)
-        if(scenarioId=="S6-4") require(parsed.params.path("models").size()<=100 &&
+        if(scenarioId in setOf("S6-1","S6-4")) require(parsed.params.path("models").size()<=100 &&
             parsed.params.path("models").all { it.asString().length<=200 })
         if(scenarioId=="S4-5") require(parsed.params.path("command_names").size()<=100 &&
             parsed.params.path("command_names").all { it.asString().length<=200 })
