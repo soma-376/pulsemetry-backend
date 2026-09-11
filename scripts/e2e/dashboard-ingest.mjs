@@ -482,8 +482,34 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, advancedRun.run.run_id);
   await page.getByRole('heading', { name: '서브에이전트 비용이 관측되었습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-advanced-scenario.png'), fullPage: true });
+  const hourlyRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S2-1', { tz: 'Asia/Seoul', params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, heatmap: series(run.result?.frames.usage_heatmap) };
+  }, scenarioFrom);
+  assert.equal(hourlyRun.run.status, 'succeeded');
+  assert.equal(hourlyRun.run.progress.step, 3);
+  assert.equal(hourlyRun.run.progress.total, 3);
+  assert.deepEqual(Object.keys(hourlyRun.run.result.frames).sort(), ['rate_limit_events', 'session_last_event', 'usage_heatmap']);
+  const hourlyPoints = hourlyRun.heatmap.points.filter(p => p.value.state === 'value');
+  assert.equal(hourlyPoints.reduce((sum, p) => sum + p.value.value, 0), 10);
+  assert.ok(hourlyPoints.every(p => Number(p.labels.hour) >= 0 && Number(p.labels.hour) < 24 && Number(p.labels.weekday) >= 1 && Number(p.labels.weekday) <= 7));
+  assert.equal(hourlyRun.run.result.findings.length, 0);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, hourlyRun.run.run_id);
+  await page.locator('aside[aria-label="시나리오 판정"]').getByText(hourlyRun.run.run_id.slice(0, 8), { exact: false }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-hourly-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    hourlyScenario: { id: 'S2-1', runId: hourlyRun.run.run_id, actualResultUI: true, prompts: 10, zone: 'Asia/Seoul', rateLimitFindings: 0 },
     advancedScenario: { id: 'S3-5', runId: advancedRun.run.run_id, actualResultUI: true, subagentCostRatio: 1, toolFailureRate: 0.2 },
     adoptionScenario: { id: 'S3-1', runId: adoptionRun.run.run_id, actualResultUI: true, activeUsers: 5, adoptionRate: 5 / 6, toolCalls: 5 },
     vendorScenario: { id: 'S8-4', runId: vendorRun.run.run_id, actualResultUI: true, product: 'claude_code', costUsd: 15, tokens: 1050 },

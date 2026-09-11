@@ -241,3 +241,5 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 `POST /v1/scenarios/S2-1/runs`는 from/to/team_ids를 받으며 공통 tz를 지원한다. usage_heatmap은 weekday/hour별 기간 합계, rate_limit_events·session_last_event는 일별 시계열로 제공하는 3단계이며 P2/W2.3을 반환한다. 히트맵은 기존 기본값 168구간을 사용하고 빈 구간을 0으로 추정하지 않는다.
 
 양수 Rate Limit 건수를 observed_rate_limits 정보성 안내로 제공한다. 소집단·미관측·0은 판정하지 않으며 시간대 변동의 원인이나 작업 중단을 확정하지 않는다. 요청 tz 또는 tenant 시간대를 적용한다.
+
+실제 수집 E2E의 `verifiedIngest.hourlyScenario`, `admin-ingest-hourly-scenario.png`에 프롬프트 10건·서울 시간대·제한 판정 없음의 실행·화면 증거를 남긴다. 양수 429 판정은 DB 통합 테스트로 검증한다. 현재 frontend는 weekday/hour 라벨을 히트맵으로 렌더링하지 않고 일반 막대 차트로 표시한다.
