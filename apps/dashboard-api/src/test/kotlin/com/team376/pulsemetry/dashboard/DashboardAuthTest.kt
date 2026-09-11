@@ -2682,6 +2682,55 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun readDensityRun(bearer: String, threshold: Double = 10.0, audit: String? = "read density review") =
+        mvc.perform(post("/v1/scenarios/S7-2/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content(mapper.writeValueAsString(mapOf("params" to
+                mapOf("from" to "2026-09-01","to" to "2026-09-02","density_threshold" to threshold)))))
+
+    @Test fun `읽기 밀도 시나리오는 세션 p90과 지정 임계값을 엄격 비교한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(toolEvent(it,true,"read"),toolEvent(it,true,"search"),toolEvent(it,true,"fetch"),toolEvent(it,true,"write")) })
+        val bearer = token()
+        readDensityRun(bearer,audit=null).andExpect(status().isForbidden)
+        readDensityRun(bearer,-1.0).andExpect(status().isBadRequest)
+        for ((threshold,count) in listOf(2.5 to 1,3.0 to 0,10.0 to 0)) {
+            val id = mapper.readTree(readDensityRun(bearer,threshold).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+            assertThat(run["result"]["frames"].propertyNames()).containsExactlyInAnyOrder("read_tool_density","mcp_connections","auto_approval_ratio")
+            assertThat(run["result"]["findings"].size()).isEqualTo(count)
+            if(count>0) {
+                val finding = run["result"]["findings"].single()
+                assertThat(finding["rule_id"].asString()).isEqualTo("high_read_density")
+                assertThat(finding["evidence"]["p90_calls_per_session"].asDouble()).isEqualTo(3.0)
+                assertThat(finding["evidence"]["threshold"].asDouble()).isEqualTo(threshold)
+            }
+        }
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S7-2'")
+            .query(Long::class.java).single()).isEqualTo(3)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        readDensityRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `읽기 밀도 시나리오는 소집단 빈 데이터와 쓰기만 있는 세션을 제외한다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { toolEvent(it,true,"read") },emptyList(),ids.map { toolEvent(it,true,"write") })) {
+            seedPoints(rows)
+            val id = mapper.readTree(readDensityRun(bearer,0.0).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun latencyRun(bearer: String, models: List<String> = listOf("test"), audit: String? = "latency model review") =
         mvc.perform(post("/v1/scenarios/S6-4/runs").header("Authorization","Bearer $bearer")
             .also { if(audit!=null) it.header("X-Audit-Reason",audit) }

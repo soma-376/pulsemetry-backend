@@ -30,6 +30,8 @@ internal object DashboardThresholdFindings {
                 "전체 관측 호출 중 attempt가 1보다 큰 호출의 비율이며 attempt 미수집 호출도 분모에 포함됩니다. 재시도 고갈·스톰 여부를 확정하지 않으며 전체 관측 비용을 재시도 추가 비용으로 해석하지 않습니다.")
             "S7-3" -> Rule("observed_tool_rejections","도구 거절이 관측되었습니다","W3.3",
                 "관측된 도구 거절 수입니다. 거절 사유·정책 변경·실제 에스컬레이션을 확인하지 못하므로 정책 위반이나 악의적 사용을 확정하지 않습니다.")
+            "S7-2" -> Rule("high_read_density","세션별 읽기 도구 호출 수 p90이 임계값을 초과했습니다","W3.2",
+                "read·search·fetch 도구 호출 수의 세션별 p90입니다. 데이터 내용·접근 권한·외부 전송을 확인하지 않으므로 부적절한 접근이나 유출을 확정하지 않습니다.")
             "S7-1" -> Rule("high_tool_failure_rate","도구 실패율이 임계값을 초과했습니다","W2.10",
                 "도구 호출 실패율이며 에이전트 태스크 완료 여부나 성공률을 직접 측정하지 않습니다.")
             "S4-1" -> Rule("multiple_prompts_per_session","세션별 프롬프트 수 중앙값이 1을 초과했습니다","W2.2",
@@ -41,7 +43,7 @@ internal object DashboardThresholdFindings {
         val findings = mutableListOf<Map<String,Any>>()
         for (frame in result["frames"].toList()) {
             val fields = frame["schema"]["fields"].toList()
-            val value = fields.indexOfFirst { it["name"].asString()==when(scenario) { "S4-1" -> "p50"; "S6-4" -> "p90"; else -> "value" } }
+            val value = fields.indexOfFirst { it["name"].asString()==when(scenario) { "S4-1" -> "p50"; "S6-4","S7-2" -> "p90"; else -> "value" } }
             val time = fields.indexOfFirst { it["type"].asString()=="time" }
             if(value<0 || time<0 || fields[value].path("config").path("suppressed").asBoolean(false)) continue
             frame["data"]["values"][value].toList().forEachIndexed { i, cell ->
@@ -49,7 +51,7 @@ internal object DashboardThresholdFindings {
                     "rule_id" to rule.id, "severity" to "info", "widget_id" to rule.widget,
                     "title" to rule.title,
                     "evidence" to (mapOf("date" to Instant.ofEpochMilli(frame["data"]["values"][time][i].asLong()).toString(),
-                        (when(scenario) { "S6-4" -> "p90_ms"; "S4-1" -> "p50"; "S2-1","S2-2","S5-2","S7-3","S8-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
+                        (when(scenario) { "S7-2" -> "p90_calls_per_session"; "S6-4" -> "p90_ms"; "S4-1" -> "p50"; "S2-1","S2-2","S5-2","S7-3","S8-1" -> "count"; else -> "ratio" }) to cell.asDouble(), "threshold" to threshold,
                         "limitation" to rule.limitation) + details))
             }
         }
