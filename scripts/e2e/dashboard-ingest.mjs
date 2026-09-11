@@ -656,6 +656,29 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, trainingRun.run_id);
   await page.locator('aside[aria-label="시나리오 판정"]').getByText(trainingRun.run_id.slice(0, 8), { exact: false }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-training-comparison.png'), fullPage: true });
+  const acceptanceRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    let { run } = await scenarioApi.start('S4-3', { params: { from, to: new Date().toISOString(), language: 'kotlin' } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return run;
+  }, scenarioFrom);
+  assert.equal(acceptanceRun.status, 'succeeded');
+  assert.equal(acceptanceRun.progress.step, 4);
+  assert.equal(acceptanceRun.progress.total, 4);
+  assert.equal(acceptanceRun.params.language, 'kotlin');
+  assert.deepEqual(Object.keys(acceptanceRun.result.frames).sort(), ['commits', 'edit_acceptance_rate', 'lines_of_code', 'pull_requests']);
+  assert.equal(acceptanceRun.result.findings.length, 0);
+  assert.equal(acceptanceRun.result.frames.edit_acceptance_rate.frames.length, 0);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, acceptanceRun.run_id);
+  await page.locator('aside[aria-label="시나리오 판정"]').getByText(acceptanceRun.run_id.slice(0, 8), { exact: false }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-acceptance-scenario.png'), fullPage: true });
   const consolidationRun = await page.evaluate(async from => {
     const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
     let { run } = await scenarioApi.start('S8-5', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
@@ -1073,6 +1096,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    acceptanceScenario: { id: 'S4-3', runId: acceptanceRun.run_id, admin: true, actualResultUI: true, language: 'kotlin', editsMissing: true },
     shadowScenario: { id: 'S5-4', runId: shadowRun.run_id, owner: true, audited: true, queryAudited: true, actualResultUI: true, vendorEmailMissing: true, activeUsers: 5 },
     modelComparisonScenario: { id: 'S8-3', runId: modelComparisonRun.run_id, owner: true, audited: true, actualResultUI: true, modelACost: 15, modelBCostMissing: true },
     purposeScenario: { id: 'S5-6', runId: purposeRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionEventsMissing: true },

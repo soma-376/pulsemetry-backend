@@ -331,3 +331,6 @@ S5-4 수집 E2E 증거는 `verifiedIngest.shadowScenario`와 `owner-ingest-shado
 owner/admin이 from/to·team_ids와 선택 language를 지정한다. language는 편집 수락률에만 적용하며 코드량·커밋·PR은 같은 기간과 팀의 보조 집계다. 언어명이 없는 편집 결정은 언어 선택 시 제외된다. 대소문자 정확 일치이며 생략하면 전체 언어다. QRY edit_acceptance_rate에도 같은 language 파라미터(1~256자)를 사용할 수 있다.
 
 사용자 편집 수락이 관측된 양수 비율만 info로 제공한다. 소집단·미관측·거절만 있는 경우는 판정이 없으며 revert나 코드 품질·생산성 향상을 계산하지 않는다.
+
+
+언어 선택 시 마스킹 인원은 해당 언어의 유효 편집 관측자다. 다른 언어 사용자는 5인 기준을 채우지 않는다. 수집 E2E의 `verifiedIngest.acceptanceScenario`는 admin의 언어 입력·완료 응답·미관측 화면을 검증한다. 양수 수락률은 DB 통합 테스트로 확인하며 frontend 상단의 언어 전용 표시는 미연결이다.

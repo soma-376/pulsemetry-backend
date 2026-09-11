@@ -909,3 +909,13 @@
 - 실행 경로 35개, 추가 실행 대상 7개, 명세상 unavailable 4개다.
 
 - S4-3 언어 선택 시에는 해당 언어의 유효 편집 관측 인원으로 마스킹한다. 다른 언어·보조 지표 사용자가 소집단을 해제하지 않는다.
+
+
+### S4-3 검증 결과
+
+- dashboard 테스트 217건, 실패·오류·skip 0건. 선택 언어 25%와 전체 언어 10/13 비율, 보조 코드량 50 유지, 따옴표 포함 언어명의 정확 일치, 잘못된 입력 거부를 검증했다. 대소문자 불일치·거절만·미관측·선택 언어 4명과 다른 언어 1명의 혼합에서도 수락 판정을 생성하지 않는다.
+- 구현 `ecaae70`와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`의 실제 수집 E2E 통과. `unexpectedOrUnimplementedResponses=[]`, 연결 시나리오 35개다.
+- `verifiedIngest.acceptanceScenario`: run `4b8c46b6-7683-4451-a0cd-ec32fd11be29`, admin 현재 팀 범위, language=kotlin, 진행 4/4 완료. `admin-ingest-acceptance-scenario.png`에서 네 지표의 미관측과 판정 없음 패널을 확인했다.
+- 실제 ingest fixture에 편집 결정·코드량·커밋·PR 원천이 없어 이번 화면은 미관측 실행 경로 검증이다. 양수 수락률과 언어 필터 및 보조 코드량은 DB 통합 테스트가 담당한다. 미관측을 0% 수락이나 revert로 판정하지 않는다.
+- frontend 상단에는 선택 언어 전용 표시가 없다. 언어는 실행 params 및 관측 프레임의 품질 설명·양수 판정 evidence에 보존한다. frontend 소스는 변경하지 않았다.
+- 로그: `/tmp/proj156-acceptance-test.log`, `/tmp/proj156-acceptance-e2e.log`.
