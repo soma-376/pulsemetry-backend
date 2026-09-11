@@ -48,7 +48,8 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     const body = JSON.stringify({ resourceLogs: [{ resource, scopeLogs: [{ logRecords: [{ timeUnixNano: String(BigInt(Date.now()) * 1000000n),
       body: { stringValue: 'claude_code.tool_result' }, attributes: [
         attr('session.id', `ingest-${installation}`), attr('tool_use_id', randomUUID()),
-        attr('tool_name', tool), { key: 'success', value: { boolValue: true } },
+        attr('tool_name', tool), attr('agent_id', `worker-${installation}`),
+        { key: 'success', value: { boolValue: index !== 0 } },
       ],
     }, { timeUnixNano: String(now), body: { stringValue: 'claude_code.api_request' }, attributes: [
       attr('session.id', `ingest-${installation}`), attr('model', scenarioModel),
@@ -177,8 +178,34 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, contextRun.run.run_id);
   await page.getByRole('heading', { name: '입력/출력 토큰 비율이 임계값을 초과했습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-context-scenario.png'), fullPage: true });
+  const agentRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S7-1', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, series: Object.fromEntries(Object.entries(run.result?.frames || {}).map(([id, frame]) => [id, series(frame)])) };
+  }, scenarioFrom);
+  assert.equal(agentRun.run.status, 'succeeded');
+  assert.equal(agentRun.run.progress.step, 4);
+  assert.equal(agentRun.run.progress.total, 4);
+  assert.ok(agentRun.series.tool_failure_rate.points.some(p => p.value.state === 'value' && p.value.value === 0.2));
+  assert.ok(agentRun.series.tool_calls.points.some(p => p.value.state === 'value' && p.value.value === 5));
+  assert.ok(agentRun.series.cost.points.some(p => p.value.state === 'value' && p.value.value === 15));
+  assert.equal(agentRun.run.result.findings[0].rule_id, 'high_tool_failure_rate');
+  assert.equal(agentRun.run.result.findings[0].evidence.ratio, 0.2);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, agentRun.run.run_id);
+  await page.getByRole('heading', { name: '도구 실패율이 임계값을 초과했습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-agent-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 25,
+    agentScenario: { id: 'S7-1', runId: agentRun.run.run_id, actualResultUI: true, failureRate: 0.2, calls: 5, costUsd: 15 },
     contextScenario: { id: 'S1-5', runId: contextRun.run.run_id, actualResultUI: true, ratio: 20, threshold: 10 },
     scenario: { id: 'S1-3', runId: scenario.run.run_id, actualResultUI: true, costUsd: 15, retryRatio: 0.2 },
     toolCalls: 5, deltaCostUsd: 15, cumulativeCostExcluded: true, ttftMs: quantiles };
