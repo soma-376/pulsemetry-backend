@@ -3091,6 +3091,62 @@ class DashboardAuthTest {
         }
     }
 
+    private fun inactivityRun(bearer: String, audit: String? = "inactive installation review") =
+        mvc.perform(post("/v1/scenarios/S1-7/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content("""{"params":{"as_of":"2026-09-10T00:00:00Z","inactive_days":30}}"""))
+
+    @Test fun `유휴 관측은 과거 기준 이후 이벤트를 제외하고 경계 이상 경과 설치를 집계한다`() {
+        val ids = installations(5)
+        jdbc.sql("UPDATE enrollment.installations SET created_at='2026-07-01T00:00:00Z' WHERE tenant_id=:tenant").param("tenant",tenant).update()
+        seedPoints(ids.flatMap { listOf(promptEvent(it,at="2026-08-11T00:00:00Z"),promptEvent(it,at="2026-09-11T00:00:00Z")) })
+        val bearer = token()
+        inactivityRun(bearer,null).andExpect(status().isForbidden)
+        val id = mapper.readTree(inactivityRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+        assertThat(run["resolved_from"].asString()).isEqualTo("2026-08-11T00:00:00Z")
+        assertThat(run["result"]["findings"].single()["evidence"]["installations"].asInt()).isEqualTo(5)
+        ids.forEach { assertThat(run.toString()).doesNotContain(it.toString()) }
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        inactivityRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `유휴 관측은 신규 최근 활동 폐기 설치와 소집단을 제외한다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for (mode in listOf("recent","new","revoked","small")) {
+            jdbc.sql("UPDATE enrollment.installations SET created_at='2026-07-01T00:00:00Z',status='active' WHERE tenant_id=:tenant").param("tenant",tenant).update()
+            seedPoints(if(mode=="recent") ids.map { promptEvent(it,at="2026-09-09T23:59:59Z") } else emptyList())
+            if(mode=="new") jdbc.sql("UPDATE enrollment.installations SET created_at='2026-09-09T00:00:00Z' WHERE tenant_id=:tenant").param("tenant",tenant).update()
+            if(mode=="revoked") jdbc.sql("UPDATE enrollment.installations SET status='revoked' WHERE tenant_id=:tenant").param("tenant",tenant).update()
+            if(mode=="small") jdbc.sql("UPDATE enrollment.installations SET status='revoked' WHERE id=:id").param("id",ids.last()).update()
+            val id = mapper.readTree(inactivityRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
+    @Test fun `미관측 설치는 생성일을 사용하고 한 사람의 여러 설치로 소집단을 해제하지 않는다`() {
+        val ids = installations(5)
+        jdbc.sql("UPDATE enrollment.installations SET created_at='2026-07-01T00:00:00Z' WHERE tenant_id=:tenant").param("tenant",tenant).update()
+        seedPoints(emptyList())
+        val bearer = token()
+        val first = mapper.readTree(inactivityRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        assertThat(readRun(first,bearer)["result"]["findings"].single()["evidence"]["installations"].asInt()).isEqualTo(5)
+        jdbc.sql("UPDATE enrollment.installations SET member_id=(SELECT member_id FROM enrollment.installations WHERE id=:id) WHERE tenant_id=:tenant")
+            .param("id",ids.first()).param("tenant",tenant).update()
+        val second = mapper.readTree(inactivityRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        assertThat(readRun(second,bearer)["result"]["findings"].size()).isZero()
+    }
+
     private fun sprintRun(bearer: String, dates: List<String>, zone: String = "Asia/Seoul") =
         mvc.perform(post("/v1/scenarios/S2-3/runs").header("Authorization","Bearer $bearer")
             .contentType("application/json").content(mapper.writeValueAsString(mapOf("tz" to zone,"params" to

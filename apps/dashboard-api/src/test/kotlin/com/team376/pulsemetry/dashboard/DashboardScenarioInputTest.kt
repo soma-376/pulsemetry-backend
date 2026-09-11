@@ -100,6 +100,13 @@ class DashboardScenarioInputTest {
         }
     }
 
+    @Test fun `유휴 관측은 기준 시점과 고정 경과일을 해석하고 미래를 거부한다`() {
+        val result = input("S1-7","""{"params":{"as_of":"2026-09-01","inactive_days":30}}""")
+        assertThat(result.times["to"]).isEqualTo(Instant.parse("2026-08-31T15:00:00Z"))
+        assertThat(result.times["from"]).isEqualTo(Instant.parse("2026-08-01T15:00:00Z"))
+        assertThatThrownBy { input("S1-7","""{"params":{"as_of":"2027-01-01"}}""") }.isInstanceOf(IllegalArgumentException::class.java)
+    }
+
     @Test fun `모든 카탈로그 파라미터 스키마에 타입에 맞는 입력을 적용할 수 있다`() {
         val examples = mapOf("pivot_date" to "2026-09-01", "cohort_from" to "2026-08-01", "cohort_to" to "2026-09-01",
             "model_a" to "model-a", "model_b" to "model-b")

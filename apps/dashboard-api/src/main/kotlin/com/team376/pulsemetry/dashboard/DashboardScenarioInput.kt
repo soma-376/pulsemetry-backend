@@ -83,6 +83,12 @@ internal object ScenarioParameterValidator {
             times["compare_to"] = pivot
             times["from"] = pivot
         }
+        if (scenario["scenario_id"].asString()=="S1-7") {
+            val at = times.getValue("as_of")
+            require(at <= now)
+            times["to"] = at
+            times["from"] = at.minus(Duration.ofDays(params["inactive_days"].asLong()))
+        }
         params.path("team_ids").forEach { canonicalUuid(it.asString()) }
         if (params.has("budget_by_team")) {
             val budgets = params["budget_by_team"]
