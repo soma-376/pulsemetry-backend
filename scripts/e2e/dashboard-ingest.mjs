@@ -641,6 +641,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   let latencyRun;
   let readDensityRun;
   let governanceRun;
+  let qualityRun;
   try {
     await ownerPage.goto(`${new URL(page.url()).origin}/settings`);
     await ownerPage.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
@@ -873,11 +874,39 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     }, governanceRun.run_id);
     await ownerPage.getByRole('heading', { name: '텔레메트리 수집 커버리지가 관측되었습니다', exact: true }).waitFor();
     await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-governance-scenario.png'), fullPage: true });
+    qualityRun = await ownerPage.evaluate(async from => {
+      const { request } = await import('/src/api/client.ts');
+      const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+      let run = await request('/scenarios/S6-1/runs', { method: 'POST', body: JSON.stringify({
+        params: { from, to: new Date(Date.now() + 1000).toISOString(), models: [] },
+      }) }, '품질 피드백 관측 E2E 점검');
+      const deadline = Date.now() + 60000;
+      while (activeRun(run) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        run = (await scenarioApi.get(run.run_id)).run;
+      }
+      return run;
+    }, scenarioFrom);
+    assert.equal(qualityRun.status, 'succeeded');
+    assert.equal(qualityRun.progress.step, 3);
+    assert.equal(qualityRun.progress.total, 3);
+    assert.equal(qualityRun.result.target_page, 'P2');
+    assert.deepEqual(Object.keys(qualityRun.result.frames).sort(), ['edit_acceptance_rate', 'prompts_per_session', 'refusals']);
+    assert.equal(qualityRun.result.findings.length, 0);
+    assert.ok(qualityRun.result.frames.prompts_per_session.frames.some(f => f.data.values[1].includes(2)));
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S6-1'"), '1');
+    await ownerPage.evaluate(id => {
+      window.history.pushState(null, '', `/runs/${id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, qualityRun.run_id);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(qualityRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-ingest-quality-scenario.png'), fullPage: true });
   } finally {
     await ownerPage.close();
   }
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
+    qualityScenario: { id: 'S6-1', runId: qualityRun.run_id, owner: true, audited: true, actualResultUI: true, refusalFindings: 0, promptsPerSession: 2 },
     consolidationScenario: { id: 'S8-5', runId: consolidationRun.run_id, admin: true, actualResultUI: true, product: 'claude_code', activeUsers: 5, costPerActiveUser: 3, toolCalls: 5 },
     templateScenario: { id: 'S4-5', runId: templateRun.run_id, admin: true, actualResultUI: true, commandNames: ['/review'], ratio: 0.5 },
     governanceScenario: { id: 'S7-4', runId: governanceRun.run_id, owner: true, audited: true, actualResultUI: true, observedInstallations: 5, coverage: governanceRun.result.findings[0].evidence.ratio },
