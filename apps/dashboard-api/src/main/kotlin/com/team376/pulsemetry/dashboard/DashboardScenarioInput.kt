@@ -91,6 +91,12 @@ internal object ScenarioParameterValidator {
             times["to"] = at
             times["from"] = at.minus(Duration.ofDays(params["inactive_days"].asLong()))
         }
+        if(scenario["scenario_id"].asString()=="S3-3") {
+            require(times.getValue("cohort_to")<=now)
+            require(Duration.between(times.getValue("cohort_from"),now)<=Duration.ofDays(366))
+            times["from"] = times.getValue("cohort_from")
+            times["to"] = now
+        }
         params.path("team_ids").forEach { canonicalUuid(it.asString()) }
         if (params.has("budget_by_team")) {
             val budgets = params["budget_by_team"]

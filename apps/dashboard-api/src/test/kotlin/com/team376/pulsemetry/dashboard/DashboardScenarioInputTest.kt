@@ -13,6 +13,16 @@ class DashboardScenarioInputTest {
     private fun input(id: String = "S1-3", json: String = """{"params":{}}""", zone: String = "Asia/Seoul") =
         ScenarioParameterValidator.validate(scenarios.detail(id), mapper.readTree(json), zone, now)
 
+    @Test fun `온보딩은 요청 시점을 관측 종료로 고정하고 미래와 과도한 추적 범위를 거부한다`() {
+        val result = input("S3-3","""{"params":{"cohort_from":"2026-09-01","cohort_to":"2026-09-02"}}""")
+        assertThat(result.times["from"]).isEqualTo(Instant.parse("2026-08-31T15:00:00Z"))
+        assertThat(result.times["to"]).isEqualTo(now)
+        for (pair in listOf("2026-09-01" to "2027-01-01","2025-01-01" to "2025-01-02")) {
+            assertThatThrownBy { input("S3-3","""{"params":{"cohort_from":"${pair.first}","cohort_to":"${pair.second}"}}""") }
+                .isInstanceOf(IllegalArgumentException::class.java)
+        }
+    }
+
     @Test fun `기본값과 요청 시간을 고정하고 호출자 JSON은 변경하지 않는다`() {
         val body = mapper.readTree("""{"params":{}}""")
         val result = ScenarioParameterValidator.validate(scenarios.detail("S1-3"), body, "Asia/Seoul", now)

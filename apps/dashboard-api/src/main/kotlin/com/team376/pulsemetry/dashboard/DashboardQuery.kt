@@ -98,8 +98,17 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return execute(user,body,null,"application/json",null,patterns)
     }
 
+    /** 선택 기간에 처음 관측된 설치만 같은 시점까지 추적한다. */
+    internal fun onboardingScenario(user: UserIdentity, body: DashboardQueryRequest,
+        cohort: Pair<Instant,Instant>): ResponseEntity<*> {
+        require(user.role=="owner" && body.compare=="none" && body.queries.all {
+            it.metricId in setOf("onboarding_ttfu","onboarding_retention","active_time") && it.groupBy.isEmpty() })
+        require(cohort.first<cohort.second && cohort.first==Instant.parse(body.from) && cohort.second<=Instant.parse(body.to))
+        return execute(user,body,null,"application/json",null,cohort=cohort)
+    }
+
     private fun execute(user: UserIdentity, body: DashboardQueryRequest, audit: String?, accept: String,
-        before: Pair<Instant, Instant>?, premiumPatterns: List<String> = emptyList()): ResponseEntity<*> {
+        before: Pair<Instant, Instant>?, premiumPatterns: List<String> = emptyList(), cohort: Pair<Instant,Instant>? = null): ResponseEntity<*> {
         val deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos()
         require(body.queries.size in 1..12 && body.maxDataPoints in 1..1000)
         require(body.queries.map { it.refId }.distinct().size == body.queries.size)
@@ -146,7 +155,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 throw UserAuthException("contract_scope_required",403)
         }
         val scopes = filters.associateWith { scope(user, it).let { scope ->
-            scope.copy(parameters=scope.parameters + ("premium_patterns" to array(premiumPatterns.map(DashboardPremiumModels::sqlPattern))))
+            val filtered = scope.copy(parameters=scope.parameters + ("premium_patterns" to array(premiumPatterns.map(DashboardPremiumModels::sqlPattern))))
+            if(cohort==null) filtered else onboardingScope(filtered,cohort,deadline)
         } }
         val id = UUID.randomUUID().toString()
         val results = linkedMapOf<String, Any>()
@@ -290,6 +300,18 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             "platforms" to selected.joinToString(",","{","}") { "'${it["id"]}':'${it["platform"]}'" },
             "members" to map, "personal" to if (f.memberIds.isNotEmpty()) "1" else "0"), members.size, names, teamMembers, installationCount)
     }
+    private fun onboardingScope(scope: Scope, cohort: Pair<Instant,Instant>, deadline: Long): Scope {
+        val history = base.replace("ts>={from:DateTime} AND ","")
+        val sql = """SELECT installation_id,{members:Map(String,String)}[installation_id] AS member_id
+            $history AND $known GROUP BY installation_id HAVING min(ts)>={from:DateTime} LIMIT 5001"""
+        val parameters = scope.parameters+mapOf("from" to boundary(cohort.first),"to" to boundary(cohort.second))
+        val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
+        if(rows.size>5000) throw DashboardReadException("query_too_wide",422)
+        val selected = rows.joinToString(",","{","}") { "${quoted(it["installation_id"].asString())}:${quoted(it["member_id"].asString())}" }
+        return scope.copy(parameters=scope.parameters+mapOf("members" to selected,"personal" to "1"),
+            members=rows.map { it["member_id"].asString() }.distinct().size,installations=rows.size)
+    }
+
     private fun boundary(at: Instant) = utc.format(if (at.nano == 0) at else at.plusSeconds(1).minusNanos(at.nano.toLong()))
     private val activePoint = """signal='metric' AND product='claude_code'
         AND JSONExtractString(raw_json,'point','name')='claude_code.active_time.total'

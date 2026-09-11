@@ -3772,6 +3772,53 @@ class DashboardAuthTest {
         return row.toString()
     }
 
+    private fun onboardingRun(bearer: String, reason: String? = "onboarding cohort review") =
+        mvc.perform(post("/v1/scenarios/S3-3/runs").header("Authorization","Bearer $bearer")
+            .also { if(reason!=null) it.header("X-Audit-Reason",reason) }.contentType("application/json")
+            .content("""{"tz":"UTC","params":{"cohort_from":"2026-09-01","cohort_to":"2026-09-02"}}"""))
+
+    @Test fun `온보딩 시나리오는 코호트 밖 첫 사용을 제외하고 동일 설치의 이후 활동을 추적한다`() {
+        val fresh = installations(5); val old = installations(5); val later = installations(5)
+        (fresh+old+later).forEach { installationCreated(it,"2026-08-01T00:00:00Z") }
+        seedPoints(fresh.flatMap { listOf(promptEvent(it,at="2026-09-01T00:00:00Z"),
+            point(it,120.0,at="2026-09-03T00:00:00Z").replace("claude_code.session.count","claude_code.active_time.total")) }+
+            old.flatMap { listOf(promptEvent(it,at="2026-08-31T23:59:59Z"),
+                point(it,9999.0,at="2026-09-03T00:00:00Z").replace("claude_code.session.count","claude_code.active_time.total")) }+
+            later.flatMap { listOf(promptEvent(it,at="2026-09-02T00:00:00Z"),
+                point(it,9999.0,at="2026-09-03T00:00:00Z").replace("claude_code.session.count","claude_code.active_time.total")) })
+        val bearer = token()
+        onboardingRun(bearer,null).andExpect(status().isForbidden)
+        val id = mapper.readTree(onboardingRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).withFailMessage(run.toString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        assertThat(run["result"]["frames"]["active_time"]["frames"].single()["data"]["values"][0][0].asDouble()).isEqualTo(600.0)
+        val retention = run["result"]["frames"]["onboarding_retention"]["frames"].toList()
+        assertThat(retention.map { it["schema"]["fields"][0]["labels"]["cohort_week"].asString() }.distinct()).containsExactly("2026-08-31")
+        assertThat(retention.first()["data"]["values"][2][0].asInt()).isEqualTo(5)
+        assertThat(retention.first()["data"]["values"][0][0].asDouble()).isEqualTo(1.0)
+        assertThat(run["result"]["applied_filters"]["observed_to"].asString()).isEqualTo(run["resolved_to"].asString())
+        (fresh+old+later).forEach { assertThat(run.toString()).doesNotContain(it.toString()) }
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        onboardingRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `온보딩 코호트 소집단은 기간 내 다른 설치로 마스킹을 해제하지 않는다`() {
+        val fresh = installations(4); val old = installations(5)
+        (fresh+old).forEach { installationCreated(it,"2026-08-01T00:00:00Z") }
+        seedPoints(fresh.flatMap { listOf(promptEvent(it),point(it,120.0).replace("claude_code.session.count","claude_code.active_time.total")) }+
+            old.flatMap { listOf(promptEvent(it,at="2026-08-31T00:00:00Z"),point(it,9999.0).replace("claude_code.session.count","claude_code.active_time.total")) })
+        val bearer = token()
+        val id = mapper.readTree(onboardingRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).withFailMessage(run.toString()).isEqualTo("succeeded")
+        assertThat(run["result"]["frames"]["active_time"]["frames"].single()["data"]["values"][0][0].isNull).isTrue()
+        assertThat(run["result"]["findings"].size()).isZero()
+    }
+
     private fun premiumRun(bearer: String, patterns: List<String>) = startRun(bearer,"S1-2",
         mapper.writeValueAsString(mapOf("from" to "2026-09-01","to" to "2026-09-02","premium_model_patterns" to patterns)))
 
@@ -4522,7 +4569,7 @@ class DashboardAuthTest {
             .contentType("application/json").content("""{"params":{}}""")).andExpect(status().isBadRequest)
 
         startRun(bearer,"S5-1", "{}").andExpect(status().isConflict)
-        startRun(bearer,"S3-3", "{}").andExpect(status().isNotImplemented)
+        startRun(bearer,"S8-2", "{}").andExpect(status().isNotImplemented)
         startRun(bearer,"S9-1", "{}").andExpect(status().isNotFound)
         repeat(3) { startRun(bearer).andExpect(status().isAccepted) }
         startRun(bearer).andExpect(status().isTooManyRequests)
