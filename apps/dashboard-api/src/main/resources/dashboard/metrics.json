@@ -1118,7 +1118,13 @@
     ],
     "params_schema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "language": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
       "additionalProperties": false
     },
     "sql_template_id": "Q9"

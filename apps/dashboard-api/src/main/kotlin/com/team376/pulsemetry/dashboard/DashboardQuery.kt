@@ -151,6 +151,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 else if (q.metricId=="tool_rejections") require(q.params.keys.all { it=="decided_by" } &&
                     q.params.values.all { it.isArray && it.size()<=3 && it.toList().distinct().size==it.size() &&
                         it.all { source -> source.isString && source.asString() in setOf("config","hook","user") } })
+                else if (q.metricId=="edit_acceptance_rate") require(q.params.keys.all { it=="language" } &&
+                    q.params.values.all { it.isString && it.asString().isNotBlank() && it.asString().length<=256 && it.asString().none { c -> c.isISOControl() } })
                 else if (q.metricId=="tool_calls") require(q.params.keys.all { it=="success" } && q.params.values.all { it.isBoolean })
                 else if (q.metricId=="mcp_connections") require(q.params.keys.all { it=="server_scope" } &&
                     q.params.values.all { it.isString && it.asString().length in 1..100 })
@@ -342,7 +344,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             "refusals" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type')='llm_response' AND JSONExtractString(raw_json,'payload','stop_reason')='refusal'"
             "hook_blocking" -> "signal='span' AND JSONExtractString(raw_json,'type')='hook'"
             "subagent_activity" -> tool
-            "edit_acceptance_rate" -> "signal='metric' AND product='claude_code' AND $name='claude_code.code_edit_tool.decision' AND JSONExtractString(raw_json,'point','attrs','source') IN ('user_temporary','user_permanent','user_reject','user_abort')"
+            "edit_acceptance_rate" -> "signal='metric' AND product='claude_code' AND $name='claude_code.code_edit_tool.decision' AND JSONExtractString(raw_json,'point','attrs','source') IN ('user_temporary','user_permanent','user_reject','user_abort')" +
+                if(q.params.containsKey("language")) " AND JSONExtractString(raw_json,'point','attrs','language')={language:String}" else ""
             "rubber_stamp_ratio" -> "signal='span' AND JSONExtractString(raw_json,'type')='tool_gate' AND JSONExtractString(raw_json,'payload','decided_by')='user' AND isNotNull($blocked) AND $blocked>=0"
             "llm_stop_reasons" -> "signal IN ('log','span') AND JSONExtractString(raw_json,'type') IN ('llm_call','llm_response')"
             "mcp_connections", "mcp_failure_ratio" -> mcp + if (q.params.containsKey("server_scope"))
@@ -406,8 +409,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             else if (q.metricId in ratioMetrics)
             "coalesce($numerator,0) AS numerator, coalesce($denominator,0) AS denominator, numerator/nullIf(denominator,0) AS value"
             else "$numerator AS value"
+        // 언어 선택으로 분모가 좁아지면 선택 언어의 유효 관측 인원으로 마스킹한다.
+        val selectedPeople = if(q.metricId=="edit_acceptance_rate" && q.params.containsKey("language"))
+            "uniqExactIf($person,$known AND $valid)" else people
         val sql = """SELECT $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
-            $people AS people, countIf($activePoint)>0 AS active_time_definition,
+            $selectedPeople AS people, countIf($activePoint)>0 AS active_time_definition,
             countIf($observed) AS points, $cumulative AS cumulative,
             $result,
             ${if (q.metricId=="api_retry_attempts") "countIf($llm AND isNull($attempt))" else "0"} AS unknown_attempts,
@@ -418,6 +424,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             ORDER BY ${if (groupNames.isEmpty()) "" else groupNames.joinToString(",")+","}bucket"""
         val parameters = scope.parameters + mapOf("from" to boundary(from), "to" to boundary(to), "zone" to zone, "metric" to pointMetrics[q.metricId].orEmpty(),
             "threshold" to (q.params["threshold_ms"]?.asInt() ?: 2000).toString(),
+            "language" to (q.params["language"]?.asString() ?: ""),
             "decided_by" to array(q.params["decided_by"]?.toList()?.map { it.asString() }?.toSet().orEmpty()),
             "command_names" to array(q.params["command_names"]?.toList()?.map { it.asString() }?.toSet().orEmpty()),
             "server_scope" to (q.params["server_scope"]?.asString() ?: ""),
@@ -1094,6 +1101,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             if (q.metricId=="llm_stop_reasons") quality += "llm_call·llm_response 관측 이벤트 수; 사유 누락은 빈 라벨"
             if (q.metricId=="tool_rejections" && q.params["decided_by"]?.size()?.let { it>0 }==true)
                 quality += "선택한 결정 주체만 포함: " + q.params.getValue("decided_by").toList().joinToString(",") { it.asString() }
+            if (q.metricId=="edit_acceptance_rate" && q.params.containsKey("language"))
+                quality += "편집 결정의 language 정확 일치: " + q.params.getValue("language").asString()
             if (q.metricId=="api_error_rate") quality += "호출 시도 단위 오류율이며 최종 재시도 실패율이 아님"
             if (cumulative>0) quality += if (suppressed) "누적 temporality 포인트 제외" else "누적 temporality 포인트 ${cumulative}개 제외"
             if (q.metricId=="api_retry_attempts" && unknownAttempts>0) quality += if (suppressed)

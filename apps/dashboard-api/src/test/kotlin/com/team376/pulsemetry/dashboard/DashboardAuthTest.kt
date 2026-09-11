@@ -2969,6 +2969,59 @@ class DashboardAuthTest {
         assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='query'").query(Long::class.java).single()).isZero()
     }
 
+    private fun acceptanceRun(bearer: String, language: String? = "kotlin") =
+        mvc.perform(post("/v1/scenarios/S4-3/runs").header("Authorization","Bearer $bearer")
+            .contentType("application/json").content(mapper.writeValueAsString(mapOf("params" to
+                (mapOf("from" to "2026-09-01","to" to "2026-09-02") + if(language!=null) mapOf("language" to language) else emptyMap())))))
+
+    private fun languageEdit(id: UUID, language: String, value: Double, decision: String): String {
+        val row = mapper.readTree(editPoint(id,value,decision,if(decision=="accept") "user_temporary" else "user_reject")) as tools.jackson.databind.node.ObjectNode
+        val raw = mapper.readTree(row["raw_json"].asString())
+        (raw["point"]["attrs"] as tools.jackson.databind.node.ObjectNode).put("language",language)
+        row.put("raw_json",raw.toString())
+        return row.toString()
+    }
+
+    @Test fun `코드 수용 시나리오는 선택 언어의 비율과 전체 기간 보조 지표를 구분한다`() {
+        val ids = installations(5)
+        val language = "kotlin'quoted"
+        seedPoints(ids.flatMap { listOf(languageEdit(it,language,1.0,"accept"),languageEdit(it,language,3.0,"reject"),
+            languageEdit(it,"javascript",9.0,"accept"),point(it,10.0).replace("claude_code.session.count","claude_code.lines_of_code.count")) })
+        val bearer = token()
+        acceptanceRun(bearer,"").andExpect(status().isBadRequest)
+        acceptanceRun(bearer,"x".repeat(257)).andExpect(status().isBadRequest)
+        for ((selected,expected) in listOf(language to 0.25,null to (10.0/13.0))) {
+            val id = mapper.readTree(acceptanceRun(bearer,selected).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["progress"]["step"].asInt()).isEqualTo(4)
+            assertThat(run["progress"]["total"].asInt()).isEqualTo(4)
+            val finding = run["result"]["findings"].single()
+            assertThat(finding["evidence"]["ratio"].asDouble()).isCloseTo(expected,org.assertj.core.api.Assertions.within(0.000001))
+            if(selected!=null) assertThat(finding["evidence"]["language"].asString()).isEqualTo(language)
+            assertThat(run["result"]["frames"]["lines_of_code"]["frames"].single()["data"]["values"][1][0].asDouble()).isEqualTo(50.0)
+        }
+        for (invalid in listOf(42,"", " ","x".repeat(257))) queryResult(queryBody(mapOf("metric_id" to "edit_acceptance_rate",
+            "params" to mapOf("language" to invalid)))).andExpect(status().isBadRequest)
+    }
+
+    @Test fun `코드 수용은 언어 대소문자 소집단 거절만 있는 경우와 미관측을 추정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for (rows in listOf(ids.map { languageEdit(it,"Kotlin",1.0,"accept") },
+            ids.take(4).map { languageEdit(it,"kotlin",1.0,"accept") },
+            ids.take(4).map { languageEdit(it,"kotlin",1.0,"accept") } + languageEdit(ids.last(),"javascript",1.0,"accept"),
+            ids.map { languageEdit(it,"kotlin",1.0,"reject") },emptyList<String>())) {
+            seedPoints(rows)
+            val id = mapper.readTree(acceptanceRun(bearer).andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun sprintRun(bearer: String, dates: List<String>, zone: String = "Asia/Seoul") =
         mvc.perform(post("/v1/scenarios/S2-3/runs").header("Authorization","Bearer $bearer")
             .contentType("application/json").content(mapper.writeValueAsString(mapOf("tz" to zone,"params" to

@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-4·S4-5·S4-6·S4-8·S5-2·S5-4·S5-6·S5-7·S6-1·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-3·S8-4·S8-5·S8-6 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S2-3·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-3·S4-4·S4-5·S4-6·S4-8·S5-2·S5-4·S5-6·S5-7·S6-1·S6-4·S6-5·S7-1·S7-2·S7-3·S7-4·S8-1·S8-3·S8-4·S8-5·S8-6 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -49,14 +49,14 @@
 1. QRY 보완: 53개 지표의 기본 계산은 연결했다. 미지원 frame 형식과 상위 N의 `__other__`, W3.3 주소 테이블 등 남은 명세를 보완한다.
 2. 계약 기반 파생 지표 검토: 약정 소진율도 연결했다. 현재 366일 조회 제한보다 긴 계약의 전체 기간 조회는 후속 보완 대상이다.
 3. 설치·세션 API는 구현했다. 기존 frontend 설치 카드의 감사 사유 전달 및 P3 전체 UI 검증은 후속 보완 대상이다.
-4. 46개 시나리오: 34개 실행 경로가 연결되었다. 추가 구현 대상은 8개이며, 명세상 unavailable 4개는 409 거부를 유지한다. 연결된 실행도 관측 한계를 유지하며 시나리오 제목이 암시하는 인과 분석 전체를 구현한 것은 아니다.
+4. 46개 시나리오: 35개 실행 경로가 연결되었다. 추가 구현 대상은 7개이며, 명세상 unavailable 4개는 409 거부를 유지한다. 연결된 실행도 관측 한계를 유지하며 시나리오 제목이 암시하는 인과 분석 전체를 구현한 것은 아니다.
 5. 실행 워커·조회·취소·목록·삭제는 연결했다. 추가 운영·복구 검증을 보완한다.
 6. 저장 리포트: 저장·목록·삭제, 접근 범위 재검증, fixed/relative와 active·linked 삭제 409를 연결했다.
 7. 실제 ingest → ClickHouse → dashboard → frontend 전체 E2E 및 operation/metric/scenario 추적표.
 
 ## 알려진 한계
 
-- QRY의 일부 frame 형식·상위 N 처리와 8개 시나리오 실행 계획이 남아 있다. 실행·조회·취소·목록·저장·삭제 API는 연결되어 있으며, 실행 계획이 없는 available/partial 시나리오는 501로 거부한다.
+- QRY의 일부 frame 형식·상위 N 처리와 7개 시나리오 실행 계획이 남아 있다. 실행·조회·취소·목록·저장·삭제 API는 연결되어 있으며, 실행 계획이 없는 available/partial 시나리오는 501로 거부한다.
 - telemetry_coverage 계산은 연결되었다. 약정 소진율도 owner 전사 범위에서 연결했다. 모든 frame 형식과 전체 수용 조건을 충족한 것은 아니다.
 - 전체 계획 완료나 운영 배포 가능 상태로 판정하지 않는다.
 
@@ -899,3 +899,13 @@
 - `verifiedIngest.shadowScenario`: run `c5502d47-f757-4383-a2c5-de3cf5821111`, owner 시작 감사 1건·같은 사유의 vendor_account_mismatch query 감사 1건, 진행 4/4 완료. 활성 사용자 5명과 벤더 이메일 미관측 및 판정 없음을 확인했다. `owner-ingest-shadow-scenario.png`를 확인했다.
 - 실제 ingest fixture에 벤더 이메일은 없으므로 빈 프레임 경로를 검증한다. 불일치 양수·일치·소집단은 DB 통합 테스트가 담당한다. 일반 frontend 실행 폼의 감사 사유 입력은 여전히 후속 대상이며 이번 검증은 owner 로그인 후 공통 클라이언트 감사 경로다.
 - 로그: `/tmp/proj156-shadow-test.log`, `/tmp/proj156-shadow-e2e.log`. frontend 소스는 변경하지 않았다.
+
+
+## S4-3 언어별 코드 수용 관측
+
+- S4-3 실행을 연결했다. owner/admin의 현재 범위에서 편집 수락률·코드량·커밋·PR을 4단계로 조회한다. language는 편집 결정의 point.attrs.language에만 대소문자를 구분한 정확 일치로 적용한다. 다른 세 지표는 동일 기간·팀 범위의 보조 집계다.
+- QRY edit_acceptance_rate에도 language 문자열 파라미터(공백이 아닌 1~256자, 제어 문자 불가)를 추가했다. SQL 명명 파라미터로 전달하며 생략하면 기존 전체 언어 집계를 유지한다. 언어별 조회임을 프레임 품질 설명과 판정 evidence.language에 보존한다.
+- 사용자 편집 accept/(accept+reject) 양수 비율을 observed_edit_acceptance info로 제공한다. 소집단·미관측·거절만 있는 경우는 수락 관측 판정이 없다. revert·코드 품질·생산성은 측정하지 않으며 카탈로그 partial을 유지한다.
+- 실행 경로 35개, 추가 실행 대상 7개, 명세상 unavailable 4개다.
+
+- S4-3 언어 선택 시에는 해당 언어의 유효 편집 관측 인원으로 마스킹한다. 다른 언어·보조 지표 사용자가 소집단을 해제하지 않는다.
