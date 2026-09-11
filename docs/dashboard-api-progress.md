@@ -24,7 +24,7 @@
 | INSTALL-LIST | owner·감사 필수, 현재 팀·플랫폼·상태·무활동 필터, UUID 키셋 페이지, 실제 마지막 관측·제품 버전 |
 | META-METRICS | 53개 정적 지표 정의·허용/금지 차원·원천 컬럼·파라미터 스키마; OpenAPI 대조 검증 |
 | META-FILTERS, META-MODELS | 기간·tenant·팀 범위를 적용한 실제 ClickHouse 관측 조회 |
-| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S7-1·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
+| SCN-RUN, RUN-GET, RUN-CANCEL | S1-1·S1-3·S1-4·S1-5·S1-6·S2-1·S2-2·S3-1·S3-2·S3-4·S3-5·S4-1·S4-2·S4-6·S4-8·S6-5·S7-1·S8-1·S8-4 비동기 실행·실측 결과·현재 권한 재검증·취소; 다른 시나리오 실행 계획은 미지원 |
 | RUN-LIST | 최신순 요약·필터·키셋 페이지, admin 본인 실행과 현재 팀 범위 적용 |
 | RUN-SAVE, SAVED-LIST, SAVED-DELETE, RUN-DELETE | 완료 실행 저장·범위별 목록·생성자/owner 삭제, active·linked 실행 삭제 409 |
 | dashboard 저장소 | 실행·리포트·감사 스키마, tenant별 admission 잠금·claim token·lease·종료 상태 조건부 갱신 |
@@ -691,3 +691,9 @@
 - 실제 OTLP 수집→owner 웹 로그인→감사 사유 포함 실행→P3 결과 UI E2E 통과. fixture의 제한 이벤트는 0건이며 판정도 0건, 토큰 1050·재시도 비율 0.2와 감사 행 1건을 확인했다. 양수 429 판정은 실제 DB 테스트로 검증했다. 실행 가능한 시나리오는 18개다.
 - 현재 frontend는 `rate_limit_events`를 W3.3에 매핑하지 않아 빈 위젯 안내가 남는다. 일반 차트의 제한 이벤트 0과 토큰·재시도 결과 표시는 확인했다.
 - 증거: `build/e2e/auth-settings/result.json`, `owner-ingest-pressure-scenario.png`. 전체 PROJ-156 수용 완료를 뜻하지 않는다.
+
+## S6-5 리트라이 스톰 관측 실행
+
+- owner와 감사 사유를 요구하는 P3 실행에 `api_retry_attempts`·`cost` 일 시계열을 연결했다. 양수 재시도 비율에 정보 판정을 제공한다.
+- Q12와 같이 전체 관측 llm_call을 분모로 삼으므로 attempt 미수집 호출도 분모에 포함한다. retries_exhausted가 없어 스톰·고갈을 확정하지 않으며 전체 비용을 재시도 추가 비용으로 해석하지 않는다.
+- dashboard 테스트 181건 통과. 실제 DB에서 1/3 재시도 비율과 비용 $15, owner 감사, admin·감사 누락 거부, 소집단·미관측·첫 시도의 판정 제외를 검증했다.

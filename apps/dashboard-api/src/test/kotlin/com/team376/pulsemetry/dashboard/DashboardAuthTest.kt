@@ -2682,6 +2682,51 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    private fun retryStormRun(bearer: String, audit: String? = "retry scenario review") =
+        mvc.perform(post("/v1/scenarios/S6-5/runs").header("Authorization","Bearer $bearer")
+            .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
+            .contentType("application/json").content("""{"params":{"from":"2026-09-01","to":"2026-09-02"}}"""))
+
+    @Test fun `재시도 시나리오는 감사 후 재시도 비율과 전체 비용을 제공한다`() {
+        val ids = installations(5)
+        seedPoints(ids.flatMap { listOf(llmEvent(it,1,200),llmEvent(it,2,200),costEvent(it,3.0)) })
+        val bearer = token()
+        retryStormRun(bearer,null).andExpect(status().isForbidden)
+        val id = mapper.readTree(retryStormRun(bearer).andExpect(status().isAccepted)
+            .andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(2)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(2)
+        assertThat(run["result"]["target_page"].asString()).isEqualTo("P3")
+        assertThat(run["result"]["frames"].propertyNames()).containsExactlyInAnyOrder("api_retry_attempts","cost")
+        assertThat(run["result"]["frames"]["cost"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(15.0)
+        val findings = run["result"]["findings"]
+        assertThat(findings.size()).isEqualTo(1)
+        assertThat(findings[0]["rule_id"].asString()).isEqualTo("observed_api_retries")
+        // 비용만 있는 llm_call도 전체 관측 호출 분모에 포함된다(Q12).
+        assertThat(findings[0]["evidence"]["ratio"].asDouble()).isEqualTo(1.0/3)
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S6-5'")
+            .query(Long::class.java).single()).isEqualTo(1)
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        retryStormRun(token()).andExpect(status().isForbidden)
+    }
+
+    @Test fun `재시도 시나리오는 소집단과 미관측 및 첫 시도를 스톰으로 판정하지 않는다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { llmEvent(it,2,500) },emptyList(),ids.map { llmEvent(it,1,200) })) {
+            seedPoints(rows)
+            val id = mapper.readTree(retryStormRun(bearer).andExpect(status().isAccepted)
+                .andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+        }
+    }
+
     private fun rateLimitRun(bearer: String, audit: String? = "rate limit scenario review") =
         mvc.perform(post("/v1/scenarios/S2-2/runs").header("Authorization","Bearer $bearer")
             .also { if(audit!=null) it.header("X-Audit-Reason",audit) }
