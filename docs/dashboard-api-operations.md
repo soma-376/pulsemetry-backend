@@ -196,3 +196,5 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 `POST /v1/scenarios/S4-6/runs`는 from/to/team_ids를 받는다. tool_calls는 action별, lines_of_code는 전체 기간 합계 표로 조회한다. P2/W2.8을 반환하는 2단계 실행이며 주제 분류 불가의 partial 상태를 유지한다.
 
 공개 가능한 양수 action별 건수를 observed_tool_action 정보성 안내로 제공한다. 성공·실패 호출을 모두 포함한다. 업무 주제·사용 목적·생산성을 추정하지 않으며 소집단·빈 action·topN 잔여 그룹은 안내하지 않는다. 미분류 other는 원천 분류 그대로 표시하며 숨겨진 그룹의 비율은 계산하지 않는다.
+
+실제 수집 E2E의 `verifiedIngest.actionScenario`, `admin-ingest-action-scenario.png`에 other 호출 5건의 실행·화면 증거를 남긴다. 코드 변경량 fixture는 없어 미관측이다. 현재 frontend 차트 축은 value로 표시되며 action은 판정 근거에 표시된다.

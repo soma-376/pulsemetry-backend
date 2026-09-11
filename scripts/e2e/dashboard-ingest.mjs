@@ -353,8 +353,34 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   }, gateRun.run_id);
   await page.getByRole('heading', { name: '도구 승인 대기 p90이 입력 임계값을 초과했습니다', exact: true }).waitFor();
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-gate-scenario.png'), fullPage: true });
+  const actionRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S4-6', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, calls: series(run.result?.frames.tool_calls) };
+  }, scenarioFrom);
+  assert.equal(actionRun.run.status, 'succeeded');
+  assert.equal(actionRun.run.progress.step, 2);
+  assert.equal(actionRun.run.progress.total, 2);
+  assert.deepEqual(Object.keys(actionRun.run.result.frames).sort(), ['lines_of_code', 'tool_calls']);
+  assert.ok(actionRun.calls.points.some(p => p.labels.action === 'other' && p.value.state === 'value' && p.value.value === 5));
+  assert.equal(actionRun.run.result.findings.length, 1);
+  assert.equal(actionRun.run.result.findings[0].evidence.action, 'other');
+  assert.equal(actionRun.run.result.findings[0].evidence.calls, 5);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, actionRun.run.run_id);
+  await page.getByRole('heading', { name: '도구 action별 호출이 관측되었습니다', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-action-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 40,
+    actionScenario: { id: 'S4-6', runId: actionRun.run.run_id, actualResultUI: true, action: 'other', calls: 5 },
     gateScenario: { id: 'S4-8', runId: gateRun.run_id, actualResultUI: true, p90Ms: 120000, thresholdMin: 1 },
     promptScenario: { id: 'S4-1', runId: promptRun.run.run_id, actualResultUI: true, p50: 2, tokens: 1050 },
     cacheScenario: { id: 'S1-4', runId: cacheRun.run.run_id, actualResultUI: true, cacheRatio: 0, tokens: 1050 },
