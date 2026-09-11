@@ -47,7 +47,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 ## 시나리오 정의 조회
 
-`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-5·S7-1의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
+`GET /v1/scenarios`와 `GET /v1/scenarios/{scenario_id}`는 로그인한 owner/admin에게 46개 정의를 제공한다. 목록은 `category`, `availability`, `target_page`, `q`를 지원한다. 상세의 `params_schema`는 frontend 폼과 시나리오 서버 입력 검증에서 공통으로 사용한다. S1-1·S1-3·S1-5·S4-2·S7-1의 실행 계획과 실행 목록·저장 API를 제공한다. 다른 시나리오의 실행 계획은 후속 작업이다.
 
 동일 smoke는 owner/admin의 실제 `scenarioApi`로 46개 목록·상세와 지표 메타 일치를 검증하고 S1-3 폼 검증 함수를 실행한다. 결과의 `verifiedScenarios`에서 확인한다. 카탈로그 화면 전체 렌더는 포함하지 않으며, S1-3 실행 결과 검증 범위는 아래와 같다.
 
@@ -57,7 +57,7 @@ node scripts/e2e/dashboard-auth-settings.mjs
 
 워커는 기본 활성화이며 `pulsemetry.dashboard.worker-enabled=false`로 해당 인스턴스의 claim을 중단할 수 있다. 접수는 계속 가능하므로 유지보수 시 활성 실행 3개 상한에 유의한다. queued는 DB에 남고 running lease가 만료되면 다음 워커 claim 시 실패 처리된다. 재시도는 새 실행 요청으로 한다. 취소는 실행 중인 DB 조회의 즉시 중단을 보장하지 않으며 결과 저장을 차단한다.
 
-현재 S1-1, S1-3, S1-5, S7-1을 실행할 수 있다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
+현재 S1-1, S1-3, S1-5, S4-2, S7-1을 실행할 수 있다. 다른 available/partial 카탈로그 항목은 아직 501을 반환한다. availability는 데이터 산출 가능성을 뜻하며 실행 구현 상태와 다르다.
 
 E2E 스크립트는 각 외부 명령을 60초로 제한한다. `result.json`은 최신 시도의 상태이며 이전 성공은 `last-success.json`에 보관한다. S1-3 실행·폴링·취소와 실측 판정은 실제 frontend 클라이언트로 검증했다. 2026-09-11 Docker 재시작 후 backend `cd057dc` / frontend `52f7cb1`에서 owner/admin의 결과 화면 판정 표시까지 통과했다. 스크린샷은 `owner-scenario.png`, `admin-scenario.png`다. W1.3·W2.5의 결과 미연결 안내는 남아 있어 모든 위젯의 시각화 완료를 검증한 것은 아니다.
 
@@ -151,3 +151,14 @@ S1-3 실행은 팀별 비용 조회를 포함해 4단계이며 cost 결과에 �
 첨부의 상세 판정식 공백을 보완해 관측 사용량이 입력 예산을 초과하면 `budget_exceeded` warning을 만든다. USD는 비용, tokens_m은 토큰 합계/1,000,000과 비교한다. 근거에 팀·단위·관측량·예산·비율을 담는다. 비율이 표현 범위를 넘으면 ratio만 null이고 초과 판정은 유지한다. 동률·미달·미관측·마스킹은 경고하지 않으며 미관측을 0이나 미사용 예산으로 추정하지 않는다. 실제 청구액, 예산 배분 적정성, 조직 내 불균형을 단정하지 않는다.
 
 실제 수집 E2E는 비용 15 USD/예산 7.5 USD=2배, 토큰 1,050/예산 0.0005백만 토큰=2.1배를 실행·결과 화면에서 확인한다. `verifiedIngest.budgetScenario`와 `admin-ingest-budget-{usd,tokens}.png`가 증거다.
+
+
+## S4-2 무산출 세션 검토
+
+`POST /v1/scenarios/S4-2/runs`는 from/to/team_ids를 받는다. abandoned_session_ratio, session_last_event, api_error_rate를 일별 시계열로 조회하는 3단계이며 P2/W2.2/W2.10을 반환한다. 서버 지표의 기존 세션 연결·마지막 이벤트 판정·집단 마스킹 규칙을 사용한다.
+
+첨부에 상세 판정식이 없어 `abandoned_session_ratio > 0`을 정보성 관측 안내로 명시했다. 산출 이벤트(accept·LoC·commit·PR)가 관측되지 않은 세션이 있다는 의미이며 세션 종료나 사용자의 대화 포기를 확정하지 않는다. 산출 비율 0, 소집단, 미관측은 판정하지 않는다. 기간 밖 산출이나 수집되지 않은 산출은 확인할 수 없다는 한계를 응답에 포함한다.
+
+실제 수집 E2E는 산출 없는 5개 세션으로 비율 1과 판정 화면을 확인한다. `verifiedIngest.abandonedScenario`와 `admin-ingest-abandoned-scenario.png`를 남긴다. 산출이 있는/없는 세션 혼합(비율 0.5), 전부 산출 있음, 4명 마스킹, 미관측은 DB 테스트로 검증한다.
+
+현재 frontend는 실행 결과 중 하나라도 마스킹되면 판정 제목·근거를 함께 숨긴다. 따라서 마지막 이벤트 유형별 인원이 5명 미만이면 전체 무산출 비율이 공개돼도 판정은 비공개일 수 있다. E2E는 로그의 시각과 event.sequence를 명시해 마지막 이벤트 유형이 5명 동일 집단인 공개 경로를 검증한다.

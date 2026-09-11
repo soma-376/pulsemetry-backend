@@ -45,14 +45,16 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
       attr('developer.installation_id', randomUUID()),
     ] };
     const now = BigInt(Date.now()) * 1000000n;
-    const body = JSON.stringify({ resourceLogs: [{ resource, scopeLogs: [{ logRecords: [{ timeUnixNano: String(BigInt(Date.now()) * 1000000n),
+    const body = JSON.stringify({ resourceLogs: [{ resource, scopeLogs: [{ logRecords: [{ timeUnixNano: String(now),
       body: { stringValue: 'claude_code.tool_result' }, attributes: [
         attr('session.id', `ingest-${installation}`), attr('tool_use_id', randomUUID()),
         attr('tool_name', tool), attr('agent_id', `worker-${installation}`),
+        { key: 'event.sequence', value: { intValue: '1' } },
         { key: 'success', value: { boolValue: index !== 0 } },
       ],
     }, { timeUnixNano: String(now), body: { stringValue: 'claude_code.api_request' }, attributes: [
       attr('session.id', `ingest-${installation}`), attr('model', scenarioModel),
+      { key: 'event.sequence', value: { intValue: '2' } },
       attr('request_id', randomUUID()), { key: 'cost_usd', value: { doubleValue: index + 1 } },
       { key: 'attempt', value: { intValue: index === 0 ? '2' : '1' } },
       ...[['input_tokens', 200], ['output_tokens', 10], ['cache_read_tokens', 0], ['cache_creation_tokens', 0]]
@@ -231,12 +233,46 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
       window.history.pushState(null, '', `/runs/${id}`);
       window.dispatchEvent(new PopStateEvent('popstate'));
     }, budgetRun.run.run_id);
+    // 연속 예산 실행은 제목이 같으므로 새 실행 ID가 렌더될 때까지 기다린다.
+    await page.getByLabel('시나리오 판정', { exact: true }).getByText(budgetRun.run.run_id.slice(0, 8), { exact: false }).waitFor();
     await page.getByRole('heading', { name: '관측 사용량이 입력한 팀 예산을 초과했습니다', exact: true }).waitFor();
     await page.screenshot({ path: resolve(artifacts, `admin-ingest-budget-${budget.usd ? 'usd' : 'tokens'}.png`), fullPage: true });
     budgetEvidence.push({ runId: budgetRun.run.run_id, unit: finding.evidence.unit, ratio: finding.evidence.ratio });
   }
+  const abandonedRun = await page.evaluate(async from => {
+    const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
+    const { series } = await import('/src/widgets/model.ts');
+    let { run } = await scenarioApi.start('S4-2', { params: { from, to: new Date(Date.now() + 1000).toISOString() } });
+    const deadline = Date.now() + 60000;
+    while (activeRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      run = (await scenarioApi.get(run.run_id)).run;
+    }
+    return { run, ratio: series(run.result?.frames.abandoned_session_ratio) };
+  }, scenarioFrom);
+  assert.equal(abandonedRun.run.status, 'succeeded');
+  assert.equal(abandonedRun.run.progress.step, 3);
+  assert.equal(abandonedRun.run.progress.total, 3);
+  assert.deepEqual(Object.keys(abandonedRun.run.result.frames).sort(), ['abandoned_session_ratio','api_error_rate','session_last_event']);
+  assert.ok(abandonedRun.ratio.points.some(p => p.value.state === 'value' && p.value.value === 1));
+  assert.equal(abandonedRun.run.result.findings.length, 1);
+  assert.equal(abandonedRun.run.result.findings[0].rule_id, 'sessions_without_output');
+  assert.equal(abandonedRun.run.result.findings[0].evidence.ratio, 1);
+  await page.evaluate(id => {
+    window.history.pushState(null, '', `/runs/${id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, abandonedRun.run.run_id);
+  try {
+    await page.getByRole('heading', { name: '산출물이 관측되지 않은 세션이 있습니다', exact: true }).waitFor();
+  } catch (error) {
+    await page.screenshot({ path: resolve(artifacts, 'admin-ingest-abandoned-failed.png'), fullPage: true });
+    console.error('S4-2 결과 화면:', await page.locator('body').innerText());
+    throw error;
+  }
+  await page.screenshot({ path: resolve(artifacts, 'admin-ingest-abandoned-scenario.png'), fullPage: true });
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 25,
+    abandonedScenario: { id: 'S4-2', runId: abandonedRun.run.run_id, actualResultUI: true, ratio: 1 },
     budgetScenario: { id: 'S1-1', actualResultUI: true, costUsd: 15, tokens: 1050, runs: budgetEvidence },
     agentScenario: { id: 'S7-1', runId: agentRun.run.run_id, actualResultUI: true, failureRate: 0.2, calls: 5, costUsd: 15 },
     contextScenario: { id: 'S1-5', runId: contextRun.run.run_id, actualResultUI: true, ratio: 20, threshold: 10 },
