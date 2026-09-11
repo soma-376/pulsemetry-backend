@@ -800,7 +800,7 @@ try {
     await context.close();
   }
   assert.deepEqual(failures, [], '예상하지 않은 API 오류 응답');
-  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP 로그 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
+  const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
     verifiedDurationAndUsersTopN: { actualFrontendClient: true, admin: true, topMedian: 10, otherMedian: 3, otherUsers: 5 },

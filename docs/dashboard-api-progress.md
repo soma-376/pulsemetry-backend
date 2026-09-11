@@ -531,3 +531,12 @@
 - 5개 installation이 각 1개 도구 호출을 동일 바이트로 두 번씩 전송한다. 잘못된 토큰 401, 인증 신원으로 자기신고 tenant/installation 대체, 실제 팀 as-of 보강, FINAL 조회 5행과 frontend 집계 5를 검증했다. 4명까지는 frontend cell이 masked/null이고 5명부터 공개된다.
 - 기존 owner/admin smoke도 함께 통과했다. dashboard/ingest bootJar 빌드 성공. frontend는 수정하지 않았다. 이번 작업은 E2E 스크립트 변경이며 dashboard 단위 테스트 수를 늘리지 않았다.
 - 남은 큰 범위는 시나리오 실행 확장(S1-3 외), 조회 명세 잔여 항목, metrics/traces와 시나리오·화면까지 확대한 수집 E2E다. 이번 검증은 로그 한 경로의 완료이며 전체 PROJ-156 완료를 뜻하지 않는다.
+
+
+## 실제 metrics·traces 수집 E2E 확장
+
+- 기존 로그 경로에 `/v1/metrics`의 비용 sum과 `/v1/traces`의 LLM 요청 스팬을 추가했다. 각 신호는 5개 installation에서 동일 바이트로 두 번씩 전송한다. 테스트 대상 행을 직접 DB에 넣지 않는다.
+- metrics는 delta 1~5 USD만 합산해 15 USD이며 cumulative 999는 제외된다. traces는 TTFT 100~500ms의 p50=300/p90=500을 실제 frontend 클라이언트로 확인한다. TTFT의 허용 그룹(product/model)과 응답 백분위수(p50/p90)를 따른다.
+- 세 신호 모두 잘못된 토큰 401, 인증 tenant/installation 스탬핑, 팀 as-of 보강, 4명 이하 비공개를 검증한다. 총 30회 전송 후 FINAL 저장 행은 logs 5개·metrics 10개·spans 5개이며 중복이 집계되지 않는다.
+- 잔여 범위는 시나리오 실행 확장, 조회 명세 보완, 수집 데이터로 실행하는 시나리오·화면 E2E다. 이번 작업은 Claude Code의 대표 이벤트 세 종류를 검증하며 모든 벤더·이벤트 종류나 enroll/토큰 발급까지 검증한 것은 아니다.
+- 최종 실제 frontend E2E 통과, 예상하지 않은 API 오류 응답 0건. 기존 owner/admin 검증도 함께 통과했다. 테스트 스크립트 변경으로 앱 JAR 변경은 없으며 frontend 작업 트리는 깨끗하다.
