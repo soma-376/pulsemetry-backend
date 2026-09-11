@@ -2682,6 +2682,49 @@ class DashboardAuthTest {
         assertThat(denied["items"].size()).isZero()
     }
 
+    @Test fun `집중도 시나리오는 익명 요약과 로렌츠 곡선을 제공한다`() {
+        val ids = installations(5)
+        seedPoints(ids.mapIndexed { index,id -> tokenEvent(id,(index+1)*10,0,0,0) } + ids.map { toolEvent(it,true) })
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer,"S3-2","""{"from":"2026-09-01","to":"2026-09-02"}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        assertThat(run["progress"]["step"].asInt()).isEqualTo(3)
+        assertThat(run["progress"]["total"].asInt()).isEqualTo(3)
+        val result = run["result"]
+        assertThat(result["frames"].propertyNames()).containsExactlyInAnyOrder("usage_concentration","tool_calls","tokens")
+        val frames = result["frames"]["usage_concentration"]["frames"].toList()
+        assertThat(frames).hasSize(2)
+        val curve = frames.single { it["schema"]["fields"][0]["name"].asString()=="population_share" }
+        assertThat(curve["data"]["values"][0].size()).isEqualTo(6)
+        assertThat(curve["data"]["values"][2][5].asDouble()).isEqualTo(1.0)
+        assertThat(result["findings"].size()).isEqualTo(1)
+        assertThat(result["findings"][0]["evidence"]["top_decile_share"].asDouble()).isEqualTo(1.0/3)
+        ids.forEach { assertThat(result.toString()).doesNotContain(it.toString()) }
+    }
+
+    @Test fun `집중도 시나리오는 소집단 곡선과 영 분모 판정을 숨긴다`() {
+        val ids = installations(5)
+        val bearer = token()
+        for(rows in listOf(ids.take(4).map { tokenEvent(it,100,0,0,0) },emptyList(),ids.map { tokenEvent(it,0,0,0,0) })) {
+            seedPoints(rows)
+            val id = mapper.readTree(startRun(bearer,"S3-2","""{"from":"2026-09-01","to":"2026-09-02"}""")
+                .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+            scenarioRuns.runOne()
+            val run = readRun(id,bearer)
+            assertThat(run["status"].asString()).isEqualTo("succeeded")
+            assertThat(run["result"]["findings"].size()).isZero()
+            if(rows.size==4) run["result"]["frames"]["usage_concentration"]["frames"].forEach { frame ->
+                frame["data"]["values"].forEach { column ->
+                    assertThat(column.size()).isEqualTo(1)
+                    assertThat(column[0].isNull).isTrue()
+                }
+            }
+        }
+    }
+
     @Test fun `경영 보고 시나리오는 일곱 지표와 사용자당 비용을 제공한다`() {
         val ids = installations(5)
         seedPoints(ids.flatMap { listOf(point(it,1.0),tokenEvent(it,100,50,0,0),userTime(it,60.0),costEvent(it,3.0),
