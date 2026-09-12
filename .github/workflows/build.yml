@@ -19,6 +19,9 @@ jobs:
           # 이후 단계는 git 자격증명이 필요 없다 — 워크스페이스에 토큰을 남기지 않는다.
           persist-credentials: false
 
+      - name: Test deployment image promotion
+        run: python3 .github/tests/test_deploy_dev.py
+
       # 계약 테스트는 telemetryctl 의 스키마 파일 원본을 읽는다.
       # 복사본을 backend 에 두면 언젠가 원본과 갈라지고, 그때 통과하는 건 계약이 아니게 된다.
       - name: Checkout telemetryctl (계약 원천)
