@@ -840,6 +840,17 @@ try {
           cost_usd: (day === 0 ? [40, 20, 30] : [10, 10, 30])[index], cost_source: 'reported' } }),
       }))));
       run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], anomalyEvents.join('\n'));
+      const lastEvents = installations.flatMap(p => [
+        { team: sessionTeams[0], session: 'top-a', type: 'user_prompt', sequence: 1 },
+        { team: sessionTeams[0], session: 'top-b', type: 'user_prompt', sequence: 1 },
+        { team: sessionTeams[1], session: 'shared', type: 'user_prompt', sequence: 1 },
+        { team: sessionTeams[2], session: 'shared', type: 'llm_call', sequence: 2 },
+      ].map(({ team, session, type, sequence }) => JSON.stringify({
+        ...p, event_id: randomUUID(), signal: 'log', team_ids_as_of: [team],
+        raw_json: JSON.stringify({ type, sequence, envelope: { session_id: session },
+          payload: { model: 'last-top-e2e', error_type: sequence === 2 ? 'failed' : '' } }),
+      })));
+      run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], lastEvents.join('\n'));
       const securityContext = await browser.newContext();
       try {
         const ownerPage = await securityContext.newPage();
@@ -929,6 +940,18 @@ try {
           }) });
           return series(response.results.A);
         });
+        const lastTop = await ownerPage.evaluate(async () => {
+          const { request } = await import('/src/api/client.ts');
+          const { series } = await import('/src/widgets/model.ts');
+          const response = await request('/query', { method: 'POST', body: JSON.stringify({
+            from: 'now-1d', to: 'now', filters: { models: ['last-top-e2e'] },
+            queries: [{ ref_id: 'A', metric_id: 'session_last_event', group_by: ['team'], frame_type: 'table', limit: 1 }],
+          }) });
+          return series(response.results.A);
+        });
+        assert.equal(lastTop.state, 'success');
+        assert.deepEqual(Object.fromEntries(lastTop.points.filter(p => p.labels.team === '__other__').map(p => [p.labels.last_event, p.value.value])),
+          { api_error: 5 });
         assert.equal(anomalyTop.state, 'success');
         assert.deepEqual(Object.fromEntries(anomalyTop.points.filter(p => p.labels.team === '__other__').map(p => [p.key, p.value.value])),
           { value: 0.25, numerator: 250, denominator: 200 });
@@ -984,6 +1007,7 @@ try {
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
+    verifiedLastEventTopN: { actualFrontendClient: true, owner: true, otherFinalErrors: 5 },
     verifiedAnomalyTopN: { actualFrontendClient: true, owner: true, otherCost: 250, otherBaseline: 200, otherIncrease: 0.25 },
     verifiedConcentrationTopN: { actualFrontendClient: true, owner: true, otherTopTokens: 20, otherTotalTokens: 60, otherRatio: 1 / 3 },
     verifiedOnboardingTopN: { actualFrontendClient: true, owner: true, otherP50Seconds: 3600, otherP90Seconds: 3600 },
