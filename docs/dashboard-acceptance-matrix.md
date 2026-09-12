@@ -46,7 +46,7 @@
 | distribution | Query는 형식을 열거하지만 다수 지표의 분포 표본·버킷 정의는 없음. 명시적 미지원 501을 유지 | 지표별 의미가 있는 분포 요구를 확인하고 구현/지원 범위를 계약에 명시 |
 | 일반 CSV 내보내기 감사 | frontend src/api/client.ts의 request는 지원, api.queryCsv는 감사 사유 인자가 없음 | 래퍼와 호출 UI가 사유를 전달하고 실제 버튼 흐름으로 403/성공 검증 |
 | P3 시나리오 시작 감사 | frontend src/api/scenarios.ts의 start는 감사 사유를 받지 않음 | 실제 시작 폼→API에서 사유 전달·검증·실행 확인 |
-| 새 표·시계열 화면 | 주소 표와 잔존율은 공통 API 연동 검증. 일반 화면 시각 검증은 아님 | 실제 페이지에서 라벨·빈 값·비교·마스킹 확인 |
+| 새 표·시계열 화면 | 주소 표 일반 UI는 감사 헤더 누락으로 403·오류 표시 재현. 잔존율은 공통 API 연동 검증 | 주소 표 감사 입력 연결 후 라벨·빈 값·비교·마스킹, 잔존율 실제 화면 확인 |
 | 시나리오 의미 | 관측 가능한 결과만 제공. 인과 효과·공격 여부 등을 확정하지 않음 | 시나리오별 명세 문구와 구현 판정·관측 한계의 최종 대조 |
 | 운영 장애 | 프로세스 강제 종료 뒤 준비한 queued/expired 상태 복구 및 ClickHouse pause 무응답→query_timeout→새 실행 성공 통과 | 필요 운영 범위에 맞춰 DB 재시작·데이터 손실·네트워크 분단·실제 조회 중단 검증 |
 
@@ -55,3 +55,11 @@
 세부 지표 지원은 dashboard-api-contract-matrix.md, 복구 조건은 dashboard-recovery-verification.md, 커밋별 결과는 dashboard-api-progress.md를 참조한다.
 
 최신 전체 빌드: `7e122fa`, 테스트 1,072건(실패·오류·skip 0), 58개 작업 재실행. 최신 E2E는 동일 런타임 코드 `0842990`에서 통과했다.
+
+## 주소 표 일반 UI 재현
+
+- frontend `52f7cb1`, backend `5282ed5`에서 owner 로그인 → 운영 · 보안 → 보안 → 벤더 계정 불일치 위젯을 실제 브라우저로 검증했다.
+- `Operations.tsx`의 `ops-mismatch`는 `useWidget.ts` → `api.query`를 호출하면서 감사 사유를 전달하지 않는다. 요청에 X-Audit-Reason이 없고 403으로 거부되어 표 행은 0개다.
+- 화면은 “쿼리에 실패했습니다”와 “기간을 줄이거나 잠시 후 다시 시도해 주세요.”를 표시한다. 기간 변경이나 재시도로 해결되지 않는 감사 입력 문제다. 기존 세션 조회의 AuditDialog와 연결하는 프런트엔드 후속 작업이 필요하다.
+- `scripts/e2e/dashboard-auth-settings.mjs`가 이 경로를 재현하고 result.json의 knownUiGaps에 별도 기록한다. passed=true는 알려진 차단 재현과 기존 검증 통과이며 UI 수용 완료가 아니다. 프런트엔드 수정 후에는 이 기대값을 감사 입력·성공 조건으로 교체해야 한다.
+- 실행 산출물: build/e2e/auth-settings/owner-address-ui-audit-blocked.png. 이미지를 직접 확인했다. 주소 데이터가 렌더링되지 않아 정상 표의 라벨·비교·마스킹 시각 검증은 아직 남아 있다.

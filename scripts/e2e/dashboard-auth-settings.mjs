@@ -1060,6 +1060,22 @@ try {
           { value: 1, numerator: 5, denominator: 5 });
         assert.equal(refusalTop.state, 'success');
         assert.deepEqual(Object.fromEntries(refusalTop.points.map(p => [p.labels.category, p.value.value])), { A: 10, '__other__': 10 });
+        // 일반 화면의 알려진 감사 사유 누락을 API 성공 검증과 별도로 기록한다.
+        const mismatchResponse = ownerPage.waitForResponse(response => {
+          if (response.url() !== `${api}/v1/query`) return false;
+          return response.request().postDataJSON()?.queries?.some(q => q.metric_id === 'vendor_account_mismatch');
+        });
+        await ownerPage.getByRole('link', { name: '운영 · 보안', exact: true }).click();
+        await ownerPage.getByRole('tab', { name: '보안', exact: true }).click();
+        const mismatchWidget = ownerPage.locator('[data-widget="ops-mismatch"]');
+        await mismatchWidget.scrollIntoViewIfNeeded();
+        const blockedMismatch = await mismatchResponse;
+        assert.equal(blockedMismatch.request().headers()['x-audit-reason'], undefined);
+        const blockedBody = await blockedMismatch.json();
+        assert.equal(blockedMismatch.status() === 403 || blockedBody.results?.A?.status === 403, true);
+        await mismatchWidget.getByRole('alert').waitFor();
+        assert.equal(await mismatchWidget.locator('tbody tr').count(), 0);
+        await mismatchWidget.screenshot({ path: resolve(artifacts, 'owner-address-ui-audit-blocked.png') });
       } finally { await securityContext.close(); }
       assert.equal(topCost.cost.state, 'success');
       assert.deepEqual(Object.fromEntries(topCost.cost.points.map(p => [p.labels.model, p.value.value])),
@@ -1154,6 +1170,7 @@ try {
     verifiedClickHouseOutage: { pausedDuringQuery: true, error: 'query_timeout', partialResult: false, newRunAfterRecovery: 'succeeded', failedRunUnchanged: true, actualFrontendClient: true },
     verifiedRecovery: { processKilled: true, restarted: true, queuedSucceeded: true, expiredFailed: true, actualFrontendClient: true },
     verifiedAddressCsv: { actualFrontendClient: true, owner: true, domainsOnly: true, persistedAuditRecords: 1, errorStatuses: [403, 422] },
+    knownUiGaps: [{ path: '/operations', widget: 'ops-mismatch', missingAuditReason: true, status: 403, renderedState: 'error', rows: 0 }],
     verifiedAddressTable: { actualFrontendClient: true, owner: true, auditReason: true, installations: 5, domainsOnly: true },
     verifiedRetentionTimeseries: { actualFrontendClient: true, owner: true, weekly: true, cohortInstallations: 5 },
     verifiedRetentionTopN: { actualFrontendClient: true, owner: true, otherCohortInstallations: 5 },
