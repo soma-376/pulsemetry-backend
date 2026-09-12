@@ -78,3 +78,5 @@ S4-4 비교 결과 표의 현재 p50=2/이전 미관측은 실제 DOM 검사와 
 - 실제 표에는 value/numerator/denominator와 미관측/미관측/5가 표시되지만 코호트 날짜·주차는 표시되지 않는다. src/pages/scenarios/Reports.tsx의 다중 수치 table 경로는 필드 이름과 셀만 렌더링하고 labels를 표시하지 않는다. 여러 코호트가 있으면 어떤 코호트/주차의 행인지 식별하기 어렵다.
 - scripts/e2e/dashboard-ingest.mjs가 API 라벨 존재·분모·null, 실제 표 개수·미관측 표시·라벨 부재를 단언하고 retentionResultUi.knownGap에 기록한다. build/e2e/auth-settings/admin-retention-table-missing-labels.png도 직접 확인했다.
 - 이 테스트는 알려진 UI 결함 재현이며 잔존율 UI 수용 통과가 아니다. frontend 수정 후에는 라벨 표시를 기대하는 검증으로 교체해야 한다. 주간 시계열·다중 코호트·소집단의 시각 검증은 별도로 남아 있다. S3-3은 기존 빈 코호트 실행 경로만 재실행했으며 이번에 정상 코호트 화면 검증을 추가한 것은 아니다.
+
+프론트엔드 결함의 구체적 수정·검증·커밋 계획은 [dashboard-frontend-completion-plan.md](dashboard-frontend-completion-plan.md)다. 기존 frontend 소스 수정 제외 범위를 변경할지 사용자에게 질문했으며 응답 대기다.

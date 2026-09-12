@@ -1309,3 +1309,9 @@
 - S8-2 실제 결과의 잔존율 API는 cohort_week·week_index=0·분모5·진행 주 null을 제공하지만 일반 결과 표는 코호트/주차를 렌더링하지 않는 문제를 재현했다. DOM 검사와 위젯 스크린샷 직접 확인을 마쳤다.
 - backend 993bc19(동일 런타임 86a2a29), frontend 52f7cb1 E2E 통과. 기존 42개 실행 경로·프로세스 재기동·ClickHouse 무응답/복구도 통과했고 unexpectedOrUnimplementedResponses=[]다. 라벨 누락은 retentionResultUi.knownGap으로 별도 기록했다. 로그 /tmp/proj156-retention-ui-e2e.log.
 - 테스트/문서만 변경했고 frontend 소스와 backend 런타임은 수정하지 않았다. 잔존율 UI는 미완료이며, 프런트엔드에서 labels를 표시한 후 성공 조건으로 검증을 교체해야 한다. S3-3 빈 코호트는 기존 검증 범위만 유지한다.
+
+## 프론트엔드 잔여 구현 범위 확인과 구체적 수정안
+
+- 확인된 감사 전달·주소 표·비교/잔존율 라벨 결함을 해결하려면 기존 frontend 소스 수정 제외 범위의 변경이 필요하다. 사용자에게 프론트엔드 수정 포함 여부를 질문했으며 응답 대기다. distribution 범위 질문과는 별도다.
+- docs/dashboard-frontend-completion-plan.md에 API 래퍼, 최초 실행과 모든 재실행 경로, CSV 선택, 주소 자동 조회 제어, 결과 라벨의 수정·검증·커밋 단위를 정리했다. 명시한 frontend 파일 8곳의 존재와 호출 경로를 확인했다.
+- frontend 52f7cb1의 워킹트리가 깨끗함을 확인했으며 소스를 변경하지 않았다. backend 런타임과 테스트도 변경하지 않았다. 최신 검증을 반복하지 않고 구체적인 범위 결정안을 남긴다.
