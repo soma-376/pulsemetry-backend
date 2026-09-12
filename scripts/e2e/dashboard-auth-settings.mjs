@@ -1084,6 +1084,37 @@ try {
         assert.ok(!(await mismatchWidget.innerText()).includes('private-local'));
         assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE reason='주소 표 실제 화면 감사 점검'"), '1');
         await mismatchWidget.screenshot({ path: resolve(artifacts, 'owner-address-ui-audited.png') });
+        const privateRequestsAfterScopeChange = [];
+        const capturePrivateRequest = request => {
+          if (request.url() === `${api}/v1/query` &&
+              request.postDataJSON()?.queries?.some(q => q.metric_id === 'vendor_account_mismatch')) {
+            privateRequestsAfterScopeChange.push(request);
+          }
+        };
+        ownerPage.on('request', capturePrivateRequest);
+        await ownerPage.getByRole('button', { name: '24h', exact: true }).click();
+        await mismatchWidget.getByRole('button', { name: '조회 사유 입력', exact: true }).waitFor();
+        assert.equal(await mismatchWidget.locator('tbody tr').count(), 0);
+        assert.ok(!(await mismatchWidget.innerText()).includes('***@vendor.test'));
+        await mismatchWidget.getByRole('button', { name: '조회 사유 입력', exact: true }).click();
+        auditDialog = ownerPage.getByRole('dialog', { name: '조회 사유 입력' });
+        assert.equal(await auditDialog.getByRole('textbox').inputValue(), '');
+        assert.equal(await auditDialog.getByRole('button', { name: '사유 기록 후 조회' }).isDisabled(), true);
+        assert.equal(privateRequestsAfterScopeChange.length, 0);
+        await auditDialog.getByRole('textbox').fill('주소 표 기간 변경 후 새 감사 점검');
+        const changedScopeResponse = ownerPage.waitForResponse(response => response.url() === `${api}/v1/query` &&
+          response.request().postDataJSON()?.queries?.some(q => q.metric_id === 'vendor_account_mismatch'));
+        await auditDialog.getByRole('button', { name: '사유 기록 후 조회' }).click();
+        const changedAddressResponse = await changedScopeResponse;
+        assert.equal(changedAddressResponse.request().postDataJSON().from, 'now-24h');
+        assert.equal(changedAddressResponse.request().postDataJSON().to, 'now');
+        assert.equal(changedAddressResponse.request().headers()['x-audit-reason'], encodeURIComponent('주소 표 기간 변경 후 새 감사 점검'));
+        assert.equal((await changedAddressResponse.json()).results.A.status, 200);
+        await mismatchWidget.locator('tbody tr').first().waitFor();
+        assert.ok((await mismatchWidget.innerText()).includes('***@vendor.test'));
+        assert.equal(privateRequestsAfterScopeChange.length, 1);
+        ownerPage.off('request', capturePrivateRequest);
+        assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE reason='주소 표 기간 변경 후 새 감사 점검'"), '1');
         await ownerPage.getByRole('link', { name: '개요', exact: true }).click();
         await ownerPage.getByRole('button', { name: 'CSV', exact: true }).click();
         const csvDialog = ownerPage.getByRole('dialog', { name: '개요 데이터 내보내기' });
@@ -1194,7 +1225,7 @@ try {
     verifiedRecovery: { processKilled: true, restarted: true, queuedSucceeded: true, expiredFailed: true, actualFrontendClient: true },
     verifiedAddressCsv: { actualFrontendClient: true, owner: true, domainsOnly: true, persistedAuditRecords: 1, errorStatuses: [403, 422] },
     knownUiGaps: [],
-    verifiedAuditUi: { addressTable: true, csvDownload: true, personalCsvWrapper: true, invalidReasonBlocked: true, cancel: true, persistedReasons: true },
+    verifiedAuditUi: { addressTable: true, scopeChangeRequiresFreshReason: true, csvDownload: true, personalCsvWrapper: true, invalidReasonBlocked: true, cancel: true, persistedReasons: true },
     verifiedAddressTable: { actualFrontendClient: true, owner: true, auditReason: true, installations: 5, domainsOnly: true },
     verifiedRetentionTimeseries: { actualFrontendClient: true, owner: true, weekly: true, cohortInstallations: 5 },
     verifiedRetentionTopN: { actualFrontendClient: true, owner: true, otherCohortInstallations: 5 },

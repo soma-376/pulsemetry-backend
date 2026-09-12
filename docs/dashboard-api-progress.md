@@ -1324,3 +1324,10 @@
 - 현재/이전 비교 헤더와 p50 2/미관측, 잔존율 코호트 날짜·주차0·분모5·미관측을 DOM/스크린샷으로 확인했다. 잔존율768px 페이지 넘침 없음. 재실행 스크린샷이 이전 DOM을 기다리던 경합은 새 run ID 완료로 교정했다.
 - 기존42개 시나리오·프로세스 재기동·ClickHouse 무응답/복구도 통과. knownUiGaps=[] 및 unexpectedOrUnimplementedResponses=[]다. 로그 /tmp/proj156-frontend-integration-e2e.log. 테스트 스크립트는 과거 결함 기대값을 정상 입력/성공/라벨 표시 조건으로 교체했다.
 - distribution 8개 지원/45개 미지원 범위 결정은 여전히 응답 대기다. 모든 테마·다중 코호트·주간 시계열·마스킹 조합의 UI 검증까지 완료했다는 뜻은 아니다. backend 전체 Gradle 빌드는 런타임 변경이 없어 반복하지 않았다. 로컬 커밋만 수행한다.
+
+## 개인 주소 조회의 기간 변경 후 감사 재입력 검증
+
+- 실제 운영·보안 주소 표에서 감사 조회 성공 후 전역 기간을 24h로 바꿨다. 이전 주소 행이 사라지고 조회 사유 입력 버튼이 다시 표시되며, 새 사유 제출 전 개인 조회 요청이 0건임을 확인했다. 새 입력창은 비어 있고 제출 버튼은 비활성 상태다.
+- 새 사유 제출 후 요청 from=now-24h/to=now, 새 X-Audit-Reason, 결과 상태200, 마스킹 주소 행 복원과 해당 사유의 감사 기록1건을 검증했다. result.json의 verifiedAuditUi.scopeChangeRequiresFreshReason=true로 기록한다.
+- backend c28823e(런타임86a2a29), frontend42ae5c1(런타임acdc626)에서 실제 E2E 통과. passed=true, knownUiGaps=[], unexpectedOrUnimplementedResponses=[]다. 로그 /tmp/proj156-audit-scope-e2e.log.
+- 테스트 스크립트와 검증 문서만 변경했다. 런타임 변경이 없어 Gradle/프런트엔드 단위 검사를 반복하지 않았다. 다른 필터 조합이나 이전 범위로 돌아오는 동작까지 검증한 것은 아니다. distribution 지원 범위 결정은 여전히 응답 대기다.
