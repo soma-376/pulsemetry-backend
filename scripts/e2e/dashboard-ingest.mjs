@@ -775,7 +775,10 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   assert.equal(consolidationRun.result.findings.length, 1);
   assert.equal(consolidationRun.result.findings[0].evidence.product, 'claude_code');
   assert.equal(consolidationRun.result.findings[0].evidence.active_users, 5);
-  assert.ok(consolidationRun.result.frames.cost_per_active_user.frames.some(f => f.data.values[1].includes(3)));
+  assert.ok(consolidationRun.result.frames.cost_per_active_user.frames.some(f => {
+    const value = f.schema.fields.findIndex(field => field.name === 'value');
+    return f.schema.fields[value].labels.product === 'claude_code' && f.data.values[value].includes(3);
+  }));
   assert.ok(consolidationRun.result.frames.tool_calls.frames.some(f => f.data.values[1].includes(5)));
   await page.evaluate(id => {
     window.history.pushState(null, '', `/runs/${id}`);

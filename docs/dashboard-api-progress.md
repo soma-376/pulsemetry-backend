@@ -1259,3 +1259,9 @@
 - 시나리오 명세가 요구한 cost_per_active_user(product)가 전체 제품 값으로 반환되던 차이를 수정했다. metrics 메타데이터에 product를 추가하고 S8-5 실행에 제품별 차원을 전달한다. 일별 프레임 형식과 도구 호출의 전체 범위는 유지한다.
 - 초기 DB 검증은 허용 차원에 product가 없어 실패했다. 메타데이터까지 반영한 후 dashboard 테스트와 bootJar가 통과했다. 동일 사용자 5명의 Claude Code/Codex 비용이 사용자당 3/7달러로 분리되는 회귀 검증과 기존 소집단·미관측 검증을 포함한다.
 - 첨부 개요의 일반 지표 표(team만)와 S8-5 상세(product)의 차이를 계약 추적표에 기록했다. 구체적인 시나리오 요구를 만족시키는 차원 추가이며 frontend 소스 변경은 없다. E2E 검증은 이어서 진행한다.
+
+### S8-5 제품별 비용 E2E 결과
+
+- `6417e04`와 frontend `52f7cb1` E2E 통과. 실제 수집 fixture의 S8-5 비용 프레임에서 product=claude_code와 사용자당 3달러를 함께 확인하고 결과 화면으로 이동했다. 두 제품 비용 분리는 DB 테스트에서 검증했다.
+- dashboard 테스트 265건(실패·오류·skip 0), bootJar 통과. 기존 42개 실행 경로·프로세스 재기동·ClickHouse 무응답/복구도 통과했고 unexpectedOrUnimplementedResponses=[]다. 로그 /tmp/proj156-product-cost-e2e.log.
+- 알려진 주소 표 UI 감사 누락은 knownUiGaps에 남아 있다. 이번 변경으로 시나리오 전체 의미 대조나 제품 전체 수용을 완료했다고 판정하지 않는다.
