@@ -49,7 +49,7 @@
 | 일반 CSV 내보내기 감사 | frontend src/api/client.ts의 request는 지원, api.queryCsv는 감사 사유 인자가 없음 | 래퍼와 호출 UI가 사유를 전달하고 실제 버튼 흐름으로 403/성공 검증 |
 | P3 시나리오 시작 감사 | frontend src/api/scenarios.ts의 start는 감사 사유를 받지 않음 | 실제 시작 폼→API에서 사유 전달·검증·실행 확인 |
 | 새 표·시계열 화면 | 주소 표 일반 UI는 감사 헤더 누락으로 403·오류 표시 재현. 잔존율은 공통 API 연동 검증 | 주소 표 감사 입력 연결 후 라벨·빈 값·비교·마스킹, 잔존율 실제 화면 확인 |
-| 시나리오 의미 | S4-4·S5-6·S6-3·S8-6·S8-7의 기간·집계·판정 의미 대조 완료. 인과 효과를 확정하지 않음 | 나머지 시나리오의 명세 문구·판정·관측 한계 대조; UI 검증은 별도 |
+| 시나리오 의미 | 46개 ID 분류 및 실행 가능 42개의 관측·판정 의미 대조 완료 | 제목 수준의 인과 효과·공격 탐지 추가는 별도 데이터/요구 필요; UI 수용은 위 항목에서 추적 |
 | 운영 장애 | 프로세스 강제 종료 뒤 준비한 queued/expired 상태 복구 및 ClickHouse pause 무응답→query_timeout→새 실행 성공 통과 | 필요 운영 범위에 맞춰 DB 재시작·데이터 손실·네트워크 분단·실제 조회 중단 검증 |
 
 현재 작업 범위에서는 frontend 소스를 변경하지 않는다. 위 프런트엔드 항목을 backend 인증 완화로 우회하지 않는다.
@@ -67,3 +67,5 @@
 - 실행 산출물: build/e2e/auth-settings/owner-address-ui-audit-blocked.png. 이미지를 직접 확인했다. 주소 데이터가 렌더링되지 않아 정상 표의 라벨·비교·마스킹 시각 검증은 아직 남아 있다.
 
 전후 비교 5개 시나리오의 의미 대조와 기존 테스트 10건의 근거는 [dashboard-comparison-acceptance.md](dashboard-comparison-acceptance.md)에 정리했다. 런타임 수정 없이 최신 테스트 결과와 소스의 일치를 확인했다.
+
+전체 시나리오 의미 목록은 [dashboard-scenario-semantics.md](dashboard-scenario-semantics.md)다. 나머지 37개 대표 DB 테스트의 최신 통과를 확인했으며, 시나리오 의미의 소스 대조 자체는 더 이상 미착수 항목이 아니다. UI·미지원 distribution·확대 분석 요구와 구분한다.
