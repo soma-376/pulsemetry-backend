@@ -1303,3 +1303,9 @@
 - 실제 S4-4 결과 페이지의 prompts_per_session 위젯에서 p50/p50_compare 헤더 위치, 현재 값 2, 이전 미관측, 1개 행을 단언했다. 위젯 스크린샷을 직접 확인했다. 원시 필드명 라벨은 현재 UI 상태로 기록했다.
 - backend 76e83b4(동일 런타임 86a2a29), frontend 52f7cb1 E2E 통과. 기존 42개 실행·프로세스 재기동·ClickHouse 무응답/복구도 통과했고 unexpectedOrUnimplementedResponses=[]다. 로그 /tmp/proj156-comparison-ui-e2e.log.
 - 테스트 스크립트와 문서만 수정했다. frontend 소스와 backend 런타임은 변경하지 않았다. 다른 비교 지표·소집단 마스킹·잔존율·주소 정상 표의 화면 검증은 남아 있으며 distribution 범위 질문도 응답 대기다.
+
+## 잔존율 결과 화면의 코호트·주차 라벨 누락 검증
+
+- S8-2 실제 결과의 잔존율 API는 cohort_week·week_index=0·분모5·진행 주 null을 제공하지만 일반 결과 표는 코호트/주차를 렌더링하지 않는 문제를 재현했다. DOM 검사와 위젯 스크린샷 직접 확인을 마쳤다.
+- backend 993bc19(동일 런타임 86a2a29), frontend 52f7cb1 E2E 통과. 기존 42개 실행 경로·프로세스 재기동·ClickHouse 무응답/복구도 통과했고 unexpectedOrUnimplementedResponses=[]다. 라벨 누락은 retentionResultUi.knownGap으로 별도 기록했다. 로그 /tmp/proj156-retention-ui-e2e.log.
+- 테스트/문서만 변경했고 frontend 소스와 backend 런타임은 수정하지 않았다. 잔존율 UI는 미완료이며, 프런트엔드에서 labels를 표시한 후 성공 조건으로 검증을 교체해야 한다. S3-3 빈 코호트는 기존 검증 범위만 유지한다.

@@ -71,3 +71,10 @@
 전체 시나리오 의미 목록은 [dashboard-scenario-semantics.md](dashboard-scenario-semantics.md)다. 나머지 37개 대표 DB 테스트의 최신 통과를 확인했으며, 시나리오 의미의 소스 대조 자체는 더 이상 미착수 항목이 아니다. UI·미지원 distribution·확대 분석 요구와 구분한다.
 
 S4-4 비교 결과 표의 현재 p50=2/이전 미관측은 실제 DOM 검사와 스크린샷으로 확인했다. 원시 필드명 라벨 개선·다른 비교 지표의 마스킹·잔존율 화면은 남아 있다. 근거는 dashboard-comparison-acceptance.md의 실제 결과 표 검증 절을 참조한다.
+
+## 잔존율 결과 표 라벨 누락 재현
+
+- backend 993bc19(런타임 86a2a29), frontend 52f7cb1에서 실제 수집 후 S8-2 실행 결과의 onboarding_retention 표를 검증했다. API의 value 필드에는 cohort_week·week_index=0이 있고, 진행 중인 주의 value는 null, denominator는 5다.
+- 실제 표에는 value/numerator/denominator와 미관측/미관측/5가 표시되지만 코호트 날짜·주차는 표시되지 않는다. src/pages/scenarios/Reports.tsx의 다중 수치 table 경로는 필드 이름과 셀만 렌더링하고 labels를 표시하지 않는다. 여러 코호트가 있으면 어떤 코호트/주차의 행인지 식별하기 어렵다.
+- scripts/e2e/dashboard-ingest.mjs가 API 라벨 존재·분모·null, 실제 표 개수·미관측 표시·라벨 부재를 단언하고 retentionResultUi.knownGap에 기록한다. build/e2e/auth-settings/admin-retention-table-missing-labels.png도 직접 확인했다.
+- 이 테스트는 알려진 UI 결함 재현이며 잔존율 UI 수용 통과가 아니다. frontend 수정 후에는 라벨 표시를 기대하는 검증으로 교체해야 한다. 주간 시계열·다중 코호트·소집단의 시각 검증은 별도로 남아 있다. S3-3은 기존 빈 코호트 실행 경로만 재실행했으며 이번에 정상 코호트 화면 검증을 추가한 것은 아니다.

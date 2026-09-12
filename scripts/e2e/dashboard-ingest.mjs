@@ -585,6 +585,29 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, forecastRun.run_id);
   await page.getByRole('heading', { name: '비용 예측에 필요한 관측 이력이 부족합니다', exact: true }).waitFor();
+  const retentionFrames = forecastRun.result.frames.onboarding_retention.frames;
+  assert.ok(retentionFrames.length > 0);
+  for (const frame of retentionFrames) {
+    const value = frame.schema.fields.findIndex(f => f.name === 'value');
+    const denominator = frame.schema.fields.findIndex(f => f.name === 'denominator');
+    assert.ok(frame.schema.fields[value].labels.cohort_week);
+    assert.equal(frame.schema.fields[value].labels.week_index, '0');
+    assert.equal(frame.data.values[value][0], null);
+    assert.equal(frame.data.values[denominator][0], 5);
+  }
+  const retentionWidget = page.locator('[data-result-metric="onboarding_retention"]');
+  await retentionWidget.scrollIntoViewIfNeeded();
+  await retentionWidget.locator('table').first().waitFor();
+  assert.equal(await retentionWidget.locator('table').count(), retentionFrames.length);
+  assert.ok((await retentionWidget.innerText()).includes('미관측'));
+  // 알려진 UI 제한: table 렌더러가 schema.fields.labels의 코호트/주차를 표시하지 않는다.
+  const retentionHeaders = await retentionWidget.locator('th').allTextContents();
+  assert.ok(!retentionHeaders.some(header => /cohort|week|코호트|주차/.test(header)));
+  for (const frame of retentionFrames) {
+    const label = frame.schema.fields.find(field => field.name === 'value').labels.cohort_week;
+    assert.ok(!(await retentionWidget.innerText()).includes(label));
+  }
+  await retentionWidget.screenshot({ path: resolve(artifacts, 'admin-retention-table-missing-labels.png') });
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-forecast-scenario.png'), fullPage: true });
   const premiumRun = await page.evaluate(async ({ from, scenarioModel }) => {
     const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
@@ -1317,6 +1340,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
     championScenario: { id: 'S8-7', runId: championRun.run_id, admin: true, actualResultUI: true, windowWeeks: 4, promptsPerSession: 2 },
+    retentionResultUi: { observedDenominator: 5, currentWeekMissing: true, knownGap: 'cohort_and_week_labels_not_rendered', actualResultUI: true },
     onboardingScenario: { id: 'S3-3', runId: onboardingRun.run_id, owner: true, audited: true, actualResultUI: true, findings: 0, cohortExcludesTodaysInstallations: true },
     probeScenario: { id: 'S5-5', runId: probeRun.run_id, owner: true, audited: true, actualResultUI: true, probeWindowMin: 5, probeCount: 10, refusalFindings: 0 },
     inactivityScenario: { id: 'S1-7', runId: inactivityRun.run_id, owner: true, audited: true, actualResultUI: true, inactiveDays: 30, activeUsers: 5, inactivityFindings: 0 },
