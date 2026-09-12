@@ -2156,6 +2156,23 @@ class DashboardAuthTest {
         assertThat(jdbc.sql("SELECT target FROM dashboard.audit_log WHERE action='query'").query(String::class.java).single())
             .isEqualTo("vendor_account_mismatch")
     }
+    @Test fun `벤더 불일치 표는 감사 후 설치와 주소 도메인만 제공하며 소집단을 숨긴다`() {
+        val ids = installations(5)
+        val query = queryBody(mapOf("metric_id" to "vendor_account_mismatch","frame_type" to "table"))
+        seedPoints(ids.map { vendorEvent(it,"private-local@vendor.test") })
+        queryResult(query).andExpect(status().isForbidden)
+        val response = mismatchQuery(query).andExpect(status().isOk).andReturn().response.contentAsString
+        val result = mapper.readTree(response)["results"]["A"]
+        assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+        val values = result["frames"][0]["data"]["values"]
+        assertThat(values[0].toList().map { it.asString() }).containsExactlyInAnyOrderElementsOf(ids.map { it.toString() })
+        assertThat(values[1].toList().map { it.asString() }.distinct()).containsExactly("***@vendor.test")
+        assertThat(response).doesNotContain("private-local","person-")
+        seedPoints(ids.take(4).map { vendorEvent(it,"private-local@vendor.test") })
+        val hidden = mismatchQuery(query).andReturn().response.contentAsString
+        assertThat(mapper.readTree(hidden)["results"]["A"]["frames"][0]["data"]["values"].toList().all { it.size()==1 && it[0].isNull }).isTrue()
+        assertThat(hidden).doesNotContain(ids[0].toString(),"***@vendor.test")
+    }
     @Test fun `벤더 불일치 비교 소집단은 시계열과 CSV를 숨긴다`() {
         val ids = installations(5)
         seedPoints(ids.map { vendorEvent(it,"different@vendor.test") }+

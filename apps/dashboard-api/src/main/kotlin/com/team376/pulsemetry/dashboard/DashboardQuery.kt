@@ -665,10 +665,41 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             SELECT bucket,count() AS points,0 AS cumulative,uniqExact($person) AS observed_people,
                 countIf(lowerUTF8(latest_email)!=lowerUTF8({emails:Map(String,String)}[installation_id])) AS value
             FROM latest GROUP BY bucket
-        ) SELECT stats.*,least(privacy.people,stats.observed_people) AS people,privacy.active_time_definition
-            FROM stats INNER JOIN privacy USING (bucket) ORDER BY bucket"""
+        ) ${if(frameType=="table") """SELECT latest.*,{emails:Map(String,String)}[installation_id] AS registered_email,
+            lowerUTF8(latest_email)!=lowerUTF8(registered_email) AS mismatch,
+            least(privacy.people,stats.observed_people) AS people
+            FROM latest INNER JOIN stats USING (bucket) INNER JOIN privacy USING (bucket) ORDER BY installation_id"""
+            else "SELECT stats.*,least(privacy.people,stats.observed_people) AS people,privacy.active_time_definition FROM stats INNER JOIN privacy USING (bucket) ORDER BY bucket"}"""
         val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
         return Rows(mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList(),sql)
+    }
+    private fun mismatchTable(q: DashboardQueryItem, current: Rows, previous: Rows?): List<Map<String,Any>> {
+        val all = current.data+previous?.data.orEmpty()
+        if(all.isEmpty()) return emptyList()
+        val hidden = all.any { it["people"].asLong()<5 }
+        val currentById = current.data.associateBy { it["installation_id"].asString() }
+        val priorById = previous?.data.orEmpty().associateBy { it["installation_id"].asString() }
+        val ids = (currentById.keys+priorById.keys).filter { id ->
+            currentById[id]?.get("mismatch")?.asInt()==1 || priorById[id]?.get("mismatch")?.asInt()==1 }.sorted()
+        if(!hidden && ids.size>groupLimit(q)) throw DashboardReadException("query_too_wide",422)
+        if(!hidden && ids.isEmpty()) return emptyList()
+        fun domain(row: JsonNode?, key: String): String? = row?.get(key)?.asString()?.let {
+            if('@' in it && it.substringAfterLast('@').isNotBlank()) "***@"+it.substringAfterLast('@').lowercase() else null }
+        val columns = listOf("installation_id","vendor_email","registered_email")+
+            if(previous!=null) listOf("vendor_email_compare","registered_email_compare") else emptyList()
+        val values = columns.map { column ->
+            if(hidden) listOf(null) else ids.map { id -> when(column) {
+                "installation_id" -> id
+                "vendor_email" -> domain(currentById[id],"latest_email")
+                "registered_email" -> domain(currentById[id],"registered_email")
+                "vendor_email_compare" -> domain(priorById[id],"latest_email")
+                else -> domain(priorById[id],"registered_email")
+            } }
+        }
+        return listOf(mapOf("schema" to mapOf("ref_id" to q.refId,"metric_id" to q.metricId,"frame_type" to "table",
+            "fields" to columns.map { mapOf("name" to it,"type" to "string","config" to mapOf("suppressed" to hidden)) },
+            "meta" to mapOf("executed_sql" to current.sql,"data_quality" to listOf("이메일 로컬 부분은 숨기고 도메인만 표시; 마지막 비어 있지 않은 관측 주소"))),
+            "data" to mapOf("values" to values)))
     }
     private fun readRetention(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
         zone: String, deadline: Long, retained: List<List<String>>? = null): Rows {
@@ -1078,6 +1109,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             else if(q.metricId=="onboarding_retention") keys.map { it.dropLast(if(q.frameType=="timeseries") 1 else 2) }.distinct() else keys
         if (limitedKeys.size > groupLimit(q)+(if (q.metricId in topGroupMetrics && limitedKeys.any { it.all { value -> value=="__other__" } }) 1 else 0)) throw DashboardReadException("query_too_wide", 422)
         val frameType = q.frameType ?: definition.defaultFrameType
+        if(q.metricId=="vendor_account_mismatch" && frameType=="table") return mismatchTable(q,current,previous)
         val frames = keys.flatMap { group ->
             val rows = groups[group].orEmpty()
             val prior = comparisons[group].orEmpty()
