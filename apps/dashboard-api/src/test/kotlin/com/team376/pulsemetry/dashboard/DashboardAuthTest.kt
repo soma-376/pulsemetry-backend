@@ -2610,6 +2610,25 @@ class DashboardAuthTest {
         jdbc.sql("UPDATE enrollment.contracts SET terminated_at='2026-09-01T12:00:00Z' WHERE id=:id").param("id",contract).update()
         assertThat(mapper.readTree(queryResult(request).andReturn().response.contentAsString)["results"]["A"]["frames"].size()).isZero()
     }
+    @Test fun `계약을 명시한 약정은 일년을 넘는 기간을 집계하고 일반 조회의 제한은 유지한다`() {
+        val ids = installations(5); val contract = termContract()
+        jdbc.sql("UPDATE enrollment.contracts SET starts_at='2024-01-01' WHERE id=:id").param("id",contract).update()
+        jdbc.sql("UPDATE enrollment.contract_memberships SET assigned_at='2024-01-01T00:00:00Z' WHERE contract_id=:id")
+            .param("id",contract).update()
+        seedPoints(ids.flatMap { listOf(costEvent(it,10.0,at="2024-02-01T12:00:00Z"),costEvent(it,20.0)) })
+        val range = mapOf("from" to "2024-01-01T00:00:00Z","to" to "2026-09-03T00:00:00Z")
+        val query = mapOf("metric_id" to "contract_commitment_burn","params" to mapOf("contract_id" to contract.toString()))
+        for(type in listOf("scalar","table")) {
+            val result = mapper.readTree(queryResult(queryBody(query+mapOf("frame_type" to type),range)).andExpect(status().isOk)
+                .andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            assertThat(result["frames"][0]["data"]["values"].toList().map { it[0].asDouble() }).containsExactly(0.15,150.0,1000.0)
+        }
+        queryResult(queryBody(mapOf("metric_id" to "cost"),range)).andExpect(status().isUnprocessableEntity)
+        queryResult(queryBody(mapOf("metric_id" to "contract_commitment_burn"),range)).andExpect(status().isUnprocessableEntity)
+        val mixed = queryBody(extra=range+mapOf("queries" to listOf(query+mapOf("ref_id" to "A"),mapOf("ref_id" to "B","metric_id" to "cost"))))
+        queryResult(mixed).andExpect(status().isUnprocessableEntity)
+    }
     @Test fun `약정액 누락과 영 금액을 구분하고 통화와 음수는 오류로 반환한다`() {
         val ids = installations(5)
         val contract = termContract()

@@ -119,7 +119,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val from = time.resolve(body.from)
         val to = time.resolve(body.to)
         require(from < to)
-        if (Duration.between(from, to) > Duration.ofDays(366)) throw DashboardReadException("query_too_wide", 422)
+        // 계약을 명시한 약정 소진율만 장기 조회를 허용한다. DB 시간·행 수·포인트 제한은 계속 적용한다.
+        val selectedCommitments = body.queries.isNotEmpty() && body.queries.all {
+            it.metricId=="contract_commitment_burn" && !it.params["contract_id"]?.asString().isNullOrBlank()
+        }
+        if (!selectedCommitments && Duration.between(from, to) > Duration.ofDays(366)) throw DashboardReadException("query_too_wide", 422)
         val comparison = before ?: time.compare(from, to, body.compare)
         if (before != null) {
             require(before.first < before.second && before.second == from)
