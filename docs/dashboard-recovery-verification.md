@@ -25,3 +25,11 @@
 이 방법은 중단 복구 상태를 의도적으로 준비한다. 실제 조회 도중의 임의 시점 장애, DB 자체 재시작, 네트워크 분단, 다중 프로세스 부하 시험을 대신하지 않는다. 기동 전후 로그는 build/e2e/auth-settings/backend.log와 backend-restarted.log로 분리한다.
 
 검증 결과: `5455685`에서 dashboard 263건과 프로세스 재기동 E2E 통과. `result.json`의 verifiedRecovery에 결과를 기록한다.
+
+## ClickHouse 무응답 시험
+
+격리된 ClickHouse 컨테이너를 docker pause로 일시 정지한 상태에서 실제 frontend 공통 클라이언트로 S1-3 실행을 생성한다. RUN-GET에서 failed/query_timeout과 result=null을 확인하고 finally에서 컨테이너를 unpause한다. ping 복구 후 새 실행을 생성해 succeeded가 되는지, 이전 실패 실행은 그대로인지 확인한다.
+
+이 시험은 연결 대상이 응답하지 않는 상황과 조회 기한을 다룬다. ClickHouse 데이터를 삭제하거나 운영 서비스를 정지하지 않는다. 실제 데이터베이스 재시작·데이터 손실·복제 장애·네트워크 분단 토폴로지는 별도 범위다.
+
+검증 결과: `b125f8a` 기준 E2E 통과. verifiedClickHouseOutage에 query_timeout·부분 결과 없음·복구 후 새 실행 성공·이전 실패 보존을 기록했다.

@@ -1240,3 +1240,9 @@
 - `7e122fa`에서 전체 build --rerun-tasks 통과: 1,072건(dashboard 265건), 실패·오류·skip 0건, 58개 작업 모두 재실행. 로그 /tmp/proj156-acceptance-build.log.
 - 이번 변경은 추적 문서이며 런타임 코드를 수정하지 않았다. 최신 `0842990` E2E(주소 CSV·감사·42개 시나리오·재기동 복구) 이후 같은 런타임에 대한 E2E를 중복 실행하지 않았다.
 - 다음 수용 작업은 일반 UI 감사 전달·새 표/시계열 렌더링, 미지원 distribution의 지표별 정의, 시나리오 의미 대조와 요구되는 추가 장애 범위다. 전체 제품 수용 완료로 판정하지 않는다.
+
+## ClickHouse 무응답과 복구 E2E
+
+- 런타임 변경 없이 장애 E2E를 추가했다. 격리된 ClickHouse를 pause한 상태에서 실제 frontend 클라이언트로 S1-3을 시작해 failed/query_timeout, result=null을 확인했다. unpause 후 새 실행은 succeeded였고 기존 실패 상태는 보존됐다.
+- `b125f8a` 런타임 기준 E2E 통과. 기존 실제 수집·42개 시나리오·프로세스 재기동·주소 CSV 감사 검증도 통과했으며 unexpectedOrUnimplementedResponses=[]다. frontend 소스는 변경하지 않았다.
+- 이번 시험은 DB 무응답과 조회 기한·새 실행 복구를 확인한다. DB 재시작·데이터 손실·복제 장애·실제 네트워크 분단 시험과 구분한다. 최신 전체 빌드 1,072건은 변경 없는 런타임에 대해 유효하며 반복하지 않았다.

@@ -1112,12 +1112,46 @@ try {
     }, [queuedRecovery, expiredRecovery]);
     assert.deepEqual(recovery.map(r => r.status), ['succeeded', 'failed']);
     assert.equal(recovery[1].error.error, 'worker_lease_expired');
+    const startFaultRun = () => page.evaluate(async () => {
+      const { request } = await import('/src/api/client.ts');
+      return request('/scenarios/S1-3/runs', { method: 'POST', body: JSON.stringify({ params: {
+        from: new Date(Date.now() - 86400000).toISOString(), to: new Date().toISOString(),
+      } }) });
+    });
+    let failedRunId;
+    run('docker', ['pause', clickhouse]);
+    try {
+      const started = await startFaultRun();
+      failedRunId = started.run_id;
+      assert.ok(failedRunId);
+      await waitFor(() => sql(`SELECT status FROM dashboard.scenario_runs WHERE id='${failedRunId}'`) === 'failed');
+      const failed = await page.evaluate(async id => {
+        const { request } = await import('/src/api/client.ts');
+        return request(`/scenario-runs/${id}`);
+      }, failedRunId);
+      assert.equal(failed.status, 'failed');
+      assert.equal(failed.error.error, 'query_timeout');
+      assert.equal(failed.result, null);
+    } finally { run('docker', ['unpause', clickhouse]); }
+    await waitFor(async () => (await fetch(`http://127.0.0.1:${chPort}/ping`)).ok);
+    const retried = await startFaultRun();
+    assert.notEqual(retried.run_id, failedRunId);
+    await waitFor(() => sql(`SELECT status FROM dashboard.scenario_runs WHERE id='${retried.run_id}'`) === 'succeeded');
+    const restored = await page.evaluate(async ids => {
+      const { request } = await import('/src/api/client.ts');
+      return Promise.all(ids.map(id => request(`/scenario-runs/${id}`)));
+    }, [failedRunId, retried.run_id]);
+    assert.deepEqual(restored.map(r => r.status), ['failed', 'succeeded']);
+    assert.equal(restored[0].result, null);
+    assert.ok(restored[1].result);
+
   } finally { await recoveryContext.close(); }
   assert.deepEqual(failures, [], '예상하지 않은 API 오류 응답');
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
     verifiedLongCommitment: { actualFrontendClient: true, owner: true, requestedDays: 730, explicitContract: true },
+    verifiedClickHouseOutage: { pausedDuringQuery: true, error: 'query_timeout', partialResult: false, newRunAfterRecovery: 'succeeded', failedRunUnchanged: true, actualFrontendClient: true },
     verifiedRecovery: { processKilled: true, restarted: true, queuedSucceeded: true, expiredFailed: true, actualFrontendClient: true },
     verifiedAddressCsv: { actualFrontendClient: true, owner: true, domainsOnly: true, persistedAuditRecords: 1, errorStatuses: [403, 422] },
     verifiedAddressTable: { actualFrontendClient: true, owner: true, auditReason: true, installations: 5, domainsOnly: true },
