@@ -63,7 +63,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "api_retry_attempts","auto_approval_ratio","api_error_rate","compaction_reduction","mcp_failure_ratio",
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
     private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
-    private val topPeriodMetrics = topCostRatioMetrics + setOf("abandoned_session_ratio","subagent_activity","adoption_rate","active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
+    private val topPeriodMetrics = topCostRatioMetrics + setOf("onboarding_ttfu","abandoned_session_ratio","subagent_activity","adoption_rate","active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
     private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
@@ -346,7 +346,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (q.metricId in setOf("cost","subagent_cost_ratio","cost_per_active_user","cost_per_user_hour","model_unit_price")) return readCost(q,scope,from,to,zone,interval,deadline,retained=retained)
         if (q.metricId=="vendor_account_mismatch") return readMismatch(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="onboarding_retention") return readRetention(q,scope,from,to,zone,deadline)
-        if (q.metricId=="onboarding_ttfu") return readOnboarding(q,scope,from,to,zone,interval,deadline)
+        if (q.metricId=="onboarding_ttfu") return readOnboarding(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId=="usage_concentration") return readConcentration(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="session_last_event") return readLastEvent(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="abandoned_session_ratio") return readAbandoned(q,scope,from,to,zone,interval,deadline,retained)
@@ -695,9 +695,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return Rows(mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList(),sql)
     }
     private fun readOnboarding(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
-        zone: String, interval: String, deadline: Long): Rows {
+        zone: String, interval: String, deadline: Long, retained: List<List<String>>? = null): Rows {
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
-        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val dimensions = groupDimensions(q.groupBy.map(::dimension),retained)
         val suffix = if (dimensions.isEmpty()) "" else ","+q.groupBy.indices.joinToString(",") { "g$it" }
         val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
         // 과거 사용을 신규 사용으로 오인하지 않도록 하한 이전의 보존 이력도 조회한다.
@@ -726,7 +726,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             FROM cohort GROUP BY bucket$suffix
         ) SELECT stats.*,least(privacy.people,stats.cohort_people) AS people,privacy.active_time_definition
             FROM stats INNER JOIN privacy USING (bucket$suffix) ORDER BY bucket$suffix"""
-        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
+        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone,
+            "retained" to mapper.writeValueAsString(retained.orEmpty()).replace("\\", "\\\\"))
         return Rows(mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList(),sql)
     }
     private fun readConcentration(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,

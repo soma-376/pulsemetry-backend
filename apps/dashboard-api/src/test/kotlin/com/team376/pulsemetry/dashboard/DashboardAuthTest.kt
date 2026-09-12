@@ -1919,6 +1919,30 @@ class DashboardAuthTest {
         assertThat(summary["schema"]["fields"][0]["config"]["unit"].asString()).isEqualTo("s")
         assertThat(summary["schema"]["fields"][0]["labels"]["platform"].asString()).isEqualTo("linux")
     }
+    @Test fun `첫 사용 상위 기타는 다중 팀 설치의 최초 관측으로 분포를 다시 계산한다`() {
+        val teams = costTeams(); val top = installations(5); val shared = installations(5)
+        val first = java.time.Instant.parse("2026-09-01T12:00:00Z")
+        top.forEach { installationCreated(it,first.minusSeconds(10000).toString()) }
+        shared.forEach { installationCreated(it,first.minusSeconds(3600).toString()) }
+        seedPoints(top.map { inTeam(promptEvent(it),teams[0]) }+shared.flatMap { id ->
+            listOf(inTeam(promptEvent(id),teams[1]),inTeam(promptEvent(id,at="2026-09-01T13:00:00Z"),teams[2])) })
+        for(type in listOf("table","scalar","timeseries","distribution")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "onboarding_ttfu","group_by" to listOf("team"),
+                "frame_type" to type,"limit" to 1))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val summaries = result["frames"].toList().filter { it["schema"]["fields"][0]["name"].asString()!="bucket" }
+            val offset = if(type=="timeseries") 1 else 0
+            val frames = summaries.associateBy { it["schema"]["fields"][offset]["labels"]["team"].asString() }
+            assertThat(frames.keys).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
+            assertThat(frames.getValue("__other__")["data"]["values"][offset][0].asDouble()).isEqualTo(3600.0)
+            assertThat(frames.getValue("__other__")["data"]["values"][offset+1][0].asDouble()).isEqualTo(3600.0)
+            if(type=="distribution") {
+                val histogram = result["frames"].single { it["schema"]["fields"][0]["name"].asString()=="bucket" &&
+                    it["schema"]["fields"][1]["labels"]["team"].asString()=="__other__" }
+                assertThat(histogram["data"]["values"][1].toList().map { it.asInt() }).containsExactly(0,5,0,0,0)
+            }
+        }
+    }
     @Test fun `첫 사용은 기간 이전 이력을 확인하고 생성 이전 및 미매핑 이벤트를 제외한다`() {
         val fresh = installations(5); val old = installations(5); val invalid = installations(5)
         fresh.forEach { installationCreated(it,"2026-09-01T12:00:00Z") }
