@@ -110,3 +110,8 @@
 - 참고 개요 §3의 cost_per_active_user 행은 team만 열거하지만 §6 S8-5는 cost_per_active_user(product)를 명시한다. 시나리오의 구체적 요구를 충족하도록 허용 차원에 product를 추가한다. 원본 참고 문서는 수정하지 않는다.
 - S8-5는 active_users와 cost_per_active_user를 제품별로 조회한다. 비용은 기존 일별 시계열 형식을 유지하며 product 라벨로 구분한다. 각 제품의 비용·관측 활성 사용자 분모·최소 집단 크기를 따로 집계한다. tool_calls는 기존 전체 범위 값이다.
 - 같은 사용자 5명이 두 제품에서 각각 15/35달러를 사용한 DB fixture에서 사용자당 3/7달러를 검증했다. 제품별 사용자 수를 더해 고유 사용자 수나 통합 절감액으로 해석하지 않는다.
+
+## S4-8 팀별 대기 판정 범위
+
+- gate_wait_ms는 일별·팀별 p90을 입력 wait_thresholds_min과 비교하고 evidence.dimensions.team으로 판정 팀을 식별한다. 각 팀의 최소 집단 크기를 따로 적용한다. 등록된 팀에 귀속되지 않은 이벤트로 팀 판정을 만들지 않는다.
+- tool_rejections와 usage_heatmap은 기존 선택 범위의 보조 값이다. Plan 전용 대기·생산성 손실·팀 간 고유 사용자 합계를 추정하지 않는다.

@@ -19,7 +19,8 @@ internal object DashboardGateFindings {
                         "title" to "도구 승인 대기 p90이 입력 임계값을 초과했습니다",
                         "evidence" to mapOf("date" to Instant.ofEpochMilli(frame["data"]["values"][time][i].asLong()).toString(),
                             "p90_ms" to cell.asDouble(), "threshold_min" to threshold,
-                            "limitation" to "관측된 tool_gate 대기 시간입니다. Plan 전용 대기나 생산성 손실로 단정하지 않습니다."))
+                            "dimensions" to fields[value].path("labels").properties().associate { it.key to it.value.asString() },
+                            "limitation" to "팀별 관측 tool_gate 대기 시간입니다. 보조 지표는 선택 범위 전체 값입니다. Plan 전용 대기나 생산성 손실로 단정하지 않습니다."))
                 }
             }
         }

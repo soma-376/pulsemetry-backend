@@ -4802,7 +4802,8 @@ class DashboardAuthTest {
     @Test fun `대기 시나리오는 분 임계값과 p90을 비교하고 경계값을 제외한다`() {
         val ids = installations(5)
         val bearer = token()
-        seedPoints(ids.flatMap { listOf(gateEvent(it,120000),promptEvent(it)) })
+        val team = costTeams().first()
+        seedPoints(ids.flatMap { listOf(inTeam(gateEvent(it,120000),team),inTeam(promptEvent(it),team)) })
         val id = mapper.readTree(startRun(bearer,"S4-8","""{"from":"2026-09-01","to":"2026-09-02","wait_thresholds_min":[3,1,2]}""")
             .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
         scenarioRuns.runOne()
@@ -4818,12 +4819,39 @@ class DashboardAuthTest {
         startRun(bearer,"S4-8","""{"wait_thresholds_min":[-1]}""").andExpect(status().isBadRequest)
     }
 
+    @Test fun `대기 시나리오는 팀별 임계값을 판정하고 다른 팀의 인원으로 소집단을 노출하지 않는다`() {
+        val ids = installations(5)
+        val teams = costTeams()
+        seedPoints(ids.map { inTeam(gateEvent(it,120000),teams[0]) } +
+            ids.map { inTeam(gateEvent(it,30000),teams[1]) } +
+            ids.take(4).map { inTeam(gateEvent(it,600000),teams[2]) })
+        val bearer = token()
+        val id = mapper.readTree(startRun(bearer,"S4-8","""{"from":"2026-09-01","to":"2026-09-02","wait_thresholds_min":[1]}""")
+            .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
+        scenarioRuns.runOne()
+        val run = readRun(id,bearer)
+        assertThat(run["status"].asString()).isEqualTo("succeeded")
+        val findings = run["result"]["findings"]
+        assertThat(findings.size()).isEqualTo(1)
+        assertThat(findings[0]["evidence"]["dimensions"]["team"].asString()).isEqualTo(teams[0].toString())
+        assertThat(findings[0]["evidence"]["p90_ms"].asDouble()).isEqualTo(120000.0)
+        val frames = run["result"]["frames"]["gate_wait_ms"]["frames"].toList()
+        val waits = frames.associate { frame ->
+            val fields = frame["schema"]["fields"].toList()
+            val p90 = fields.indexOfFirst { it["name"].asString()=="p90" }
+            fields[p90]["labels"]["team"].asString() to frame["data"]["values"][p90][0]
+        }
+        assertThat(waits.getValue(teams[1].toString()).asDouble()).isEqualTo(30000.0)
+        assertThat(waits.getValue(teams[2].toString()).isNull).isTrue()
+    }
+
     @Test fun `대기 시나리오는 소집단 미관측과 빈 임계값에서 판정하지 않는다`() {
         val ids = installations(5)
         val bearer = token()
+        val team = costTeams().first()
         for((rows, thresholds) in listOf(ids.take(4).map { gateEvent(it,120000) } to "[0]",
             emptyList<String>() to "[0]", ids.map { gateEvent(it,120000) } to "[]")) {
-            seedPoints(rows)
+            seedPoints(rows.map { inTeam(it,team) })
             val id = mapper.readTree(startRun(bearer,"S4-8","""{"from":"2026-09-01","to":"2026-09-02","wait_thresholds_min":$thresholds}""")
                 .andExpect(status().isAccepted).andReturn().response.contentAsString)["run_id"].asString()
             scenarioRuns.runOne()

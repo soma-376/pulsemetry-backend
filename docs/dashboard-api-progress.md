@@ -1265,3 +1265,9 @@
 - `6417e04`와 frontend `52f7cb1` E2E 통과. 실제 수집 fixture의 S8-5 비용 프레임에서 product=claude_code와 사용자당 3달러를 함께 확인하고 결과 화면으로 이동했다. 두 제품 비용 분리는 DB 테스트에서 검증했다.
 - dashboard 테스트 265건(실패·오류·skip 0), bootJar 통과. 기존 42개 실행 경로·프로세스 재기동·ClickHouse 무응답/복구도 통과했고 unexpectedOrUnimplementedResponses=[]다. 로그 /tmp/proj156-product-cost-e2e.log.
 - 알려진 주소 표 UI 감사 누락은 knownUiGaps에 남아 있다. 이번 변경으로 시나리오 전체 의미 대조나 제품 전체 수용을 완료했다고 판정하지 않는다.
+
+## S4-8 팀별 대기 임계값 판정
+
+- 참고 개요 §6의 S4-8 팀 단위 요구에 맞춰 gate_wait_ms를 team으로 분리한다. 기존 일별 p90·엄격한 분 임계값 초과 조건은 유지하고 findings.evidence.dimensions에 팀 라벨을 포함한다. 도구 거절·사용 히트맵 보조 지표는 선택 범위 전체 값이며 판정 한계에도 이를 명시한다.
+- 같은 사용자 5명이 속한 두 팀의 p90 120,000/30,000ms를 분리하고 1분 초과 팀만 판정했다. 네 명인 세 번째 팀의 600,000ms는 null 마스킹하며 판정에서 제외했다.
+- 최초 회귀 실행에서 팀이 없는 기존 경계 fixture가 팀별 결과를 만들지 못했다. 팀을 명시해 경계·소집단·빈 임계값 검증 의미를 보존한 후 dashboard 테스트·bootJar 통과. E2E는 이어서 진행한다.
