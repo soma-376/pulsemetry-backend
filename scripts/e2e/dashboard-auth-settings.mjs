@@ -953,9 +953,10 @@ try {
           const { request } = await import('/src/api/client.ts');
           const response = await request('/query', { method: 'POST', body: JSON.stringify({
             from: 'now-1d', to: 'now', filters: { models: ['session-top-e2e'] },
-            queries: [{ ref_id: 'A', metric_id: 'onboarding_retention', group_by: ['team'], frame_type: 'table', limit: 1 }],
+            queries: [{ ref_id: 'A', metric_id: 'onboarding_retention', group_by: ['team'], frame_type: 'table', limit: 1 },
+              { ref_id: 'B', metric_id: 'onboarding_retention', group_by: ['team'], frame_type: 'timeseries', limit: 1 }],
           }) });
-          return response.results.A;
+          return { ...response.results.A, weekly: response.results.B };
         });
         const longCommitment = await ownerPage.evaluate(async contractId => {
           const { request } = await import('/src/api/client.ts');
@@ -973,6 +974,13 @@ try {
         assert.ok(commitmentValues.commitment_amount > 0);
         assert.equal(commitmentValues.burn_ratio, commitmentValues.cost_usd / commitmentValues.commitment_amount);
         assert.equal(retentionTop.status, 200);
+        assert.equal(retentionTop.weekly.status, 200);
+        assert.ok(retentionTop.weekly.frames.length > 0);
+        for (const frame of retentionTop.weekly.frames) {
+          assert.equal(frame.schema.fields[0].type, 'time');
+          const denominator = frame.schema.fields.findIndex(f => f.name === 'denominator');
+          assert.ok(frame.data.values[denominator].includes(5));
+        }
         const otherCohorts = retentionTop.frames.filter(f => f.schema.fields[0].labels.team === '__other__');
         assert.ok(otherCohorts.length > 0);
         for (const frame of otherCohorts) {
@@ -1038,6 +1046,7 @@ try {
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
     verifiedLongCommitment: { actualFrontendClient: true, owner: true, requestedDays: 730, explicitContract: true },
+    verifiedRetentionTimeseries: { actualFrontendClient: true, owner: true, weekly: true, cohortInstallations: 5 },
     verifiedRetentionTopN: { actualFrontendClient: true, owner: true, otherCohortInstallations: 5 },
     verifiedLastEventTopN: { actualFrontendClient: true, owner: true, otherFinalErrors: 5 },
     verifiedAnomalyTopN: { actualFrontendClient: true, owner: true, otherCost: 250, otherBaseline: 200, otherIncrease: 0.25 },
