@@ -166,7 +166,9 @@ jobs:
 
       # Dockerfile과 빌드 컨텍스트는 레포 루트다. 배포 역할에 ECR pull 권한이 없으므로
       # registry cache 대신 GitHub Actions cache만 쓴다.
+      # 두 이미지가 모두 게시되기 전에는 배포용 dev 태그를 갱신하지 않는다.
       - name: Build and push enrollment-api
+        id: build-enrollment
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
@@ -176,12 +178,12 @@ jobs:
           provenance: false
           push: true
           tags: |
-            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_ENROLLMENT_API }}:${{ env.IMAGE_TAG }}
             ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_ENROLLMENT_API }}:sha-${{ github.sha }}
           cache-from: type=gha,scope=enrollment-api
           cache-to: type=gha,mode=max,scope=enrollment-api
 
       - name: Build and push telemetry-ingest
+        id: build-ingest
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
@@ -191,7 +193,6 @@ jobs:
           provenance: false
           push: true
           tags: |
-            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_TELEMETRY_INGEST }}:${{ env.IMAGE_TAG }}
             ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_TELEMETRY_INGEST }}:sha-${{ github.sha }}
           cache-from: type=gha,scope=telemetry-ingest
           cache-to: type=gha,mode=max,scope=telemetry-ingest
@@ -200,7 +201,39 @@ jobs:
       # Flyway를 적용하는 enrollment-api가 먼저 안정화돼야 ingest의 JPA 검증이 성립한다.
       # 두 서비스 모두 minHealthyPercent가 0이므로 교체 중 짧은 다운타임이 정상이다.
       - name: Deploy enrollment-api, then telemetry-ingest
+        env:
+          ENROLLMENT_IMAGE_DIGEST: ${{ steps.build-enrollment.outputs.digest }}
+          INGEST_IMAGE_DIGEST: ${{ steps.build-ingest.outputs.digest }}
         run: |
+          promote_image() {
+            local repository="$1" digest="$2" image manifest media_type current_digest
+            # SHA 태그가 재실행으로 이동해도 이번 빌드가 게시한 정확한 이미지를 선택한다.
+            image=$(aws ecr batch-get-image --repository-name "$repository" \
+              --image-ids "imageDigest=$digest" --no-cli-pager --output json)
+            manifest=$(jq -er --arg digest "$digest" '
+              if (.failures | length) == 0 and (.images | length) == 1 and
+                 .images[0].imageId.imageDigest == $digest
+              then .images[0].imageManifest | select(type == "string" and length > 0)
+              else error("게시된 이미지 manifest를 확인할 수 없다") end
+              ' <<< "$image")
+            media_type=$(jq -er '.images[0].imageManifestMediaType' <<< "$image")
+
+            # 같은 이미지로 재실행하면 PutImage의 ImageAlreadyExistsException을 피한다.
+            current_digest=$(aws ecr batch-get-image --repository-name "$repository" \
+              --image-ids "imageTag=$IMAGE_TAG" --no-cli-pager \
+              --query 'images[0].imageId.imageDigest' --output text)
+            if [[ "$current_digest" == "$digest" ]]; then
+              echo "이미지 태그 유지: $repository:$IMAGE_TAG ($digest)"
+              return
+            fi
+
+            # 레이어를 다시 내려받지 않고 manifest만 재사용한다.
+            aws ecr put-image --repository-name "$repository" --image-tag "$IMAGE_TAG" \
+              --image-manifest "$manifest" --image-manifest-media-type "$media_type" \
+              --image-digest "$digest" --no-cli-pager \
+              --query 'image.imageId.imageDigest' --output text
+          }
+
           deploy_service() {
             local service="$1" deployment_id state
             echo "::group::재배포 및 안정화: $service"
@@ -234,5 +267,8 @@ jobs:
             echo '::endgroup::'
           }
 
+          promote_image "$ECR_REPO_ENROLLMENT_API" "$ENROLLMENT_IMAGE_DIGEST"
           deploy_service "$ECS_SERVICE_ENROLLMENT_API"
+          # enrollment 안정화에 실패하면 ingest의 dev 태그도 이전 이미지에 남긴다.
+          promote_image "$ECR_REPO_TELEMETRY_INGEST" "$INGEST_IMAGE_DIGEST"
           deploy_service "$ECS_SERVICE_TELEMETRY_INGEST"
