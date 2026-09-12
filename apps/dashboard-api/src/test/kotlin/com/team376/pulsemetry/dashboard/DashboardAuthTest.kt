@@ -1324,6 +1324,42 @@ class DashboardAuthTest {
             .andReturn().response.contentAsString)["results"]["A"]["frames"]
         assertThat(empty.size()).isZero()
     }
+    @Test fun `서브에이전트 상위는 기간 고유 식별자로 정하고 기타의 다중 팀 호출을 중복 제거한다`() {
+        val ids = installations(5); val teams = costTeams()
+        fun event(id: UUID, agent: String?, groups: List<UUID>, at: String): String {
+            val row = mapper.readTree(agentEvent(id,agent,at=at)) as tools.jackson.databind.node.ObjectNode
+            row.set("team_ids_as_of",mapper.valueToTree(groups.map { it.toString() }))
+            return row.toString()
+        }
+        seedPoints(ids.flatMap { id -> listOf("a","b","c").map { event(id,it,listOf(teams[0]),"2026-09-01T12:00:00Z") }+
+            listOf("2026-09-01T12:00:00Z","2026-09-02T12:00:00Z").flatMap { at -> listOf("x","y",null).map { event(id,it,teams.drop(1),at) } }+
+            listOf("z",null).map { event(id,it,teams.drop(1),"2026-08-30T12:00:00Z") } })
+        for(type in listOf("table","scalar","timeseries")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "subagent_activity","group_by" to listOf("team"),
+                "frame_type" to type,"limit" to 1),mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val offset = if(type=="timeseries") 1 else 0
+            val frames = result["frames"].toList().associateBy { it["schema"]["fields"][offset]["labels"]["team"].asString() }
+            assertThat(frames.keys).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
+            val other = frames.getValue("__other__")
+            val values = other["schema"]["fields"].toList().mapIndexed { n,f -> f["name"].asString() to other["data"]["values"][n][0] }.toMap()
+            assertThat(values["value"]?.asDouble()).isEqualTo(2.0)
+            assertThat(values["ratio"]?.asDouble()).isEqualTo(2.0/3.0)
+            assertThat(values["numerator"]?.asDouble()).isEqualTo(if(type=="timeseries") 10.0 else 20.0)
+            assertThat(values["denominator"]?.asDouble()).isEqualTo(if(type=="timeseries") 15.0 else 30.0)
+            assertThat(values["value_compare"]?.asDouble()).isEqualTo(1.0)
+            assertThat(values["numerator_compare"]?.asDouble()).isEqualTo(5.0)
+            assertThat(values["denominator_compare"]?.asDouble()).isEqualTo(10.0)
+        }
+    }
+    @Test fun `서브에이전트 기타 소집단은 일반 프롬프트로 마스킹이 해제되지 않는다`() {
+        val ids = installations(5); val teams = costTeams()
+        seedPoints(ids.flatMap { id -> listOf("a","b","c").map { inTeam(agentEvent(id,it),teams[0]) } }+
+            ids.take(4).flatMap { id -> teams.drop(1).map { inTeam(agentEvent(id,"x"),it) } }+
+            ids.map { inTeam(promptEvent(it),teams[1]) })
+        val other = topFrames("subagent_activity","team").getValue("__other__")
+        assertThat(other["data"]["values"].toList().all { it[0].isNull }).isTrue()
+    }
     @Test fun `서브에이전트 활동 비교의 작은 집단은 수 비율 분자 분모 모두 숨긴다`() {
         val ids = installations(5)
         seedPoints(ids.map { agentEvent(it,"a") }+ids.take(4).map { agentEvent(it,"b",at="2026-08-31T12:00:00Z") })

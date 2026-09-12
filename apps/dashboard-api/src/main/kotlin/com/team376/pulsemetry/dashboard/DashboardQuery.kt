@@ -63,7 +63,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "api_retry_attempts","auto_approval_ratio","api_error_rate","compaction_reduction","mcp_failure_ratio",
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
     private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
-    private val topPeriodMetrics = topCostRatioMetrics + setOf("adoption_rate","active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
+    private val topPeriodMetrics = topCostRatioMetrics + setOf("subagent_activity","adoption_rate","active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
     private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
@@ -444,14 +444,14 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             else -> "countIf($valid)"
         }
         val result = if (q.metricId=="subagent_activity")
-            "uniqExactIf($agentId,$valid AND $agentId!='') AS value, countIf($valid AND $agentId!='') AS numerator, countIf($valid) AS denominator, numerator/nullIf(denominator,0) AS ratio"
+            "uniqExactIf($agentId,$valid AND $agentId!='') AS value, uniqExactIf(tuple(ts,event_id,installation_id,product,signal),$valid AND $agentId!='') AS numerator, uniqExactIf(tuple(ts,event_id,installation_id,product,signal),$valid) AS denominator, numerator/nullIf(denominator,0) AS ratio"
             else if (q.metricId in setOf("compaction_reduction","usage_concentration") || q.metricId in tokenRatios)
             "if(countIf($valid)=0,NULL,$numerator) AS numerator, if(countIf($valid)=0,NULL,$denominator) AS denominator, numerator/nullIf(denominator,0) AS value"
             else if (q.metricId in ratioMetrics)
             "coalesce($numerator,0) AS numerator, coalesce($denominator,0) AS denominator, numerator/nullIf(denominator,0) AS value"
             else "$numerator AS value"
         // 언어 선택으로 분모가 좁아지면 선택 언어의 유효 관측 인원으로 마스킹한다.
-        val selectedPeople = if(q.metricId=="refusals" || (q.metricId=="edit_acceptance_rate" && q.params.containsKey("language")))
+        val selectedPeople = if(q.metricId in setOf("refusals","subagent_activity") || (q.metricId=="edit_acceptance_rate" && q.params.containsKey("language")))
             "uniqExactIf($person,$known AND $valid)" else people
         val sql = """SELECT $bucket AS bucket${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
             $selectedPeople AS people, countIf($activePoint)>0 AS active_time_definition,
