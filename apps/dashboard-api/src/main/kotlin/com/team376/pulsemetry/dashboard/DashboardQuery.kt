@@ -63,7 +63,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "api_retry_attempts","auto_approval_ratio","api_error_rate","compaction_reduction","mcp_failure_ratio",
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
     private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
-    private val topPeriodMetrics = topCostRatioMetrics + setOf("active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
+    private val topPeriodMetrics = topCostRatioMetrics + setOf("adoption_rate","active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
     private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
@@ -74,7 +74,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private val sessionMetrics = setOf("prompts_per_session", "read_tool_density")
     private val intervals = linkedMapOf("1h" to "1 HOUR", "6h" to "6 HOUR", "1d" to "1 DAY", "1w" to "1 WEEK", "1M" to "1 MONTH")
     private val utc = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC)
-    private data class Scope(val parameters: Map<String, String>, val members: Int, val teamNames: Map<String, String>, val teamMembers: Map<String, Int>, val installations: Int)
+    private data class Scope(val parameters: Map<String, String>, val members: Int, val teamNames: Map<String, String>, val teamMembers: Map<String, Set<UUID>>, val installations: Int)
     private data class Rows(val data: List<JsonNode>, val sql: String)
 
     @PostMapping("/query")
@@ -236,8 +236,13 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                                         if (denominator==0.0) 0.0 else rows.sumOf { it["numerator"].asDouble(0.0) }/denominator
                                     } else rows.sumOf { it["value"].asDouble(0.0) }
                                 }.thenBy { mapper.writeValueAsString(it) }).take(groupLimit(q))
-                            current = read(calculation,scope,from,to,zone,interval,deadline,retained)
-                            previous = comparison?.let { read(calculation,scope,it.first,it.second,zone,interval,deadline,retained) }
+                            // 기타에 실제 합쳐지는 팀의 현재 구성원 합집합을 두 기간에 공통 적용한다.
+                            val aggregateScope = if (q.metricId=="adoption_rate" && q.groupBy==listOf("team")) {
+                                val otherMembers = keys.filter { it !in retained }.flatMap { scope.teamMembers[it.single()].orEmpty() }.toSet()
+                                scope.copy(teamMembers=scope.teamMembers + ("__other__" to otherMembers))
+                            } else scope
+                            current = read(calculation,aggregateScope,from,to,zone,interval,deadline,retained)
+                            previous = comparison?.let { read(calculation,aggregateScope,it.first,it.second,zone,interval,deadline,retained) }
                         }
                     }
                     results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="contract_commitment_burn") calculation.copy(groupBy=listOf("contract_id")) else if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else if (q.metricId=="onboarding_retention") q.copy(groupBy=q.groupBy+listOf("cohort_index","week_index")) else calculation, definition, current, previous, interval, ticks, comparison?.takeIf { before == null }?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
@@ -288,7 +293,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             JOIN enrollment.teams t ON t.id=tm.team_id WHERE t.tenant_id=:tenant AND t.status='active' AND tm.left_at IS NULL""")
             .param("tenant", user.tenantId).query().listOfRows()
         val teamMembers = memberships.filter { it["member_id"] in members }.groupBy { it["team_id"].toString() }
-            .mapValues { (_, rows) -> rows.map { it["member_id"] }.distinct().size }
+            .mapValues { (_, rows) -> rows.map { it["member_id"] as UUID }.toSet() }
         val scopedMemberIds = if (unrestricted) selected.map { it["member_id"] }.toSet() else
             memberships.filter { it["team_id"] in teams }.map { it["member_id"] }.toSet()
         val installationCount = selected.count { it["installation_status"]=="active" && it["member_id"] in scopedMemberIds }
@@ -1013,7 +1018,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             val node = row as tools.jackson.databind.node.ObjectNode
             val numerator = if (q.metricId=="telemetry_coverage") row["observed_installations"].asDouble() else row["people"].asDouble()
             val denominator = if (q.metricId=="telemetry_coverage") scope.installations else
-                q.groupBy.indexOf("team").takeIf { it>=0 }?.let { scope.teamMembers[row["g$it"].asString()] ?: 0 } ?: scope.members
+                q.groupBy.indexOf("team").takeIf { it>=0 }?.let { scope.teamMembers[row["g$it"].asString()]?.size ?: 0 } ?: scope.members
             if (q.metricId=="active_users") node.put("value",numerator) else {
                 node.put("numerator",numerator)
                 node.put("denominator",denominator)

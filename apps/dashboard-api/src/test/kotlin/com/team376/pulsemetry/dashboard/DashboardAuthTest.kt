@@ -266,6 +266,33 @@ class DashboardAuthTest {
         val fractional = mapper.readTree(queryResult(after).andExpect(status().isOk).andReturn().response.contentAsString)
         assertThat(fractional["results"]["A"]["frames"].size()).isZero()
     }
+    @Test fun `도입률 기타는 비교 기간 팀까지 현재 구성원 합집합을 분모로 사용한다`() {
+        val teams = costTeams()
+        val top = installations(5,teams[0]); val shared = installations(10,teams[1])
+        shared.forEach { id -> jdbc.sql("""INSERT INTO enrollment.team_memberships(team_id,member_id)
+            SELECT :team,member_id FROM enrollment.installations WHERE id=:id""")
+            .param("team",teams[2]).param("id",id).update() }
+        installations(2,teams[2]) // 관측이 없어도 현재 팀 구성원은 분모에 포함한다.
+        seedPoints(top.map { point(it,1.0,team=teams[0]) }+
+            shared.take(5).flatMap { id -> listOf("2026-09-01T12:00:00Z","2026-09-02T12:00:00Z").map { point(id,1.0,at=it,team=teams[1]) } }+
+            shared.take(5).map { point(it,1.0,at="2026-08-30T12:00:00Z",team=teams[2]) })
+        for(type in listOf("table","scalar","timeseries")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "adoption_rate","group_by" to listOf("team"),
+                "frame_type" to type,"limit" to 1),mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val offset = if(type=="timeseries") 1 else 0
+            val frames = result["frames"].toList().associateBy { it["schema"]["fields"][offset]["labels"]["team"].asString() }
+            assertThat(frames.keys).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
+            val other = frames.getValue("__other__")
+            val fields = other["schema"]["fields"].toList()
+            val values = other["data"]["values"]
+            val byName = fields.mapIndexed { i,f -> f["name"].asString() to values[i][0] }.toMap()
+            assertThat(values[offset][0].asDouble()).isEqualTo(5.0/12.0)
+            assertThat(byName["denominator"]?.asDouble()).isEqualTo(12.0)
+            assertThat(byName["value_compare"]?.asDouble()).isEqualTo(5.0/12.0)
+            assertThat(byName["denominator_compare"]?.asDouble()).isEqualTo(12.0)
+        }
+    }
     @Test fun `활성 사용자 상위는 기간 고유 인원으로 선택하고 기타 팀의 중복 인원을 제거한다`() {
         val teams = costTeams(); val top = installations(6); val shared = installations(5)
         seedPoints(top.map { point(it,1.0,team=teams[0]) }+shared.flatMap { id ->
@@ -304,7 +331,7 @@ class DashboardAuthTest {
         }
     }
     @Test fun `활성 사용자 기타의 다중 팀 시간 중복으로 비활성자가 활성화되지 않는다`() {
-        val teams = costTeams(); val top = installations(5); val hidden = installations(4)
+        val teams = costTeams(); val top = installations(6); val hidden = installations(4)
         fun activity(id: UUID, value: Double, membership: List<UUID>): String {
             val row = mapper.readTree(point(id,value)) as tools.jackson.databind.node.ObjectNode
             row.set("team_ids_as_of",mapper.valueToTree(membership.map { it.toString() }))
