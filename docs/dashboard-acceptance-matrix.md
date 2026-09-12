@@ -41,7 +41,7 @@
 - W3.3 벤더 주소 도메인 표·비교·CSV·소집단과 감사, CSV 오류의 JSON 상태 코드.
 - 실제 수집 → 조회 → 42개 시나리오 실행 경로와 프로세스 재기동 복구. 실행 경로 통과는 모든 fixture에 양수 판정이 있음을 뜻하지 않는다.
 
-## 남은 수용 조건
+## 범위 결정과 검증 한계
 
 | 항목 | 현재 근거와 제한 | 다음 완료 조건 |
 |---|---|---|
@@ -58,33 +58,15 @@
 
 최신 전체 빌드: `7e122fa`, 테스트 1,072건(실패·오류·skip 0), 58개 작업 재실행. 이후 S4-8 수정 `86a2a29`는 dashboard 테스트 266건·bootJar·전체 E2E를 통과했다. 전체 Gradle build는 이번 수정 후 재실행하지 않았다.
 
-## 주소 표 일반 UI 재현
+## 현재 프론트엔드 연동 상태
 
-- frontend `52f7cb1`, backend `5282ed5`에서 owner 로그인 → 운영 · 보안 → 보안 → 벤더 계정 불일치 위젯을 실제 브라우저로 검증했다.
-- `Operations.tsx`의 `ops-mismatch`는 `useWidget.ts` → `api.query`를 호출하면서 감사 사유를 전달하지 않는다. 요청에 X-Audit-Reason이 없고 403으로 거부되어 표 행은 0개다.
-- 화면은 “쿼리에 실패했습니다”와 “기간을 줄이거나 잠시 후 다시 시도해 주세요.”를 표시한다. 기간 변경이나 재시도로 해결되지 않는 감사 입력 문제다. 기존 세션 조회의 AuditDialog와 연결하는 프런트엔드 후속 작업이 필요하다.
-- `scripts/e2e/dashboard-auth-settings.mjs`가 이 경로를 재현하고 result.json의 knownUiGaps에 별도 기록한다. passed=true는 알려진 차단 재현과 기존 검증 통과이며 UI 수용 완료가 아니다. 프런트엔드 수정 후에는 이 기대값을 감사 입력·성공 조건으로 교체해야 한다.
-- 실행 산출물: build/e2e/auth-settings/owner-address-ui-audit-blocked.png. 이미지를 직접 확인했다. 주소 데이터가 렌더링되지 않아 정상 표의 라벨·비교·마스킹 시각 검증은 아직 남아 있다.
+frontend `acdc626`에서 주소 조회 감사 전달, 비교 결과 헤더, 잔존율 코호트·주차 라벨을 수정했다. 실제 E2E의 `knownUiGaps=[]`이며, 과거 주소403·라벨 누락 재현 기록은 [진행 기록](dashboard-api-progress.md)에 보존한다. 프론트엔드 수정 포함 여부는 더 이상 응답 대기 항목이 아니다.
 
-전후 비교 5개 시나리오의 의미 대조와 기존 테스트 10건의 근거는 [dashboard-comparison-acceptance.md](dashboard-comparison-acceptance.md)에 정리했다. 런타임 수정 없이 최신 테스트 결과와 소스의 일치를 확인했다.
+- 주소 표: 사유 길이 검증·취소·정상 조회·도메인 마스킹·감사 저장. 기간을24h로 변경하면 기존 행이 제거되고 새 사유 제출 전 개인 요청0건, 제출 후 새 기간/감사 헤더·상태200·감사 기록1건을 검증했다.
+- 시나리오: P3 최초 실행·다시 실행·저장된 상대 기간 열기에서 각각 새 사유와 새 실행 ID를 확인했다.
+- CSV: 일반 개요 다운로드 버튼과 개인 주소 CSV 공통 클라이언트를 구분하여 검증했다. 일반 refusals 집계는 owner 권한이 필요하지만 감사 사유는 필수가 아니다.
+- 결과: S4-4 현재p50=2/이전 미관측과 현재/이전 헤더, S8-2 코호트 날짜·주차0·분모5·미관측 및768px 화면을 확인했다.
 
-전체 시나리오 의미 목록은 [dashboard-scenario-semantics.md](dashboard-scenario-semantics.md)다. 나머지 37개 대표 DB 테스트의 최신 통과를 확인했으며, 시나리오 의미의 소스 대조 자체는 더 이상 미착수 항목이 아니다. UI·미지원 distribution·확대 분석 요구와 구분한다.
+전후 비교5개 의미는 [비교 검증](dashboard-comparison-acceptance.md), 전체46개 분류는 [시나리오 의미](dashboard-scenario-semantics.md), 프론트엔드 변경은 [구현 계획과 결과](dashboard-frontend-completion-plan.md)를 참조한다.
 
-S4-4 비교 결과 표의 현재 p50=2/이전 미관측은 실제 DOM 검사와 스크린샷으로 확인했다. 원시 필드명 라벨 개선·다른 비교 지표의 마스킹·잔존율 화면은 남아 있다. 근거는 dashboard-comparison-acceptance.md의 실제 결과 표 검증 절을 참조한다.
-
-## 잔존율 결과 표 라벨 누락 재현
-
-- backend 993bc19(런타임 86a2a29), frontend 52f7cb1에서 실제 수집 후 S8-2 실행 결과의 onboarding_retention 표를 검증했다. API의 value 필드에는 cohort_week·week_index=0이 있고, 진행 중인 주의 value는 null, denominator는 5다.
-- 실제 표에는 value/numerator/denominator와 미관측/미관측/5가 표시되지만 코호트 날짜·주차는 표시되지 않는다. src/pages/scenarios/Reports.tsx의 다중 수치 table 경로는 필드 이름과 셀만 렌더링하고 labels를 표시하지 않는다. 여러 코호트가 있으면 어떤 코호트/주차의 행인지 식별하기 어렵다.
-- scripts/e2e/dashboard-ingest.mjs가 API 라벨 존재·분모·null, 실제 표 개수·미관측 표시·라벨 부재를 단언하고 retentionResultUi.knownGap에 기록한다. build/e2e/auth-settings/admin-retention-table-missing-labels.png도 직접 확인했다.
-- 이 테스트는 알려진 UI 결함 재현이며 잔존율 UI 수용 통과가 아니다. frontend 수정 후에는 라벨 표시를 기대하는 검증으로 교체해야 한다. 주간 시계열·다중 코호트·소집단의 시각 검증은 별도로 남아 있다. S3-3은 기존 빈 코호트 실행 경로만 재실행했으며 이번에 정상 코호트 화면 검증을 추가한 것은 아니다.
-
-프론트엔드 결함의 구체적 수정·검증·커밋 계획은 [dashboard-frontend-completion-plan.md](dashboard-frontend-completion-plan.md)다. 기존 frontend 소스 수정 제외 범위를 변경할지 사용자에게 질문했으며 응답 대기다.
-
-## 프론트엔드 결함 수정 이후 상태
-
-아래 과거 재현 기록의 주소 403·잔존율 라벨 누락·비교 원시 헤더는 frontend acdc626에서 수정했다. E2E의 knownUiGaps는 빈 목록이고 기존 실패 기대값을 성공 조건으로 교체했다. 시각 확인 범위는 주소 표·S4-4 비교 표·S8-2 잔존율 표(1440/768)다. 일반 refusals 집계에는 감사가 필수가 아니라는 점도 실제 backend 확인 후 교정했다. distribution 8개 지원/45개 미지원 범위 확정 질문은 별도로 응답 대기다.
-
-## 개인 주소 조회 기간 변경의 감사 재입력
-
-실제 주소 표 조회 후 전역 기간을24h로 변경하여 이전 행 제거, 새 감사 입력 요구, 빈 입력/제출 비활성 및 제출 전 개인 요청0건을 확인했다. 새 사유 제출 후 now-24h/now 요청과 감사 헤더, 상태200, 마스킹 주소 행, 감사 기록1건을 단언한다. verifiedAuditUi.scopeChangeRequiresFreshReason=true이며 /tmp/proj156-audit-scope-e2e.log에서 E2E 통과했다. 모든 필터 조합이나 이전 범위 복귀에 대한 검증은 아니다.
+검토 대상 브랜치·검증 버전·재실행 방법·미결 범위는 [인계 문서](dashboard-handoff.md)에 모았다.
