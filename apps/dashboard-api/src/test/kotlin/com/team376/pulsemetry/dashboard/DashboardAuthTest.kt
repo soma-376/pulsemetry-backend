@@ -31,6 +31,7 @@ class DashboardAuthTest {
     @Autowired lateinit var jdbc: JdbcClient
     @Autowired lateinit var mapper: ObjectMapper
     @Autowired lateinit var scenarioRuns: DashboardScenarioRuns
+    @Autowired lateinit var transactionManager: org.springframework.transaction.PlatformTransactionManager
     @Autowired lateinit var runStore: com.team376.pulsemetry.persistence.dashboard.DashboardRuns
     @Autowired lateinit var scenarioInputs: DashboardScenarioInputs
     @Autowired lateinit var clock: java.time.Clock
@@ -5109,6 +5110,41 @@ class DashboardAuthTest {
         } finally { pool.shutdownNow() }
     }
 
+    @Test fun `새 저장소 인스턴스는 만료 실행을 종료하고 대기 작업을 완료하며 중복 완료를 거부한다`() {
+        val bearer = token()
+        repeat(3) { startRun(bearer).andExpect(status().isAccepted) }
+        val old = requireNotNull(runStore.claim())
+        jdbc.sql("UPDATE dashboard.scenario_runs SET lease_until=now()-interval '1 second' WHERE id=:id").param("id",old.id).update()
+        val restarted = com.team376.pulsemetry.persistence.dashboard.DashboardRuns(jdbc,transactionManager)
+        val next = requireNotNull(restarted.claim())
+        assertThat(next.id).isNotEqualTo(old.id)
+        assertThat(restarted.get(tenant,old.id)?.status).isEqualTo("failed")
+        assertThat(restarted.finish(old,"{}",null)).isFalse()
+        assertThat(restarted.progress(old,1)).isFalse()
+        assertThat(restarted.finish(next,"{}",null)).isTrue()
+        assertThat(restarted.finish(next,null,"{}" )).isFalse()
+        assertThat(restarted.progress(next,1)).isFalse()
+        assertThat(restarted.get(tenant,next.id)?.status).isEqualTo("succeeded")
+        assertThat(restarted.claim()).isNotNull()
+        assertThat(restarted.claim()).isNull()
+    }
+    @Test fun `동시 워커는 대기 작업을 서로 다른 claim으로 한 번씩 가져간다`() {
+        val bearer = token()
+        repeat(3) { startRun(bearer).andExpect(status().isAccepted) }
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(6)
+        try {
+            val tasks = (1..6).map { pool.submit<com.team376.pulsemetry.persistence.dashboard.DashboardRunRow?> {
+                gate.await()
+                com.team376.pulsemetry.persistence.dashboard.DashboardRuns(jdbc,transactionManager).claim()
+            } }
+            gate.countDown()
+            val claimed = tasks.mapNotNull { it.get(10,java.util.concurrent.TimeUnit.SECONDS) }
+            assertThat(claimed).hasSize(3)
+            assertThat(claimed.map { it.id }.distinct()).hasSize(3)
+            assertThat(claimed.map { it.claim }.distinct()).hasSize(3)
+        } finally { pool.shutdownNow() }
+    }
     @Test fun `취소와 lease 만료는 늦은 워커 결과를 차단한다`() {
         val bearer = token()
         val id = mapper.readTree(startRun(bearer).andReturn().response.contentAsString)["run_id"].asString()
