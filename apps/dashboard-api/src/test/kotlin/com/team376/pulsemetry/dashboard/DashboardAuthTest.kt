@@ -1760,6 +1760,42 @@ class DashboardAuthTest {
             .andReturn().response.contentAsString)["results"]["A"]["frames"][0]
         assertThat(hidden["data"]["values"].toList().drop(1).all { it.toList().all { v -> v.isNull } }).isTrue()
     }
+    @Test fun `무산출 기타는 팀을 가로지르는 세션과 산출을 합쳐 재판정한다`() {
+        val ids = installations(5); val teams = costTeams()
+        val rows = ids.flatMap { id ->
+            listOf(inTeam(promptEvent(id,session="top"),teams[0]),
+                inTeam(promptEvent(id,session="merged"),teams[1]),
+                inTeam(promptEvent(id,session="merged"),teams[2]),
+                inTeam(sessionOutput(id,"merged","claude_code.commit.count"),teams[2]),
+                inTeam(promptEvent(id,session="empty"),teams[1]),
+                inTeam(promptEvent(id,session="empty"),teams[2]),
+                inTeam(promptEvent(id,session="productive"),teams[1]),
+                inTeam(sessionOutput(id,"productive","claude_code.commit.count"),teams[1]),
+                inTeam(promptEvent(id,session="prior",at="2026-08-30T12:00:00Z"),teams[1])) }
+        seedPoints(rows)
+        for(type in listOf("table","scalar","timeseries")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "abandoned_session_ratio","group_by" to listOf("team"),
+                "frame_type" to type,"limit" to 1),mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val offset = if(type=="timeseries") 1 else 0
+            val other = result["frames"].single { it["schema"]["fields"][offset]["labels"]["team"].asString()=="__other__" }
+            val top = result["frames"].single { it["schema"]["fields"][offset]["labels"]["team"].asString()!="__other__" }
+            val kept = top["schema"]["fields"][offset]["labels"]["team"].asString()
+            val values = other["schema"]["fields"].toList().mapIndexed { n,f -> f["name"].asString() to other["data"]["values"][n][0] }.toMap()
+            assertThat(kept).isEqualTo(teams[0].toString())
+            assertThat(values["value"]?.asDouble()).isEqualTo(1.0/3.0)
+            assertThat(values["denominator"]?.asDouble()).isEqualTo(15.0)
+            assertThat(values["value_compare"]?.asDouble()).isEqualTo(1.0)
+        }
+    }
+    @Test fun `무산출 기타 소집단은 세션 없는 로그로 해제되지 않는다`() {
+        val ids = installations(5); val teams = costTeams()
+        seedPoints(ids.map { inTeam(promptEvent(it,session="top"),teams[0]) }+
+            ids.take(4).flatMap { id -> teams.drop(1).map { inTeam(promptEvent(id,session="shared"),it) } }+
+            ids.map { inTeam(promptEvent(it,session="(unknown)"),teams[1]) })
+        val other = topFrames("abandoned_session_ratio","team").getValue("__other__")
+        assertThat(other["data"]["values"].toList().all { it[0].isNull }).isTrue()
+    }
     private fun lastEvent(id: UUID, session: String, type: String, sequence: Int, error: String = "",
         at: String = "2026-09-01T12:00:00Z", signal: String = "log", product: String = "claude_code"): String {
         val row = mapper.readTree(promptEvent(id,session=session,at=at,product=product)) as tools.jackson.databind.node.ObjectNode

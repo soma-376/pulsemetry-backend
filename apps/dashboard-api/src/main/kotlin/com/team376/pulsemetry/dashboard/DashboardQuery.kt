@@ -63,7 +63,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "api_retry_attempts","auto_approval_ratio","api_error_rate","compaction_reduction","mcp_failure_ratio",
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
     private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
-    private val topPeriodMetrics = topCostRatioMetrics + setOf("subagent_activity","adoption_rate","active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
+    private val topPeriodMetrics = topCostRatioMetrics + setOf("abandoned_session_ratio","subagent_activity","adoption_rate","active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
     private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
@@ -349,7 +349,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (q.metricId=="onboarding_ttfu") return readOnboarding(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="usage_concentration") return readConcentration(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="session_last_event") return readLastEvent(q,scope,from,to,zone,interval,deadline)
-        if (q.metricId=="abandoned_session_ratio") return readAbandoned(q,scope,from,to,zone,interval,deadline)
+        if (q.metricId=="abandoned_session_ratio") return readAbandoned(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId=="tokens") return readTokens(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId=="hook_executions") return readHookExecutions(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId in durationMetrics) return readDuration(q, scope, from, to, zone, interval, deadline,retained)
@@ -799,9 +799,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return Rows(rows,sql)
     }
     private fun readAbandoned(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
-        zone: String, interval: String, deadline: Long): Rows {
+        zone: String, interval: String, deadline: Long, retained: List<List<String>>? = null): Rows {
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
-        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val dimensions = groupDimensions(q.groupBy.map(::dimension),retained)
         val groupNames = q.groupBy.indices.map { "g$it" }
         val suffix = if (groupNames.isEmpty()) "" else ","+groupNames.joinToString(",")
         val groups = "bucket$suffix"
@@ -811,7 +811,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val cumulative = "JSONExtractInt(raw_json,'point','aggregation_temporality')=2"
         // 산출은 기간 전체의 같은 설치·제품·세션과 연결하고 마지막 로그 시각의 버킷에 한 번 배치한다.
         val sql = """WITH observed AS (
-            SELECT *${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
+            SELECT DISTINCT ts,event_id,installation_id,product,signal,raw_json${if (dimensions.isEmpty()) "" else ","+dimensions.joinToString(",")},
                 JSONExtractString(raw_json,'envelope','session_id') AS session_id
             FROM (SELECT * $base)
             ${if ("team" in q.groupBy) "ARRAY JOIN arrayFilter(t -> {unrestricted:UInt8}=1 OR has({teams:Array(String)},t),team_ids_as_of) AS team" else ""}
@@ -827,14 +827,14 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             GROUP BY installation_id,product,session_id$suffix
         ), stats AS (
             SELECT $bucket AS bucket$suffix, count() AS points, countIf(coalesce(output_value,0)<=0) AS numerator,
-                count() AS denominator, numerator/denominator AS value, sum(cumulative_points) AS cumulative
+                count() AS denominator, numerator/denominator AS value, sum(cumulative_points) AS cumulative,
+                uniqExactIf($person,$known) AS session_people
             FROM sessions WHERE logs>0 GROUP BY $groups
-        ) SELECT stats.*,privacy.people,privacy.active_time_definition
+        ) SELECT stats.*,least(privacy.people,stats.session_people) AS people,privacy.active_time_definition
             FROM stats INNER JOIN privacy USING ($groups) ORDER BY $groups"""
-        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
+        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone,
+            "retained" to mapper.writeValueAsString(retained.orEmpty()).replace("\\", "\\\\"))
         val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
-        if (rows.map { row -> q.groupBy.indices.map { row["g$it"].asString() } }.distinct().size>groupLimit(q))
-            throw DashboardReadException("query_too_wide",422)
         return Rows(rows,sql)
     }
     private fun readTokens(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
