@@ -352,6 +352,9 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   assert.equal(gateRun.result.findings.length, 1);
   assert.equal(gateRun.result.findings[0].evidence.p90_ms, 120000);
   assert.equal(gateRun.result.findings[0].evidence.threshold_min, 1);
+  assert.equal(gateRun.result.findings[0].evidence.dimensions.team, '00000000-0000-0000-0000-000000000010');
+  assert.ok(gateRun.result.frames.gate_wait_ms.frames.some(f =>
+    f.schema.fields.some(field => field.name === 'p90' && field.labels.team === '00000000-0000-0000-0000-000000000010')));
   await page.evaluate(id => {
     window.history.pushState(null, '', `/runs/${id}`);
     window.dispatchEvent(new PopStateEvent('popstate'));
