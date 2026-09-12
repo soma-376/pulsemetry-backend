@@ -824,6 +824,16 @@ try {
         raw_json: JSON.stringify({ type: 'tool_call', payload: { model: 'agent-top-e2e', agent_id: agent, tool_name: 'Read' } }),
       })));
       run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], agentEvents.join('\n'));
+      const concentrationEvents = installations.flatMap((p, index) => [
+        { value: index === 0 ? 100 : 1, teams: [sessionTeams[0]] },
+        { value: 10, teams: sessionTeams.slice(1) },
+        ...(index === 0 ? [{ value: 10, teams: [sessionTeams[2]] }] : []),
+      ].map(({ value, teams }) => JSON.stringify({
+        ...p, event_id: randomUUID(), signal: 'log', team_ids_as_of: teams,
+        raw_json: JSON.stringify({ type: 'llm_call', payload: { model: 'concentration-top-e2e',
+          tokens: { input: value, output: 0, cache_read: 0, cache_create: 0 } } }),
+      })));
+      run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], concentrationEvents.join('\n'));
       const securityContext = await browser.newContext();
       try {
         const ownerPage = await securityContext.newPage();
@@ -894,6 +904,18 @@ try {
           }) });
           return series(response.results.A);
         });
+        const concentrationTop = await ownerPage.evaluate(async () => {
+          const { request } = await import('/src/api/client.ts');
+          const { series } = await import('/src/widgets/model.ts');
+          const response = await request('/query', { method: 'POST', body: JSON.stringify({
+            from: 'now-1d', to: 'now', filters: { models: ['concentration-top-e2e'] },
+            queries: [{ ref_id: 'A', metric_id: 'usage_concentration', group_by: ['team'], frame_type: 'scalar', limit: 1 }],
+          }) });
+          return series(response.results.A);
+        });
+        assert.equal(concentrationTop.state, 'success');
+        assert.deepEqual(Object.fromEntries(concentrationTop.points.filter(p => p.labels.team === '__other__').map(p => [p.key, p.value.value])),
+          { value: 1 / 3, numerator: 20, denominator: 60 });
         assert.equal(onboardingTop.state, 'success');
         assert.deepEqual(Object.fromEntries(onboardingTop.points.filter(p => p.labels.team === '__other__').map(p => [p.key, p.value.value])),
           { p50: 3600, p90: 3600 });
@@ -943,6 +965,7 @@ try {
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
+    verifiedConcentrationTopN: { actualFrontendClient: true, owner: true, otherTopTokens: 20, otherTotalTokens: 60, otherRatio: 1 / 3 },
     verifiedOnboardingTopN: { actualFrontendClient: true, owner: true, otherP50Seconds: 3600, otherP90Seconds: 3600 },
     verifiedAbandonedTopN: { actualFrontendClient: true, owner: true, otherAbandonedSessions: 10, otherSessions: 10, otherRatio: 1 },
     verifiedAgentTopN: { actualFrontendClient: true, owner: true, otherAgents: 2, otherCalls: 10, otherTotalCalls: 15 },
