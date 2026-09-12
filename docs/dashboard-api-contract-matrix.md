@@ -102,3 +102,5 @@
 - 잔존율 시계열은 시간대의 주 시작일을 시간축으로 사용하고 코호트별 프레임을 반환한다. interval 생략 또는 1w만 허용한다. 비교 값은 상대 코호트·주차로 정렬하고 미완료 주차는 null을 유지한다.
 
 - vendor_account_mismatch의 명시적 table은 owner·감사 후 설치 ID와 주소 도메인을 반환한다. scalar/timeseries 개수 집계와 구분하며 비교 주소 열·limit 초과 422·소집단 단일 null 행 정책을 적용한다.
+
+- 주소 table 비교·CSV: 설치 합집합과 빈 기간, 로컬 부분 제거, 비교 소집단의 행 수 마스킹, limit 422 및 admin 403, 감사 기록을 DB 테스트로 검증했다. CSV 요청의 오류는 JSON Content-Type과 원래 상태 코드를 유지한다. frontend api.queryCsv의 감사 사유 전달은 남아 있다.

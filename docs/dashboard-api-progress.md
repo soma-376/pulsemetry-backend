@@ -35,7 +35,7 @@
 
 ## 검증
 
-- 최신 dashboard 검증: `5455685` 워커 복구 검증 후 263건·JAR 검증 통과. 아래 전체 빌드 1,065건은 이전 `922a5d7` 기준이다.
+- 최신 dashboard 검증: `0842990` CSV 오류·주소 수용 검증 후 265건·JAR 검증 통과. 아래 전체 빌드 1,065건은 이전 `922a5d7` 기준이다.
 
 - 최신 검증: `922a5d7`에서 전체 `./gradlew build --rerun-tasks` 통과. 1,065건(dashboard 258건 포함), 실패·오류·skip 0건. 58개 작업 모두 재실행했다. 일반 그룹 상위 N은 51개 연결·0개 미연결이며 group_by 금지 2개는 별도다.
 
@@ -1221,3 +1221,15 @@
 
 - `5455685`와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`의 E2E 통과. 테스트 API를 SIGKILL로 종료한 뒤 DB에 대기·만료 실행 상태를 준비하고 같은 DB로 재기동했다. 대기 실행 succeeded, 만료 실행 failed/worker_lease_expired를 실제 frontend 로그인·RUN-GET으로 확인했다.
 - 기존 실제 수집·42개 시나리오와 주소 감사·장기 계약·지표 연동도 통과했으며 `unexpectedOrUnimplementedResponses=[]`다. frontend 소스는 변경하지 않았다. DB 장애·네트워크 분단·실제 조회 도중 장애 시험은 이번 범위에 포함하지 않는다.
+
+## 주소 비교·CSV 수용 검증과 오류 형식 수정
+
+- 주소 표의 비교 설치 합집합·빈 기간·도메인 전용 CSV·limit 초과·비교 소집단·admin 거부·감사 기록을 실제 DB 테스트로 보강했다.
+- 새 테스트에서 Accept: text/csv 오류 응답이 JSON 형식을 명시하지 않아 422가 406으로 바뀌고 권한 예외 응답도 실패하는 문제를 발견했다. 공통 오류 핸들러와 QRY CSV 오류 응답에 application/json을 명시해 원래 상태 코드를 유지한다.
+- 구현 `0842990`, dashboard 테스트 265건·JAR 검증 통과, 실패·오류·skip 0건. 비교 주소의 로컬 부분과 소집단 식별자가 CSV에 나오지 않으며 인가 거부에는 감사 성공 기록을 남기지 않는다.
+- frontend의 공통 request는 감사 사유와 text 응답을 지원하지만 api.queryCsv 래퍼는 감사 사유를 받지 않는다. 일반 내보내기 UI의 감사 전달은 프런트엔드 후속 연동 항목이다. 이번 작업은 frontend 소스를 변경하지 않는다.
+
+### 주소 CSV·오류 E2E 결과
+
+- `0842990`와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`의 E2E 통과. 실제 owner 로그인·공통 request에서 CSV 도메인 출력, 로컬 부분 부재, 동일 사유 감사 1건을 확인했다. 감사 누락 403·limit 초과 422와 query_too_wide JSON 메시지도 확인했다.
+- 기존 실제 수집·42개 시나리오·프로세스 강제 종료/재기동 복구도 통과했고 `unexpectedOrUnimplementedResponses=[]`다. frontend 소스는 변경하지 않았다. api.queryCsv 래퍼나 일반 내보내기 버튼의 감사 입력까지 검증한 것은 아니다.

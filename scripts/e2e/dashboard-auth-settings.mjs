@@ -980,6 +980,32 @@ try {
           }) }, '벤더 주소 도메인 표 연동 검증 사유');
           return response.results.A;
         });
+        const addressCsv = await ownerPage.evaluate(async () => {
+          const { request } = await import('/src/api/client.ts');
+          return request('/query', { method: 'POST', headers: { Accept: 'text/csv' }, body: JSON.stringify({
+            from: 'now-1d', to: 'now', filters: { models: ['address-table-e2e'] },
+            queries: [{ ref_id: 'A', metric_id: 'vendor_account_mismatch', frame_type: 'table' }],
+          }) }, '벤더 주소 CSV 감사 기록 검증 사유', 'text');
+        });
+        const csvErrors = await ownerPage.evaluate(async () => {
+          const { request } = await import('/src/api/client.ts');
+          const body = { from: 'now-1d', to: 'now', filters: { models: ['address-table-e2e'] },
+            queries: [{ ref_id: 'A', metric_id: 'vendor_account_mismatch', frame_type: 'table', limit: 1 }] };
+          const errors = [];
+          for (const reason of [undefined, '벤더 주소 CSV 제한 오류 검증 사유']) {
+            try {
+              await request('/query', { method: 'POST', headers: { Accept: 'text/csv' }, body: JSON.stringify(body) }, reason, 'text');
+              errors.push({ status: 200 });
+            } catch (error) { errors.push({ status: error.status, message: error.message }); }
+          }
+          return errors;
+        });
+        assert.deepEqual(csvErrors.map(e => e.status), [403, 422]);
+        assert.equal(csvErrors[1].message, 'query_too_wide');
+        assert.ok(addressCsv.includes('***@vendor.test'));
+        assert.ok(addressCsv.includes(installations[0].installation_id));
+        assert.ok(!addressCsv.includes('private-local'));
+        assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='query' AND target='vendor_account_mismatch' AND reason='벤더 주소 CSV 감사 기록 검증 사유'"), '1');
         assert.equal(addressTable.status, 200);
         assert.equal(addressTable.frames[0].data.values[0].length, 5);
         assert.deepEqual([...new Set(addressTable.frames[0].data.values[1])], ['***@vendor.test']);
@@ -1093,6 +1119,7 @@ try {
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
     verifiedLongCommitment: { actualFrontendClient: true, owner: true, requestedDays: 730, explicitContract: true },
     verifiedRecovery: { processKilled: true, restarted: true, queuedSucceeded: true, expiredFailed: true, actualFrontendClient: true },
+    verifiedAddressCsv: { actualFrontendClient: true, owner: true, domainsOnly: true, persistedAuditRecords: 1, errorStatuses: [403, 422] },
     verifiedAddressTable: { actualFrontendClient: true, owner: true, auditReason: true, installations: 5, domainsOnly: true },
     verifiedRetentionTimeseries: { actualFrontendClient: true, owner: true, weekly: true, cohortInstallations: 5 },
     verifiedRetentionTopN: { actualFrontendClient: true, owner: true, otherCohortInstallations: 5 },
