@@ -3835,9 +3835,13 @@ class DashboardAuthTest {
         mvc.perform(post("/v1/scenarios/S8-5/runs").header("Authorization","Bearer $bearer")
             .contentType("application/json").content("""{"params":{"from":"2026-09-01","to":"2026-09-02"}}"""))
 
-    @Test fun `도구 통합 시나리오는 제품별 사용자를 별도로 제공하고 전체 비용을 합산하지 않는다`() {
+    @Test fun `도구 통합 시나리오는 제품별 사용자와 사용자당 비용을 분리한다`() {
         val ids = installations(5)
-        seedPoints(ids.flatMap { listOf(promptEvent(it,product="claude_code"),promptEvent(it,product="codex"),costEvent(it,3.0),toolEvent(it,true)) })
+        seedPoints(ids.flatMap {
+            val codexCost = mapper.readTree(costEvent(it,7.0)) as tools.jackson.databind.node.ObjectNode
+            codexCost.put("product","codex")
+            listOf(promptEvent(it,product="claude_code"),promptEvent(it,product="codex"),costEvent(it,3.0),codexCost.toString(),toolEvent(it,true))
+        })
         val bearer = token()
         val id = mapper.readTree(consolidationRun(bearer).andExpect(status().isAccepted)
             .andReturn().response.contentAsString)["run_id"].asString()
@@ -3851,7 +3855,12 @@ class DashboardAuthTest {
         val findings = run["result"]["findings"].toList()
         assertThat(findings.map { it["evidence"]["product"].asString() }).containsExactly("claude_code","codex")
         assertThat(findings.map { it["evidence"]["active_users"].asDouble() }).containsExactly(5.0,5.0)
-        assertThat(frames["cost_per_active_user"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(3.0)
+        val productCosts = frames["cost_per_active_user"]["frames"].toList().associate { frame ->
+            val fields = frame["schema"]["fields"].toList()
+            val value = fields.indexOfFirst { it["name"].asString()=="value" }
+            fields[value]["labels"]["product"].asString() to frame["data"]["values"][value][0].asDouble()
+        }
+        assertThat(productCosts).isEqualTo(mapOf("claude_code" to 3.0,"codex" to 7.0))
         assertThat(frames["tool_calls"]["frames"][0]["data"]["values"][1][0].asDouble()).isEqualTo(5.0)
     }
 

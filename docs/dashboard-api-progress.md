@@ -1253,3 +1253,9 @@
 - 프런트엔드 공통 API의 감사 포함 성공과 일반 UI 실패를 구분해 result.json에 knownUiGaps를 추가했다. 현재 실패를 재현하는 조건이므로 frontend 감사 입력을 연결하면 성공 검증으로 교체해야 한다.
 - `5282ed5` 기준 E2E 통과: 기존 42개 시나리오·주소 CSV·프로세스 재기동·ClickHouse 무응답/복구도 통과, unexpectedOrUnimplementedResponses=[]다. 로그 /tmp/proj156-address-ui-e2e.log.
 - frontend `52f7cb1` 소스와 backend 런타임은 변경하지 않았다. 다음 단계에는 주소 표 감사 입력 연결과 실제 표 렌더링 수용이 필요하며, 현재 frontend 수정 제외 범위로 인해 이를 완료로 처리하지 않는다. distribution 정의와 시나리오 의미 대조도 남아 있다.
+
+## S8-5 제품별 사용자당 비용 명세 보완
+
+- 시나리오 명세가 요구한 cost_per_active_user(product)가 전체 제품 값으로 반환되던 차이를 수정했다. metrics 메타데이터에 product를 추가하고 S8-5 실행에 제품별 차원을 전달한다. 일별 프레임 형식과 도구 호출의 전체 범위는 유지한다.
+- 초기 DB 검증은 허용 차원에 product가 없어 실패했다. 메타데이터까지 반영한 후 dashboard 테스트와 bootJar가 통과했다. 동일 사용자 5명의 Claude Code/Codex 비용이 사용자당 3/7달러로 분리되는 회귀 검증과 기존 소집단·미관측 검증을 포함한다.
+- 첨부 개요의 일반 지표 표(team만)와 S8-5 상세(product)의 차이를 계약 추적표에 기록했다. 구체적인 시나리오 요구를 만족시키는 차원 추가이며 frontend 소스 변경은 없다. E2E 검증은 이어서 진행한다.

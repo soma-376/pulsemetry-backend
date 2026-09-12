@@ -566,7 +566,8 @@
     "availability": "available",
     "default_frame_type": "scalar",
     "allowed_group_by": [
-      "team"
+      "team",
+      "product"
     ],
     "forbidden_group_by": [],
     "min_group_size": 5,

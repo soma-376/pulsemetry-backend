@@ -104,3 +104,9 @@
 - vendor_account_mismatch의 명시적 table은 owner·감사 후 설치 ID와 주소 도메인을 반환한다. scalar/timeseries 개수 집계와 구분하며 비교 주소 열·limit 초과 422·소집단 단일 null 행 정책을 적용한다.
 
 - 주소 table 비교·CSV: 설치 합집합과 빈 기간, 로컬 부분 제거, 비교 소집단의 행 수 마스킹, limit 422 및 admin 403, 감사 기록을 DB 테스트로 검증했다. CSV 요청의 오류는 JSON Content-Type과 원래 상태 코드를 유지한다. frontend api.queryCsv의 감사 사유 전달은 남아 있다.
+
+## S8-5 제품별 사용자당 비용 차원
+
+- 참고 개요 §3의 cost_per_active_user 행은 team만 열거하지만 §6 S8-5는 cost_per_active_user(product)를 명시한다. 시나리오의 구체적 요구를 충족하도록 허용 차원에 product를 추가한다. 원본 참고 문서는 수정하지 않는다.
+- S8-5는 active_users와 cost_per_active_user를 제품별로 조회한다. 비용은 기존 일별 시계열 형식을 유지하며 product 라벨로 구분한다. 각 제품의 비용·관측 활성 사용자 분모·최소 집단 크기를 따로 집계한다. tool_calls는 기존 전체 범위 값이다.
+- 같은 사용자 5명이 두 제품에서 각각 15/35달러를 사용한 DB fixture에서 사용자당 3/7달러를 검증했다. 제품별 사용자 수를 더해 고유 사용자 수나 통합 절감액으로 해석하지 않는다.
