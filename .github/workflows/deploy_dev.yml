@@ -41,6 +41,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Test deployment image promotion
+        run: python3 .github/tests/test_deploy_dev.py
+
       # 계약 테스트는 telemetryctl의 스키마 파일 원본을 읽는다.
       # 복사본을 backend에 두면 원본과 갈라질 수 있으므로 직접 체크아웃한다.
       - name: Checkout telemetryctl (계약 원천)
@@ -210,13 +213,20 @@ jobs:
             # SHA 태그가 재실행으로 이동해도 이번 빌드가 게시한 정확한 이미지를 선택한다.
             image=$(aws ecr batch-get-image --repository-name "$repository" \
               --image-ids "imageDigest=$digest" --no-cli-pager --output json)
-            manifest=$(jq -er --arg digest "$digest" '
-              if (.failures | length) == 0 and (.images | length) == 1 and
-                 .images[0].imageId.imageDigest == $digest
-              then .images[0].imageManifest | select(type == "string" and length > 0)
-              else error("게시된 이미지 manifest를 확인할 수 없다") end
+            # 같은 digest에 SHA·dev 태그가 붙으면 여러 항목이 반환될 수 있다.
+            # 태그 개수가 아니라 요청한 digest의 manifest·media type이 유일한지 확인한다.
+            image=$(jq -ec --arg digest "$digest" '
+              if (.failures | length) != 0 then
+                error("게시된 이미지 조회에 실패했다")
+              else
+                [.images[] | select(.imageId.imageDigest == $digest) |
+                  {imageManifest, imageManifestMediaType}] | unique |
+                if length == 1 then .[0]
+                else error("게시된 이미지 manifest를 유일하게 확인할 수 없다") end
+              end
               ' <<< "$image")
-            media_type=$(jq -er '.images[0].imageManifestMediaType' <<< "$image")
+            manifest=$(jq -er '.imageManifest | select(type == "string" and length > 0)' <<< "$image")
+            media_type=$(jq -er '.imageManifestMediaType | select(type == "string" and length > 0)' <<< "$image")
 
             # 같은 이미지로 재실행하면 PutImage의 ImageAlreadyExistsException을 피한다.
             current_digest=$(aws ecr batch-get-image --repository-name "$repository" \
