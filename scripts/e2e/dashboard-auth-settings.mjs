@@ -949,6 +949,21 @@ try {
           }) });
           return series(response.results.A);
         });
+        const retentionTop = await ownerPage.evaluate(async () => {
+          const { request } = await import('/src/api/client.ts');
+          const response = await request('/query', { method: 'POST', body: JSON.stringify({
+            from: 'now-1d', to: 'now', filters: { models: ['session-top-e2e'] },
+            queries: [{ ref_id: 'A', metric_id: 'onboarding_retention', group_by: ['team'], frame_type: 'table', limit: 1 }],
+          }) });
+          return response.results.A;
+        });
+        assert.equal(retentionTop.status, 200);
+        const otherCohorts = retentionTop.frames.filter(f => f.schema.fields[0].labels.team === '__other__');
+        assert.ok(otherCohorts.length > 0);
+        for (const frame of otherCohorts) {
+          const denominator = frame.schema.fields.findIndex(f => f.name === 'denominator');
+          assert.equal(frame.data.values[denominator][0], 5);
+        }
         assert.equal(lastTop.state, 'success');
         assert.deepEqual(Object.fromEntries(lastTop.points.filter(p => p.labels.team === '__other__').map(p => [p.labels.last_event, p.value.value])),
           { api_error: 5 });
@@ -1007,6 +1022,7 @@ try {
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
+    verifiedRetentionTopN: { actualFrontendClient: true, owner: true, otherCohortInstallations: 5 },
     verifiedLastEventTopN: { actualFrontendClient: true, owner: true, otherFinalErrors: 5 },
     verifiedAnomalyTopN: { actualFrontendClient: true, owner: true, otherCost: 250, otherBaseline: 200, otherIncrease: 0.25 },
     verifiedConcentrationTopN: { actualFrontendClient: true, owner: true, otherTopTokens: 20, otherTotalTokens: 60, otherRatio: 1 / 3 },
