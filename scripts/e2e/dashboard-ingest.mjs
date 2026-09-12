@@ -711,6 +711,18 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, trainingRun.run_id);
   await page.locator('aside[aria-label="시나리오 판정"]').getByText(trainingRun.run_id.slice(0, 8), { exact: false }).waitFor();
+  const comparisonWidget = page.locator('[data-result-metric="prompts_per_session"]');
+  await comparisonWidget.scrollIntoViewIfNeeded();
+  const comparisonTable = comparisonWidget.locator('table');
+  await comparisonTable.waitFor();
+  const currentColumn = trainingFrame.schema.fields.findIndex(f => f.name === 'p50');
+  const previousColumn = trainingFrame.schema.fields.findIndex(f => f.name === 'p50_compare');
+  assert.equal(await comparisonTable.locator('thead th').nth(currentColumn).innerText(), 'p50');
+  assert.equal(await comparisonTable.locator('thead th').nth(previousColumn).innerText(), 'p50_compare');
+  assert.equal(await comparisonTable.locator('tbody tr').count(), 1);
+  assert.equal(await comparisonTable.locator('tbody tr').first().locator('td').nth(currentColumn).innerText(), '2');
+  assert.equal(await comparisonTable.locator('tbody tr').first().locator('td').nth(previousColumn).innerText(), '미관측');
+  await comparisonWidget.screenshot({ path: resolve(artifacts, 'admin-training-comparison-table.png') });
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-training-comparison.png'), fullPage: true });
   const acceptanceRun = await page.evaluate(async from => {
     const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
@@ -1313,7 +1325,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     shadowScenario: { id: 'S5-4', runId: shadowRun.run_id, owner: true, audited: true, queryAudited: true, actualResultUI: true, vendorEmailMissing: true, activeUsers: 5 },
     modelComparisonScenario: { id: 'S8-3', runId: modelComparisonRun.run_id, owner: true, audited: true, actualResultUI: true, modelACost: 15, modelBCostMissing: true },
     purposeScenario: { id: 'S5-6', runId: purposeRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionEventsMissing: true },
-    trainingComparisonScenario: { id: 'S4-4', runId: trainingRun.run_id, admin: true, actualResultUI: true, promptsPerSession: 2, beforeMissing: true },
+    trainingComparisonScenario: { id: 'S4-4', runId: trainingRun.run_id, admin: true, actualResultUI: true, promptsPerSession: 2, beforeMissing: true, renderedCurrent: '2', renderedPrevious: '미관측', comparisonHeaders: ['p50', 'p50_compare'] },
     policyComparisonScenario: { id: 'S8-6', runId: policyComparisonRun.run_id, owner: true, audited: true, actualResultUI: true, gateWaitMs: 120000, beforeMissing: true },
     sprintScenario: { id: 'S2-3', runId: sprintRun.run_id, admin: true, actualResultUI: true, sprintDate: sprintRun.params.sprint_dates[0], sessions: 5 },
     qualityScenario: { id: 'S6-1', runId: qualityRun.run_id, owner: true, audited: true, actualResultUI: true, refusalFindings: 0, promptsPerSession: 2 },

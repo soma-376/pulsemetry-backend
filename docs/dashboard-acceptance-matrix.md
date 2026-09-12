@@ -69,3 +69,5 @@
 전후 비교 5개 시나리오의 의미 대조와 기존 테스트 10건의 근거는 [dashboard-comparison-acceptance.md](dashboard-comparison-acceptance.md)에 정리했다. 런타임 수정 없이 최신 테스트 결과와 소스의 일치를 확인했다.
 
 전체 시나리오 의미 목록은 [dashboard-scenario-semantics.md](dashboard-scenario-semantics.md)다. 나머지 37개 대표 DB 테스트의 최신 통과를 확인했으며, 시나리오 의미의 소스 대조 자체는 더 이상 미착수 항목이 아니다. UI·미지원 distribution·확대 분석 요구와 구분한다.
+
+S4-4 비교 결과 표의 현재 p50=2/이전 미관측은 실제 DOM 검사와 스크린샷으로 확인했다. 원시 필드명 라벨 개선·다른 비교 지표의 마스킹·잔존율 화면은 남아 있다. 근거는 dashboard-comparison-acceptance.md의 실제 결과 표 검증 절을 참조한다.
