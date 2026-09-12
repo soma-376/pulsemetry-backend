@@ -35,7 +35,7 @@
 
 ## 검증
 
-- 최신 dashboard 검증: `58ba9f3` 주소 표 보완 후 261건·JAR 검증 통과. 아래 전체 빌드 1,065건은 이전 `922a5d7` 기준이다.
+- 최신 dashboard 검증: `5455685` 워커 복구 검증 후 263건·JAR 검증 통과. 아래 전체 빌드 1,065건은 이전 `922a5d7` 기준이다.
 
 - 최신 검증: `922a5d7`에서 전체 `./gradlew build --rerun-tasks` 통과. 1,065건(dashboard 258건 포함), 실패·오류·skip 0건. 58개 작업 모두 재실행했다. 일반 그룹 상위 N은 51개 연결·0개 미연결이며 group_by 금지 2개는 별도다.
 
@@ -1211,3 +1211,13 @@
 
 - 구현 `58ba9f3`와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`의 E2E 통과. 실제 owner 로그인 후 공통 API 클라이언트에 감사 사유를 전달해 설치 5개와 ***@vendor.test 도메인을 확인했다. 이메일 로컬 부분은 응답에 없다.
 - 실제 수집·기존 42개 시나리오 경로도 통과했고 `unexpectedOrUnimplementedResponses=[]`다. frontend 소스는 변경하지 않았다. 이번 검증은 감사 헤더·API 데이터 계약이며 일반 UI의 감사 입력 폼이나 주소 표 렌더링 검증은 아니다.
+
+## 워커 복구 수용 검증
+
+- 구현 변경 없이 실제 PostgreSQL 테스트를 보강했다. 새 저장소 인스턴스의 만료 실행 정리·대기 처리, 완료 후 중복 완료/진행 차단, 6개 워커의 3개 작업 단일 획득을 검증했다.
+- 커밋 `5455685`, dashboard 테스트 263건·JAR 검증 통과, 실패·오류·skip 0건. 복구 의미와 남은 장애 시험 범위는 `docs/dashboard-recovery-verification.md`에 정리했다.
+
+### 프로세스 재기동 E2E 결과
+
+- `5455685`와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`의 E2E 통과. 테스트 API를 SIGKILL로 종료한 뒤 DB에 대기·만료 실행 상태를 준비하고 같은 DB로 재기동했다. 대기 실행 succeeded, 만료 실행 failed/worker_lease_expired를 실제 frontend 로그인·RUN-GET으로 확인했다.
+- 기존 실제 수집·42개 시나리오와 주소 감사·장기 계약·지표 연동도 통과했으며 `unexpectedOrUnimplementedResponses=[]`다. frontend 소스는 변경하지 않았다. DB 장애·네트워크 분단·실제 조회 도중 장애 시험은 이번 범위에 포함하지 않는다.

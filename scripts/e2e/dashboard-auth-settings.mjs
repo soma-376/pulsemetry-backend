@@ -64,13 +64,14 @@ try {
   const privateFile = resolve(work, 'private.pem');
   const publicFile = resolve(work, 'public.pem');
   writeFileSync(privateFile, privateKey, { mode: 0o600 }); writeFileSync(publicFile, publicKey);
-  launch('java', ['-jar', resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar')], {
+  const launchDashboard = (name = 'backend') => launch('java', ['-jar', resolve(backend, 'apps/dashboard-api/build/libs/dashboard-api-0.0.1-SNAPSHOT.jar')], {
     SERVER_PORT: '18081', PULSEMETRY_DB_URL: `jdbc:postgresql://127.0.0.1:${port}/pulsemetry`,
     PULSEMETRY_DB_USERNAME: 'pulsemetry', PULSEMETRY_DB_PASSWORD: 'e2e-only-password',
     SPRING_APPLICATION_JSON: JSON.stringify({ pulsemetry: { dashboard: { 'tenant-id': tenant,
       'clickhouse-url': `http://127.0.0.1:${chPort}`, issuer: 'https://e2e.pulsemetry.test', 'active-kid': 'e2e', 'private-key-file': privateFile,
       'public-key-files': { e2e: publicFile }, 'allowed-origins': [ui] } } }),
-  }, backend, 'backend');
+  }, backend, name);
+  let dashboardProcess = launchDashboard();
   await waitFor(async () => (await fetch(`${api}/v1/healthz`)).ok);
   sql(`CREATE EXTENSION IF NOT EXISTS pgcrypto;
     INSERT INTO enrollment.tenants(id,name) VALUES ('${tenant}','E2E 조직');
@@ -1058,11 +1059,40 @@ try {
     await Promise.all(responseReads);
     await context.close();
   }
+  dashboardProcess.kill('SIGKILL');
+  await waitFor(() => dashboardProcess.exitCode !== null || dashboardProcess.signalCode !== null, 10);
+  const queuedRecovery = randomUUID(), expiredRecovery = randomUUID();
+  for (const [id, state] of [[queuedRecovery, 'queued'], [expiredRecovery, 'running']]) {
+    sql(`INSERT INTO dashboard.scenario_runs(id,tenant_id,scenario_id,params,execution,resolved_from,resolved_to,created_by_member_id,status,claim_token,lease_until)
+      SELECT '${id}',tenant_id,scenario_id,params,execution,resolved_from,resolved_to,created_by_member_id,
+        '${state}',${state === 'running' ? `'${randomUUID()}'` : 'NULL'},${state === 'running' ? "now()-interval '1 second'" : 'NULL'}
+      FROM dashboard.scenario_runs WHERE status='succeeded' AND scenario_id='S1-3' LIMIT 1`);
+  }
+  dashboardProcess = launchDashboard('backend-restarted');
+  await waitFor(async () => (await fetch(`${api}/v1/healthz`)).ok);
+  await waitFor(() => sql(`SELECT status FROM dashboard.scenario_runs WHERE id='${queuedRecovery}'`) === 'succeeded');
+  assert.equal(sql(`SELECT error->>'error' FROM dashboard.scenario_runs WHERE id='${expiredRecovery}'`), 'worker_lease_expired');
+  const recoveryContext = await browser.newContext();
+  try {
+    const page = await recoveryContext.newPage();
+    await page.goto(`${ui}/settings`);
+    await page.getByLabel('이메일', { exact: true }).fill('owner@e2e.test');
+    await page.getByLabel('비밀번호', { exact: true }).fill('fixture-password-123');
+    await page.getByRole('button', { name: '로그인', exact: true }).click();
+    await page.getByRole('heading', { name: '설정', exact: true }).waitFor();
+    const recovery = await page.evaluate(async ids => {
+      const { request } = await import('/src/api/client.ts');
+      return Promise.all(ids.map(id => request(`/scenario-runs/${id}`)));
+    }, [queuedRecovery, expiredRecovery]);
+    assert.deepEqual(recovery.map(r => r.status), ['succeeded', 'failed']);
+    assert.equal(recovery[1].error.error, 'worker_lease_expired');
+  } finally { await recoveryContext.close(); }
   assert.deepEqual(failures, [], '예상하지 않은 API 오류 응답');
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
     verifiedLongCommitment: { actualFrontendClient: true, owner: true, requestedDays: 730, explicitContract: true },
+    verifiedRecovery: { processKilled: true, restarted: true, queuedSucceeded: true, expiredFailed: true, actualFrontendClient: true },
     verifiedAddressTable: { actualFrontendClient: true, owner: true, auditReason: true, installations: 5, domainsOnly: true },
     verifiedRetentionTimeseries: { actualFrontendClient: true, owner: true, weekly: true, cohortInstallations: 5 },
     verifiedRetentionTopN: { actualFrontendClient: true, owner: true, otherCohortInstallations: 5 },
