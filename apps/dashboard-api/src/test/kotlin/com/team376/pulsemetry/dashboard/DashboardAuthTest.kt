@@ -1859,6 +1859,36 @@ class DashboardAuthTest {
             .containsExactly(0.0,0.0,2.0,5.0,9.0,14.0,20.0,27.0,35.0,44.0,54.0,155.0)
         assertThat(curve["data"]["values"][2][11].asDouble()).isEqualTo(1.0)
     }
+    @Test fun `사용 집중도 기타는 팀 간 중복 관측을 제거하고 사람별 분포와 비교 곡선을 재계산한다`() {
+        val ids = installations(5); val teams = costTeams()
+        fun event(id: UUID, value: Int, groups: List<UUID>, at: String = "2026-09-01T12:00:00Z"): String {
+            val row = mapper.readTree(tokenEvent(id,value,0,0,0,at=at)) as tools.jackson.databind.node.ObjectNode
+            row.set("team_ids_as_of",mapper.valueToTree(groups.map { it.toString() }))
+            return row.toString()
+        }
+        seedPoints(ids.mapIndexed { n,id -> event(id,if(n==0) 100 else 1,listOf(teams[0])) }+
+            ids.map { event(it,10,teams.drop(1)) }+event(ids[0],10,listOf(teams[2]))+
+            ids.map { event(it,1,teams.drop(1),"2026-08-30T12:00:00Z") })
+        for(type in listOf("table","scalar","timeseries","distribution")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "usage_concentration","group_by" to listOf("team"),
+                "frame_type" to type,"limit" to 1),mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val offset = if(type=="timeseries") 1 else 0
+            val other = result["frames"].single { it["schema"]["fields"][offset]["name"].asString()=="value" &&
+                it["schema"]["fields"][offset]["labels"]["team"].asString()=="__other__" }
+            val values = other["schema"]["fields"].toList().mapIndexed { n,f -> f["name"].asString() to other["data"]["values"][n][0] }.toMap()
+            assertThat(values["value"]?.asDouble()).isEqualTo(1.0/3.0)
+            assertThat(values["numerator"]?.asDouble()).isEqualTo(20.0)
+            assertThat(values["denominator"]?.asDouble()).isEqualTo(60.0)
+            assertThat(values["value_compare"]?.asDouble()).isEqualTo(0.2)
+            assertThat(values["denominator_compare"]?.asDouble()).isEqualTo(5.0)
+            if(type in listOf("table","distribution")) {
+                val curve = result["frames"].single { it["schema"]["fields"][0]["name"].asString()=="population_share" &&
+                    it["schema"]["fields"][0]["labels"]["team"].asString()=="__other__" }
+                assertThat(curve["data"]["values"][1].toList().map { it.asDouble() }).containsExactly(0.0,10.0,20.0,30.0,40.0,60.0)
+            }
+        }
+    }
     @Test fun `사용 집중도는 누락과 음수 호출을 제외하고 영 분모를 보존한다`() {
         val ids = installations(5)
         seedPoints(ids.flatMap { listOf(tokenEvent(it,10,20,30,40),tokenEvent(it,null,999,999,999),
