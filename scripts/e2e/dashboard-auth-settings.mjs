@@ -851,6 +851,11 @@ try {
           payload: { model: 'last-top-e2e', error_type: sequence === 2 ? 'failed' : '' } }),
       })));
       run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], lastEvents.join('\n'));
+      const addressEvents = installations.map(p => JSON.stringify({
+        ...p, event_id: randomUUID(), signal: 'log', raw_json: JSON.stringify({ type: 'user_prompt',
+          envelope: { identity: { vendor_email: 'private-local@vendor.test' } }, payload: { model: 'address-table-e2e' } }),
+      }));
+      run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], addressEvents.join('\n'));
       const securityContext = await browser.newContext();
       try {
         const ownerPage = await securityContext.newPage();
@@ -966,6 +971,18 @@ try {
           }) });
           return response.results.A;
         }, termContract);
+        const addressTable = await ownerPage.evaluate(async () => {
+          const { request } = await import('/src/api/client.ts');
+          const response = await request('/query', { method: 'POST', body: JSON.stringify({
+            from: 'now-1d', to: 'now', filters: { models: ['address-table-e2e'] },
+            queries: [{ ref_id: 'A', metric_id: 'vendor_account_mismatch', frame_type: 'table' }],
+          }) }, '벤더 주소 도메인 표 연동 검증 사유');
+          return response.results.A;
+        });
+        assert.equal(addressTable.status, 200);
+        assert.equal(addressTable.frames[0].data.values[0].length, 5);
+        assert.deepEqual([...new Set(addressTable.frames[0].data.values[1])], ['***@vendor.test']);
+        assert.ok(!JSON.stringify(addressTable).includes('private-local'));
         assert.equal(longCommitment.status, 200);
         assert.equal(longCommitment.frames.length, 1);
         const commitmentValues = Object.fromEntries(longCommitment.frames[0].schema.fields.map((field, index) =>
@@ -1046,6 +1063,7 @@ try {
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
     verifiedLongCommitment: { actualFrontendClient: true, owner: true, requestedDays: 730, explicitContract: true },
+    verifiedAddressTable: { actualFrontendClient: true, owner: true, auditReason: true, installations: 5, domainsOnly: true },
     verifiedRetentionTimeseries: { actualFrontendClient: true, owner: true, weekly: true, cohortInstallations: 5 },
     verifiedRetentionTopN: { actualFrontendClient: true, owner: true, otherCohortInstallations: 5 },
     verifiedLastEventTopN: { actualFrontendClient: true, owner: true, otherFinalErrors: 5 },
