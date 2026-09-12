@@ -22,11 +22,13 @@ env:
   # infra의 DEV_DEFAULT_IMAGE_TAG와 반드시 일치해야 한다.
   # 태스크 정의가 이 가변 태그를 가리키고, 강제 재배포가 같은 태그를 다시 당겨온다.
   IMAGE_TAG: ${{ secrets.IMAGE_TAG_DEV }}
-  ECR_REPO_API_SERVER: ${{ secrets.ECR_REPO_API_SERVER_DEV }}
+  ECR_REPO_ENROLLMENT_API: ${{ secrets.ECR_REPO_ENROLLMENT_API_DEV }}
+  ECR_REPO_TELEMETRY_INGEST: ${{ secrets.ECR_REPO_TELEMETRY_INGEST_DEV }}
 
   AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN_DEV }}
   ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_DEV }}
-  ECS_SERVICE_DASHBOARD: ${{ secrets.ECS_SERVICE_DASHBOARD_DEV }}
+  ECS_SERVICE_ENROLLMENT_API: ${{ secrets.ECS_SERVICE_ENROLLMENT_API_DEV }}
+  ECS_SERVICE_TELEMETRY_INGEST: ${{ secrets.ECS_SERVICE_TELEMETRY_INGEST_DEV }}
 
 jobs:
   validate:
@@ -76,7 +78,10 @@ jobs:
     needs: validate
     # dev 앱 호스트가 Graviton이므로 linux/arm64 이미지를 네이티브 ARM 러너에서 만든다.
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
     permissions:
       id-token: write
       contents: read
@@ -88,10 +93,12 @@ jobs:
           for mapping in \
             AWS_REGION:AWS_REGION \
             IMAGE_TAG:IMAGE_TAG_DEV \
-            ECR_REPO_API_SERVER:ECR_REPO_API_SERVER_DEV \
+            ECR_REPO_ENROLLMENT_API:ECR_REPO_ENROLLMENT_API_DEV \
+            ECR_REPO_TELEMETRY_INGEST:ECR_REPO_TELEMETRY_INGEST_DEV \
             AWS_DEPLOY_ROLE_ARN:AWS_DEPLOY_ROLE_ARN_DEV \
             ECS_CLUSTER:ECS_CLUSTER_DEV \
-            ECS_SERVICE_DASHBOARD:ECS_SERVICE_DASHBOARD_DEV; do
+            ECS_SERVICE_ENROLLMENT_API:ECS_SERVICE_ENROLLMENT_API_DEV \
+            ECS_SERVICE_TELEMETRY_INGEST:ECS_SERVICE_TELEMETRY_INGEST_DEV; do
             env_name="${mapping%%:*}"
             secret_name="${mapping#*:}"
             if [[ -z "${!env_name}" ]]; then
@@ -101,6 +108,17 @@ jobs:
 
           if (( ${#missing[@]} > 0 )); then
             printf '::error::필수 GitHub Secret이 등록되지 않았거나 비어 있다: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+          if [[ "$IMAGE_TAG" != dev ]]; then
+            echo '::error::IMAGE_TAG_DEV는 infra의 기본 이미지 태그인 dev여야 한다.'
+            exit 1
+          fi
+
+          if [[ "$ECS_SERVICE_ENROLLMENT_API" == "$ECS_SERVICE_TELEMETRY_INGEST" \
+             || "$ECR_REPO_ENROLLMENT_API" == "$ECR_REPO_TELEMETRY_INGEST" ]]; then
+            echo '::error::두 앱의 ECR 저장소와 ECS 서비스는 각각 달라야 한다.'
             exit 1
           fi
 
@@ -119,6 +137,25 @@ jobs:
           role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # 최초 ECR 이미지 공급과 ECS 서비스 생성은 운영 선행 작업이다(infra ADR-0026).
+      # 둘 다 준비되기 전에는 가변 이미지 태그를 덮어쓰거나 일부 서비스만 재배포하지 않는다.
+      - name: Verify both ECS services are active
+        run: |
+          services=$(aws ecs describe-services --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE_ENROLLMENT_API" "$ECS_SERVICE_TELEMETRY_INGEST" \
+            --no-cli-pager --output json)
+
+          if ! jq -e \
+            --arg enrollment "$ECS_SERVICE_ENROLLMENT_API" \
+            --arg ingest "$ECS_SERVICE_TELEMETRY_INGEST" '
+              (.failures | length) == 0 and
+              ([.services[].serviceName] | sort) == ([$enrollment, $ingest] | sort) and
+              all(.services[]; .status == "ACTIVE" and .desiredCount > 0)
+            ' <<< "$services" > /dev/null; then
+            echo '::error::두 ECS 서비스가 모두 ACTIVE이고 desiredCount가 1 이상이어야 한다. infra 선행 배포를 확인한다.'
+            exit 1
+          fi
+
       # registry 출력으로 URI를 얻어 계정 ID를 워크플로우에 기록하지 않는다.
       - name: Login to Amazon ECR
         id: ecr
@@ -129,31 +166,109 @@ jobs:
 
       # Dockerfile과 빌드 컨텍스트는 레포 루트다. 배포 역할에 ECR pull 권한이 없으므로
       # registry cache 대신 GitHub Actions cache만 쓴다.
-      # batch-processor는 MVP 미구현이므로 api-server 이미지만 만든다.
-      - name: Build and push api-server
+      # 두 이미지가 모두 게시되기 전에는 배포용 dev 태그를 갱신하지 않는다.
+      - name: Build and push enrollment-api
+        id: build-enrollment
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: Dockerfile
+          target: enrollment-api
           platforms: linux/arm64
           provenance: false
           push: true
           tags: |
-            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_API_SERVER }}:${{ env.IMAGE_TAG }}
-            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_API_SERVER }}:sha-${{ github.sha }}
-          cache-from: type=gha,scope=api-server
-          cache-to: type=gha,mode=max,scope=api-server
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_ENROLLMENT_API }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=enrollment-api
+          cache-to: type=gha,mode=max,scope=enrollment-api
 
-      # 태스크 정의는 CDK가 소유한다. 기존 리비전을 유지한 채 가변 태그를 다시 당기도록
-      # api-server 컨테이너가 속한 dashboard 서비스만 강제 재배포한다.
-      - name: Force new deployment
-        run: |
-          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE_DASHBOARD" \
-            --force-new-deployment --no-cli-pager --query 'service.serviceName' --output text
+      - name: Build and push telemetry-ingest
+        id: build-ingest
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile
+          target: telemetry-ingest
+          platforms: linux/arm64
+          provenance: false
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_TELEMETRY_INGEST }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=telemetry-ingest
+          cache-to: type=gha,mode=max,scope=telemetry-ingest
 
-      # dev dashboard는 minHealthyPercent가 0이므로 재배포 중 짧은 다운타임이 정상이다.
-      - name: Wait for service to stabilize
+      # 태스크 정의는 CDK가 소유한다. 기존 리비전을 그대로 쓰고 가변 태그를 다시 당긴다.
+      # Flyway를 적용하는 enrollment-api가 먼저 안정화돼야 ingest의 JPA 검증이 성립한다.
+      # 두 서비스 모두 minHealthyPercent가 0이므로 교체 중 짧은 다운타임이 정상이다.
+      - name: Deploy enrollment-api, then telemetry-ingest
+        env:
+          ENROLLMENT_IMAGE_DIGEST: ${{ steps.build-enrollment.outputs.digest }}
+          INGEST_IMAGE_DIGEST: ${{ steps.build-ingest.outputs.digest }}
         run: |
-          aws ecs wait services-stable --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE_DASHBOARD"
-          echo "배포 완료: $ECS_SERVICE_DASHBOARD"
+          promote_image() {
+            local repository="$1" digest="$2" image manifest media_type current_digest
+            # SHA 태그가 재실행으로 이동해도 이번 빌드가 게시한 정확한 이미지를 선택한다.
+            image=$(aws ecr batch-get-image --repository-name "$repository" \
+              --image-ids "imageDigest=$digest" --no-cli-pager --output json)
+            manifest=$(jq -er --arg digest "$digest" '
+              if (.failures | length) == 0 and (.images | length) == 1 and
+                 .images[0].imageId.imageDigest == $digest
+              then .images[0].imageManifest | select(type == "string" and length > 0)
+              else error("게시된 이미지 manifest를 확인할 수 없다") end
+              ' <<< "$image")
+            media_type=$(jq -er '.images[0].imageManifestMediaType' <<< "$image")
+
+            # 같은 이미지로 재실행하면 PutImage의 ImageAlreadyExistsException을 피한다.
+            current_digest=$(aws ecr batch-get-image --repository-name "$repository" \
+              --image-ids "imageTag=$IMAGE_TAG" --no-cli-pager \
+              --query 'images[0].imageId.imageDigest' --output text)
+            if [[ "$current_digest" == "$digest" ]]; then
+              echo "이미지 태그 유지: $repository:$IMAGE_TAG ($digest)"
+              return
+            fi
+
+            # 레이어를 다시 내려받지 않고 manifest만 재사용한다.
+            aws ecr put-image --repository-name "$repository" --image-tag "$IMAGE_TAG" \
+              --image-manifest "$manifest" --image-manifest-media-type "$media_type" \
+              --image-digest "$digest" --no-cli-pager \
+              --query 'image.imageId.imageDigest' --output text
+          }
+
+          deploy_service() {
+            local service="$1" deployment_id state
+            echo "::group::재배포 및 안정화: $service"
+            deployment_id=$(aws ecs update-service --cluster "$ECS_CLUSTER" --service "$service" \
+              --force-new-deployment --no-cli-pager \
+              --query "service.deployments[?status=='PRIMARY'].id | [0]" --output text)
+
+            if [[ -z "$deployment_id" || "$deployment_id" == None ]]; then
+              echo "::error::새 deployment ID를 확인할 수 없다: $service"
+              exit 1
+            fi
+
+            aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
+
+            # waiter는 이전 배포로 롤백돼도 성공할 수 있다. 방금 요청한 배포의 완료를 확인한다.
+            state=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+              --no-cli-pager --output json)
+            if ! jq -e --arg service "$service" --arg deployment "$deployment_id" '
+              (.failures | length) == 0 and (.services | length) == 1 and
+              (.services[0] |
+                .serviceName == $service and .status == "ACTIVE" and
+                .desiredCount > 0 and .runningCount == .desiredCount and .pendingCount == 0 and
+                (.deployments | length) == 1 and
+                .deployments[0].id == $deployment and .deployments[0].status == "PRIMARY" and
+                .deployments[0].rolloutState == "COMPLETED")
+              ' <<< "$state" > /dev/null; then
+              echo "::error::요청한 배포가 완료되지 않았거나 이전 배포로 롤백됐다: $service"
+              exit 1
+            fi
+            echo "배포 완료: $service ($deployment_id)"
+            echo '::endgroup::'
+          }
+
+          promote_image "$ECR_REPO_ENROLLMENT_API" "$ENROLLMENT_IMAGE_DIGEST"
+          deploy_service "$ECS_SERVICE_ENROLLMENT_API"
+          # enrollment 안정화에 실패하면 ingest의 dev 태그도 이전 이미지에 남긴다.
+          promote_image "$ECR_REPO_TELEMETRY_INGEST" "$INGEST_IMAGE_DIGEST"
+          deploy_service "$ECS_SERVICE_TELEMETRY_INGEST"
