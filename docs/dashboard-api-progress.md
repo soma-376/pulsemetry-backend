@@ -1315,3 +1315,12 @@
 - 확인된 감사 전달·주소 표·비교/잔존율 라벨 결함을 해결하려면 기존 frontend 소스 수정 제외 범위의 변경이 필요하다. 사용자에게 프론트엔드 수정 포함 여부를 질문했으며 응답 대기다. distribution 범위 질문과는 별도다.
 - docs/dashboard-frontend-completion-plan.md에 API 래퍼, 최초 실행과 모든 재실행 경로, CSV 선택, 주소 자동 조회 제어, 결과 라벨의 수정·검증·커밋 단위를 정리했다. 명시한 frontend 파일 8곳의 존재와 호출 경로를 확인했다.
 - frontend 52f7cb1의 워킹트리가 깨끗함을 확인했으며 소스를 변경하지 않았다. backend 런타임과 테스트도 변경하지 않았다. 최신 검증을 반복하지 않고 구체적인 범위 결정안을 남긴다.
+
+## frontend 실제 감사 입력·재실행·결과 라벨 수정 완료
+
+- 후속 진행 요청을 구체적 frontend 수정안 실행으로 받아 frontend feature/PROJ-156-dashboard-integration에서 구현했다. 321fa5d는 queryCsv/start 감사 인자, a8d75b9는 공통 실행 감사/개인 Widget/결과 라벨, acdc626은 실제 개인 조회 조건 교정이다. backend 런타임은 변경하지 않았다.
+- 실제 backend에서 일반 refusals 조회에는 owner만 필요하고, 감사는 member_ids/vendor_account_mismatch에 필요함을 확인했다. 초기 CSV 감사 건수 검증 실패의 원인이며 frontend 조건과 기존 계획을 교정했다. P3/refusals 시나리오 시작의 감사 조건은 별도 유지한다.
+- frontend 타입 검사·91개 단위·빌드 및 backend d741abc(런타임86a2a29)/frontend acdc626 실제 E2E 통과. 주소 사유 길이/취소/성공·도메인 표·감사 기록, 일반 CSV 버튼 다운로드·개인 주소 CSV 래퍼, P3 최초 실행/다시 실행/저장 상대 리포트 열기의 새 사유3건과 새 run ID 완료를 확인했다.
+- 현재/이전 비교 헤더와 p50 2/미관측, 잔존율 코호트 날짜·주차0·분모5·미관측을 DOM/스크린샷으로 확인했다. 잔존율768px 페이지 넘침 없음. 재실행 스크린샷이 이전 DOM을 기다리던 경합은 새 run ID 완료로 교정했다.
+- 기존42개 시나리오·프로세스 재기동·ClickHouse 무응답/복구도 통과. knownUiGaps=[] 및 unexpectedOrUnimplementedResponses=[]다. 로그 /tmp/proj156-frontend-integration-e2e.log. 테스트 스크립트는 과거 결함 기대값을 정상 입력/성공/라벨 표시 조건으로 교체했다.
+- distribution 8개 지원/45개 미지원 범위 결정은 여전히 응답 대기다. 모든 테마·다중 코호트·주간 시계열·마스킹 조합의 UI 검증까지 완료했다는 뜻은 아니다. backend 전체 Gradle 빌드는 런타임 변경이 없어 반복하지 않았다. 로컬 커밋만 수행한다.

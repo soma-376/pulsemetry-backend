@@ -981,11 +981,11 @@ try {
           return response.results.A;
         });
         const addressCsv = await ownerPage.evaluate(async () => {
-          const { request } = await import('/src/api/client.ts');
-          return request('/query', { method: 'POST', headers: { Accept: 'text/csv' }, body: JSON.stringify({
+          const { api } = await import('/src/api/client.ts');
+          return api.queryCsv({
             from: 'now-1d', to: 'now', filters: { models: ['address-table-e2e'] },
             queries: [{ ref_id: 'A', metric_id: 'vendor_account_mismatch', frame_type: 'table' }],
-          }) }, '벤더 주소 CSV 감사 기록 검증 사유', 'text');
+          }, undefined, '벤더 주소 CSV 감사 기록 검증 사유');
         });
         const csvErrors = await ownerPage.evaluate(async () => {
           const { request } = await import('/src/api/client.ts');
@@ -1060,22 +1060,45 @@ try {
           { value: 1, numerator: 5, denominator: 5 });
         assert.equal(refusalTop.state, 'success');
         assert.deepEqual(Object.fromEntries(refusalTop.points.map(p => [p.labels.category, p.value.value])), { A: 10, '__other__': 10 });
-        // 일반 화면의 알려진 감사 사유 누락을 API 성공 검증과 별도로 기록한다.
-        const mismatchResponse = ownerPage.waitForResponse(response => {
-          if (response.url() !== `${api}/v1/query`) return false;
-          return response.request().postDataJSON()?.queries?.some(q => q.metric_id === 'vendor_account_mismatch');
-        });
         await ownerPage.getByRole('link', { name: '운영 · 보안', exact: true }).click();
         await ownerPage.getByRole('tab', { name: '보안', exact: true }).click();
         const mismatchWidget = ownerPage.locator('[data-widget="ops-mismatch"]');
         await mismatchWidget.scrollIntoViewIfNeeded();
-        const blockedMismatch = await mismatchResponse;
-        assert.equal(blockedMismatch.request().headers()['x-audit-reason'], undefined);
-        const blockedBody = await blockedMismatch.json();
-        assert.equal(blockedMismatch.status() === 403 || blockedBody.results?.A?.status === 403, true);
-        await mismatchWidget.getByRole('alert').waitFor();
+        await mismatchWidget.getByRole('button', { name: '조회 사유 입력', exact: true }).click();
+        let auditDialog = ownerPage.getByRole('dialog', { name: '조회 사유 입력' });
+        await auditDialog.getByRole('textbox').fill('짧음');
+        assert.equal(await auditDialog.getByRole('button', { name: '사유 기록 후 조회' }).isDisabled(), true);
+        await auditDialog.getByRole('button', { name: '취소', exact: true }).click();
         assert.equal(await mismatchWidget.locator('tbody tr').count(), 0);
-        await mismatchWidget.screenshot({ path: resolve(artifacts, 'owner-address-ui-audit-blocked.png') });
+        await mismatchWidget.getByRole('button', { name: '조회 사유 입력', exact: true }).click();
+        auditDialog = ownerPage.getByRole('dialog', { name: '조회 사유 입력' });
+        await auditDialog.getByRole('textbox').fill('주소 표 실제 화면 감사 점검');
+        const mismatchResponse = ownerPage.waitForResponse(response => response.url() === `${api}/v1/query` &&
+          response.request().postDataJSON()?.queries?.some(q => q.metric_id === 'vendor_account_mismatch'));
+        await auditDialog.getByRole('button', { name: '사유 기록 후 조회' }).click();
+        const addressUiResponse = await mismatchResponse;
+        assert.equal(addressUiResponse.request().headers()['x-audit-reason'], encodeURIComponent('주소 표 실제 화면 감사 점검'));
+        assert.equal((await addressUiResponse.json()).results.A.status, 200);
+        await mismatchWidget.locator('tbody tr').first().waitFor();
+        assert.ok((await mismatchWidget.innerText()).includes('***@vendor.test'));
+        assert.ok(!(await mismatchWidget.innerText()).includes('private-local'));
+        assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE reason='주소 표 실제 화면 감사 점검'"), '1');
+        await mismatchWidget.screenshot({ path: resolve(artifacts, 'owner-address-ui-audited.png') });
+        await ownerPage.getByRole('link', { name: '개요', exact: true }).click();
+        await ownerPage.getByRole('button', { name: 'CSV', exact: true }).click();
+        const csvDialog = ownerPage.getByRole('dialog', { name: '개요 데이터 내보내기' });
+        await csvDialog.getByRole('combobox').selectOption({ label: '안전 거부 · 전사 합' });
+        assert.equal(await csvDialog.getByRole('textbox').count(), 0);
+        assert.equal(await csvDialog.getByRole('button', { name: '다운로드', exact: true }).isEnabled(), true);
+        const csvResponse = ownerPage.waitForResponse(response => response.url() === `${api}/v1/query` &&
+          response.request().headers().accept === 'text/csv');
+        const download = ownerPage.waitForEvent('download');
+        await csvDialog.getByRole('button', { name: '다운로드', exact: true }).click();
+        const exported = await csvResponse;
+        assert.equal(exported.status(), 200);
+        assert.equal(exported.request().headers()['x-audit-reason'], undefined);
+        assert.equal((await download).suggestedFilename(), 'pulsemetry-refusals.csv');
+
       } finally { await securityContext.close(); }
       assert.equal(topCost.cost.state, 'success');
       assert.deepEqual(Object.fromEntries(topCost.cost.points.map(p => [p.labels.model, p.value.value])),
@@ -1170,7 +1193,8 @@ try {
     verifiedClickHouseOutage: { pausedDuringQuery: true, error: 'query_timeout', partialResult: false, newRunAfterRecovery: 'succeeded', failedRunUnchanged: true, actualFrontendClient: true },
     verifiedRecovery: { processKilled: true, restarted: true, queuedSucceeded: true, expiredFailed: true, actualFrontendClient: true },
     verifiedAddressCsv: { actualFrontendClient: true, owner: true, domainsOnly: true, persistedAuditRecords: 1, errorStatuses: [403, 422] },
-    knownUiGaps: [{ path: '/operations', widget: 'ops-mismatch', missingAuditReason: true, status: 403, renderedState: 'error', rows: 0 }],
+    knownUiGaps: [],
+    verifiedAuditUi: { addressTable: true, csvDownload: true, personalCsvWrapper: true, invalidReasonBlocked: true, cancel: true, persistedReasons: true },
     verifiedAddressTable: { actualFrontendClient: true, owner: true, auditReason: true, installations: 5, domainsOnly: true },
     verifiedRetentionTimeseries: { actualFrontendClient: true, owner: true, weekly: true, cohortInstallations: 5 },
     verifiedRetentionTopN: { actualFrontendClient: true, owner: true, otherCohortInstallations: 5 },

@@ -1,6 +1,6 @@
 # PROJ-156 프론트엔드 잔여 수정안
 
-상태: 프론트엔드 소스 수정 범위 확인 대기. 현재 frontend HEAD는 52f7cb10017c6ba6120f51f2e158ff329d14bff0이고 워킹트리는 깨끗하다. 이 문서는 수정할 코드 경로와 수용 조건을 정리한 계획이며 구현 완료 보고가 아니다.
+상태: 후속 진행 요청에 따라 frontend 수정 포함. 52f7cb1에서 feature/PROJ-156-dashboard-integration을 분기해 acdc626까지 API/감사 UI/라벨을 구현했다. 아래 수정안을 적용했으며 실제 E2E 결과는 dashboard-api-progress.md에서 추적한다.
 
 ## 1. 감사 사유 API 전달
 
@@ -13,7 +13,7 @@
 - src/pages/scenarios/RunProvider.tsx의 start까지 사유를 연결한다. Scenarios.tsx의 최초 실행·실패 후 재시도, Reports.tsx의 현재 결과 재실행·저장 결과 재실행 모두 대상이다. 최초 실행 폼만 고치면 재실행에서 다시 403이 발생한다.
 - 감사가 필요한 조건은 P3 또는 refusals 포함이다. P2인 S6-1도 포함한다. 기존 admin 접근 제한은 유지하고, 접근 가능한 owner에게 기존 감사 입력 UI를 재사용한다.
 - 사유를 시나리오 params·재실행 저장 입력·URL·공유 링크·영구 저장소에 넣지 않는다. 재실행은 새 감사 입력을 받고 취소 시 요청하지 않는다. 상세 정보가 필요한 재실행 경로는 scenarioApi.detail로 감사 대상 여부를 확인한다.
-- src/pages/overview/OverviewCsv.tsx에서 감사 대상 CSV 선택 시 사유를 입력받아 queryCsv에 전달한다. 현재 선택지에 있는 전사 안전 거부(refusals)가 실제 감사 대상이다. 일반 집계 CSV는 불필요한 사유 입력 없이 기존 경로를 유지한다.
+- src/pages/overview/OverviewCsv.tsx에서 감사 대상 CSV 선택 시 사유를 입력받아 queryCsv에 전달한다. 실제 backend 확인 결과 일반 안전 거부(refusals) 조회는 owner만 요구하고 감사 필수가 아니다. 개인 member_ids 또는 vendor_account_mismatch에만 사유를 요구한다. 현재 개요 선택지는 일반 집계이므로 기존 다운로드 경로를 유지하고, 개인 주소 CSV는 queryCsv 래퍼의 실제 연동으로 검증한다.
 
 ## 3. 주소 표 감사 입력
 
@@ -41,4 +41,4 @@ backend scripts/e2e/dashboard-auth-settings.mjs의 knownUiGaps 주소 403 재현
 
 ## 별도 결정
 
-distribution의 현재 8개 지원/45개 미지원 범위 확정 질문은 별도로 남아 있다. 프론트엔드 수정 허용만으로 분포 범위가 확정되었다고 간주하지 않는다. 프론트엔드 수정 제외가 유지되면 위 UI 문제는 backend의 인증 완화나 응답 왜곡으로 우회하지 않고 인수 미완료로 남긴다.
+distribution의 현재 8개 지원/45개 미지원 범위 확정 질문은 별도로 남아 있다. 프론트엔드 수정 진행만으로 분포 범위가 확정되었다고 간주하지 않는다. backend 인증 조건은 완화하지 않았다.

@@ -600,14 +600,18 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   await retentionWidget.locator('table').first().waitFor();
   assert.equal(await retentionWidget.locator('table').count(), retentionFrames.length);
   assert.ok((await retentionWidget.innerText()).includes('미관측'));
-  // 알려진 UI 제한: table 렌더러가 schema.fields.labels의 코호트/주차를 표시하지 않는다.
-  const retentionHeaders = await retentionWidget.locator('th').allTextContents();
-  assert.ok(!retentionHeaders.some(header => /cohort|week|코호트|주차/.test(header)));
+  assert.ok((await retentionWidget.locator('caption').first().innerText()).includes('주차 0'));
   for (const frame of retentionFrames) {
     const label = frame.schema.fields.find(field => field.name === 'value').labels.cohort_week;
-    assert.ok(!(await retentionWidget.innerText()).includes(label));
+    assert.ok((await retentionWidget.innerText()).includes(label));
   }
-  await retentionWidget.screenshot({ path: resolve(artifacts, 'admin-retention-table-missing-labels.png') });
+  await retentionWidget.screenshot({ path: resolve(artifacts, 'admin-retention-table-labels.png') });
+  await page.setViewportSize({ width: 768, height: 1000 });
+  await retentionWidget.scrollIntoViewIfNeeded();
+  await retentionWidget.screenshot({ path: resolve(artifacts, 'admin-retention-table-labels-768.png') });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
   await page.screenshot({ path: resolve(artifacts, 'admin-ingest-forecast-scenario.png'), fullPage: true });
   const premiumRun = await page.evaluate(async ({ from, scenarioModel }) => {
     const { scenarioApi, activeRun } = await import('/src/api/scenarios.ts');
@@ -740,8 +744,8 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   await comparisonTable.waitFor();
   const currentColumn = trainingFrame.schema.fields.findIndex(f => f.name === 'p50');
   const previousColumn = trainingFrame.schema.fields.findIndex(f => f.name === 'p50_compare');
-  assert.equal(await comparisonTable.locator('thead th').nth(currentColumn).innerText(), 'p50');
-  assert.equal(await comparisonTable.locator('thead th').nth(previousColumn).innerText(), 'p50_compare');
+  assert.equal(await comparisonTable.locator('thead th').nth(currentColumn).innerText(), '현재 p50');
+  assert.equal(await comparisonTable.locator('thead th').nth(previousColumn).innerText(), '이전 p50');
   assert.equal(await comparisonTable.locator('tbody tr').count(), 1);
   assert.equal(await comparisonTable.locator('tbody tr').first().locator('td').nth(currentColumn).innerText(), '2');
   assert.equal(await comparisonTable.locator('tbody tr').first().locator('td').nth(previousColumn).innerText(), '미관측');
@@ -1328,6 +1332,71 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     assert.deepEqual(Object.keys(inactivityRun.result.frames).sort(), ['active_users', 'cost_per_active_user', 'telemetry_coverage']);
     assert.ok(inactivityRun.result.frames.active_users.frames.some(f => f.data.values[1].includes(5)));
     assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND target='S1-7'"), '1');
+    await ownerPage.getByRole('link', { name: '시나리오', exact: true }).click();
+    const welcome = ownerPage.getByRole('button', { name: '전체 46개 질문 보기' });
+    if (await welcome.count()) await welcome.click();
+    await ownerPage.getByRole('searchbox', { name: '시나리오 검색' }).fill('S6-4');
+    await ownerPage.locator('button').filter({ has: ownerPage.locator('code', { hasText: /^★? ?S6-4$/ }) }).first().click();
+    let scenarioDialog = ownerPage.getByRole('dialog').filter({ has: ownerPage.locator('#scenario-title') });
+    await scenarioDialog.getByRole('button', { name: '24h', exact: true }).click();
+    await scenarioDialog.getByRole('button', { name: '실행', exact: true }).click();
+    let audit = ownerPage.getByRole('dialog', { name: '조회 사유 입력' });
+    await audit.getByRole('textbox').fill('짧음');
+    assert.equal(await audit.getByRole('button', { name: '사유 기록 후 조회' }).isDisabled(), true);
+    await audit.getByRole('button', { name: '취소', exact: true }).click();
+    await scenarioDialog.getByRole('button', { name: '실행', exact: true }).click();
+    audit = ownerPage.getByRole('dialog', { name: '조회 사유 입력' });
+    await audit.getByRole('textbox').fill('P3 최초 실행 화면 감사 점검');
+    const firstStart = ownerPage.waitForResponse(r => r.url().endsWith('/scenarios/S6-4/runs') && r.request().method() === 'POST');
+    await audit.getByRole('button', { name: '사유 기록 후 조회' }).click();
+    const firstResponse = await firstStart;
+    assert.equal(firstResponse.status(), 202);
+    assert.equal(firstResponse.request().headers()['x-audit-reason'], encodeURIComponent('P3 최초 실행 화면 감사 점검'));
+    assert.ok(!JSON.stringify(firstResponse.request().postDataJSON()).includes('감사 점검'));
+    const firstUiRun = await firstResponse.json();
+    await ownerPage.waitForURL(`**/runs/${firstUiRun.run_id}`);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByRole('button', { name: '다시 실행', exact: true }).click();
+    audit = ownerPage.getByRole('dialog', { name: '조회 사유 입력' });
+    assert.equal(await audit.getByRole('textbox').inputValue(), '');
+    await audit.getByRole('textbox').fill('P3 재실행 화면 새 감사 점검');
+    const nextStart = ownerPage.waitForResponse(r => r.url().endsWith('/scenarios/S6-4/runs') && r.request().method() === 'POST');
+    await audit.getByRole('button', { name: '사유 기록 후 조회' }).click();
+    const nextResponse = await nextStart;
+    assert.equal(nextResponse.status(), 202);
+    assert.equal(nextResponse.request().headers()['x-audit-reason'], encodeURIComponent('P3 재실행 화면 새 감사 점검'));
+    const nextUiRun = await nextResponse.json();
+    assert.notEqual(nextUiRun.run_id, firstUiRun.run_id);
+    await ownerPage.waitForURL(`**/runs/${nextUiRun.run_id}`);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(nextUiRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND reason IN ('P3 최초 실행 화면 감사 점검','P3 재실행 화면 새 감사 점검')"), '2');
+    await ownerPage.screenshot({ path: resolve(artifacts, 'owner-audited-scenario-rerun.png'), fullPage: true });
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByRole('button', { name: '저장', exact: true }).click();
+    const savedAuditDialog = ownerPage.getByRole('dialog', { name: '리포트 저장' });
+    await savedAuditDialog.getByRole('textbox', { name: '이름', exact: true }).fill('감사 상대 기간 리포트');
+    await savedAuditDialog.getByRole('radio', { name: /기간을 상대식으로 유지/ }).check();
+    await savedAuditDialog.getByRole('button', { name: '저장', exact: true }).click();
+    await ownerPage.getByText('리포트를 저장했습니다.', { exact: false }).waitFor();
+    await ownerPage.evaluate(() => {
+      window.history.pushState(null, '', '/scenarios/history');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    const savedRow = ownerPage.getByRole('row').filter({ has: ownerPage.getByRole('cell', { name: '감사 상대 기간 리포트', exact: true }) });
+    await savedRow.getByRole('button', { name: '열기', exact: true }).click();
+    audit = ownerPage.getByRole('dialog', { name: '조회 사유 입력' });
+    assert.equal(await audit.getByRole('textbox').inputValue(), '');
+    await audit.getByRole('textbox').fill('P3 저장 리포트 열기 새 감사 점검');
+    const savedStart = ownerPage.waitForResponse(r => r.url().endsWith('/scenarios/S6-4/runs') && r.request().method() === 'POST');
+    await audit.getByRole('button', { name: '사유 기록 후 조회' }).click();
+    const savedResponse = await savedStart;
+    assert.equal(savedResponse.status(), 202);
+    assert.equal(savedResponse.request().headers()['x-audit-reason'], encodeURIComponent('P3 저장 리포트 열기 새 감사 점검'));
+    const savedUiRun = await savedResponse.json();
+    assert.notEqual(savedUiRun.run_id, nextUiRun.run_id);
+    await ownerPage.waitForURL(`**/runs/${savedUiRun.run_id}`);
+    await ownerPage.locator('aside[aria-label="시나리오 판정"]').getByText(savedUiRun.run_id.slice(0, 8), { exact: false }).waitFor();
+    assert.equal(sql("SELECT count(*) FROM dashboard.audit_log WHERE action='scenario_run' AND reason='P3 저장 리포트 열기 새 감사 점검'"), '1');
+
+
     await ownerPage.evaluate(id => {
       window.history.pushState(null, '', `/runs/${id}`);
       window.dispatchEvent(new PopStateEvent('popstate'));
@@ -1340,7 +1409,8 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
   return { signals: ['logs', 'metrics', 'traces'], actualFrontendClient: true, admin: true,
     authenticatedIdentity: true, asOfTeam: true, maskedAtFour: true, duplicatePushes: 30, storedRows: 45,
     championScenario: { id: 'S8-7', runId: championRun.run_id, admin: true, actualResultUI: true, windowWeeks: 4, promptsPerSession: 2 },
-    retentionResultUi: { observedDenominator: 5, currentWeekMissing: true, knownGap: 'cohort_and_week_labels_not_rendered', actualResultUI: true },
+    auditedScenarioUi: { initialStart: true, rerun: true, savedRelativeOpen: true, freshReason: true, invalidReasonBlocked: true, persistedReasons: 3 },
+    retentionResultUi: { observedDenominator: 5, currentWeekMissing: true, cohortAndWeekLabels: true, actualResultUI: true },
     onboardingScenario: { id: 'S3-3', runId: onboardingRun.run_id, owner: true, audited: true, actualResultUI: true, findings: 0, cohortExcludesTodaysInstallations: true },
     probeScenario: { id: 'S5-5', runId: probeRun.run_id, owner: true, audited: true, actualResultUI: true, probeWindowMin: 5, probeCount: 10, refusalFindings: 0 },
     inactivityScenario: { id: 'S1-7', runId: inactivityRun.run_id, owner: true, audited: true, actualResultUI: true, inactiveDays: 30, activeUsers: 5, inactivityFindings: 0 },
@@ -1349,7 +1419,7 @@ export async function verifyDashboardIngest({ page, launch, waitFor, sql, backen
     shadowScenario: { id: 'S5-4', runId: shadowRun.run_id, owner: true, audited: true, queryAudited: true, actualResultUI: true, vendorEmailMissing: true, activeUsers: 5 },
     modelComparisonScenario: { id: 'S8-3', runId: modelComparisonRun.run_id, owner: true, audited: true, actualResultUI: true, modelACost: 15, modelBCostMissing: true },
     purposeScenario: { id: 'S5-6', runId: purposeRun.run_id, owner: true, audited: true, actualResultUI: true, rejectionEventsMissing: true },
-    trainingComparisonScenario: { id: 'S4-4', runId: trainingRun.run_id, admin: true, actualResultUI: true, promptsPerSession: 2, beforeMissing: true, renderedCurrent: '2', renderedPrevious: '미관측', comparisonHeaders: ['p50', 'p50_compare'] },
+    trainingComparisonScenario: { id: 'S4-4', runId: trainingRun.run_id, admin: true, actualResultUI: true, promptsPerSession: 2, beforeMissing: true, renderedCurrent: '2', renderedPrevious: '미관측', comparisonHeaders: ['현재 p50', '이전 p50'] },
     policyComparisonScenario: { id: 'S8-6', runId: policyComparisonRun.run_id, owner: true, audited: true, actualResultUI: true, gateWaitMs: 120000, beforeMissing: true },
     sprintScenario: { id: 'S2-3', runId: sprintRun.run_id, admin: true, actualResultUI: true, sprintDate: sprintRun.params.sprint_dates[0], sessions: 5 },
     qualityScenario: { id: 'S6-1', runId: qualityRun.run_id, owner: true, audited: true, actualResultUI: true, refusalFindings: 0, promptsPerSession: 2 },
