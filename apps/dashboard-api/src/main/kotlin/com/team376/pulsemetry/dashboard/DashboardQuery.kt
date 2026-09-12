@@ -63,7 +63,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "api_retry_attempts","auto_approval_ratio","api_error_rate","compaction_reduction","mcp_failure_ratio",
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
     private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
-    private val topPeriodMetrics = topCostRatioMetrics + setOf("usage_concentration","onboarding_ttfu","abandoned_session_ratio","subagent_activity","adoption_rate","active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
+    private val topPeriodMetrics = topCostRatioMetrics + setOf("cost_anomaly","usage_concentration","onboarding_ttfu","abandoned_session_ratio","subagent_activity","adoption_rate","active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
     private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
@@ -342,7 +342,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     private fun read(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant, zone: String, interval: String, deadline: Long,
         retained: List<List<String>>? = null): Rows {
         if (q.metricId=="contract_commitment_burn") return readCommitment(q,scope,from,to,zone,interval,deadline)
-        if (q.metricId=="cost_anomaly") return readAnomaly(q,scope,from,to,zone,deadline)
+        if (q.metricId=="cost_anomaly") return readAnomaly(q,scope,from,to,zone,deadline,retained)
         if (q.metricId in setOf("cost","subagent_cost_ratio","cost_per_active_user","cost_per_user_hour","model_unit_price")) return readCost(q,scope,from,to,zone,interval,deadline,retained=retained)
         if (q.metricId=="vendor_account_mismatch") return readMismatch(q,scope,from,to,zone,interval,deadline)
         if (q.metricId=="onboarding_retention") return readRetention(q,scope,from,to,zone,deadline)
@@ -544,15 +544,14 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
     }
     /** 누락일은 0원으로 추정하지 않는다. 기준일 각각의 개인정보 보호 조건도 결과에 전파한다. */
     private fun readAnomaly(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
-        zone: String, deadline: Long): Rows {
+        zone: String, deadline: Long, retained: List<List<String>>? = null): Rows {
         val days = (q.params["moving_avg_days"] ?: q.params["window_days"])?.asInt() ?: 7
         val timezone = ZoneId.of(zone)
         val start = from.atZone(timezone).toLocalDate().atStartOfDay(timezone)
         val daily = readCost(q.copy(metricId="cost",frameType="timeseries",
             source=if ("agent_name" in q.groupBy) "metrics" else "events"),scope,
-            start.minusDays(days.toLong()).toInstant(),to,zone,"1d",deadline)
+            start.minusDays(days.toLong()).toInstant(),to,zone,"1d",deadline,retained=retained)
         val groups = daily.data.groupBy { row -> q.groupBy.indices.map { row["g$it"].asString() } }
-        if (groups.size>groupLimit(q)) throw DashboardReadException("query_too_wide",422)
         val result = groups.values.flatMap { rows ->
             val byDay = rows.associateBy { Instant.ofEpochMilli(it["bucket"].asLong()).atZone(timezone).toLocalDate() }
             val selected = rows.filter { it["bucket"].asLong()>=start.toInstant().toEpochMilli() }

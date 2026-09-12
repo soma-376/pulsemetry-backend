@@ -2466,6 +2466,29 @@ class DashboardAuthTest {
             queryResult(queryBody(mapOf("metric_id" to "cost_anomaly","params" to params))).andExpect(status().isBadRequest)
         }
     }
+    @Test fun `비용 이상 상위는 마지막 관측 증가율로 선택하고 기타의 일별 비용에서 기준 평균을 재계산한다`() {
+        val ids = installations(5); val teams = costTeams()
+        seedPoints(ids.flatMap { id -> teams.flatMapIndexed { n,team ->
+            listOf(inTeam(costEvent(id,listOf(40.0,20.0,30.0)[n]),team),
+                inTeam(costEvent(id,listOf(10.0,10.0,30.0)[n],at="2026-08-31T12:00:00Z"),team),
+                inTeam(costEvent(id,listOf(5.0,5.0,15.0)[n],at="2026-08-30T12:00:00Z"),team),
+                inTeam(costEvent(id,listOf(5.0,5.0,15.0)[n],at="2026-08-29T12:00:00Z"),team)) } })
+        for(type in listOf("table","scalar","timeseries")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost_anomaly","group_by" to listOf("team"),
+                "frame_type" to type,"limit" to 1,"params" to mapOf("moving_avg_days" to 1)),
+                mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val offset = if(type=="timeseries") 1 else 0
+            val frames = result["frames"].toList().associateBy { it["schema"]["fields"][offset]["labels"]["team"].asString() }
+            assertThat(frames.keys).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
+            val other = frames.getValue("__other__")
+            val values = other["schema"]["fields"].toList().mapIndexed { n,f -> f["name"].asString() to other["data"]["values"][n][0] }.toMap()
+            assertThat(values["value"]?.asDouble()).isEqualTo(0.25)
+            assertThat(values["numerator"]?.asDouble()).isEqualTo(250.0)
+            assertThat(values["denominator"]?.asDouble()).isEqualTo(200.0)
+            assertThat(values["value_compare"]?.asDouble()).isEqualTo(if(type=="timeseries") 0.0 else 1.0)
+        }
+    }
     @Test fun `비용 이상은 누락일과 영 평균을 null로 두고 기준 소집단도 숨긴다`() {
         val ids = installations(5)
         fun frame(days: Int) = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "cost_anomaly",
