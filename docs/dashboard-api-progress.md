@@ -35,7 +35,7 @@
 
 ## 검증
 
-- 최신 dashboard 검증: `0842990` CSV 오류·주소 수용 검증 후 265건·JAR 검증 통과. 아래 전체 빌드 1,065건은 이전 `922a5d7` 기준이다.
+- 최신 전체 검증: `7e122fa`에서 `./gradlew build --rerun-tasks` 통과. 1,072건(dashboard 265건 포함), 실패·오류·skip 0건, 58개 작업 모두 재실행했다. 최신 E2E는 동일 런타임 코드의 `0842990` 기준으로 통과했다.
 
 - 최신 검증: `922a5d7`에서 전체 `./gradlew build --rerun-tasks` 통과. 1,065건(dashboard 258건 포함), 실패·오류·skip 0건. 58개 작업 모두 재실행했다. 일반 그룹 상위 N은 51개 연결·0개 미연결이며 group_by 금지 2개는 별도다.
 
@@ -1233,3 +1233,10 @@
 
 - `0842990`와 frontend `52f7cb10017c6ba6120f51f2e158ff329d14bff0`의 E2E 통과. 실제 owner 로그인·공통 request에서 CSV 도메인 출력, 로컬 부분 부재, 동일 사유 감사 1건을 확인했다. 감사 누락 403·limit 초과 422와 query_too_wide JSON 메시지도 확인했다.
 - 기존 실제 수집·42개 시나리오·프로세스 강제 종료/재기동 복구도 통과했고 `unexpectedOrUnimplementedResponses=[]`다. frontend 소스는 변경하지 않았다. api.queryCsv 래퍼나 일반 내보내기 버튼의 감사 입력까지 검증한 것은 아니다.
+
+## 전체 수용 조건 인덱스와 최신 전체 빌드
+
+- docs/dashboard-acceptance-matrix.md에 명세 22개 operation의 구현 위치·검증 범위를 정리하고 OpenAPI operationId 집합과 22/22 일치를 확인했다. 지표·시나리오·UI·장애의 미완료 범위를 구분했다.
+- `7e122fa`에서 전체 build --rerun-tasks 통과: 1,072건(dashboard 265건), 실패·오류·skip 0건, 58개 작업 모두 재실행. 로그 /tmp/proj156-acceptance-build.log.
+- 이번 변경은 추적 문서이며 런타임 코드를 수정하지 않았다. 최신 `0842990` E2E(주소 CSV·감사·42개 시나리오·재기동 복구) 이후 같은 런타임에 대한 E2E를 중복 실행하지 않았다.
+- 다음 수용 작업은 일반 UI 감사 전달·새 표/시계열 렌더링, 미지원 distribution의 지표별 정의, 시나리오 의미 대조와 요구되는 추가 장애 범위다. 전체 제품 수용 완료로 판정하지 않는다.
