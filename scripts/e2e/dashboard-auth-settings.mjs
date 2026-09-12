@@ -801,6 +801,8 @@ try {
         { value: 10, ratio: 1, numerator: 5, denominator: 5 });
       const sessionTeams = [randomUUID(), randomUUID(), randomUUID()];
       sessionTeams.forEach((team, index) => sql(`INSERT INTO enrollment.teams(id,tenant_id,name) VALUES ('${team}','${tenant}','세션 상위 E2E ${index}')`));
+      sessionTeams.forEach(team => installations.forEach(p => sql(`INSERT INTO enrollment.team_memberships(team_id,member_id)
+        SELECT '${team}',member_id FROM enrollment.installations WHERE id='${p.installation_id}'`)));
       const sessionEvents = installations.flatMap(p => sessionTeams.flatMap((team, index) =>
         Array.from({ length: [5, 3, 1][index] }, () => ['user_prompt', 'tool_call'].map(type => JSON.stringify({
           ...p, event_id: randomUUID(), signal: 'log', team_ids_as_of: [team], raw_json: JSON.stringify({
@@ -852,10 +854,14 @@ try {
           const response = await request('/query', { method: 'POST', body: JSON.stringify({
             from: 'now-1d', to: 'now',
             queries: [{ ref_id: 'A', metric_id: 'active_users', filters: { models: ['session-top-e2e'] }, group_by: ['team'], frame_type: 'table', limit: 1 },
-              { ref_id: 'B', metric_id: 'telemetry_coverage', filters: { models: ['population-top-e2e'] }, group_by: ['product'], frame_type: 'table', limit: 1 }],
+              { ref_id: 'B', metric_id: 'telemetry_coverage', filters: { models: ['population-top-e2e'] }, group_by: ['product'], frame_type: 'table', limit: 1 },
+              { ref_id: 'C', metric_id: 'adoption_rate', filters: { models: ['session-top-e2e'] }, group_by: ['team'], frame_type: 'table', limit: 1 }],
           }) });
-          return { active: series(response.results.A), coverage: series(response.results.B) };
+          return { active: series(response.results.A), coverage: series(response.results.B), adoption: series(response.results.C) };
         });
+        assert.equal(populationTop.adoption.state, 'success');
+        assert.deepEqual(Object.fromEntries(populationTop.adoption.points.filter(p => p.labels.team === '__other__').map(p => [p.key, p.value.value])),
+          { value: 1, numerator: 5, denominator: 5 });
         assert.equal(populationTop.active.state, 'success');
         assert.deepEqual(populationTop.active.points.map(p => p.value.value), [5, 5]);
         assert.equal(populationTop.active.points.find(p => p.labels.team === '__other__').value.value, 5);
@@ -893,6 +899,7 @@ try {
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
+    verifiedAdoptionTopN: { actualFrontendClient: true, owner: true, otherActiveUsers: 5, otherCurrentMembers: 5, otherAdoption: 1 },
     verifiedPopulationTopN: { actualFrontendClient: true, owner: true, otherActiveUsers: 5, otherObservedInstallations: 5, coverageDenominator: 5, otherCoverage: 1 },
     verifiedSessionTopN: { actualFrontendClient: true, owner: true, metrics: ['prompts_per_session', 'read_tool_density'], topMedian: 5, otherMedian: 3, otherP90: 3 },
     verifiedSecurityTopN: { actualFrontendClient: true, hookAdmin: true, refusalOwner: true, otherExecutions: 10, otherSessions: 5, otherSessionRatio: 1, otherRefusals: 10 },
