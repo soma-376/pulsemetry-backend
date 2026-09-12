@@ -2052,6 +2052,23 @@ class DashboardAuthTest {
             assertThat(frame["schema"]["fields"][0]["config"]["group_size"].asInt()).isEqualTo(5)
         }
     }
+    @Test fun `잔존율 시계열은 코호트별 주 시작과 상대 비교 주차를 정렬한다`() {
+        val current = installations(5); val prior = installations(5)
+        seedPoints(current.map { promptEvent(it,at="2026-08-04T12:00:00Z") }+
+            current.take(3).map { promptEvent(it,at="2026-08-11T12:00:00Z") }+
+            prior.map { promptEvent(it,at="2026-07-14T12:00:00Z") })
+        val range = mapOf("from" to "2026-08-03T00:00:00Z","to" to "2026-08-24T00:00:00Z","compare" to "previous_period")
+        val query = mapOf("metric_id" to "onboarding_retention","frame_type" to "timeseries","interval" to "1w")
+        val result = mapper.readTree(queryResult(queryBody(query,range)).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+        val frame = result["frames"].single()
+        assertThat(frame["data"]["values"][0].toList().map { it.asLong() }).containsExactly(
+            java.time.Instant.parse("2026-08-03T00:00:00Z").toEpochMilli(),java.time.Instant.parse("2026-08-10T00:00:00Z").toEpochMilli(),java.time.Instant.parse("2026-08-17T00:00:00Z").toEpochMilli())
+        assertThat(frame["data"]["values"][1].toList().map { it.asDouble() }).containsExactly(1.0,0.6,0.0)
+        assertThat(frame["data"]["values"][2].toList().map { it.asDouble() }).containsExactly(1.0,0.0,0.0)
+        assertThat(frame["schema"]["fields"][1]["labels"]["cohort_week_compare"].asString()).isEqualTo("2026-07-13")
+        queryResult(queryBody(query+mapOf("interval" to "1d"),range)).andExpect(status().isBadRequest)
+    }
     @Test fun `잔존율 상위 기타는 중복 설치의 코호트와 활동 주차를 합쳐 계산한다`() {
         val ids = installations(5); val teams = costTeams()
         seedPoints(ids.flatMap { id -> listOf("2026-08-03T12:00:00Z","2026-08-10T12:00:00Z","2026-08-17T12:00:00Z").map {

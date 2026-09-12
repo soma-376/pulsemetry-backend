@@ -167,7 +167,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         body.queries.forEach { q ->
             val definition = requireNotNull(catalog.find(q.metricId))
             // 미구현 계산을 빈 성공 프레임이나 수집 불가로 위장하지 않는다.
-            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users","tokens","session_last_event","vendor_account_mismatch","cost")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId!="usage_concentration") || (q.metricId=="onboarding_retention" && q.frameType=="timeseries")) {
+            if ((q.metricId !in pointMetrics && q.metricId !in populationMetrics && q.metricId !in ratioMetrics && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId !in setOf("tool_calls","rate_limit_events","tool_rejections","usage_heatmap","compactions","mcp_connections","llm_stop_reasons","subagent_activity","hook_blocking","hook_executions","refusals","model_users","tokens","session_last_event","vendor_account_mismatch","cost")) || (q.frameType == "distribution" && q.metricId !in sessionMetrics && q.metricId !in durationMetrics && q.metricId!="usage_concentration")) {
                 results[q.refId] = error(id, 501, "metric_not_implemented")
             } else {
                 if (q.metricId=="command_prompt_ratio") require(q.params.keys.all { it=="command_names" } &&
@@ -208,7 +208,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                 }
                 else require(q.params.isEmpty())
                 val timeseries = (q.frameType ?: definition.defaultFrameType) == "timeseries"
-                val interval = q.interval ?: if (q.metricId=="cost_anomaly") "1d" else if (!timeseries) "1d" else
+                if(q.metricId=="onboarding_retention" && timeseries) require(q.interval==null || q.interval=="1w")
+                val interval = q.interval ?: if(q.metricId=="onboarding_retention" && timeseries) "1w" else if (q.metricId=="cost_anomaly") "1d" else if (!timeseries) "1d" else
                     intervals.keys.firstOrNull { buckets(time, from, to, it).size <= body.maxDataPoints }
                         ?: throw DashboardReadException("query_too_wide", 422)
                 val ticks = if (timeseries) buckets(time, from, to, interval) else emptyList()
@@ -255,7 +256,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                             previous = comparison?.let { read(calculation,aggregateScope,it.first,it.second,zone,interval,deadline,retained) }
                         }
                     }
-                    results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="contract_commitment_burn") calculation.copy(groupBy=listOf("contract_id")) else if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else if (q.metricId=="onboarding_retention") q.copy(groupBy=q.groupBy+listOf("cohort_index","week_index")) else calculation, definition, current, previous, interval, ticks, comparison?.takeIf { before == null }?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
+                    results[q.refId] = mapOf("status" to 200, "frames" to frames(if (q.metricId=="contract_commitment_burn") calculation.copy(groupBy=listOf("contract_id")) else if (q.metricId=="session_last_event") q.copy(groupBy=q.groupBy+"last_event") else if (q.metricId=="onboarding_retention") q.copy(groupBy=q.groupBy+if(timeseries) listOf("cohort_index") else listOf("cohort_index","week_index")) else calculation, definition, current, previous, interval, ticks, comparison?.takeIf { before == null }?.let { ticks.map { tick -> time.bucket(if (body.compare=="previous_period")
                         tick.minus(Duration.between(from,to)) else tick.atZone(time.zone).minusWeeks(1).toInstant(), interval) } }, scope.teamNames))
                 } catch (e: DashboardReadException) { results[q.refId] = error(id, e.status, e.code) }
             }
@@ -687,7 +688,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         ), cohort AS (
             SELECT *,toStartOfWeek(first_at,1,{zone:String}) AS cohort_start FROM installations
             WHERE first_at>={from:DateTime}
-        ) SELECT 0 AS bucket$suffix,
+        ) SELECT toUnixTimestamp(addWeeks(cohort_start,toInt32(week_number)))*1000 AS bucket$suffix,
             toString(dateDiff('week',toStartOfWeek({from:DateTime},1,{zone:String}),cohort_start)) AS $cohortKey,
             toString(week_number) AS $weekKey,toString(cohort_start) AS cohort_week,
             toDateTime(addWeeks(cohort_start,toInt32(week_number)+1),{zone:String})<={cutoff:DateTime} AS complete,
@@ -1074,7 +1075,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val comparisons = previous?.data?.groupBy(::key).orEmpty()
         val keys = (groups.keys + comparisons.keys).distinct()
         val limitedKeys = if(q.metricId=="session_last_event" && q.groupBy.size>1) keys.map { it.dropLast(1) }.distinct()
-            else if(q.metricId=="onboarding_retention" && q.groupBy.size>2) keys.map { it.dropLast(2) }.distinct() else keys
+            else if(q.metricId=="onboarding_retention") keys.map { it.dropLast(if(q.frameType=="timeseries") 1 else 2) }.distinct() else keys
         if (limitedKeys.size > groupLimit(q)+(if (q.metricId in topGroupMetrics && limitedKeys.any { it.all { value -> value=="__other__" } }) 1 else 0)) throw DashboardReadException("query_too_wide", 422)
         val frameType = q.frameType ?: definition.defaultFrameType
         val frames = keys.flatMap { group ->
@@ -1099,7 +1100,11 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                     "config" to mapOf("unit" to if (q.metricId in setOf("subagent_activity","hook_executions") && column=="ratio") "ratio" else if (q.metricId in setOf("cost_per_active_user","cost_per_user_hour","model_unit_price") && column=="numerator") "USD" else if (q.metricId=="model_unit_price" && column=="denominator") "token" else if (q.metricId=="cost_per_user_hour" && column=="denominator") "h" else if (q.metricId in setOf("subagent_cost_ratio","cost_anomaly","contract_commitment_burn") && column!="value") "USD" else if (column=="value" || q.metricId in durationMetrics) definition.unit else if (q.metricId=="automation_ratio") "s" else if (q.metricId in setOf("compaction_reduction","usage_concentration") || q.metricId in tokenRatios) "token" else "count", "suppressed" to suppressed,
                         "group_size" to if (suppressed) null else (rows+prior).minOfOrNull { it["people"].asLong() }))
                 val byTime = series.associateBy { it["bucket"].asLong() }
-                val aligned = if (timeseries) ticks.indices.map { index -> seriesTicks?.getOrNull(index)?.let { byTime[it.toEpochMilli()] } }
+                val retentionWeeks = if(q.metricId=="onboarding_retention" && timeseries) series.associateBy {
+                    it["g${q.groupBy.size-1}"].asInt()+it["g${q.groupBy.size}"].asInt()
+                } else emptyMap()
+                val aligned = if(q.metricId=="onboarding_retention" && timeseries) ticks.indices.map { retentionWeeks[it] }
+                    else if (timeseries) ticks.indices.map { index -> seriesTicks?.getOrNull(index)?.let { byTime[it.toEpochMilli()] } }
                     else listOf(series.firstOrNull())
                 values += aligned.map { row -> row?.let {
                     if (suppressed || it["points"].asLong()==0L || it[column].isNull) null else it[column].asDouble()
