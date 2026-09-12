@@ -816,6 +816,14 @@ try {
         }),
       })));
       run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], populationEvents.join('\n'));
+      const agentEvents = installations.flatMap(p => [
+        ...['a', 'b', 'c'].map(agent => ({ agent, teams: [sessionTeams[0]] })),
+        ...['x', 'y', null].map(agent => ({ agent, teams: sessionTeams.slice(1) })),
+      ].map(({ agent, teams }) => JSON.stringify({
+        ...p, event_id: randomUUID(), signal: 'log', team_ids_as_of: teams,
+        raw_json: JSON.stringify({ type: 'tool_call', payload: { model: 'agent-top-e2e', agent_id: agent, tool_name: 'Read' } }),
+      })));
+      run('docker', ['exec', '-i', clickhouse, 'clickhouse-client', '--query', 'INSERT INTO enriched_events FORMAT JSONEachRow'], agentEvents.join('\n'));
       const securityContext = await browser.newContext();
       try {
         const ownerPage = await securityContext.newPage();
@@ -859,6 +867,18 @@ try {
           }) });
           return { active: series(response.results.A), coverage: series(response.results.B), adoption: series(response.results.C) };
         });
+        const agentTop = await ownerPage.evaluate(async () => {
+          const { request } = await import('/src/api/client.ts');
+          const { series } = await import('/src/widgets/model.ts');
+          const response = await request('/query', { method: 'POST', body: JSON.stringify({
+            from: 'now-1d', to: 'now', filters: { models: ['agent-top-e2e'] },
+            queries: [{ ref_id: 'A', metric_id: 'subagent_activity', group_by: ['team'], frame_type: 'table', limit: 1 }],
+          }) });
+          return series(response.results.A);
+        });
+        assert.equal(agentTop.state, 'success');
+        assert.deepEqual(Object.fromEntries(agentTop.points.filter(p => p.labels.team === '__other__').map(p => [p.key, p.value.value])),
+          { value: 2, ratio: 2 / 3, numerator: 10, denominator: 15 });
         assert.equal(populationTop.adoption.state, 'success');
         assert.deepEqual(Object.fromEntries(populationTop.adoption.points.filter(p => p.labels.team === '__other__').map(p => [p.key, p.value.value])),
           { value: 1, numerator: 5, denominator: 5 });
@@ -899,6 +919,7 @@ try {
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
+    verifiedAgentTopN: { actualFrontendClient: true, owner: true, otherAgents: 2, otherCalls: 10, otherTotalCalls: 15 },
     verifiedAdoptionTopN: { actualFrontendClient: true, owner: true, otherActiveUsers: 5, otherCurrentMembers: 5, otherAdoption: 1 },
     verifiedPopulationTopN: { actualFrontendClient: true, owner: true, otherActiveUsers: 5, otherObservedInstallations: 5, coverageDenominator: 5, otherCoverage: 1 },
     verifiedSessionTopN: { actualFrontendClient: true, owner: true, metrics: ['prompts_per_session', 'read_tool_density'], topMedian: 5, otherMedian: 3, otherP90: 3 },

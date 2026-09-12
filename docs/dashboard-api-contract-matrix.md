@@ -32,7 +32,7 @@
 | subagent_cost_ratio | scalar | 연결 | 501 | 연결 |
 | model_users | table | 연결 | 501 | 연결 |
 | model_unit_price | table | 연결 | 501 | 연결 |
-| contract_commitment_burn | scalar | 연결 | 501 | 미연결 |
+| contract_commitment_burn | scalar | 연결 | 501 | 일반 group_by 금지; 계약별 제한 별도 |
 | compactions | timeseries | 연결 | 501 | 연결 |
 | compaction_reduction | scalar | 연결 | 501 | 연결 |
 | edit_acceptance_rate | scalar | 연결 | 501 | 연결 |
@@ -42,7 +42,7 @@
 | rubber_stamp_ratio | scalar | 연결 | 501 | 연결 |
 | mcp_connections | timeseries | 연결 | 501 | 연결 |
 | mcp_failure_ratio | scalar | 연결 | 501 | 연결 |
-| subagent_activity | timeseries | 연결 | 501 | 미연결 |
+| subagent_activity | timeseries | 연결 | 501 | 연결 |
 | api_error_rate | scalar | 연결 | 501 | 연결 |
 | api_retry_attempts | scalar | 연결 | 501 | 연결 |
 | rate_limit_events | timeseries | 연결 | 501 | 연결 |
@@ -56,7 +56,7 @@
 | hook_executions | timeseries | 연결 | 501 | 연결 |
 | hook_blocking | timeseries | 연결 | 501 | 연결 |
 | refusals | timeseries | 연결 | 501 | 연결 |
-| vendor_account_mismatch | scalar | 연결 | 501 | 미연결 |
+| vendor_account_mismatch | scalar | 연결 | 501 | 해당 없음(group_by 금지) |
 | usage_heatmap | table | 연결 | 501 | 연결 |
 | usage_concentration | table | 연결 | 연결 | 미연결 |
 | onboarding_ttfu | distribution | 연결 | 연결 | 미연결 |
@@ -66,7 +66,7 @@
 
 ## 상위 N 검증 기준
 
-- 기타 재집계 지원 지표는 44개다. 현재 기간 값으로 상위 그룹을 선택하고 비교 기간에 같은 선택을 적용한다. 숨겨진 수치는 순위 선택에 사용하지 않는다.
+- 기타 재집계 지원 지표는 45개다. 현재 기간 값으로 상위 그룹을 선택하고 비교 기간에 같은 선택을 적용한다. 숨겨진 수치는 순위 선택에 사용하지 않는다.
 - 합산 불가 비율·고유 인원·백분위수는 원본 재집계를 유지한다. 나머지 지표의 상위 N은 자동 합산으로 대체하지 않는다.
 - 이번 토큰 검증: table/scalar/timeseries 비교, 두 차원(model/type), metrics 원천·누적 제외·종류 필터, 소집단과 기타 마스킹, frontend 동률 선택·기타 합계.
 
@@ -84,3 +84,5 @@
 - 인원·설치 추가 검증: 기간 전체 고유 인원·설치 기준 순위, 날짜·팀 중복 제거, 비교 그룹 고정, 활성 시간 양수·음수 상쇄와 기타 소집단. 커버리지 분모는 기존 현재 범위의 활성 설치 수를 유지한다.
 
 - 도입률 기타 분모는 현재·비교 기간에서 기타로 합쳐지는 팀들의 현재 활성 구성원 합집합이다. 미관측 구성원도 포함하고 두 기간에 동일한 분모를 적용한다. 상위 선택은 기간 전체 도입률을 기준으로 한다.
+
+- 서브에이전트 활동: 기간 전체 고유 agent_id로 순위를 정하고 기타의 식별자·도구 호출을 원본에서 중복 제거한다. 실제 도구 호출 구성원으로 소집단을 판단한다. 일반 그룹 상위 N 미연결은 6개이며, group_by 금지 2개는 이 수에 포함하지 않는다. 약정 소진율의 내부 계약별 결과·기간 제한 검토는 별도 유지한다.
