@@ -957,6 +957,21 @@ try {
           }) });
           return response.results.A;
         });
+        const longCommitment = await ownerPage.evaluate(async contractId => {
+          const { request } = await import('/src/api/client.ts');
+          const response = await request('/query', { method: 'POST', body: JSON.stringify({
+            from: 'now-730d', to: 'now',
+            queries: [{ ref_id: 'A', metric_id: 'contract_commitment_burn', frame_type: 'scalar', params: { contract_id: contractId } }],
+          }) });
+          return response.results.A;
+        }, termContract);
+        assert.equal(longCommitment.status, 200);
+        assert.equal(longCommitment.frames.length, 1);
+        const commitmentValues = Object.fromEntries(longCommitment.frames[0].schema.fields.map((field, index) =>
+          [field.name, longCommitment.frames[0].data.values[index][0]]));
+        assert.ok(commitmentValues.cost_usd > 0);
+        assert.ok(commitmentValues.commitment_amount > 0);
+        assert.equal(commitmentValues.burn_ratio, commitmentValues.cost_usd / commitmentValues.commitment_amount);
         assert.equal(retentionTop.status, 200);
         const otherCohorts = retentionTop.frames.filter(f => f.schema.fields[0].labels.team === '__other__');
         assert.ok(otherCohorts.length > 0);
@@ -1022,6 +1037,7 @@ try {
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
+    verifiedLongCommitment: { actualFrontendClient: true, owner: true, requestedDays: 730, explicitContract: true },
     verifiedRetentionTopN: { actualFrontendClient: true, owner: true, otherCohortInstallations: 5 },
     verifiedLastEventTopN: { actualFrontendClient: true, owner: true, otherFinalErrors: 5 },
     verifiedAnomalyTopN: { actualFrontendClient: true, owner: true, otherCost: 250, otherBaseline: 200, otherIncrease: 0.25 },
