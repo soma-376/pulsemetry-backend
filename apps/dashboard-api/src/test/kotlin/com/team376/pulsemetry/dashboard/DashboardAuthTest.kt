@@ -1804,6 +1804,27 @@ class DashboardAuthTest {
             "envelope" to mapOf("session_id" to session),"payload" to mapOf("error_type" to error))))
         return mapper.writeValueAsString(row)
     }
+    @Test fun `마지막 이벤트 기타는 팀 간 세션을 합쳐 최종 유형을 다시 선택한다`() {
+        val ids = installations(5); val teams = costTeams()
+        seedPoints(ids.flatMap { id -> listOf(
+            inTeam(lastEvent(id,"top-a","user_prompt",1),teams[0]),inTeam(lastEvent(id,"top-b","user_prompt",1),teams[0]),
+            inTeam(lastEvent(id,"shared","user_prompt",1),teams[1]),
+            inTeam(lastEvent(id,"shared","llm_call",2,error="failed"),teams[2]),
+            inTeam(lastEvent(id,"prior","user_prompt",1,at="2026-08-30T12:00:00Z"),teams[1])) })
+        for(type in listOf("table","scalar","timeseries")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "session_last_event","group_by" to listOf("team"),
+                "frame_type" to type,"limit" to 1),mapOf("compare" to "previous_period"))).andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val offset = if(type=="timeseries") 1 else 0
+            val other = result["frames"].toList().filter { it["schema"]["fields"][offset]["labels"]["team"].asString()=="__other__" }
+            assertThat(other).hasSize(2)
+            val error = other.single { it["schema"]["fields"][offset]["labels"]["last_event"].asString()=="api_error" }
+            assertThat(error["data"]["values"][offset][0].asDouble()).isEqualTo(5.0)
+            val prior = other.single { it["schema"]["fields"][offset]["labels"]["last_event"].asString()=="user_prompt" }
+            assertThat(prior["data"]["values"][offset][0].isNull).isTrue()
+            assertThat(prior["data"]["values"][offset+1][0].asDouble()).isEqualTo(5.0)
+        }
+    }
     @Test fun `마지막 로그는 시각과 순번으로 유형과 오류를 함께 고르고 제품을 분리한다`() {
         val ids = installations(5)
         val rows = ids.flatMap { id -> listOf(lastEvent(id,"s","llm_call",1,error="old"),

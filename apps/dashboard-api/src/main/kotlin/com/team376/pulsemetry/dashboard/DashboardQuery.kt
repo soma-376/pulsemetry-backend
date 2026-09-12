@@ -64,7 +64,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
     private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
     private val topPeriodMetrics = topCostRatioMetrics + setOf("cost_anomaly","usage_concentration","onboarding_ttfu","abandoned_session_ratio","subagent_activity","adoption_rate","active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
-    private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
+    private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("session_last_event","cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
     private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio", "cost_per_active_user", "cost_per_user_hour", "model_unit_price", "cost_anomaly", "contract_commitment_burn")
@@ -348,7 +348,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (q.metricId=="onboarding_retention") return readRetention(q,scope,from,to,zone,deadline)
         if (q.metricId=="onboarding_ttfu") return readOnboarding(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId=="usage_concentration") return readConcentration(q,scope,from,to,zone,interval,deadline,retained)
-        if (q.metricId=="session_last_event") return readLastEvent(q,scope,from,to,zone,interval,deadline)
+        if (q.metricId=="session_last_event") return readLastEvent(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId=="abandoned_session_ratio") return readAbandoned(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId=="tokens") return readTokens(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId=="hook_executions") return readHookExecutions(q,scope,from,to,zone,interval,deadline,retained)
@@ -766,9 +766,9 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return Rows(mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList(),sql)
     }
     private fun readLastEvent(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
-        zone: String, interval: String, deadline: Long): Rows {
+        zone: String, interval: String, deadline: Long, retained: List<List<String>>? = null): Rows {
         val frameType = q.frameType ?: requireNotNull(catalog.find(q.metricId)).defaultFrameType
-        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        val dimensions = groupDimensions(q.groupBy.map(::dimension),retained)
         val suffix = if (dimensions.isEmpty()) "" else ","+q.groupBy.indices.joinToString(",") { "g$it" }
         val category = "g${q.groupBy.size}"
         val bucket = if (frameType=="timeseries") "toUnixTimestamp(toStartOfInterval(ts, INTERVAL ${intervals.getValue(interval)}, {zone:String}))*1000" else "0"
@@ -795,7 +795,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             FROM sessions GROUP BY bucket$suffix,$category
         ) SELECT stats.*,least(privacy.people,stats.category_people) AS people,privacy.active_time_definition
             FROM stats INNER JOIN privacy USING (bucket$suffix) ORDER BY bucket$suffix,$category"""
-        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone)
+        val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone,
+            "retained" to mapper.writeValueAsString(retained.orEmpty()).replace("\\", "\\\\"))
         val rows = mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList()
         return Rows(rows,sql)
     }
@@ -1061,7 +1062,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val groups = current.data.groupBy(::key)
         val comparisons = previous?.data?.groupBy(::key).orEmpty()
         val keys = (groups.keys + comparisons.keys).distinct()
-        if (keys.size > groupLimit(q)+(if (q.metricId in topGroupMetrics && keys.any { it.all { value -> value=="__other__" } }) 1 else 0)) throw DashboardReadException("query_too_wide", 422)
+        val limitedKeys = if(q.metricId=="session_last_event" && q.groupBy.size>1) keys.map { it.dropLast(1) }.distinct() else keys
+        if (limitedKeys.size > groupLimit(q)+(if (q.metricId in topGroupMetrics && limitedKeys.any { it.all { value -> value=="__other__" } }) 1 else 0)) throw DashboardReadException("query_too_wide", 422)
         val frameType = q.frameType ?: definition.defaultFrameType
         val frames = keys.flatMap { group ->
             val rows = groups[group].orEmpty()
