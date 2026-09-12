@@ -35,7 +35,7 @@ jobs:
           java-version: '25'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       # 통합 테스트는 실제 PostgreSQL 로만 돈다 (Testcontainers).
       # ubuntu-latest 러너에는 Docker 데몬이 이미 떠 있다. H2 등으로 대체하지 않는다.
