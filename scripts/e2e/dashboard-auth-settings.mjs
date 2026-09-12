@@ -885,6 +885,18 @@ try {
           }) });
           return series(response.results.A);
         });
+        const onboardingTop = await ownerPage.evaluate(async () => {
+          const { request } = await import('/src/api/client.ts');
+          const { series } = await import('/src/widgets/model.ts');
+          const response = await request('/query', { method: 'POST', body: JSON.stringify({
+            from: 'now-1d', to: 'now', filters: { models: ['session-top-e2e'] },
+            queries: [{ ref_id: 'A', metric_id: 'onboarding_ttfu', group_by: ['team'], frame_type: 'table', limit: 1 }],
+          }) });
+          return series(response.results.A);
+        });
+        assert.equal(onboardingTop.state, 'success');
+        assert.deepEqual(Object.fromEntries(onboardingTop.points.filter(p => p.labels.team === '__other__').map(p => [p.key, p.value.value])),
+          { p50: 3600, p90: 3600 });
         assert.equal(abandonedTop.state, 'success');
         assert.deepEqual(Object.fromEntries(abandonedTop.points.filter(p => p.labels.team === '__other__').map(p => [p.key, p.value.value])),
           { value: 1, numerator: 10, denominator: 10 });
@@ -931,6 +943,7 @@ try {
   const result = { scope: '인증·P5 설정 및 실제 frontend 클라이언트의 카탈로그·공통 지표 50개 및 owner 전용 지표 3개 집계; OTLP logs·metrics·traces 수집→집계 검증 포함; 전체 PROJ-156 수용 검증 아님', passed: true,
     verifiedIngest,
     ingestJarSha256: createHash('sha256').update(readFileSync(resolve(backend, 'apps/telemetry-ingest/build/libs/telemetry-ingest-0.0.1-SNAPSHOT.jar'))).digest('hex'),
+    verifiedOnboardingTopN: { actualFrontendClient: true, owner: true, otherP50Seconds: 3600, otherP90Seconds: 3600 },
     verifiedAbandonedTopN: { actualFrontendClient: true, owner: true, otherAbandonedSessions: 10, otherSessions: 10, otherRatio: 1 },
     verifiedAgentTopN: { actualFrontendClient: true, owner: true, otherAgents: 2, otherCalls: 10, otherTotalCalls: 15 },
     verifiedAdoptionTopN: { actualFrontendClient: true, owner: true, otherActiveUsers: 5, otherCurrentMembers: 5, otherAdoption: 1 },
