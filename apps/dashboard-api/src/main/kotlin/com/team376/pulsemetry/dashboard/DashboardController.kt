@@ -53,7 +53,7 @@ class DashboardErrors {
     fun invalid(e: Exception) = response(400, "invalid_request")
     private fun response(status: Int, code: String, retry: Long? = null): ResponseEntity<Map<String, String>> {
         val id = UUID.randomUUID().toString()
-        val builder = ResponseEntity.status(status).header("X-Request-Id", id)
+        val builder = ResponseEntity.status(status).contentType(org.springframework.http.MediaType.APPLICATION_JSON).header("X-Request-Id", id)
         if (retry != null) builder.header("Retry-After", retry.toString())
         return builder.body(mapOf("error" to code, "message" to code, "request_id" to id))
     }

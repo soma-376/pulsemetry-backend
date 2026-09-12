@@ -267,7 +267,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             "coverage" to coverage, "results" to results)
         if (accept.split(',').any { it.trim().startsWith("text/csv") }) {
             @Suppress("UNCHECKED_CAST") val first = results.values.first() as Map<String, Any>
-            if (first["status"] != 200) return ResponseEntity.status(first["status"] as Int).body(first["error"])
+            if (first["status"] != 200) return ResponseEntity.status(first["status"] as Int).contentType(org.springframework.http.MediaType.APPLICATION_JSON).body(first["error"])
             val node = mapper.valueToTree<JsonNode>(first)["frames"]
             val lines = mutableListOf("frame,field,labels,index,value")
             node.toList().forEachIndexed { index, frame ->

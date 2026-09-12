@@ -2174,6 +2174,51 @@ class DashboardAuthTest {
         assertThat(mapper.readTree(hidden)["results"]["A"]["frames"][0]["data"]["values"].toList().all { it.size()==1 && it[0].isNull }).isTrue()
         assertThat(hidden).doesNotContain(ids[0].toString(),"***@vendor.test")
     }
+    @Test fun `주소 표 비교는 설치 합집합과 빈 기간을 보존하고 CSV도 도메인만 내보낸다`() {
+        val current = installations(5); val previous = installations(5)
+        seedPoints(current.map { vendorEvent(it,"current-local@current.test") }+
+            previous.map { vendorEvent(it,"previous-local@previous.test",at="2026-08-30T12:00:00Z") })
+        val q = mapOf("metric_id" to "vendor_account_mismatch","frame_type" to "table")
+        val compare = mapOf("compare" to "previous_period")
+        val query = queryBody(q,compare)
+        val result = mapper.readTree(mismatchQuery(query).andExpect(status().isOk).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(result["status"].asInt()).isEqualTo(200)
+        val data = result["frames"][0]["data"]["values"]
+        assertThat(data[0].size()).isEqualTo(10)
+        data[0].toList().forEachIndexed { n,id ->
+            if(UUID.fromString(id.asString()) in current) {
+                assertThat(data[1][n].asString()).isEqualTo("***@current.test")
+                assertThat(data[3][n].isNull).isTrue()
+            } else {
+                assertThat(data[1][n].isNull).isTrue()
+                assertThat(data[3][n].asString()).isEqualTo("***@previous.test")
+            }
+        }
+        val csv = mismatchQuery(query,"text/csv").andExpect(status().isOk).andReturn().response.contentAsString
+        assertThat(csv).contains(current[0].toString(),previous[0].toString(),"***@current.test","***@previous.test")
+            .doesNotContain("current-local","previous-local","person-")
+        val limited = queryBody(q+mapOf("limit" to 5),compare)
+        val error = mapper.readTree(mismatchQuery(limited).andReturn().response.contentAsString)["results"]["A"]
+        assertThat(error["status"].asInt()).isEqualTo(422)
+        mismatchQuery(limited,"text/csv").andExpect(status().`is`(422))
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='query' AND target='vendor_account_mismatch'")
+            .query(Long::class.java).single()).isEqualTo(4)
+    }
+    @Test fun `주소 표 비교 소집단과 admin 거부는 CSV에서도 식별자를 노출하지 않는다`() {
+        val ids = installations(5)
+        seedPoints(ids.map { vendorEvent(it,"current-local@current.test") }+
+            ids.take(4).map { vendorEvent(it,"previous-local@previous.test",at="2026-08-30T12:00:00Z") })
+        val query = queryBody(mapOf("metric_id" to "vendor_account_mismatch","frame_type" to "table"),mapOf("compare" to "previous_period"))
+        val response = mismatchQuery(query).andReturn().response.contentAsString
+        val values = mapper.readTree(response)["results"]["A"]["frames"][0]["data"]["values"]
+        assertThat(values.size()).isEqualTo(5)
+        assertThat(values.toList().all { it.size()==1 && it[0].isNull }).isTrue()
+        val csv = mismatchQuery(query,"text/csv").andExpect(status().isOk).andReturn().response.contentAsString
+        assertThat(csv).doesNotContain(ids[0].toString(),"current.test","previous.test","person-")
+        jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id",member).update()
+        mismatchQuery(query,"text/csv").andExpect(status().isForbidden)
+        assertThat(jdbc.sql("SELECT count(*) FROM dashboard.audit_log WHERE action='query'").query(Long::class.java).single()).isEqualTo(2)
+    }
     @Test fun `벤더 불일치 비교 소집단은 시계열과 CSV를 숨긴다`() {
         val ids = installations(5)
         seedPoints(ids.map { vendorEvent(it,"different@vendor.test") }+
