@@ -64,7 +64,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         "rubber_stamp_ratio","edit_acceptance_rate","cache_read_ratio","input_output_ratio")
     private val topCostRatioMetrics = setOf("cost_per_active_user","cost_per_user_hour","model_unit_price","subagent_cost_ratio")
     private val topPeriodMetrics = topCostRatioMetrics + setOf("cost_anomaly","usage_concentration","onboarding_ttfu","abandoned_session_ratio","subagent_activity","adoption_rate","active_users","telemetry_coverage","prompts_per_session","read_tool_density","model_users","llm_duration_ms","turn_duration_ms","llm_ttft_ms","gate_wait_ms")
-    private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("session_last_event","cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
+    private val topGroupMetrics = pointMetrics.keys + topRatioMetrics + topPeriodMetrics + setOf("onboarding_retention","session_last_event","cost","tokens","refusals","hook_executions","tool_calls","rate_limit_events","tool_rejections",
         "usage_heatmap","compactions","mcp_connections","llm_stop_reasons","hook_blocking")
     private val populationMetrics = setOf("active_users", "adoption_rate", "telemetry_coverage")
     private val ratioMetrics = setOf("automation_ratio", "integration_depth", "command_prompt_ratio", "tool_failure_rate", "api_retry_attempts", "auto_approval_ratio", "api_error_rate", "compaction_reduction", "mcp_failure_ratio", "rubber_stamp_ratio", "edit_acceptance_rate", "cache_read_ratio", "input_output_ratio", "abandoned_session_ratio", "usage_concentration", "onboarding_retention", "subagent_cost_ratio", "cost_per_active_user", "cost_per_user_hour", "model_unit_price", "cost_anomaly", "contract_commitment_burn")
@@ -229,6 +229,12 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
                                 compareByDescending<List<String>> { key ->
                                     val rows = grouped[key].orEmpty()
                                     if ((rows+priorGroups[key].orEmpty()).any { it["people"].asLong()<5 }) 0.0
+                                    else if (q.metricId=="onboarding_retention") {
+                                        // 완료된 코호트·주차 셀의 설치 수로 가중하며 미완료 주차는 순위에서 제외한다.
+                                        val complete = rows.filter { !it["value"].isNull }
+                                        val denominator = complete.sumOf { it["denominator"].asDouble() }
+                                        if(denominator==0.0) 0.0 else complete.sumOf { it["numerator"].asDouble() }/denominator
+                                    }
                                     else if (q.metricId in topPeriodMetrics) periodGroups[key]?.get("value")?.asDouble(0.0) ?: 0.0
                                     else if (q.metricId in topRatioMetrics) {
                                         // 일별 비율의 합계가 아니라 관측량으로 가중한 전체 기간 비율을 사용한다.
@@ -345,7 +351,7 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         if (q.metricId=="cost_anomaly") return readAnomaly(q,scope,from,to,zone,deadline,retained)
         if (q.metricId in setOf("cost","subagent_cost_ratio","cost_per_active_user","cost_per_user_hour","model_unit_price")) return readCost(q,scope,from,to,zone,interval,deadline,retained=retained)
         if (q.metricId=="vendor_account_mismatch") return readMismatch(q,scope,from,to,zone,interval,deadline)
-        if (q.metricId=="onboarding_retention") return readRetention(q,scope,from,to,zone,deadline)
+        if (q.metricId=="onboarding_retention") return readRetention(q,scope,from,to,zone,deadline,retained)
         if (q.metricId=="onboarding_ttfu") return readOnboarding(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId=="usage_concentration") return readConcentration(q,scope,from,to,zone,interval,deadline,retained)
         if (q.metricId=="session_last_event") return readLastEvent(q,scope,from,to,zone,interval,deadline,retained)
@@ -660,8 +666,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         return Rows(mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList(),sql)
     }
     private fun readRetention(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
-        zone: String, deadline: Long): Rows {
-        val dimensions = q.groupBy.mapIndexed { index, dim -> "${dimension(dim)} AS g$index" }
+        zone: String, deadline: Long, retained: List<List<String>>? = null): Rows {
+        val dimensions = groupDimensions(q.groupBy.map(::dimension),retained)
         val suffix = if (dimensions.isEmpty()) "" else ","+q.groupBy.indices.joinToString(",") { "g$it" }
         val cohortKey = "g${q.groupBy.size}"
         val weekKey = "g${q.groupBy.size+1}"
@@ -690,7 +696,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
             GROUP BY cohort_start,week_number$suffix ORDER BY cohort_start,week_number$suffix"""
         val cutoff = minOf(to,clock.instant())
         val parameters = scope.parameters+mapOf("from" to boundary(from),"to" to boundary(to),"zone" to zone,
-            "cutoff" to utc.format(cutoff),"observed_to" to boundary(cutoff))
+            "cutoff" to utc.format(cutoff),"observed_to" to boundary(cutoff),
+            "retained" to mapper.writeValueAsString(retained.orEmpty()).replace("\\", "\\\\"))
         return Rows(mapper.readTree(reader.query(sql,parameters,remaining(deadline)))["data"].toList(),sql)
     }
     private fun readOnboarding(q: DashboardQueryItem, scope: Scope, from: Instant, to: Instant,
@@ -1062,7 +1069,8 @@ class DashboardQuery(private val catalog: DashboardMetricCatalog, private val ac
         val groups = current.data.groupBy(::key)
         val comparisons = previous?.data?.groupBy(::key).orEmpty()
         val keys = (groups.keys + comparisons.keys).distinct()
-        val limitedKeys = if(q.metricId=="session_last_event" && q.groupBy.size>1) keys.map { it.dropLast(1) }.distinct() else keys
+        val limitedKeys = if(q.metricId=="session_last_event" && q.groupBy.size>1) keys.map { it.dropLast(1) }.distinct()
+            else if(q.metricId=="onboarding_retention" && q.groupBy.size>2) keys.map { it.dropLast(2) }.distinct() else keys
         if (limitedKeys.size > groupLimit(q)+(if (q.metricId in topGroupMetrics && limitedKeys.any { it.all { value -> value=="__other__" } }) 1 else 0)) throw DashboardReadException("query_too_wide", 422)
         val frameType = q.frameType ?: definition.defaultFrameType
         val frames = keys.flatMap { group ->

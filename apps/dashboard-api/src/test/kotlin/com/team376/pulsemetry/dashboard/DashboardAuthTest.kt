@@ -2052,6 +2052,29 @@ class DashboardAuthTest {
             assertThat(frame["schema"]["fields"][0]["config"]["group_size"].asInt()).isEqualTo(5)
         }
     }
+    @Test fun `잔존율 상위 기타는 중복 설치의 코호트와 활동 주차를 합쳐 계산한다`() {
+        val ids = installations(5); val teams = costTeams()
+        seedPoints(ids.flatMap { id -> listOf("2026-08-03T12:00:00Z","2026-08-10T12:00:00Z","2026-08-17T12:00:00Z").map {
+            inTeam(promptEvent(id,at=it),teams[0]) }+listOf(
+            inTeam(promptEvent(id,at="2026-08-03T12:00:00Z"),teams[1]),
+            inTeam(promptEvent(id,at="2026-08-03T12:00:00Z"),teams[2]),
+            inTeam(promptEvent(id,at="2026-08-10T12:00:00Z"),teams[1])) })
+        for(type in listOf("table","scalar")) {
+            val result = mapper.readTree(queryResult(queryBody(mapOf("metric_id" to "onboarding_retention","group_by" to listOf("team"),
+                "frame_type" to type,"limit" to 1),mapOf("from" to "2026-08-03T00:00:00Z","to" to "2026-08-24T00:00:00Z")))
+                .andReturn().response.contentAsString)["results"]["A"]
+            assertThat(result["status"].asInt()).withFailMessage(result.toString()).isEqualTo(200)
+            val frames = result["frames"].toList()
+            assertThat(frames.map { it["schema"]["fields"][0]["labels"]["team"].asString() }.distinct()).containsExactlyInAnyOrder(teams[0].toString(),"__other__")
+            val other = frames.filter { it["schema"]["fields"][0]["labels"]["team"].asString()=="__other__" }
+                .associateBy { it["schema"]["fields"][0]["labels"]["week_index"].asString() }
+            assertThat(other.keys).containsExactlyInAnyOrder("0","1","2")
+            for((week,frame) in other) {
+                assertThat(frame["data"]["values"][0][0].asDouble()).isEqualTo(if(week=="2") 0.0 else 1.0)
+                assertThat(frame["data"]["values"][2][0].asInt()).isEqualTo(5)
+            }
+        }
+    }
     @Test fun `잔존율 진행 중과 미래 주는 미판정이며 미래 이벤트를 사용하지 않는다`() {
         val ids = installations(5)
         val at = clock.instant().minusSeconds(5)
