@@ -1,0 +1,2374 @@
+{
+  "categories": [
+    {
+      "id": "cost",
+      "title": "비용·토큰·예산 최적화",
+      "question": "돈(토큰)을 제대로 배분·소비하고 있는가?",
+      "persona": "FinOps, IT 관리자"
+    },
+    {
+      "id": "usage_pattern",
+      "title": "사용 패턴·시간대·Rate Limit"
+    },
+    {
+      "id": "adoption",
+      "title": "도입·채택"
+    },
+    {
+      "id": "productivity",
+      "title": "생산성·활용 역량"
+    },
+    {
+      "id": "security",
+      "title": "보안·컴플라이언스"
+    },
+    {
+      "id": "quality",
+      "title": "품질·신뢰성·성능·운영"
+    },
+    {
+      "id": "governance",
+      "title": "거버넌스·에이전트·리스크"
+    },
+    {
+      "id": "strategy",
+      "title": "ROI·전략·경영 보고"
+    }
+  ],
+  "items": [
+    {
+      "scenario_id": "S1-1",
+      "title": "부서별 토큰 할당 불균형",
+      "category": "cost",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P1",
+      "highlight_widgets": [
+        "W1.3",
+        "W1.6"
+      ],
+      "metric_ids": [
+        "tokens",
+        "cost",
+        "adoption_rate"
+      ],
+      "required_params": [
+        "from",
+        "to",
+        "budget_by_team"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "budget_by_team": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "usd": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "tokens_m": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "budget_by_team"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [
+        {
+          "rule_id": "budget_exceeded",
+          "severity": "warning",
+          "when": "observed_team_usage > supplied_team_budget",
+          "message": "관측 사용량이 입력한 팀 예산을 초과했습니다. USD 또는 백만 토큰 단위로 비교합니다."
+        }
+      ],
+      "actions": []
+    },
+    {
+      "scenario_id": "S1-2",
+      "title": "모델 티어 미스매치",
+      "category": "cost",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.5",
+        "W2.2"
+      ],
+      "metric_ids": [
+        "tokens",
+        "cost",
+        "prompts_per_session",
+        "tool_calls"
+      ],
+      "required_params": [
+        "from",
+        "to",
+        "premium_model_patterns"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "premium_model_patterns": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "모델명 전체에 대소문자를 구분해 매칭합니다. *만 임의 문자열이며 다른 문자는 문자 그대로입니다.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "premium_model_patterns"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S1-3",
+      "title": "비용 스파이크·폭주",
+      "category": "cost",
+      "featured": true,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P1",
+      "highlight_widgets": [
+        "W1.2",
+        "W1.3",
+        "W2.5"
+      ],
+      "metric_ids": [
+        "cost",
+        "cost_anomaly",
+        "api_retry_attempts"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "moving_avg_days": {
+            "type": "integer",
+            "default": 7,
+            "minimum": 3,
+            "maximum": 28
+          },
+          "spike_threshold_pct": {
+            "type": "integer",
+            "default": 200,
+            "minimum": 0
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [
+        {
+          "rule_id": "spike_day",
+          "severity": "anomaly",
+          "when": "cost_anomaly.value >= spike_threshold_pct/100",
+          "message": "{date} 비용이 이동평균 대비 +{pct}%"
+        },
+        {
+          "rule_id": "top_mover",
+          "severity": "warning",
+          "when": "group_share_change >= 0.3",
+          "message": "{group} 비중이 {delta}pt 급변"
+        },
+        {
+          "rule_id": "retry_cost",
+          "severity": "info",
+          "when": "api_retry_attempts.ratio >= 0.05",
+          "message": "재시도 요청 비율 {ratio}%"
+        }
+      ],
+      "actions": [
+        "자동화/에이전트 트래픽은 사람 트래픽과 예산을 분리",
+        "일일 지출 상한 + 폭주 시 담당자 알림"
+      ],
+      "situation": "어느 날 일일 비용이 평소의 5배. 알고 보니 자동화 에이전트가 무한 루프."
+    },
+    {
+      "scenario_id": "S1-4",
+      "title": "반복 프롬프트→캐싱",
+      "category": "cost",
+      "featured": true,
+      "availability": "partial",
+      "unavailable_reason": "유사도 불가",
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.6"
+      ],
+      "metric_ids": [
+        "tokens",
+        "cache_read_ratio",
+        "prompts_per_session"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [
+        {
+          "rule_id": "no_cache_reads",
+          "severity": "info",
+          "when": "cache_read_ratio.value == 0 with positive denominator",
+          "message": "유효 토큰 요청에서 캐시 읽기가 관측되지 않았습니다. 반복 여부와 캐싱 효과는 판정하지 않습니다."
+        }
+      ],
+      "actions": []
+    },
+    {
+      "scenario_id": "S1-5",
+      "title": "컨텍스트 과다 첨부",
+      "category": "cost",
+      "featured": true,
+      "availability": "partial",
+      "unavailable_reason": "@멘션 없음",
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.6",
+        "W2.9"
+      ],
+      "metric_ids": [
+        "input_output_ratio",
+        "compactions",
+        "compaction_reduction"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "io_ratio_threshold": {
+            "type": "number",
+            "default": 10,
+            "minimum": 0
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [
+        {
+          "rule_id": "high_io_ratio",
+          "severity": "info",
+          "when": "input_output_ratio.value > io_ratio_threshold",
+          "message": "입력/출력 토큰 비율이 임계값을 초과했습니다. 컨텍스트 첨부 여부는 관측하지 못합니다."
+        }
+      ],
+      "actions": []
+    },
+    {
+      "scenario_id": "S1-6",
+      "title": "모델·effort 낭비",
+      "category": "cost",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.5",
+        "W2.6"
+      ],
+      "metric_ids": [
+        "cost",
+        "tokens",
+        "sessions"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S1-7",
+      "title": "유휴 라이선스·좀비 시트",
+      "category": "cost",
+      "featured": true,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.2"
+      ],
+      "metric_ids": [
+        "telemetry_coverage",
+        "active_users",
+        "cost_per_active_user"
+      ],
+      "required_params": [],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "inactive_days": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 365
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S2-1",
+      "title": "오전/오후 사용량 변동",
+      "category": "usage_pattern",
+      "featured": true,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.3"
+      ],
+      "metric_ids": [
+        "usage_heatmap",
+        "rate_limit_events",
+        "session_last_event"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S2-2",
+      "title": "Rate Limit 상시 도달",
+      "category": "usage_pattern",
+      "featured": true,
+      "availability": "partial",
+      "unavailable_reason": "retries_exhausted 없음",
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.3",
+        "W2.6"
+      ],
+      "metric_ids": [
+        "rate_limit_events",
+        "tokens",
+        "api_retry_attempts"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S2-3",
+      "title": "요일·스프린트 주기",
+      "category": "usage_pattern",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.3",
+        "W2.4"
+      ],
+      "metric_ids": [
+        "usage_heatmap",
+        "sessions",
+        "llm_duration_ms",
+        "rate_limit_events"
+      ],
+      "required_params": [
+        "from",
+        "to",
+        "sprint_dates"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "sprint_dates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "format": "date"
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "sprint_dates"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S3-1",
+      "title": "직군별 채택 격차",
+      "category": "adoption",
+      "featured": false,
+      "availability": "partial",
+      "unavailable_reason": "직군 없음→팀",
+      "target_page": "P1",
+      "highlight_widgets": [
+        "W1.6",
+        "W1.1"
+      ],
+      "metric_ids": [
+        "active_users",
+        "adoption_rate",
+        "prompts_per_session",
+        "tool_calls",
+        "mcp_connections"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S3-2",
+      "title": "파워유저 집중 vs 롱테일",
+      "category": "adoption",
+      "featured": true,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.5",
+        "W2.8"
+      ],
+      "metric_ids": [
+        "usage_concentration",
+        "tool_calls",
+        "tokens"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S3-3",
+      "title": "온보딩 정착",
+      "category": "adoption",
+      "featured": true,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.2"
+      ],
+      "metric_ids": [
+        "onboarding_ttfu",
+        "onboarding_retention",
+        "active_time"
+      ],
+      "required_params": [
+        "cohort_from",
+        "cohort_to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "cohort_from": {
+            "type": "string",
+            "format": "date"
+          },
+          "cohort_to": {
+            "type": "string",
+            "format": "date"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "cohort_from",
+          "cohort_to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S3-4",
+      "title": "부서별 활용 격차",
+      "category": "adoption",
+      "featured": true,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P1",
+      "highlight_widgets": [
+        "W1.6",
+        "W1.5"
+      ],
+      "metric_ids": [
+        "sessions",
+        "active_time",
+        "lines_of_code",
+        "adoption_rate"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S3-5",
+      "title": "고급 기능 활용률",
+      "category": "adoption",
+      "featured": false,
+      "availability": "partial",
+      "unavailable_reason": "스킬·플러그인 없음",
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.8",
+        "W2.10"
+      ],
+      "metric_ids": [
+        "mcp_connections",
+        "subagent_cost_ratio",
+        "command_prompt_ratio",
+        "tool_failure_rate"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S4-1",
+      "title": "재시도·프롬프트 반복률",
+      "category": "productivity",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.2"
+      ],
+      "metric_ids": [
+        "prompts_per_session",
+        "tokens"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [
+        {
+          "rule_id": "multiple_prompts_per_session",
+          "severity": "info",
+          "when": "prompts_per_session.p50 > 1",
+          "message": "세션별 프롬프트 수 중앙값이 1을 초과했습니다. 원문 반복이나 재시도를 판정하지 않습니다."
+        }
+      ],
+      "actions": []
+    },
+    {
+      "scenario_id": "S4-2",
+      "title": "대화 포기율",
+      "category": "productivity",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.2",
+        "W2.10"
+      ],
+      "metric_ids": [
+        "abandoned_session_ratio",
+        "session_last_event",
+        "api_error_rate"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [
+        {
+          "rule_id": "sessions_without_output",
+          "severity": "info",
+          "when": "abandoned_session_ratio.value > 0",
+          "message": "산출물이 관측되지 않은 세션이 있습니다. 세션 종료나 대화 포기를 확정하지 않습니다."
+        }
+      ],
+      "actions": []
+    },
+    {
+      "scenario_id": "S4-3",
+      "title": "코드 수용률·revert",
+      "category": "productivity",
+      "featured": false,
+      "availability": "partial",
+      "unavailable_reason": "revert 불가",
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.7",
+        "W2.4"
+      ],
+      "metric_ids": [
+        "edit_acceptance_rate",
+        "lines_of_code",
+        "commits",
+        "pull_requests"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "language": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S4-4",
+      "title": "교육 효과 전후 비교",
+      "category": "productivity",
+      "featured": true,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.0",
+        "W2.2",
+        "W2.8"
+      ],
+      "metric_ids": [
+        "active_users",
+        "prompts_per_session",
+        "edit_acceptance_rate",
+        "mcp_connections"
+      ],
+      "required_params": [
+        "pivot_date"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "pivot_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "window_weeks": {
+            "type": "integer",
+            "default": 4,
+            "minimum": 1,
+            "maximum": 52
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "pivot_date"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S4-5",
+      "title": "템플릿 활용률",
+      "category": "productivity",
+      "featured": true,
+      "availability": "partial",
+      "unavailable_reason": "스킬 없음",
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.8",
+        "W2.2"
+      ],
+      "metric_ids": [
+        "command_prompt_ratio",
+        "prompts_per_session"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "command_names": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S4-6",
+      "title": "유즈케이스 분포",
+      "category": "productivity",
+      "featured": false,
+      "availability": "partial",
+      "unavailable_reason": "주제 분류 불가",
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.8"
+      ],
+      "metric_ids": [
+        "tool_calls",
+        "lines_of_code"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S4-7",
+      "title": "성과 상관분석",
+      "category": "productivity",
+      "featured": false,
+      "availability": "unavailable",
+      "unavailable_reason": "외부 DORA",
+      "target_page": "P1",
+      "highlight_widgets": [],
+      "metric_ids": [],
+      "required_params": [],
+      "params_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S4-8",
+      "title": "Plan 응답 대기 시간",
+      "category": "productivity",
+      "featured": true,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.7"
+      ],
+      "metric_ids": [
+        "gate_wait_ms",
+        "tool_rejections",
+        "usage_heatmap"
+      ],
+      "required_params": [
+        "from",
+        "to",
+        "wait_thresholds_min"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "wait_thresholds_min": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "wait_thresholds_min"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S5-1",
+      "title": "민감정보 유출",
+      "category": "security",
+      "featured": true,
+      "availability": "unavailable",
+      "unavailable_reason": "프롬프트 원문은 정책상 미취급(ADR 0017 규칙 1). 대리 지표 hook_blocking만 가능.",
+      "target_page": "P3",
+      "highlight_widgets": [],
+      "metric_ids": [],
+      "required_params": [],
+      "params_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S5-2",
+      "title": "코드·문서 외부 유출",
+      "category": "security",
+      "featured": false,
+      "availability": "partial",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.2"
+      ],
+      "metric_ids": [
+        "mcp_connections",
+        "read_tool_density"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S5-3",
+      "title": "고객 데이터 취급",
+      "category": "security",
+      "featured": false,
+      "availability": "unavailable",
+      "unavailable_reason": "원문",
+      "target_page": "P3",
+      "highlight_widgets": [],
+      "metric_ids": [],
+      "required_params": [],
+      "params_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S5-4",
+      "title": "섀도우 AI",
+      "category": "security",
+      "featured": false,
+      "availability": "partial",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.3",
+        "W3.2"
+      ],
+      "metric_ids": [
+        "rate_limit_events",
+        "vendor_account_mismatch",
+        "mcp_connections",
+        "active_users"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S5-5",
+      "title": "인젝션·탈옥 시도",
+      "category": "security",
+      "featured": true,
+      "availability": "partial",
+      "unavailable_reason": "전사 단위",
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.3"
+      ],
+      "metric_ids": [
+        "refusals",
+        "hook_blocking",
+        "tool_rejections"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "probe_window_min": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 1440
+          },
+          "probe_count": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 10000
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S5-6",
+      "title": "정책 위반 용도",
+      "category": "security",
+      "featured": false,
+      "availability": "partial",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.3"
+      ],
+      "metric_ids": [
+        "tool_rejections"
+      ],
+      "required_params": [
+        "from",
+        "to",
+        "pivot_date"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "pivot_date": {
+            "type": "string",
+            "format": "date"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "pivot_date"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S5-7",
+      "title": "무검증 반출(러버스탬프)",
+      "category": "security",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.3"
+      ],
+      "metric_ids": [
+        "rubber_stamp_ratio",
+        "auto_approval_ratio",
+        "pull_requests"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "threshold_ms": {
+            "type": "integer",
+            "default": 2000,
+            "minimum": 1,
+            "maximum": 60000
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S6-1",
+      "title": "품질 피드백 루프",
+      "category": "quality",
+      "featured": false,
+      "availability": "partial",
+      "unavailable_reason": "설문 없음",
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.7",
+        "W2.2"
+      ],
+      "metric_ids": [
+        "refusals",
+        "edit_acceptance_rate",
+        "prompts_per_session"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S6-2",
+      "title": "환각 신고",
+      "category": "quality",
+      "featured": false,
+      "availability": "unavailable",
+      "unavailable_reason": "외부 채널",
+      "target_page": "P3",
+      "highlight_widgets": [],
+      "metric_ids": [],
+      "required_params": [],
+      "params_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S6-3",
+      "title": "모델 버전 드리프트",
+      "category": "quality",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.1"
+      ],
+      "metric_ids": [
+        "api_error_rate",
+        "tool_failure_rate",
+        "prompts_per_session",
+        "llm_stop_reasons"
+      ],
+      "required_params": [
+        "pivot_date"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "pivot_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "pivot_date"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S6-4",
+      "title": "레이턴시·에러율·장애",
+      "category": "quality",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.1"
+      ],
+      "metric_ids": [
+        "llm_duration_ms",
+        "llm_ttft_ms",
+        "api_error_rate",
+        "active_users"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S6-5",
+      "title": "리트라이 스톰",
+      "category": "quality",
+      "featured": false,
+      "availability": "partial",
+      "unavailable_reason": "고갈 없음",
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.1"
+      ],
+      "metric_ids": [
+        "api_retry_attempts",
+        "cost"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S7-1",
+      "title": "에이전트 태스크 성공률",
+      "category": "governance",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.10",
+        "W2.5"
+      ],
+      "metric_ids": [
+        "tool_failure_rate",
+        "tool_calls",
+        "subagent_activity",
+        "cost"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "failure_threshold": {
+            "type": "number",
+            "default": 0.05,
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [
+        {
+          "rule_id": "high_tool_failure_rate",
+          "severity": "info",
+          "when": "tool_failure_rate.value > failure_threshold",
+          "message": "도구 실패율이 임계값을 초과했습니다. 태스크 완료 여부는 직접 측정하지 않습니다."
+        }
+      ],
+      "actions": []
+    },
+    {
+      "scenario_id": "S7-2",
+      "title": "과도한 데이터 접근",
+      "category": "governance",
+      "featured": true,
+      "availability": "partial",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.2",
+        "W3.3"
+      ],
+      "metric_ids": [
+        "read_tool_density",
+        "mcp_connections",
+        "auto_approval_ratio"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "density_threshold": {
+            "type": "number",
+            "default": 10,
+            "minimum": 0
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S7-3",
+      "title": "에이전트 정책 위반·에스컬레이션",
+      "category": "governance",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.3"
+      ],
+      "metric_ids": [
+        "tool_rejections",
+        "hook_blocking",
+        "gate_wait_ms"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S7-4",
+      "title": "감사 로그·리텐션 거버넌스",
+      "category": "governance",
+      "featured": true,
+      "availability": "partial",
+      "unavailable_reason": "retention_sweep·auth 없음",
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.2",
+        "W3.4"
+      ],
+      "metric_ids": [
+        "telemetry_coverage",
+        "hook_executions",
+        "mcp_connections"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S8-1",
+      "title": "ROI·경영 보고",
+      "category": "strategy",
+      "featured": false,
+      "availability": "partial",
+      "unavailable_reason": "재무 조인 없음",
+      "target_page": "P1",
+      "highlight_widgets": [
+        "W1.1",
+        "W1.5",
+        "W1.2"
+      ],
+      "metric_ids": [
+        "sessions",
+        "tokens",
+        "active_time",
+        "lines_of_code",
+        "commits",
+        "pull_requests",
+        "cost_per_active_user"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S8-2",
+      "title": "예산 수립·비용 예측",
+      "category": "strategy",
+      "featured": true,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P1",
+      "highlight_widgets": [
+        "W1.2",
+        "W1.4"
+      ],
+      "metric_ids": [
+        "cost",
+        "tokens",
+        "model_unit_price",
+        "cache_read_ratio",
+        "onboarding_retention"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-90d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "growth_model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "enum": [
+              "linear",
+              "constant"
+            ],
+            "default": "linear"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S8-3",
+      "title": "신규 모델 A/B",
+      "category": "strategy",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.1",
+        "W2.5"
+      ],
+      "metric_ids": [
+        "prompts_per_session",
+        "cost",
+        "llm_duration_ms",
+        "api_error_rate"
+      ],
+      "required_params": [
+        "from",
+        "to",
+        "model_a",
+        "model_b"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          },
+          "model_a": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "model_b": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "model_a",
+          "model_b"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S8-4",
+      "title": "벤더 종속",
+      "category": "strategy",
+      "featured": false,
+      "availability": "partial",
+      "unavailable_reason": null,
+      "target_page": "P1",
+      "highlight_widgets": [
+        "W1.4"
+      ],
+      "metric_ids": [
+        "tokens",
+        "cost"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S8-5",
+      "title": "도구 중복·통합",
+      "category": "strategy",
+      "featured": true,
+      "availability": "partial",
+      "unavailable_reason": null,
+      "target_page": "P1",
+      "highlight_widgets": [
+        "W1.1",
+        "W1.4"
+      ],
+      "metric_ids": [
+        "active_users",
+        "cost_per_active_user",
+        "tool_calls"
+      ],
+      "required_params": [
+        "from",
+        "to"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now-28d"
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "default": "now"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S8-6",
+      "title": "정책 실효성",
+      "category": "strategy",
+      "featured": false,
+      "availability": "available",
+      "unavailable_reason": null,
+      "target_page": "P3",
+      "highlight_widgets": [
+        "W3.3"
+      ],
+      "metric_ids": [
+        "tool_rejections",
+        "hook_blocking",
+        "gate_wait_ms"
+      ],
+      "required_params": [
+        "pivot_date"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "pivot_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "window_weeks": {
+            "type": "integer",
+            "default": 4,
+            "minimum": 1,
+            "maximum": 52
+          }
+        },
+        "required": [
+          "pivot_date"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    },
+    {
+      "scenario_id": "S8-7",
+      "title": "챔피언 프로그램",
+      "category": "strategy",
+      "featured": true,
+      "availability": "partial",
+      "unavailable_reason": "개인 리스트 미제공",
+      "target_page": "P2",
+      "highlight_widgets": [
+        "W2.0",
+        "W2.2"
+      ],
+      "metric_ids": [
+        "adoption_rate",
+        "prompts_per_session",
+        "usage_concentration"
+      ],
+      "required_params": [
+        "pivot_date"
+      ],
+      "params_schema": {
+        "type": "object",
+        "properties": {
+          "pivot_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "pivot_date"
+        ],
+        "additionalProperties": false
+      },
+      "findings_rules": [],
+      "actions": []
+    }
+  ]
+}

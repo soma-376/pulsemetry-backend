@@ -28,6 +28,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: soma-376/telemetryctl
+          # PROJ-107 계약 커밋. 계약 브랜치 게시 후 CI에서도 같은 원본을 검증한다.
+          ref: e730bbfa08657a9887a87cc1d1e07095e9cca305
           path: telemetryctl
           persist-credentials: false
 

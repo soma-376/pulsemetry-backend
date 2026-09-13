@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+	implementation(libs.spring.boot.starter.security)
 	implementation(project(":libs:enrollment-persistence"))
 	// telemetry token 해시. 발급(이 앱)과 검증(:libs:security)이 같은 연산을 써야 하므로
 	// 정의를 한 벌로 둔다 (ADR 0008 규칙 3·5). 이 의존은 필터 체인을 켜지 않는다 — ADR 0011.

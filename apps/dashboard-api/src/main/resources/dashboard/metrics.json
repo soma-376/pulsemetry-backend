@@ -1,0 +1,2064 @@
+[
+  {
+    "metric_id": "telemetry_coverage",
+    "indicator_id": "H-1",
+    "title": "텔레메트리 커버리지",
+    "definition": "기간 내 이벤트 있는 설치 수 ÷ installations.status='active'; 활성 설치 ÷ 활성 구성원",
+    "caveat": "",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "product"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "enriched_events.installation_id",
+      "enrollment.installations.id",
+      "enrollment.installations.member_id",
+      "enrollment.installations.status",
+      "enrollment.members.status",
+      "enriched_events.product"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q22"
+  },
+  {
+    "metric_id": "active_users",
+    "indicator_id": "A-1",
+    "title": "활성 사용자",
+    "definition": "1순위 active_time.total{type=user} 합>0 인 사람 수; 폴백 이벤트≥1(가정 A2)",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 사용자 활성 시간 원천이 없으면 기간 내 이벤트가 있는 사람으로 대체하고 응답에 정의를 표시합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team",
+      "product"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.type",
+      "enriched_events.installation_id",
+      "enrollment.installations.id",
+      "enrollment.installations.member_id",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "enriched_events.product"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q1"
+  },
+  {
+    "metric_id": "adoption_rate",
+    "indicator_id": "A-2",
+    "title": "도입률",
+    "definition": "active_users(팀) ÷ 팀 활성 인원",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 사용자 활성 시간 원천이 없으면 기간 내 이벤트가 있는 사람으로 대체하고 응답에 정의를 표시합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.type",
+      "enriched_events.installation_id",
+      "enrollment.installations.id",
+      "enrollment.installations.member_id",
+      "enrollment.team_memberships.team_id",
+      "enrollment.team_memberships.member_id",
+      "enrollment.team_memberships.left_at",
+      "enrollment.members.status",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q2"
+  },
+  {
+    "metric_id": "sessions",
+    "indicator_id": "A-3",
+    "title": "세션 수",
+    "definition": "sum(value) name=claude_code.session.count",
+    "caveat": "Claude Code 메트릭만 산출합니다. Codex 메트릭 이름 매핑은 없습니다. aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team",
+      "product",
+      "start_type"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.start_type",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "enriched_events.product"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q3"
+  },
+  {
+    "metric_id": "active_time",
+    "indicator_id": "A-4",
+    "title": "활성 시간",
+    "definition": "sum(value) name=claude_code.active_time.total (초)",
+    "caveat": "Claude Code 메트릭만 산출합니다. Codex 메트릭 이름 매핑은 없습니다. aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "s",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team",
+      "product",
+      "type"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.type",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "enriched_events.product"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q4"
+  },
+  {
+    "metric_id": "automation_ratio",
+    "indicator_id": "A-4",
+    "title": "자동화 비율",
+    "definition": "cli ÷ (user+cli)",
+    "caveat": "Claude Code 메트릭만 산출합니다. Codex 메트릭 이름 매핑은 없습니다. aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.type",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q4"
+  },
+  {
+    "metric_id": "prompts_per_session",
+    "indicator_id": "A-5",
+    "title": "세션당 프롬프트",
+    "definition": "세션당 type='user_prompt' 수 분포(p50/p90, 히스토그램)",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "distribution",
+    "allowed_group_by": [
+      "team",
+      "product"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.envelope.session_id",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "enriched_events.product"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q5"
+  },
+  {
+    "metric_id": "command_prompt_ratio",
+    "indicator_id": "A-5",
+    "title": "명령 프롬프트 비율",
+    "definition": "payload.command_name IS NOT NULL 프롬프트 비율",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.command_name",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "command_names": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q5"
+  },
+  {
+    "metric_id": "lines_of_code",
+    "indicator_id": "B-1",
+    "title": "코드 변경량",
+    "definition": "sum(value) name=claude_code.lines_of_code.count",
+    "caveat": "Claude Code 메트릭만 산출합니다. Codex 메트릭 이름 매핑은 없습니다. aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "lines",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team",
+      "type",
+      "model"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.type",
+      "raw_json.point.attrs.model",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "raw_json.payload.model"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q6"
+  },
+  {
+    "metric_id": "commits",
+    "indicator_id": "B-2",
+    "title": "커밋 수",
+    "definition": "sum(value) name=claude_code.commit.count",
+    "caveat": "Claude Code 메트릭만 산출합니다. Codex 메트릭 이름 매핑은 없습니다. aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q6"
+  },
+  {
+    "metric_id": "pull_requests",
+    "indicator_id": "B-2",
+    "title": "풀 리퀘스트 수",
+    "definition": "sum(value) name=claude_code.pull_request.count",
+    "caveat": "Claude Code 메트릭만 산출합니다. Codex 메트릭 이름 매핑은 없습니다. aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q6"
+  },
+  {
+    "metric_id": "integration_depth",
+    "indicator_id": "B-3",
+    "title": "통합 깊이",
+    "definition": "(commits+pull_requests) ÷ sessions{start_type=fresh}",
+    "caveat": "Claude Code 메트릭만 산출합니다. Codex 메트릭 이름 매핑은 없습니다. aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.start_type",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q6"
+  },
+  {
+    "metric_id": "cost",
+    "indicator_id": "C-1",
+    "title": "비용",
+    "definition": "source=events(기본): sum(payload.cost_usd) type=llm_call (두 제품, cost_source reported/estimated). source=metrics: sum(value) name=claude_code.cost.usage. price_basis=contract: × discount_rate(가정 A5)",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 청구액이 아닙니다. 계약 할인은 유효한 token_type=all만 적용하며 종류별 단가는 적용하지 않습니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다. source=events와 source=metrics는 중복 합산하지 않습니다. agent_name 등 메트릭 귀속 차원은 source=metrics에서만 사용할 수 있습니다.",
+    "unit": "USD",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team",
+      "product",
+      "model",
+      "query_source",
+      "agent_name",
+      "skill_name",
+      "plugin_name",
+      "mcp_server",
+      "speed",
+      "effort"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.cost_usd",
+      "raw_json.payload.cost_source",
+      "raw_json.payload.source",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.model",
+      "raw_json.point.attrs.query_source",
+      "enrollment.contract_token_discounts.discount_rate",
+      "enrollment.contract_token_discounts.token_type",
+      "enrollment.contract_token_discounts.model_pattern",
+      "enrollment.contract_memberships.contract_id",
+      "enrollment.contract_memberships.member_id",
+      "enrollment.contract_memberships.assigned_at",
+      "enrollment.contract_memberships.released_at",
+      "enrollment.contracts.id",
+      "enrollment.contracts.tenant_id",
+      "enrollment.contracts.vendor",
+      "enrollment.contracts.contract_type",
+      "enrollment.contracts.starts_at",
+      "enrollment.contracts.ends_at",
+      "enrollment.contracts.status",
+      "enrollment.contracts.terminated_at",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "enriched_events.product",
+      "raw_json.point.attrs['agent.name']",
+      "raw_json.point.attrs['skill.name']",
+      "raw_json.point.attrs['plugin.name']",
+      "raw_json.payload.mcp_server",
+      "raw_json.point.attrs['mcp_server.name']",
+      "raw_json.point.attrs.speed",
+      "raw_json.payload.reasoning_effort",
+      "raw_json.point.attrs.effort",
+      "enrollment.contract_token_discounts.contract_id",
+      "enrollment.contract_token_discounts.effective_from",
+      "enrollment.contract_token_discounts.effective_to"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q7"
+  },
+  {
+    "metric_id": "cost_anomaly",
+    "indicator_id": "S1-3",
+    "title": "비용 이상 징후",
+    "definition": "일별 비용 ÷ 직전 N일 이동평균 − 1",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 청구액이 아닙니다. 계약 할인은 유효한 token_type=all만 적용하며 종류별 단가는 적용하지 않습니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team",
+      "agent_name",
+      "query_source"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.cost_usd",
+      "raw_json.payload.cost_source",
+      "raw_json.payload.source",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.model",
+      "raw_json.point.attrs.query_source",
+      "enrollment.contract_token_discounts.discount_rate",
+      "enrollment.contract_token_discounts.token_type",
+      "enrollment.contract_token_discounts.model_pattern",
+      "enrollment.contract_memberships.contract_id",
+      "enrollment.contract_memberships.member_id",
+      "enrollment.contract_memberships.assigned_at",
+      "enrollment.contract_memberships.released_at",
+      "enrollment.contracts.id",
+      "enrollment.contracts.tenant_id",
+      "enrollment.contracts.vendor",
+      "enrollment.contracts.contract_type",
+      "enrollment.contracts.starts_at",
+      "enrollment.contracts.ends_at",
+      "enrollment.contracts.status",
+      "enrollment.contracts.terminated_at",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "raw_json.point.attrs['agent.name']",
+      "enrollment.contract_token_discounts.contract_id",
+      "enrollment.contract_token_discounts.effective_from",
+      "enrollment.contract_token_discounts.effective_to"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "moving_avg_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90,
+          "default": 7
+        },
+        "window_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90,
+          "description": "moving_avg_days의 frontend 호환 별칭. 두 값이 다르면 요청 오류."
+        }
+      },
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q21"
+  },
+  {
+    "metric_id": "cost_per_active_user",
+    "indicator_id": "C-4",
+    "title": "활성 사용자당 비용",
+    "definition": "cost ÷ active_users",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 청구액이 아닙니다. 계약 할인은 유효한 token_type=all만 적용하며 종류별 단가는 적용하지 않습니다. 사용자 활성 시간 원천이 없으면 기간 내 이벤트가 있는 사람으로 대체하고 응답에 정의를 표시합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "USD",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team",
+      "product"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.cost_usd",
+      "raw_json.payload.cost_source",
+      "raw_json.payload.source",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.model",
+      "raw_json.point.attrs.query_source",
+      "enrollment.contract_token_discounts.discount_rate",
+      "enrollment.contract_token_discounts.token_type",
+      "enrollment.contract_token_discounts.model_pattern",
+      "enrollment.contract_memberships.contract_id",
+      "enrollment.contract_memberships.member_id",
+      "enrollment.contract_memberships.assigned_at",
+      "enrollment.contract_memberships.released_at",
+      "enrollment.contracts.id",
+      "enrollment.contracts.tenant_id",
+      "enrollment.contracts.vendor",
+      "enrollment.contracts.contract_type",
+      "enrollment.contracts.starts_at",
+      "enrollment.contracts.ends_at",
+      "enrollment.contracts.status",
+      "enrollment.contracts.terminated_at",
+      "raw_json.point.attrs.type",
+      "enriched_events.installation_id",
+      "enrollment.installations.id",
+      "enrollment.installations.member_id",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "enrollment.contract_token_discounts.contract_id",
+      "enrollment.contract_token_discounts.effective_from",
+      "enrollment.contract_token_discounts.effective_to"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q1+Q7"
+  },
+  {
+    "metric_id": "cost_per_user_hour",
+    "indicator_id": "C-4",
+    "title": "사용자 활동 시간당 비용",
+    "definition": "cost ÷ (active_time{user}/3600)",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 청구액이 아닙니다. 계약 할인은 유효한 token_type=all만 적용하며 종류별 단가는 적용하지 않습니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "USD",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.cost_usd",
+      "raw_json.payload.cost_source",
+      "raw_json.payload.source",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.model",
+      "raw_json.point.attrs.query_source",
+      "enrollment.contract_token_discounts.discount_rate",
+      "enrollment.contract_token_discounts.token_type",
+      "enrollment.contract_token_discounts.model_pattern",
+      "enrollment.contract_memberships.contract_id",
+      "enrollment.contract_memberships.member_id",
+      "enrollment.contract_memberships.assigned_at",
+      "enrollment.contract_memberships.released_at",
+      "enrollment.contracts.id",
+      "enrollment.contracts.tenant_id",
+      "enrollment.contracts.vendor",
+      "enrollment.contracts.contract_type",
+      "enrollment.contracts.starts_at",
+      "enrollment.contracts.ends_at",
+      "enrollment.contracts.status",
+      "enrollment.contracts.terminated_at",
+      "raw_json.point.attrs.type",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "enrollment.contract_token_discounts.contract_id",
+      "enrollment.contract_token_discounts.effective_from",
+      "enrollment.contract_token_discounts.effective_to"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q4+Q7"
+  },
+  {
+    "metric_id": "tokens",
+    "indicator_id": "C-2",
+    "title": "토큰 사용량",
+    "definition": "source=events: sum(payload.tokens.*); source=metrics: sum(value) name=claude_code.token.usage by attrs.type",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다. source=events와 source=metrics는 중복 합산하지 않습니다. agent_name 등 메트릭 귀속 차원은 source=metrics에서만 사용할 수 있습니다.",
+    "unit": "token",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team",
+      "product",
+      "model",
+      "type",
+      "query_source",
+      "agent_name"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.tokens.input",
+      "raw_json.payload.tokens.output",
+      "raw_json.payload.tokens.cache_read",
+      "raw_json.payload.tokens.cache_create",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.type",
+      "raw_json.point.attrs.model",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "enriched_events.product",
+      "raw_json.payload.source",
+      "raw_json.point.attrs.query_source",
+      "raw_json.point.attrs['agent.name']"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "types": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "input",
+              "output",
+              "cache_read",
+              "cache_create"
+            ]
+          },
+          "description": "합산할 토큰 종류. 생략하거나 빈 배열이면 전체."
+        }
+      },
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q8"
+  },
+  {
+    "metric_id": "cache_read_ratio",
+    "indicator_id": "C-2",
+    "title": "캐시 읽기 비율",
+    "definition": "cache_read ÷ (input+cache_read+cache_create)",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team",
+      "model"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.tokens.input",
+      "raw_json.payload.tokens.output",
+      "raw_json.payload.tokens.cache_read",
+      "raw_json.payload.tokens.cache_create",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.type",
+      "raw_json.point.attrs.model",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q8"
+  },
+  {
+    "metric_id": "input_output_ratio",
+    "indicator_id": "S1-5",
+    "title": "입력/출력 토큰 비율",
+    "definition": "input ÷ output",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team",
+      "model"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.tokens.input",
+      "raw_json.payload.tokens.output",
+      "raw_json.payload.tokens.cache_read",
+      "raw_json.payload.tokens.cache_create",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.type",
+      "raw_json.point.attrs.model",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q8"
+  },
+  {
+    "metric_id": "subagent_cost_ratio",
+    "indicator_id": "C-3",
+    "title": "서브에이전트 비용 비중",
+    "definition": "cost{query_source=subagent} ÷ cost",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 청구액이 아닙니다. 계약 할인은 유효한 token_type=all만 적용하며 종류별 단가는 적용하지 않습니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.cost_usd",
+      "raw_json.payload.cost_source",
+      "raw_json.payload.source",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.model",
+      "raw_json.point.attrs.query_source",
+      "enrollment.contract_token_discounts.discount_rate",
+      "enrollment.contract_token_discounts.token_type",
+      "enrollment.contract_token_discounts.model_pattern",
+      "enrollment.contract_memberships.contract_id",
+      "enrollment.contract_memberships.member_id",
+      "enrollment.contract_memberships.assigned_at",
+      "enrollment.contract_memberships.released_at",
+      "enrollment.contracts.id",
+      "enrollment.contracts.tenant_id",
+      "enrollment.contracts.vendor",
+      "enrollment.contracts.contract_type",
+      "enrollment.contracts.starts_at",
+      "enrollment.contracts.ends_at",
+      "enrollment.contracts.status",
+      "enrollment.contracts.terminated_at",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "enrollment.contract_token_discounts.contract_id",
+      "enrollment.contract_token_discounts.effective_from",
+      "enrollment.contract_token_discounts.effective_to"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q7"
+  },
+  {
+    "metric_id": "model_users",
+    "indicator_id": "E-1",
+    "title": "모델별 사용자",
+    "definition": "모델별 사람 수 distinct",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "table",
+    "allowed_group_by": [
+      "model"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.point.attrs.model",
+      "enriched_events.installation_id",
+      "enrollment.installations.id",
+      "enrollment.installations.member_id"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q1"
+  },
+  {
+    "metric_id": "model_unit_price",
+    "indicator_id": "S8-2",
+    "title": "모델별 토큰 단가",
+    "definition": "cost ÷ tokens(billable) by model",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 청구액이 아닙니다. 계약 할인은 유효한 token_type=all만 적용하며 종류별 단가는 적용하지 않습니다.",
+    "unit": "USD",
+    "availability": "available",
+    "default_frame_type": "table",
+    "allowed_group_by": [
+      "model"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.cost_usd",
+      "raw_json.payload.cost_source",
+      "raw_json.payload.source",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.model",
+      "raw_json.point.attrs.query_source",
+      "enrollment.contract_token_discounts.discount_rate",
+      "enrollment.contract_token_discounts.token_type",
+      "enrollment.contract_token_discounts.model_pattern",
+      "enrollment.contract_memberships.contract_id",
+      "enrollment.contract_memberships.member_id",
+      "enrollment.contract_memberships.assigned_at",
+      "enrollment.contract_memberships.released_at",
+      "enrollment.contracts.id",
+      "enrollment.contracts.tenant_id",
+      "enrollment.contracts.vendor",
+      "enrollment.contracts.contract_type",
+      "enrollment.contracts.starts_at",
+      "enrollment.contracts.ends_at",
+      "enrollment.contracts.status",
+      "enrollment.contracts.terminated_at",
+      "raw_json.payload.tokens.input",
+      "raw_json.payload.tokens.output",
+      "raw_json.payload.tokens.cache_read",
+      "raw_json.payload.tokens.cache_create",
+      "raw_json.point.attrs.type",
+      "enrollment.contract_token_discounts.contract_id",
+      "enrollment.contract_token_discounts.effective_from",
+      "enrollment.contract_token_discounts.effective_to"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q7+Q8"
+  },
+  {
+    "metric_id": "contract_commitment_burn",
+    "indicator_id": "H-2",
+    "title": "계약 약정 소진율",
+    "definition": "Σ계약비용 ÷ commitment_amount (계약 기간 내)",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 청구액이 아닙니다. 계약 할인은 유효한 token_type=all만 적용하며 종류별 단가는 적용하지 않습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.cost_usd",
+      "raw_json.payload.cost_source",
+      "raw_json.payload.source",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.model",
+      "raw_json.point.attrs.query_source",
+      "enrollment.contract_token_discounts.discount_rate",
+      "enrollment.contract_token_discounts.token_type",
+      "enrollment.contract_token_discounts.model_pattern",
+      "enrollment.contract_memberships.contract_id",
+      "enrollment.contract_memberships.member_id",
+      "enrollment.contract_memberships.assigned_at",
+      "enrollment.contract_memberships.released_at",
+      "enrollment.contracts.id",
+      "enrollment.contracts.tenant_id",
+      "enrollment.contracts.vendor",
+      "enrollment.contracts.contract_type",
+      "enrollment.contracts.starts_at",
+      "enrollment.contracts.ends_at",
+      "enrollment.contracts.status",
+      "enrollment.contracts.terminated_at",
+      "enrollment.contract_term_commitments.commitment_amount",
+      "enrollment.contract_token_discounts.contract_id",
+      "enrollment.contract_token_discounts.effective_from",
+      "enrollment.contract_token_discounts.effective_to",
+      "enrollment.contract_term_commitments.contract_id",
+      "enrollment.contract_term_commitments.currency"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "contract_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q7+RDB"
+  },
+  {
+    "metric_id": "compactions",
+    "indicator_id": "C-5",
+    "title": "컨텍스트 압축 수",
+    "definition": "count() lifecycle kind=compaction",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team",
+      "trigger"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.kind",
+      "raw_json.payload.attrs.trigger",
+      "raw_json.payload.attrs.success",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q16"
+  },
+  {
+    "metric_id": "compaction_reduction",
+    "indicator_id": "C-5",
+    "title": "컨텍스트 압축 감소율",
+    "definition": "1 − Σtokens_after ÷ Σtokens_before",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.kind",
+      "raw_json.payload.tokens_before",
+      "raw_json.payload.tokens_after",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q16"
+  },
+  {
+    "metric_id": "edit_acceptance_rate",
+    "indicator_id": "D-1",
+    "title": "편집 수락률",
+    "definition": "accept ÷ (accept+reject), attrs.source ∈ user_* 만",
+    "caveat": "Claude Code 메트릭만 산출합니다. Codex 메트릭 이름 매핑은 없습니다. aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team",
+      "language",
+      "tool_name"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.decision",
+      "raw_json.point.attrs.source",
+      "raw_json.point.attrs.language",
+      "raw_json.point.attrs.tool_name",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "raw_json.payload.tool_name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "language": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q9"
+  },
+  {
+    "metric_id": "auto_approval_ratio",
+    "indicator_id": "D-2",
+    "title": "자동 승인 비율",
+    "definition": "decided_by ∈ (config, hook) ÷ 전체 tool_decision",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team",
+      "decided_by",
+      "tool_name"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.decided_by",
+      "raw_json.payload.tool_name",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "raw_json.point.attrs.tool_name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q11"
+  },
+  {
+    "metric_id": "gate_wait_ms",
+    "indicator_id": "D-4",
+    "title": "사용자 승인 대기 시간",
+    "definition": "span tool_gate blocked_on_user_ms p50/p90",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ms",
+    "availability": "available",
+    "default_frame_type": "distribution",
+    "allowed_group_by": [
+      "team",
+      "decision",
+      "decided_by"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.blocked_on_user_ms",
+      "raw_json.payload.decision",
+      "raw_json.payload.decided_by",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q10"
+  },
+  {
+    "metric_id": "tool_rejections",
+    "indicator_id": "D-5",
+    "title": "도구 거절 수",
+    "definition": "count() tool_decision decision=reject",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team",
+      "decided_by",
+      "tool_name"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.decision",
+      "raw_json.payload.decided_by",
+      "raw_json.payload.tool_name",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "raw_json.point.attrs.tool_name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "decided_by": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "config",
+              "hook",
+              "user"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q11"
+  },
+  {
+    "metric_id": "rubber_stamp_ratio",
+    "indicator_id": "S5-7",
+    "title": "즉시 승인 비율",
+    "definition": "accept 중 blocked_on_user_ms < threshold_ms(기본 2000) 비율",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.blocked_on_user_ms",
+      "raw_json.payload.decision",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "threshold_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600000,
+          "default": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q24"
+  },
+  {
+    "metric_id": "mcp_connections",
+    "indicator_id": "E-4",
+    "title": "MCP 연결 수",
+    "definition": "count() lifecycle kind=mcp_connection",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team",
+      "server_name",
+      "server_scope",
+      "transport_type",
+      "is_plugin"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.kind",
+      "raw_json.payload.attrs.server_name",
+      "raw_json.payload.attrs.status",
+      "raw_json.payload.attrs.transport_type",
+      "raw_json.payload.attrs.server_scope",
+      "raw_json.payload.attrs.is_plugin",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "server_scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q15"
+  },
+  {
+    "metric_id": "mcp_failure_ratio",
+    "indicator_id": "E-4",
+    "title": "MCP 연결 실패율",
+    "definition": "status≠connected ÷ 전체",
+    "caveat": "",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "server_name"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.kind",
+      "raw_json.payload.attrs.server_name",
+      "raw_json.payload.attrs.status"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q15"
+  },
+  {
+    "metric_id": "subagent_activity",
+    "indicator_id": "E-5",
+    "title": "서브에이전트 활동",
+    "definition": "distinct agent_id 수, agent_id 있는 tool_call 비율",
+    "caveat": "subagent_completed가 보존되지 않아 활동 식별자만 측정합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "partial",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.agent_id",
+      "raw_json.payload.parent_agent_id",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q14"
+  },
+  {
+    "metric_id": "api_error_rate",
+    "indicator_id": "F-1",
+    "title": "API 오류율",
+    "definition": "llm_call{error_type≠null} ÷ llm_call 전체",
+    "caveat": "retries_exhausted가 보존되지 않아 최종 재시도 실패를 별도로 판정할 수 없습니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "partial",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team",
+      "product",
+      "model",
+      "status_code"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.error_type",
+      "raw_json.payload.status_code",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "enriched_events.product",
+      "raw_json.point.attrs.model"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q12"
+  },
+  {
+    "metric_id": "api_retry_attempts",
+    "indicator_id": "F-1",
+    "title": "API 재시도",
+    "definition": "attempt ≥ 2 인 llm_call 비율·수",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team",
+      "model"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.attempt",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "raw_json.point.attrs.model"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q12"
+  },
+  {
+    "metric_id": "rate_limit_events",
+    "indicator_id": "S2-1",
+    "title": "Rate Limit 발생 수",
+    "definition": "llm_call status_code=429 수",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team",
+      "product",
+      "hour"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.status_code",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "enriched_events.product"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q20"
+  },
+  {
+    "metric_id": "tool_calls",
+    "indicator_id": "F-2",
+    "title": "도구 호출 수",
+    "definition": "count() type=tool_call",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "team",
+      "tool_name",
+      "tool_kind",
+      "action",
+      "error_type",
+      "mcp_server"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.tool_name",
+      "raw_json.payload.tool_kind",
+      "raw_json.payload.action",
+      "raw_json.payload.error_type",
+      "raw_json.payload.mcp_server",
+      "raw_json.payload.success",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "raw_json.point.attrs.tool_name",
+      "raw_json.point.attrs['mcp_server.name']"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "성공 여부가 명시된 호출만 필터링."
+        }
+      },
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q14"
+  },
+  {
+    "metric_id": "tool_failure_rate",
+    "indicator_id": "F-2",
+    "title": "도구 실패율",
+    "definition": "success=false ÷ (success 판정 있는 호출)",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team",
+      "tool_name"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.success",
+      "raw_json.payload.tool_name",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name",
+      "raw_json.point.attrs.tool_name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q14"
+  },
+  {
+    "metric_id": "read_tool_density",
+    "indicator_id": "S7-2",
+    "title": "세션당 읽기 도구 호출",
+    "definition": "세션당 action ∈ (read, search, fetch) 호출 수 p50/p90",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "distribution",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.action",
+      "raw_json.envelope.session_id",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q14"
+  },
+  {
+    "metric_id": "turn_duration_ms",
+    "indicator_id": "F-3",
+    "title": "턴 소요 시간",
+    "definition": "span turn attrs.duration_ms p50/p90",
+    "caveat": "",
+    "unit": "ms",
+    "availability": "available",
+    "default_frame_type": "distribution",
+    "allowed_group_by": [
+      "product"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.attrs.duration_ms",
+      "enriched_events.product"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q13"
+  },
+  {
+    "metric_id": "llm_ttft_ms",
+    "indicator_id": "F-3",
+    "title": "첫 토큰 지연",
+    "definition": "ttft_ms p50/p90 (로그 llm_call 우선, 없으면 스팬 llm_request)",
+    "caveat": "",
+    "unit": "ms",
+    "availability": "available",
+    "default_frame_type": "distribution",
+    "allowed_group_by": [
+      "product",
+      "model"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.ttft_ms",
+      "enriched_events.product",
+      "raw_json.point.attrs.model"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q13"
+  },
+  {
+    "metric_id": "llm_duration_ms",
+    "indicator_id": "F-3",
+    "title": "LLM 호출 소요 시간",
+    "definition": "duration_ms p50/p95/p99",
+    "caveat": "",
+    "unit": "ms",
+    "availability": "available",
+    "default_frame_type": "distribution",
+    "allowed_group_by": [
+      "product",
+      "model"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.duration_ms",
+      "enriched_events.product",
+      "raw_json.point.attrs.model"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q13"
+  },
+  {
+    "metric_id": "llm_stop_reasons",
+    "indicator_id": "S6-3",
+    "title": "LLM 종료 사유",
+    "definition": "llm_call/llm_response stop_reason 분포",
+    "caveat": "",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "table",
+    "allowed_group_by": [
+      "model",
+      "stop_reason"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.stop_reason",
+      "raw_json.point.attrs.model"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q12"
+  },
+  {
+    "metric_id": "hook_executions",
+    "indicator_id": "G-1",
+    "title": "훅 실행 수",
+    "definition": "count() span hook; 훅 스팬 있는 세션 비율",
+    "caveat": "detailed beta tracing 수집이 필요하며 hook_registered는 보존되지 않습니다.",
+    "unit": "count",
+    "availability": "partial",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "hook_event"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.envelope.session_id",
+      "raw_json.payload.attrs.hook_event",
+      "raw_json.payload.attrs.num_hooks",
+      "raw_json.payload.attrs.duration_ms"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q18"
+  },
+  {
+    "metric_id": "hook_blocking",
+    "indicator_id": "G-1",
+    "title": "훅 차단 수",
+    "definition": "Σ attrs.num_blocking",
+    "caveat": "detailed beta tracing 수집이 필요하며 hook_registered는 보존되지 않습니다.",
+    "unit": "count",
+    "availability": "partial",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "hook_event"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.attrs.hook_event",
+      "raw_json.payload.attrs.num_blocking"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q18"
+  },
+  {
+    "metric_id": "refusals",
+    "indicator_id": "G-2",
+    "title": "모델 거부 수",
+    "definition": "count() llm_response stop_reason=refusal. team 분해 금지",
+    "caveat": "server_fallback_hop이 보존되지 않아 홉 중복이 포함될 수 있습니다. owner만 조회하며 팀별 분해를 금지합니다.",
+    "unit": "count",
+    "availability": "partial",
+    "default_frame_type": "timeseries",
+    "allowed_group_by": [
+      "category",
+      "model",
+      "product"
+    ],
+    "forbidden_group_by": [
+      "team"
+    ],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.stop_reason",
+      "raw_json.payload.refusal_category",
+      "raw_json.payload.model",
+      "raw_json.point.attrs.model",
+      "enriched_events.product"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q17"
+  },
+  {
+    "metric_id": "vendor_account_mismatch",
+    "indicator_id": "H-3",
+    "title": "벤더 계정 불일치",
+    "definition": "identity.vendor_email 도메인/주소 ≠ members.email 인 설치 수",
+    "caveat": "owner의 감사 사유가 필요한 개인 식별 조회입니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "enriched_events.installation_id",
+      "enrollment.installations.id",
+      "enrollment.installations.member_id",
+      "raw_json.envelope.identity.vendor_email",
+      "enrollment.members.email"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q23"
+  },
+  {
+    "metric_id": "usage_heatmap",
+    "indicator_id": "S2-1",
+    "title": "시간대별 사용량",
+    "definition": "hour×weekday 별 user_prompt 수(또는 tokens)",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "table",
+    "allowed_group_by": [
+      "team",
+      "hour",
+      "weekday"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.tokens.input",
+      "raw_json.payload.tokens.output",
+      "raw_json.payload.tokens.cache_read",
+      "raw_json.payload.tokens.cache_create",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.type",
+      "raw_json.point.attrs.model",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q19"
+  },
+  {
+    "metric_id": "usage_concentration",
+    "indicator_id": "S3-2",
+    "title": "사용 집중도",
+    "definition": "사람별 토큰 합 정렬 → 상위 10% 점유율, 로렌츠 곡선 점(익명)",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "table",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.payload.model",
+      "raw_json.payload.tokens.input",
+      "raw_json.payload.tokens.output",
+      "raw_json.payload.tokens.cache_read",
+      "raw_json.payload.tokens.cache_create",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.type",
+      "raw_json.point.attrs.model",
+      "enriched_events.installation_id",
+      "enrollment.installations.id",
+      "enrollment.installations.member_id",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q26"
+  },
+  {
+    "metric_id": "onboarding_ttfu",
+    "indicator_id": "S3-3",
+    "title": "첫 사용까지 소요 시간",
+    "definition": "installations.created_at → 첫 이벤트 min(ts) 간격 분포",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "s",
+    "availability": "available",
+    "default_frame_type": "distribution",
+    "allowed_group_by": [
+      "team",
+      "platform"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "enriched_events.installation_id",
+      "enrollment.installations.id",
+      "enrollment.installations.member_id",
+      "enrollment.installations.created_at",
+      "enrollment.installations.platform",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q27"
+  },
+  {
+    "metric_id": "onboarding_retention",
+    "indicator_id": "S3-3",
+    "title": "신규 사용자 잔존율",
+    "definition": "코호트(첫 이벤트 주) 별 n주차 잔존율",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "table",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "enriched_events.installation_id",
+      "enrollment.installations.id",
+      "enrollment.installations.member_id",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q27"
+  },
+  {
+    "metric_id": "abandoned_session_ratio",
+    "indicator_id": "S4-2",
+    "title": "무산출 세션 비율",
+    "definition": "산출(accept·LoC·commit·PR) 없이 끝난 세션 비율",
+    "caveat": "aggregation_temporality=2인 누적 포인트는 합산에서 제외합니다. 다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "ratio",
+    "availability": "available",
+    "default_frame_type": "scalar",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.envelope.session_id",
+      "raw_json.point.name",
+      "raw_json.point.value",
+      "raw_json.point.aggregation_temporality",
+      "raw_json.point.attrs.decision",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q25"
+  },
+  {
+    "metric_id": "session_last_event",
+    "indicator_id": "S4-2",
+    "title": "세션 마지막 이벤트",
+    "definition": "세션 마지막 이벤트 유형 분포(api_error / llm_request 긴 대기 / 기타)",
+    "caveat": "다중 소속은 각 팀에 계상하므로 팀 합계가 조직 전체보다 클 수 있습니다.",
+    "unit": "count",
+    "availability": "available",
+    "default_frame_type": "table",
+    "allowed_group_by": [
+      "team"
+    ],
+    "forbidden_group_by": [],
+    "min_group_size": 5,
+    "source_columns": [
+      "enriched_events.tenant_id",
+      "enriched_events.ts",
+      "raw_json.type",
+      "raw_json.sequence",
+      "raw_json.payload.error_type",
+      "raw_json.payload.duration_ms",
+      "raw_json.envelope.session_id",
+      "enriched_events.team_ids_as_of",
+      "enrollment.teams.id",
+      "enrollment.teams.name"
+    ],
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "sql_template_id": "Q25"
+  }
+]

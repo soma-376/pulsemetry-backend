@@ -50,6 +50,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: soma-376/telemetryctl
+          ref: e730bbfa08657a9887a87cc1d1e07095e9cca305
           path: telemetryctl
           persist-credentials: false
 

@@ -62,3 +62,11 @@ pulsemetry:
   binaries:
     # 바이너리는 서버 로컬 디렉터리에서 서빙한다 (L9). S3·GitHub Releases 리다이렉트가 아니다.
     dir: ${PULSEMETRY_BINARIES_DIR:./binaries}
+
+  # 키 준비 전에는 신규 사용자 API를 열지 않는다. enabled=true일 때 키 누락은 기동 실패다.
+  user-auth:
+    enabled: ${PULSEMETRY_USER_AUTH_ENABLED:false}
+    issuer: ${PULSEMETRY_USER_AUTH_ISSUER:}
+    audience: ${PULSEMETRY_USER_AUTH_AUDIENCE:}
+    active-kid: ${PULSEMETRY_USER_AUTH_ACTIVE_KID:}
+    private-key-file: ${PULSEMETRY_USER_AUTH_PRIVATE_KEY_FILE:}

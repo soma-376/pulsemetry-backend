@@ -110,6 +110,7 @@ class EnrollmentTestData(
 		code: String,
 		expiresAt: Instant = Instant.now().plus(72, ChronoUnit.HOURS),
 		usedAt: Instant? = null,
+        signupUsedAt: Instant? = null,
 		revokedAt: Instant? = null,
 	): Invitation = invitations.save(
 		Invitation(
@@ -119,6 +120,7 @@ class EnrollmentTestData(
 			codeHash = Sha256.hex(code),
 			expiresAt = expiresAt,
 			usedAt = usedAt,
+            signupUsedAt = signupUsedAt,
 			revokedAt = revokedAt,
 		),
 	)
