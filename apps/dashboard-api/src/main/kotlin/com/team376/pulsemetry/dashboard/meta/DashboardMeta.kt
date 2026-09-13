@@ -13,19 +13,11 @@ import java.util.UUID
 /** 조직 데이터는 tenant 및 현재 팀 범위를 SQL 단계에서 제한한다. */
 @RestController
 @RequestMapping("/v1/meta")
-class DashboardMeta(private val jdbc: JdbcClient, private val access: DashboardAccess, private val mapper: ObjectMapper) {
+class DashboardMeta(private val jdbc: JdbcClient, private val access: DashboardAccess, private val mapper: ObjectMapper,
+    private val directory: DashboardDirectory) {
     @GetMapping("/teams") fun teams(@AuthenticationPrincipal user: UserIdentity,
-        @RequestParam(defaultValue = "false", name = "include_archived") archived: Boolean): Map<String, Any> {
-        val rows = jdbc.sql("""SELECT t.id AS team_id,t.name,t.status::text,
-            (SELECT count(DISTINCT m.id) FROM enrollment.team_memberships tm JOIN enrollment.members m ON m.id=tm.member_id
-             WHERE tm.team_id=t.id AND tm.left_at IS NULL AND m.status='active' AND m.tenant_id=t.tenant_id) AS member_count
-            FROM enrollment.teams t WHERE t.tenant_id=:tenant AND (:archived OR t.status='active')
-            AND (:owner OR EXISTS (SELECT 1 FROM enrollment.team_memberships own WHERE own.team_id=t.id
-            AND own.member_id=:member AND own.left_at IS NULL)) ORDER BY t.name,t.id""")
-            .param("tenant", user.tenantId).param("archived", archived).param("owner", user.role == "owner")
-            .param("member", user.memberId).query().listOfRows()
-        return mapOf("items" to rows)
-    }
+        @RequestParam(defaultValue = "false", name = "include_archived") archived: Boolean): Map<String, Any> =
+        mapOf("items" to directory.teams(user, archived))
     @GetMapping("/members") fun members(@AuthenticationPrincipal user: UserIdentity,
         @RequestParam(name = "team_id", required = false) team: UUID?,
         @RequestParam(required = false) status: String?, @RequestParam(defaultValue = "100") limit: Int,

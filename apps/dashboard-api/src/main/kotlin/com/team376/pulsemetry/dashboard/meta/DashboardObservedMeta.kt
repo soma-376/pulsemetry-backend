@@ -16,7 +16,7 @@ import java.time.ZoneOffset
 @RestController
 @RequestMapping("/v1/meta")
 class DashboardObservedMeta(private val reader: DashboardClickHouseReader, private val mapper: ObjectMapper,
-    private val access: DashboardAccess, private val meta: DashboardMeta, private val jdbc: JdbcClient, private val clock: Clock) {
+    private val access: DashboardAccess, private val directory: DashboardDirectory, private val jdbc: JdbcClient, private val clock: Clock) {
     private fun observed(user: UserIdentity, from: String, to: String): List<Map<String, String>> {
         val zone = jdbc.sql("SELECT timezone FROM enrollment.tenants WHERE id=:tenant").param("tenant", user.tenantId)
             .query(String::class.java).single()
@@ -52,7 +52,7 @@ class DashboardObservedMeta(private val reader: DashboardClickHouseReader, priva
     @GetMapping("/filters") fun filters(@AuthenticationPrincipal user: UserIdentity,
         @RequestParam(defaultValue = "now-7d") from: String, @RequestParam(defaultValue = "now") to: String): Map<String, Any> {
         val rows = observed(user, from, to)
-        return mapOf("teams" to requireNotNull(meta.teams(user, false)["items"]),
+        return mapOf("teams" to directory.teams(user, false),
             "products" to rows.mapNotNull { it["product"] }.distinct(), "models" to rows.filter { it["model"] != "" },
             "time_presets" to listOf("now-24h", "now-7d", "now-28d", "now-90d"), "price_bases" to listOf("list", "contract"))
     }
