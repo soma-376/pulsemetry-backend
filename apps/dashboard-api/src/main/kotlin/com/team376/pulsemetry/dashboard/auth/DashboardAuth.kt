@@ -8,7 +8,6 @@ import com.team376.pulsemetry.security.user.UserJwt
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
-import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.dao.DataAccessException
@@ -30,7 +29,6 @@ import java.time.Clock
 import java.util.UUID
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(DashboardProperties::class)
 class DashboardAuth {
     @Bean fun repository(jdbc: JdbcClient) = UserAuthRepository(jdbc)
     @Bean fun jwt(p: DashboardProperties, clock: Clock): UserJwt {

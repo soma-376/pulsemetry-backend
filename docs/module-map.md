@@ -269,7 +269,7 @@ ADR 0008의 대시보드 트리(지표군별 패키지)는 규칙을 보이는 �
 
 | 패키지 | 담는 것 |
 |---|---|
-| `dashboard` (루트) | `DashboardApplication` 하나. 컴포넌트 스캔의 출발점이라 옮기지 않는다 |
+| `com.team376.pulsemetry` (루트) | `DashboardApplication` 하나. 규칙대로 루트에 있다(ADR 0008 규칙 2). `dashboard` 패키지 자체에는 파일이 없다 |
 | `config` | Spring 배선·설정 바인딩(ADR 0011). `DashboardProperties`, 시계, Flyway와 리포지토리, ClickHouse 리더, 실행 큐 빈 |
 | `auth` | 인증·인가. 보안 체인과 JWT 필터(`DashboardAuth`), 팀 범위 판정과 owner 감사 게이트(`DashboardAccess`) |
 | `api` | 앱 수준 HTTP 경계. 로그인·`/me`·healthz, 전역 예외 매핑, 커서 페이지네이션 코덱 |
@@ -284,7 +284,7 @@ ADR 0008의 대시보드 트리(지표군별 패키지)는 규칙을 보이는 �
 패키지 안을 참조하지 않는다. `meta`는 `auth`·`api`·`time`을, `query`는 `auth`·`catalog`·`time`을,
 `scenario`는 그 전부와 `query`·`finding`을 본다. `config`의 빈을 주입받는 것은 런타임 조립이지 컴파일 의존이 아니다.
 단위 테스트는 대상과 같은 하위 패키지(`time`·`scenario`·`finding`)에 두고, 컨텍스트 테스트 `DashboardAuthTest`는
-루트에 둔다. `@SpringBootTest`가 그 패키지에서 앱 클래스를 찾기 때문이다.
+`dashboard` 패키지에 둔다. `@SpringBootTest`가 그 패키지에서 위로 올라가며 앱 클래스를 찾는다.
 
 `:libs:dashboard-persistence`는 `com.team376.pulsemetry.persistence.dashboard`에서 실행·저장 리포트·감사 테이블을 소유한다.
 마이그레이션은 `db/dashboard`에 있으며 `dashboard.flyway_schema_history`에 독립 이력을 둔다.
