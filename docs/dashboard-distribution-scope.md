@@ -83,4 +83,4 @@
 
 ## 대조 근거
 
-DashboardQuery.kt의 sessionMetrics·durationMetrics·usage_concentration 지원 분기와 docs/dashboard-api-contract-matrix.md의 53개 행을 대조해 8개 지원/45개 미지원을 확인했다. 프레임 구성의 실제 분위수·버킷·곡선 필드도 확인했다. 런타임 변경 없이 작성했으며, 직전 86a2a29의 dashboard 266건/E2E를 새로 실행했다고 보고하지 않는다.
+DashboardQuerySql.kt의 sessionMetrics·durationMetrics와 DashboardQuery.kt의 usage_concentration 지원 분기와 docs/dashboard-api-contract-matrix.md의 53개 행을 대조해 8개 지원/45개 미지원을 확인했다. 프레임 구성의 실제 분위수·버킷·곡선 필드도 확인했다. 런타임 변경 없이 작성했으며, 직전 86a2a29의 dashboard 266건/E2E를 새로 실행했다고 보고하지 않는다.

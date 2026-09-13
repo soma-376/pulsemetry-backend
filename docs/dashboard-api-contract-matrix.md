@@ -3,7 +3,7 @@
 이 표는 현재 코드의 명시적 지원 분기를 정리한 구현 인벤토리다. 모든 지표·차원·필터 조합이 E2E 검증됐다는 뜻이 아니다.
 
 - 기준: `docs/reference/pulsemetry_api_spec.yaml` Query.limit / frame_type와 런타임 `metrics.json`.
-- 집계·프레임·권한 구현: `apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/query/DashboardQuery.kt`.
+- 구현은 `apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/query/` 아래에 있다. 흐름·권한은 `DashboardQuery.kt`, 집계는 `DashboardQueryReaders.kt`(분기)와 `DashboardQueryCostReaders.kt`·`DashboardQueryPopulationReaders.kt`·`DashboardQuerySessionReaders.kt`, 프레임은 `DashboardQueryFrames.kt`, SQL 조각·지표 집합은 `DashboardQuerySql.kt`다.
 - 실제 DB 회귀 테스트: `apps/dashboard-api/src/test/kotlin/com/team376/pulsemetry/dashboard/DashboardAuthTest.kt`.
 - 실제 frontend 클라이언트·수집 검증: `scripts/e2e/dashboard-auth-settings.mjs`, `scripts/e2e/dashboard-ingest.mjs`.
 - scalar/table 기본 집계 53개 연결. 아래 표는 추가 형식과 상위 N의 명시적 지원을 구분한다. 입력 기간·차원·원천·권한 제약은 별도로 적용한다.

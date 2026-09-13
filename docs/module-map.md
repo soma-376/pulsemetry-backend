@@ -276,7 +276,7 @@ ADR 0008의 대시보드 트리(지표군별 패키지)는 규칙을 보이는 �
 | `time` | 상대 기간 표현(`now-7d`)·버킷·비교 창 해석 |
 | `catalog` | `metrics.json`·`scenarios.json` 카탈로그와 그 조회 엔드포인트 |
 | `meta` | 무엇이 존재하고 무엇을 고를 수 있는가. 팀·구성원·manifest·계약·설치 목록, 관측된 모델·필터 |
-| `query` | 텔레메트리 조회. `/v1/query` 집계 엔진과 세션 이벤트 드릴다운 |
+| `query` | 텔레메트리 조회. `/v1/query`는 컨트롤러(`DashboardQuery`) → 리더(`DashboardQueryReaders`가 분기, 비용·인구/온보딩·세션 파일의 확장 함수) → 프레임 조립(`DashboardQueryFrames`)이고 SQL 조각·지표 집합은 `DashboardQuerySql`이다. 세션 이벤트 드릴다운은 `DashboardSessions` |
 | `scenario` | 시나리오 입력 검증, 실행 큐와 워커, 저장 리포트 |
 | `finding` | 실행 결과 프레임을 판정하는 분석기. 순수 object 16개와 자체 조회하는 서비스 2개 |
 
