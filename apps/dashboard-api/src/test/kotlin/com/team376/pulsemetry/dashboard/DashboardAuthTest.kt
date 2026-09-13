@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.dashboard
 
+import com.team376.pulsemetry.dashboard.scenario.DashboardScenarioInputs
+import com.team376.pulsemetry.dashboard.scenario.DashboardScenarioRuns
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
