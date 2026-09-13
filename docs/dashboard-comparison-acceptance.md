@@ -22,7 +22,7 @@
 
 ## 기존 검증 근거
 
-검증 파일은 apps/dashboard-api/src/test/kotlin/com/team376/pulsemetry/dashboard/ 아래에 있다.
+검증 파일은 apps/dashboard-api/src/test/kotlin/com/team376/pulsemetry/dashboard/ 아래에 있다. DashboardAuthTest는 그 루트, DashboardScenarioInputTest는 scenario/ 하위 패키지다.
 
 | 파일·테스트 | 확인한 경계 |
 |---|---|

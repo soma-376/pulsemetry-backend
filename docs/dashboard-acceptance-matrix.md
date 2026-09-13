@@ -3,8 +3,8 @@
 이 문서는 명세 22개 operation의 구현 위치와 검증 범위를 찾기 위한 인덱스다. 각 행의 모든 가능한 조합이나 전체 제품 수용 완료를 선언하지 않는다.
 
 - 명세: docs/reference/pulsemetry_api_spec.yaml 및 pulsemetry_api_overview.md.
-- 컨트롤러: apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/ 아래 같은 이름의 .kt 파일.
-- DB 검증: DashboardAuthTest, 시간·입력 검증은 DashboardTimeTest와 DashboardScenarioInputTest 등.
+- 컨트롤러: apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/{api,catalog,meta,query,scenario}/ 아래 같은 이름의 .kt 파일. 배치는 docs/module-map.md PROJ-156 절.
+- DB 검증: DashboardAuthTest, 시간·입력 검증은 DashboardTimeTest와 DashboardScenarioInputTest 등. 단위 테스트는 대상과 같은 하위 패키지(time/·scenario/·finding/)에 있다.
 - 연동 검증: scripts/e2e/dashboard-auth-settings.mjs와 dashboard-ingest.mjs. 실제 frontend 공통 클라이언트 사용과 일반 사용자 UI 경로를 구분한다.
 
 | operation | 구현 파일 | 대조·검증 범위 |

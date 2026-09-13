@@ -46,7 +46,7 @@
 
 ## 소스와 검증 범위
 
-- 실행 분기는 DashboardScenarioRuns.kt, 입력·기간·권한 범위는 DashboardScenarioInput.kt, 20개 관측 임계 규칙은 DashboardThresholdFindings.kt에 있다. 나머지는 DashboardBudgetFindings, DashboardPremiumModels, DashboardSpikeFindings, DashboardInactivity, DashboardSprintFindings, DashboardAdoptionFindings, DashboardConcentrationFindings, DashboardTeamUsageFindings, DashboardActionFindings, DashboardGateFindings, DashboardProbeWindows, DashboardCostForecast, DashboardModelComparison, DashboardVendorFindings, DashboardProductUsageFindings, DashboardModelEffortFindings에 분리되어 있다. 온보딩은 전용 실행에서 프레임을 반환하고 findings는 빈 목록이다.
+- 실행 분기는 scenario/DashboardScenarioRuns.kt, 입력·기간·권한 범위는 scenario/DashboardScenarioInput.kt, 20개 관측 임계 규칙은 finding/DashboardThresholdFindings.kt에 있다. 나머지는 같은 finding/ 아래 DashboardBudgetFindings, DashboardPremiumModels, DashboardSpikeFindings, DashboardInactivity, DashboardSprintFindings, DashboardAdoptionFindings, DashboardConcentrationFindings, DashboardTeamUsageFindings, DashboardActionFindings, DashboardGateFindings, DashboardProbeWindows, DashboardCostForecast, DashboardModelComparison, DashboardVendorFindings, DashboardProductUsageFindings, DashboardModelEffortFindings에 분리되어 있다. 온보딩은 전용 실행에서 프레임을 반환하고 findings는 빈 목록이다.
 - 대표 테스트는 모두 apps/dashboard-api/src/test/kotlin/com/team376/pulsemetry/dashboard/DashboardAuthTest.kt에 있다. 표의 37개 이름을 실제 소스와 최신 JUnit XML에 대조해 통과를 확인했다. 대표 테스트 하나가 가능한 모든 입력 조합을 검증한다는 뜻은 아니다.
 - 최신 런타임 86a2a29의 dashboard 테스트 266건과 실제 frontend E2E가 통과했다. E2E의 42개 실행 성공은 모든 시나리오의 양수 판정이나 제목의 의미를 입증하지 않는다. 권한·감사·실행 및 저장 수명주기 검증은 dashboard-acceptance-matrix.md에서 추적한다.
 - S8-2의 30일 예측은 현재 구현 기본값이며 사용자가 별도로 확정한 예측 기간이 아니다. S1-2의 전체 이름 매칭/* 와일드카드와 S6-3/S8-7의 전후 4주는 사용자 확정 사항이다.

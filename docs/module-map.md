@@ -263,6 +263,29 @@ SQL과 V5 테이블은 enrollment-persistence 소유다. 기존 모듈 간 단�
 인증은 `:libs:security`, 조직 조회는 `:libs:enrollment-persistence`에 의존한다. 앱 간 의존은 없다.
 웹 세션은 ADR 0019에 따라 CLI와 분리한다.
 
+앱 안은 책임별 하위 패키지로 나뉜다. 3절의 판정대로 모두 타입이 섞인 묶음이라 이름은 추상명사다.
+ADR 0008의 대시보드 트리(지표군별 패키지)는 규칙을 보이는 예시였고, 실제 구현은 지표 53개를 `metrics.json`
+카탈로그 하나로 읽는 범용 조회 엔진이라 지표군별 코드가 없다. 현행 트리는 아래 표가 권위다.
+
+| 패키지 | 담는 것 |
+|---|---|
+| `dashboard` (루트) | `DashboardApplication` 하나. 컴포넌트 스캔의 출발점이라 옮기지 않는다 |
+| `config` | Spring 배선·설정 바인딩(ADR 0011). `DashboardProperties`, 시계, Flyway와 리포지토리, ClickHouse 리더, 실행 큐 빈 |
+| `auth` | 인증·인가. 보안 체인과 JWT 필터(`DashboardAuth`), 팀 범위 판정과 owner 감사 게이트(`DashboardAccess`) |
+| `api` | 앱 수준 HTTP 경계. 로그인·`/me`·healthz, 전역 예외 매핑, 커서 페이지네이션 코덱 |
+| `time` | 상대 기간 표현(`now-7d`)·버킷·비교 창 해석 |
+| `catalog` | `metrics.json`·`scenarios.json` 카탈로그와 그 조회 엔드포인트 |
+| `meta` | 무엇이 존재하고 무엇을 고를 수 있는가. 팀·구성원·manifest·계약·설치 목록, 관측된 모델·필터 |
+| `query` | 텔레메트리 조회. `/v1/query` 집계 엔진과 세션 이벤트 드릴다운 |
+| `scenario` | 시나리오 입력 검증, 실행 큐와 워커, 저장 리포트 |
+| `finding` | 실행 결과 프레임을 판정하는 분석기. 순수 object 16개와 자체 조회하는 서비스 2개 |
+
+의존은 한 방향이다. `config`는 라이브러리만 보고 `auth`·`api`는 `config`만 본다. `time`·`catalog`·`finding`은
+패키지 안을 참조하지 않는다. `meta`는 `auth`·`api`·`time`을, `query`는 `auth`·`catalog`·`time`을,
+`scenario`는 그 전부와 `query`·`finding`을 본다. `config`의 빈을 주입받는 것은 런타임 조립이지 컴파일 의존이 아니다.
+단위 테스트는 대상과 같은 하위 패키지(`time`·`scenario`·`finding`)에 두고, 컨텍스트 테스트 `DashboardAuthTest`는
+루트에 둔다. `@SpringBootTest`가 그 패키지에서 앱 클래스를 찾기 때문이다.
+
 `:libs:dashboard-persistence`는 `com.team376.pulsemetry.persistence.dashboard`에서 실행·저장 리포트·감사 테이블을 소유한다.
 마이그레이션은 `db/dashboard`에 있으며 `dashboard.flyway_schema_history`에 독립 이력을 둔다.
 enrollment 마이그레이션 완료 후 dashboard 앱이 이를 적용한다.
