@@ -258,23 +258,74 @@ jobs:
 
             aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
 
-            # waiter는 이전 배포로 롤백돼도 성공할 수 있다. 방금 요청한 배포의 완료를 확인한다.
-            state=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
-              --no-cli-pager --output json)
-            if ! jq -e --arg service "$service" --arg deployment "$deployment_id" '
-              (.failures | length) == 0 and (.services | length) == 1 and
-              (.services[0] |
-                .serviceName == $service and .status == "ACTIVE" and
-                .desiredCount > 0 and .runningCount == .desiredCount and .pendingCount == 0 and
-                (.deployments | length) == 1 and
-                .deployments[0].id == $deployment and .deployments[0].status == "PRIMARY" and
-                .deployments[0].rolloutState == "COMPLETED")
-              ' <<< "$state" > /dev/null; then
-              echo "::error::요청한 배포가 완료되지 않았거나 이전 배포로 롤백됐다: $service"
-              exit 1
-            fi
-            echo "배포 완료: $service ($deployment_id)"
-            echo '::endgroup::'
+            # services-stable은 rolloutState 완료까지 확인하지 않으므로 후속 조회가 필요하다.
+            # 10초 간격·최대 31회는 운영상 선택한 상한이며, AWS 권장값이나
+            # 이 서비스의 실측 지연에서 도출한 값은 아니다.
+            # 조회 사이의 대기는 최대 300초이고, AWS 조회 소요 시간은 별도다.
+            local poll_interval_seconds=10 max_attempts=31 attempt
+            for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+              if ! state=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+                --no-cli-pager --output json); then
+                echo "::error::ECS 배포 상태 조회에 실패했다: $service ($deployment_id)"
+                exit 1
+              fi
+
+              # 누락 필드·잘못된 타입·여러 JSON 문서를 정상 상태로 판정하지 않는다.
+              if ! jq -es '
+                length == 1 and (.[0] |
+                  type == "object" and
+                  (.failures | type == "array") and
+                  (.services | type == "array" and length == 1) and
+                  (.services[0] |
+                    type == "object" and
+                    (.serviceName | type == "string") and (.status | type == "string") and
+                    all(.desiredCount, .runningCount, .pendingCount;
+                      type == "number" and . >= 0 and floor == .) and
+                    (.deployments | type == "array") and
+                    all(.deployments[];
+                      type == "object" and (.id | type == "string") and
+                      (.status | type == "string") and
+                      (.rolloutState | . == "IN_PROGRESS" or . == "COMPLETED" or . == "FAILED"))))
+                ' <<< "$state" > /dev/null; then
+                echo "::error::ECS 배포 상태 조회 응답이 유효하지 않다: $service ($deployment_id)"
+                exit 1
+              fi
+
+              # waiter는 이전 배포로 롤백돼도 성공할 수 있다. 요청한 배포의 완료만 인정한다.
+              if jq -e --arg service "$service" --arg deployment "$deployment_id" '
+                (.failures | length) == 0 and (.services | length) == 1 and
+                (.services[0] |
+                  .serviceName == $service and .status == "ACTIVE" and
+                  .desiredCount > 0 and .runningCount == .desiredCount and .pendingCount == 0 and
+                  (.deployments | length) == 1 and
+                  .deployments[0].id == $deployment and .deployments[0].status == "PRIMARY" and
+                  .deployments[0].rolloutState == "COMPLETED")
+                ' <<< "$state" > /dev/null; then
+                echo "배포 완료: $service ($deployment_id)"
+                echo '::endgroup::'
+                return 0
+              fi
+
+              if ! jq -e --arg service "$service" --arg deployment "$deployment_id" '
+                (.failures | length) == 0 and
+                (.services[0] |
+                  .serviceName == $service and .status == "ACTIVE" and .desiredCount > 0 and
+                  (.deployments | length) == 1 and
+                  .deployments[0].id == $deployment and .deployments[0].status == "PRIMARY" and
+                  .deployments[0].rolloutState == "IN_PROGRESS")
+                ' <<< "$state" > /dev/null; then
+                echo "::error::요청한 배포가 실패·롤백·교체됐거나 서비스 상태가 완료 조건을 충족하지 않는다: $service ($deployment_id)"
+                exit 1
+              fi
+
+              if (( attempt < max_attempts )); then
+                echo "배포 완료 대기 중: $service ($deployment_id, IN_PROGRESS, $attempt/$max_attempts)"
+                sleep "$poll_interval_seconds"
+              fi
+            done
+
+            echo "::error::요청한 배포가 IN_PROGRESS인 채 시간 초과: $service ($deployment_id, 최대 ${max_attempts}회 조회)"
+            exit 1
           }
 
           promote_image "$ECR_REPO_ENROLLMENT_API" "$ENROLLMENT_IMAGE_DIGEST"
