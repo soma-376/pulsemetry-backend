@@ -42,7 +42,8 @@ pulsemetry-backend
     ├── telemetry-adapter/           com.team376.pulsemetry.telemetry.adapter
     │                                OTLP 읽기 · record_id 생성 · call_id 페어링
     │                                ├ model/      공통 스키마 (봉투 · payload · enum)
-    │                                └ source/     벤더별 매핑 (claude_code · codex)
+    │                                ├ source/     벤더별 매핑 (claude_code · codex)
+    │                                └ observation/ 정규화 계약 2판의 관측 모델 (ADR 0020)
     ├── telemetry-enricher/          com.team376.pulsemetry.telemetry.enricher
     │                                사원 정보 결합 — as-of 조인 · provider 주석
     │                                └ provider/   EnrichmentProvider 와 그 구현
