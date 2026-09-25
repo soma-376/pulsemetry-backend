@@ -26,7 +26,7 @@ class TelemetryOpsMigrationTest {
 	private lateinit var migrator: TelemetryOpsSchemaMigrator
 
 	@Test
-	@DisplayName("기동하면 telemetry_ops 의 세 테이블과 그 스키마 안의 이력 테이블이 생긴다")
+	@DisplayName("기동하면 telemetry_ops 의 네 테이블과 그 스키마 안의 이력 테이블이 생긴다")
 	fun startupCreatesTheOperationsSchema() {
 		val tables = strings(
 			"SELECT table_name FROM information_schema.tables WHERE table_schema = 'telemetry_ops' AND table_type = 'BASE TABLE'",
@@ -37,9 +37,10 @@ class TelemetryOpsMigrationTest {
 			"tenant_ingest_summary",
 			"tenant_summary_backfill",
 			"tenant_retention_boundary",
+			"retention_operations",
 		)
-		assertThat(strings("SELECT script FROM telemetry_ops.flyway_schema_history WHERE success AND version IS NOT NULL"))
-			.containsExactly("V1__telemetry_ops_schema.sql")
+		assertThat(strings("SELECT script FROM telemetry_ops.flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank"))
+			.containsExactly("V1__telemetry_ops_schema.sql", "V2__retention_operations.sql")
 	}
 
 	@Test
