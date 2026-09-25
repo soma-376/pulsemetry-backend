@@ -19,7 +19,7 @@ import java.nio.charset.StandardCharsets
  * 것**을 스텁 서버로 확인한다.
  *
  * ClickHouse 없이 돈다. 판정 대상이 문장 분해이지 DDL 의 효력이 아니다 — 효력은
- * [EnrichedEventsSinkTest] 가 실 컨테이너에서 본다.
+ * [EnrichedEventsSinkTest] 와 [TelemetryAnalysisTablesTest] 가 실 컨테이너에서 본다.
  */
 class ClickHouseSchemaMigratorTest {
 
@@ -92,14 +92,28 @@ class ClickHouseSchemaMigratorTest {
 	}
 
 	@Test
-	@DisplayName("V1 은 문장 하나다 — 헤더 열여덟 줄이 전부 벗겨져 CREATE TABLE 만 나간다")
-	fun v1SendsExactlyOneStatement() {
+	@DisplayName("V1 은 문장 하나, V2 는 두 분석 테이블 — 헤더가 전부 벗겨져 CREATE TABLE 셋만 순서대로 나간다")
+	fun migrationsSendTheirCreateStatementsInOrder() {
 		migrator().apply()
 
-		assertThat(received).hasSize(1)
-		assertThat(received.single())
+		assertThat(received).hasSize(3)
+		assertThat(received).allSatisfy { assertThat(it).doesNotContain("--") }
+		assertThat(received[0])
 			.startsWith("CREATE TABLE IF NOT EXISTS enriched_events")
-			.doesNotContain("--")
 			.endsWith("ORDER BY event_id")
+		assertThat(received[1])
+			.startsWith("CREATE TABLE IF NOT EXISTS telemetry_events")
+			.endsWith("ORDER BY (tenant_id, source_time, installation_id, observation_id)")
+		assertThat(received[2])
+			.startsWith("CREATE TABLE IF NOT EXISTS telemetry_metric_points")
+			.endsWith("ORDER BY (tenant_id, source_time, installation_id, observation_id)")
+	}
+
+	@Test
+	@DisplayName("statements() 는 apply() 가 보내는 것과 같다 — 요청 수를 세는 테스트의 기준")
+	fun statementsListsExactlyWhatApplySends() {
+		migrator().apply()
+
+		assertThat(ClickHouseSchemaMigrator.statements()).containsExactlyElementsOf(received)
 	}
 }

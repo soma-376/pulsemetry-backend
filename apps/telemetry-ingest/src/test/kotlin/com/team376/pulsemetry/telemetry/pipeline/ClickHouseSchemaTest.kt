@@ -70,7 +70,8 @@ class ClickHouseSchemaTest {
 
 		hold.countDown()
 		first.get(5, TimeUnit.SECONDS)
-		assertThat(requests.get()).isEqualTo(1)
+		// 첫 스레드의 적용 한 번분만 서버에 닿았다. 둘째 호출은 한 문장도 보내지 않았다.
+		assertThat(requests.get()).isEqualTo(statementsPerApply)
 	}
 
 	@Test
@@ -111,11 +112,14 @@ class ClickHouseSchemaTest {
 		schema.ensureApplied()
 		schema.ensureApplied()
 
-		// 실패 1회 + 성공 1회. 두 번째 성공 호출은 volatile 읽기로 끝난다.
-		assertThat(requests.get()).isEqualTo(2)
+		// 실패 1회(첫 문장에서 멈춘다) + 성공한 적용 한 번분. 두 번째 성공 호출은 volatile 읽기로 끝난다.
+		assertThat(requests.get()).isEqualTo(1 + statementsPerApply)
 	}
 
 	// ------------------------------------------------------------------ 도구
+
+	/** 적용 한 번이 보내는 요청 수. 마이그레이션 파일이 늘어도 이 테스트를 고치지 않게 한다. */
+	private val statementsPerApply: Int = ClickHouseSchemaMigrator.statements().size
 
 	private fun schema(backoff: Duration = Duration.ZERO): ClickHouseSchema = ClickHouseSchema(
 		ClickHouseSchemaMigrator(ClickHouseHttpClient("http://127.0.0.1:${server.address.port}")),

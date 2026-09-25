@@ -88,7 +88,8 @@ PROJ-101이 만든 `TeamMembershipRepository.findActiveTeamMembershipsByInstalla
 `TeamMembership.coversAt`를 그대로 쓴다 — 읽기 전용이고 `team_memberships`의 쓰기 소유는 그대로다.
 
 `:libs:telemetry-persistence`는 단계가 아니라 **역할** 모듈이라 어순이 뒤집힌다(ADR 0010).
-`enriched_events`의 DDL과 쓰기를 소유하고, ClickHouse HTTP 인터페이스를 JDK `HttpClient`로 직접
+ClickHouse 테이블(`enriched_events`, 정규화 2판의 `telemetry_events`·`telemetry_metric_points`)의 DDL과
+쓰기를 소유하고, ClickHouse HTTP 인터페이스를 JDK `HttpClient`로 직접
 부른다 — 드라이버를 넣으면 자체 오류 매핑이 상태 코드별 처분을 덮는데, 그 분류가 곧 HTTP
 계약이다(허브 ADR 0006 — 연결 계열과 `5xx`·`429`·`408`은 일시 장애, 그 밖의 4xx는 영구 오류).
 
@@ -104,14 +105,15 @@ PROJ-101이 만든 `TeamMembershipRepository.findActiveTeamMembershipsByInstalla
 | enrollment | `invitations` · `installations` · `installation_credentials` · `telemetry_tokens` · `installation_manifest_assignments` | `enrollment-api` |
 | policy | `manifests` | 관리자 API (미구현) |
 | contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 관리자 API (미구현) |
-| telemetry | ClickHouse `enriched_events` | `:libs:telemetry-persistence` |
+| telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` | `:libs:telemetry-persistence` |
 
 **쓰기 소유는 모듈이다**(ADR 0008 규칙 1). 표가 앱 이름을 적은 행은 그 도메인의 쓰기가 아직 앱에
 직접 있다는 뜻이고, 규칙 5의 승격 트리거가 당겨지면 모듈로 내려간다. telemetry는 새 도메인이라
 처음부터 모듈이 소유한다([ADR 0010](adr/0010-파이프라인-단계를-모듈-경계로-나눈다.md)).
 
 **ClickHouse는 Flyway가 다루지 않는다** — 구현 모듈이 10.24.0에서 멈춰 이 저장소가 해석하는
-`flyway-core` 12.x 계열에 없다. `enriched_events`의 DDL 진실원은
+`flyway-core` 12.x 계열에 없다. `enriched_events`와 정규화 2판의 두 분석 테이블
+([ADR 0020](adr/0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md))의 DDL 진실원은
 `libs/telemetry-persistence/src/main/resources/clickhouse/`의 `V*.sql`이고, 적용은 기동 시 전량이다
 ([ADR 0015](adr/0015-clickhouse-ddl-은-번호-붙은-멱등-파일이고-기동-시-적용한다.md)가
 허브 ADR 0004 Follow-up이 넘긴 이 항목을 닫는다). **모든 문장은 `IF NOT EXISTS` 형태여야 하고,
