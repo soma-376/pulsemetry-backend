@@ -1,11 +1,13 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.claudecode
 
+import com.team376.pulsemetry.telemetry.adapter.observation.ErrorType
 import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
 import com.team376.pulsemetry.telemetry.adapter.observation.EventType
 import com.team376.pulsemetry.telemetry.adapter.observation.MappingStatus
 import com.team376.pulsemetry.telemetry.adapter.observation.MetadataAllowlist
 import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
 import com.team376.pulsemetry.telemetry.adapter.observation.ReportedCostBasis
+import com.team376.pulsemetry.telemetry.adapter.observation.StopReason
 import com.team376.pulsemetry.telemetry.adapter.observation.TtftScope
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedValue
 import com.team376.pulsemetry.telemetry.adapter.observation.UsageRole
@@ -41,6 +43,9 @@ internal object ClaudeCodeLogs : LogProfile {
 			"request_id", "client_request_id", "query_source", "effort", "speed", "agent.name", "skill.name", "plugin.name",
 			"marketplace.name", "mcp_server.name", "mcp_tool.name", "input_tokens", "output_tokens", "cache_read_tokens",
 			"cache_creation_tokens", "cost_usd", "cost_usd_micros", "duration_ms", "ttft_ms",
+			// 오류·재시도·응답·본문 메타데이터 — 오류 원문·본문·body_ref 는 뺀다.
+			"status_code", "attempt", "error_class", "total_attempts", "total_retry_duration_ms", "response_length", "category",
+			"server_fallback_hop", "truncated",
 		),
 	)
 
@@ -57,6 +62,31 @@ internal object ClaudeCodeLogs : LogProfile {
 		val fields = FieldReader(view.attributes)
 		val mapped = when (name) {
 			"api_request" -> apiRequest(fields, common(fields, base))
+			// 사용량에 더하지 않는다. 오류와 재시도 고갈을 더해 고유 실패 요청 수라 부르지 않는다 — 각자의 관측이다.
+			"api_error" -> common(fields, base).copy(
+				eventType = EventType.MODEL_REQUEST_ERROR,
+				httpStatus = httpStatus(fields, "status_code"),
+				attempt = fields.count("attempt", NumberWire.INT_OR_DECIMAL_STRING),
+				durationNs = fields.millisAsNanos("duration_ms", NumberWire.INT_OR_DECIMAL_STRING),
+				errorType = if (fields.has("error")) ErrorType.UNKNOWN else ErrorType.NONE,
+			)
+			"api_retries_exhausted" -> common(fields, base).copy(
+				eventType = EventType.MODEL_RETRY_EXHAUSTED,
+				attempt = fields.count("total_attempts", NumberWire.INT_OR_DECIMAL_STRING),
+				durationNs = fields.millisAsNanos("total_retry_duration_ms", NumberWire.INT_OR_DECIMAL_STRING),
+			)
+			// 텍스트 응답의 길이·요청 ID 만. 응답 원문은 allowlist 밖이다. 사용량·호출 수에 더하지 않는다.
+			"assistant_response" -> common(fields, base).copy(
+				eventType = EventType.MODEL_RESPONSE_TEXT,
+				responseLength = fields.count("response_length", NumberWire.INT),
+			)
+			// 거부는 응답의 stop_reason 이 refusal 인 사건이다. 분류(category)는 metadata 에.
+			"api_refusal" -> common(fields, base).copy(eventType = EventType.MODEL_RESPONSE_REFUSAL, stopReason = REFUSAL)
+			// 본문 이벤트는 요청 ID·attempt·잘림 여부만. 본문과 body_ref 가 가리키는 파일은 읽지 않는다.
+			"api_request_body", "api_response_body" -> common(fields, base).copy(
+				eventType = EventType.MODEL_BODY_METADATA,
+				attempt = fields.count("attempt", NumberWire.INT_OR_DECIMAL_STRING),
+			)
 			else -> return null
 		}
 		return MappedEvent(mapped.withFlags(*fields.flags.toTypedArray()))
@@ -130,6 +160,12 @@ internal object ClaudeCodeLogs : LogProfile {
 		}
 	}
 
+	/** HTTP 상태 코드(0–65535). 범위 밖은 invalid. */
+	private fun httpStatus(fields: FieldReader, key: String): Int? {
+		val status = fields.count(key, NumberWire.INT_OR_DECIMAL_STRING) ?: return null
+		return if (status <= UINT16_MAX) status.toInt() else fields.invalid()
+	}
+
 	/**
 	 * `query_source` 로 작업 목적을 정한다. 메인 대화(`repl_main_thread`·`main`)는 main, `compact` 는 compaction, 하위
 	 * 에이전트(`subagent`, 에이전트 이름을 담은 `agent:…`)는 subagent. 제목 생성·요약 같은 보조 작업과 모르는 값은 unknown.
@@ -153,6 +189,8 @@ internal object ClaudeCodeLogs : LogProfile {
 	/** 클라이언트가 만든 요청 ID. */
 	const val CLIENT_REQUEST_NAMESPACE: String = "claude_code.client_request"
 
+	private val REFUSAL = StopReason("refusal")
+	private const val UINT16_MAX = 65_535L
 	private const val EVENT_NAME = "event.name"
 	private const val BODY_PREFIX = "claude_code."
 	private const val MICROS_SCALE = 6
