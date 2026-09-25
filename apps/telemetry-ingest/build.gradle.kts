@@ -8,6 +8,8 @@ plugins {
 dependencies {
 	// 적재 모듈이 api() 로 보강·변환 모듈을 함께 끌어온다 (ADR 0014).
 	implementation(project(":libs:telemetry-persistence"))
+	// 수집 운영 기록의 RDS 쪽(tenant 생애 요약·백필) — ADR 0021. DDL 은 enrollment-api 가 적용하고 이 앱은 쓰기만 한다.
+	implementation(project(":libs:telemetry-ops-persistence"))
 	implementation(project(":libs:telemetry-collector"))
 	// 두 리포지토리(TelemetryTokenRepository · TeamMembershipRepository)는 :libs:security 와
 	// :libs:telemetry-enricher 가 api() 로 노출한다 — 생성자 인자 타입은 계약이다 (module-map 4절).

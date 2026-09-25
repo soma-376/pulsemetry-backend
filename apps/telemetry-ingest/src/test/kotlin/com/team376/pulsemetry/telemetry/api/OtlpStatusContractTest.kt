@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.telemetry.api
 
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
+import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsUnavailableException
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
 import com.team376.pulsemetry.telemetry.collector.PermanentIngestException
 import com.team376.pulsemetry.telemetry.collector.Signal
@@ -36,6 +37,15 @@ class OtlpStatusContractTest {
 		assertThat(response.contentType).isEqualTo("application/json")
 		// google.rpc.Status — UNAVAILABLE 은 14 다.
 		assertThat(response.contentAsString).contains("\"code\":14")
+	}
+
+	@Test
+	@DisplayName("수집 운영 기록(요약)의 장애도 503 + Retry-After 다 — 수신 기록 없이 성공을 돌려주지 않는다")
+	fun anOperationsStoreFailureCarriesRetryAfter() {
+		val response = post(consumer { throw TelemetryOpsUnavailableException("telemetry_ops down") })
+
+		assertThat(response.status).isEqualTo(503)
+		assertThat(response.getHeader("Retry-After")).isEqualTo("1")
 	}
 
 	@Test

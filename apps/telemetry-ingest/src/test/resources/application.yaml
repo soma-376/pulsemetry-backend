@@ -16,3 +16,10 @@ spring:
       hibernate:
         default_schema: enrollment
     open-in-view: false
+
+# 수집 운영 기록을 켠다 — E2E 가 ledger·요약까지 본다. telemetry_ops 스키마는 IngestTestData 가 적용한다
+# (운영에서는 enrollment-api 기동의 몫이다, ADR 0021 §3).
+pulsemetry:
+  telemetry:
+    ops:
+      enabled: true

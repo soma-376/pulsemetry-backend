@@ -8,24 +8,28 @@ import com.team376.pulsemetry.persistence.enrollment.repository.TeamRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TelemetryTokenRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TenantRepository
 import com.team376.pulsemetry.persistence.enrollment.support.EnrollmentFixtures
+import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsSchemaMigrator
 import com.team376.pulsemetry.security.TelemetryTokenHasher
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.jdbc.core.JdbcTemplate
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
+import javax.sql.DataSource
 
 /**
- * OTLP 요청 하나가 `enriched_events` 행이 되기까지 필요한 신원 사슬을 심는다.
+ * OTLP 요청 하나가 분석 테이블 행이 되기까지 필요한 신원 사슬을 심는다.
  *
  * ```
  * tenant → member → team → team_membership(as-of)
  *                └→ invitation → installation → telemetry_token(HMAC)
  * ```
  *
- * `team_membership` 이 **초대 대상 member** 에 걸려야 보강이 팀을 찾는다 —
- * `TeamMembershipRepository.findActiveTeamMembershipsByInstallationId` 가
- * `installations → members → team_memberships` 로 조인하기 때문이다.
+ * `team_membership` 이 **초대 대상 member** 에 걸려야 보강이 팀을 찾는다 — 보강이 installation 의 구성원을 읽고
+ * 그 구성원의 소속 이력을 as-of 로 자르기 때문이다(ADR 0020 §5).
+ *
+ * 수집 운영 기록의 `telemetry_ops` 스키마도 여기서 적용한다. 운영에서는 `:apps:enrollment-api` 기동이 적용하고
+ * ingest 는 적용하지 않는다(ADR 0021 §3) — 테스트 컨테이너에는 그 주체가 없다.
  *
  * **`POST /v1/enroll` 을 부르지 않는다.** 그 엔드포인트는 `:apps:enrollment-api` 에 있고
  * 앱끼리는 의존하지 않으므로 이 컨텍스트에 올릴 수 없다. 토큰은 발급과 검증이 공유하는
@@ -45,7 +49,12 @@ class IngestTestData(
 	private val telemetryTokens: TelemetryTokenRepository,
 	private val hasher: TelemetryTokenHasher,
 	private val jdbc: JdbcTemplate,
+	dataSource: DataSource,
 ) {
+
+	init {
+		TelemetryOpsSchemaMigrator(dataSource).migrate()
+	}
 
 	/** 심은 신원과 그것으로 인증할 수 있는 원문 토큰. */
 	data class Seeded(
@@ -116,5 +125,7 @@ class IngestTestData(
 			CASCADE
 			""".trimIndent(),
 		)
+		// 백필 완료 기록은 비우지 않는다 — 기동 시 한 번 쓰이고 컨텍스트가 공유된다.
+		jdbc.execute("TRUNCATE TABLE telemetry_ops.tenant_ingest_summary")
 	}
 }

@@ -1,7 +1,10 @@
 package com.team376.pulsemetry.telemetry.support
 
+import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TelemetryTokenRepository
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
+import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
+import com.team376.pulsemetry.persistence.telemetryops.TenantIngestSummaryStore
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import org.springframework.test.context.DynamicPropertyRegistry
@@ -20,8 +23,8 @@ import org.testcontainers.containers.wait.strategy.Wait
  * ClickHouse 는 Spring 이 관리하지 않는다. `@ServiceConnection` 이 없는 저장소라
  * 정적 컨테이너를 직접 띄우고 URL 만 프로퍼티로 넘긴다.
  *
- * [telemetryTokens] 의 spy 도 같은 이유로 여기 있다 — 빈 오버라이드는 캐시 키의 일부다. 인증
- * 조회 장애를 흉내 내는 테스트만 쓰고, 나머지는 실물 그대로 지나간다(테스트마다 원복된다).
+ * spy 들도 같은 이유로 여기 있다 — 빈 오버라이드는 캐시 키의 일부다. 장애를 흉내 내는 테스트만 쓰고(인증 조회·
+ * 보강 조회·분석 적재·요약 쓰기), 나머지는 실물 그대로 지나간다(테스트마다 원복된다).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(PostgresContainerConfig::class, IngestTestData::class)
@@ -29,6 +32,18 @@ abstract class AbstractIngestIntegrationTest {
 
 	@MockitoSpyBean
 	protected lateinit var telemetryTokens: TelemetryTokenRepository
+
+	/** 보강의 RDS 장애를 흉내 낸다. */
+	@MockitoSpyBean
+	protected lateinit var installations: InstallationRepository
+
+	/** 분석 테이블 적재의 ClickHouse 장애를 흉내 낸다. */
+	@MockitoSpyBean
+	protected lateinit var telemetryEvents: TelemetryEventsSink
+
+	/** 수집 운영 기록(요약)의 RDS 장애를 흉내 낸다. */
+	@MockitoSpyBean
+	protected lateinit var summaries: TenantIngestSummaryStore
 
 	companion object {
 		private const val HTTP_PORT: Int = 8123
