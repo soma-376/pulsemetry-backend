@@ -73,6 +73,25 @@ class FieldReaderTest {
 	}
 
 	@Test
+	@DisplayName("double 금액은 가장 짧은 10진 표기 그대로 — 정수부가 Decimal(38, 12) 범위(26자리)를 넘으면 invalid")
+	fun doubleAmounts() {
+		val r = reader(
+			"ok" to TypedValue.Double(0.0031),
+			"artifact" to TypedValue.Double(0.1 + 0.2),
+			"largest" to TypedValue.Double(9.0E25),
+			"tooLarge" to TypedValue.Double(1.0E26),
+		)
+
+		assertThat(r.nonNegativeDouble("ok")).isEqualByComparingTo("0.0031")
+		// 소수 자릿수는 그대로 둔다 — 컬럼에 맞추는 규칙은 프로파일의 몫이다.
+		assertThat(r.nonNegativeDouble("artifact")).isEqualByComparingTo("0.30000000000000004")
+		assertThat(r.nonNegativeDouble("largest")).isEqualByComparingTo("90000000000000000000000000")
+		assertThat(r.flags).isEmpty()
+		assertThat(r.nonNegativeDouble("tooLarge")).isNull()
+		assertThat(r.flags).containsExactly(QualityFlag.INVALID_MEASUREMENT)
+	}
+
+	@Test
 	@DisplayName("밀리초를 나노초로 — 넘치면 invalid")
 	fun millis() {
 		val r = reader("ok" to TypedValue.Str("12"), "big" to TypedValue.Str(Long.MAX_VALUE.toString()))
