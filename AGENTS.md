@@ -20,6 +20,7 @@ Kotlin + Spring Boot, Gradle 멀티모듈. 시스템 아키텍처의 **Auth Serv
 ```
 apps/enrollment-api/         enrollment · manifest · 부트스트랩 서빙 (HTTP)
 apps/telemetry-ingest/       조립 앱 — OTLP 수신부터 적재까지 한 프로세스. 배선만 한다
+apps/dashboard-api/          분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐. 인증은 포트 뒤 기본 거부 (ADR 0022)
 libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이그레이션
 libs/security/               횡단 인증 라이브러리 — OTLP 경로 ptt_ 검증 · telemetry token 해시
 libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 신원 스탬프 · 원본 아카이브
@@ -39,7 +40,7 @@ libs/telemetry-ops-persistence/ 수집 운영 기록의 RDS 쪽 — telemetry_op
 |---|---|---|
 | 사람 계정·로그인 | 미구현 | 이 레포가 **Auth Service**다. Spring Security가 AT·RT를 직접 발급한다(ADR-0007 — Cognito 미사용). `members.cognito_user_sub`는 제거됐고(`V4`) 비밀번호 자리는 `members.password_hash`다 — 담을 곳만 있고 로그인 경로는 아직 없다. 얹힐 자리는 `:libs:security`이고 모듈은 이미 서 있다 |
 | manifest 작성 API | 미구현 (현재 수동 INSERT) | manifest 저장은 이미 이 레포 소유 |
-| 대시보드 API | **소재 미정** — 이 레포의 모듈인지 별도 레포인지 | 확정 ADR은 아직 없다 |
+| 대시보드 API | `:apps:dashboard-api` — 분석 조회(GET)와 인증 포트. 조회 구현은 진행 중, 쓰기 API 는 범위 밖 | ADR 0022 (Proposed — 허브 소재 결정·허브 ADR 0007 채택 대기) |
 | 텔레메트리 파이프라인 이관 | **코드는 끝났다. 배포만 남았다** | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다 — 남은 것은 infra 가 이 앱을 배포하고 collector 컨테이너를 내리는 일이다(PROJ-106) |
 
 **파이프라인은 이 레포의 단일 앱이다**(허브 ADR 0004·0005 — 배포 단위 하나, OTel Collector 바이너리 없음).
@@ -87,6 +88,7 @@ libs/telemetry-ops-persistence/ 수집 운영 기록의 RDS 쪽 — telemetry_op
 ./gradlew :apps:enrollment-api:test               # 테스트
 ./gradlew :apps:enrollment-api:bootRun            # enrollment 서버 (8080)
 ./gradlew :apps:telemetry-ingest:bootRun          # OTLP 수집 서버 (4316)
+./gradlew :apps:dashboard-api:bootRun             # 분석 조회 API (8081) — PULSEMETRY_DASHBOARD_RETRY_AFTER 필수
 docker compose up -d                              # 로컬 Postgres · ClickHouse
 ```
 

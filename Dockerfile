@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# enrollment-api · telemetry-ingest 컨테이너 이미지. target을 생략하면 enrollment-api를 만든다.
+# enrollment-api · telemetry-ingest · dashboard-api 컨테이너 이미지. target을 생략하면 enrollment-api를 만든다.
 #
 # 빌드 스테이지는 $BUILDPLATFORM 에 고정한다. 산출물이 JVM 바이트코드라 아키텍처를 타지 않으므로,
 # arm64 이미지를 만들 때도 Gradle 빌드는 러너의 네이티브 아키텍처에서 그대로 돌면 된다.
@@ -8,6 +8,7 @@
 #
 #   docker buildx build --platform linux/arm64 --target enrollment-api -t <repo>:<tag> --load .
 #   docker buildx build --platform linux/arm64 --target telemetry-ingest -t <repo>:<tag> --load .
+#   docker buildx build --platform linux/arm64 --target dashboard-api -t <repo>:<tag> --load .
 
 FROM --platform=$BUILDPLATFORM eclipse-temurin:25-jdk AS build-base
 
@@ -19,6 +20,7 @@ COPY gradlew settings.gradle.kts build.gradle.kts ./
 COPY gradle gradle
 COPY apps/enrollment-api/build.gradle.kts apps/enrollment-api/
 COPY apps/telemetry-ingest/build.gradle.kts apps/telemetry-ingest/
+COPY apps/dashboard-api/build.gradle.kts apps/dashboard-api/
 COPY libs/enrollment-persistence/build.gradle.kts libs/enrollment-persistence/
 COPY libs/security/build.gradle.kts libs/security/
 COPY libs/telemetry-collector/build.gradle.kts libs/telemetry-collector/
@@ -64,6 +66,21 @@ RUN java -Djarmode=tools -jar apps/telemetry-ingest/build/libs/*.jar \
 	extract --layers --launcher --destination /extracted
 
 
+FROM build-base AS dashboard-api-build
+
+RUN --mount=type=cache,target=/root/.gradle,sharing=locked \
+	./gradlew --no-daemon :apps:dashboard-api:dependencies --configuration runtimeClasspath > /dev/null
+
+COPY libs libs
+COPY apps apps
+
+RUN --mount=type=cache,target=/root/.gradle,sharing=locked \
+	./gradlew --no-daemon :apps:dashboard-api:bootJar -x test
+
+RUN java -Djarmode=tools -jar apps/dashboard-api/build/libs/*.jar \
+	extract --layers --launcher --destination /extracted
+
+
 FROM eclipse-temurin:25-jre AS runtime-base
 
 WORKDIR /app
@@ -85,6 +102,18 @@ COPY --from=telemetry-ingest-build --chown=pulsemetry:pulsemetry /extracted/appl
 
 USER pulsemetry
 EXPOSE 4316
+
+
+# 분석 조회 API (ADR 0022). 배포는 허브의 소재 결정과 사용자 인증 연결 뒤다 — 그 전에는 조직 경로가 전부 401 이다.
+FROM runtime-base AS dashboard-api
+
+COPY --from=dashboard-api-build --chown=pulsemetry:pulsemetry /extracted/dependencies/ ./
+COPY --from=dashboard-api-build --chown=pulsemetry:pulsemetry /extracted/spring-boot-loader/ ./
+COPY --from=dashboard-api-build --chown=pulsemetry:pulsemetry /extracted/snapshot-dependencies/ ./
+COPY --from=dashboard-api-build --chown=pulsemetry:pulsemetry /extracted/application/ ./
+
+USER pulsemetry
+EXPOSE 8081
 
 
 # 기존 target 없는 빌드도 enrollment-api를 만들도록 마지막에 둔다.

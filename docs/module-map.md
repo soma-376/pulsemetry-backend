@@ -18,6 +18,7 @@
 [ADR 0017](adr/0017-정규화-불변-규칙과-enrichment-json-승격-금지는-이-저장소가-정한다.md) ·
 [ADR 0020](adr/0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md) ·
 [ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md) ·
+[ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md) ·
 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)
@@ -30,8 +31,15 @@
 pulsemetry-backend
 ├── apps/
 │   ├── enrollment-api/              com.team376.pulsemetry.enrollment
-│   └── telemetry-ingest/            com.team376.pulsemetry.telemetry
-│                                    OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
+│   ├── telemetry-ingest/            com.team376.pulsemetry.telemetry
+│   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
+│   └── dashboard-api/               com.team376.pulsemetry.dashboard
+│                                    분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐 (ADR 0022)
+│                                    ├ api/            HTTP 표현 계층
+│                                    ├ authentication/ 인증 포트 · 기본 거부 구현 · 필터
+│                                    ├ error/          오류 본문 · 코드 · 예외 매핑
+│                                    ├ request/        요청 ID
+│                                    └ config/
 └── libs/
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
     │                                └ enrollment 스키마 14 테이블 · Flyway 마이그레이션
@@ -58,7 +66,7 @@ pulsemetry-backend
                                      RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필
 ```
 
-`settings.gradle.kts`의 `include`는 이 아홉뿐이다. **5절이 예고한 모듈이 전부 섰다.**
+`settings.gradle.kts`의 `include`는 이 열뿐이다. **5절이 예고한 모듈이 전부 섰다.**
 `:libs:telemetry-ops-persistence`는 5절 밖에서 더해졌다 — 수집 운영 기록의 RDS 쪽이 ClickHouse와 아웃바운드
 기술이 달라 나뉜다([ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md)).
 
@@ -66,6 +74,13 @@ pulsemetry-backend
 배선·설정 바인딩과 단계 호출이 전부이고, 그것이 ADR 0011이 라이브러리에서 걷어낸 몫이다.
 기동·배선 정책은 [ADR 0016](adr/0016-조립-앱은-인증-체인과-단계-호출을-배선하고-스키마-적용-실패를-견딘다.md),
 상태 코드 계약은 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)이 담는다.
+
+`:apps:dashboard-api`는 분석 조회 API다([ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md), Proposed).
+원천 스키마를 소유한 라이브러리(`enrollment`·`telemetry-ops`·`telemetry`의 `-persistence`)를 **읽기 소비자**로만 쓰므로 2절의
+쓰기 소유 표는 바뀌지 않고, `:libs:enrollment-persistence`의 분할 트리거(6절)도 당겨지지 않는다. 화면별 조회는 모듈이 아니라 이 앱 안의
+패키지다. 인증은 앱 안의 포트(`DashboardAuthenticator`)이고 기본 런타임 구현은 전부 거부한다 — 사용자 인증이 `:libs:security`에 서면
+그 검증을 잇는 어댑터가 포트를 구현한다. 필터 체인은 `telemetry-ingest`처럼 둘이고 기본 닫힘이다(`/api/v1/organizations` 아래만
+인증, 나머지는 `/v1/healthz`만 열고 404).
 
 `:libs:security`에는 아직 **OTLP 경로의 `ptt_` 검증만** 있다(PROJ-102). 관리자 API 경로의 AT 검증은
 PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 — 지금은 내용물 묶음이 하나뿐이라

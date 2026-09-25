@@ -1,0 +1,22 @@
+server:
+  # 8080(enrollment-api) · 4316(telemetry-ingest) 과 겹치지 않는 로컬 편의값이다 (ADR 0022 §1).
+  port: ${PULSEMETRY_DASHBOARD_PORT:8081}
+
+spring:
+  application:
+    name: pulsemetry-dashboard-api
+
+  web:
+    resources:
+      # 정적 자원을 서빙하지 않는다. 매핑이 없는 경로는 컨트롤러 계층의 404 not_found 가 된다.
+      add-mappings: false
+
+logging:
+  pattern:
+    # 요청 ID(X-Request-Id)를 로그 상관 키로 싣는다 — RequestIds.MDC_KEY 와 맞춘다.
+    correlation: "[%X{requestId:-}] "
+
+pulsemetry:
+  dashboard:
+    # 503 응답의 Retry-After. 기본값이 없다 — 비어 있으면 기동이 실패한다 (ADR 0022 §5).
+    retry-after: ${PULSEMETRY_DASHBOARD_RETRY_AFTER:}
