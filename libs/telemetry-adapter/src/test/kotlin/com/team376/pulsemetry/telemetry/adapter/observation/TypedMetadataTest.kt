@@ -77,6 +77,17 @@ class TypedMetadataTest {
 	}
 
 	@Test
+	@DisplayName("최상위 eventName 은 있을 때만 쓰고 왕복한다")
+	fun eventNameIsOptional() {
+		val withName = TypedMetadata(record = listOf(TypedAttribute("k", TypedValue.Str("v"))), eventName = "event a/b.rs:1")
+
+		assertThat(TypedMetadata().toJson()).doesNotContain("eventName")
+		assertThat(withName.toJson()).isEqualTo("""{"resource":[],"scope":[],"record":[{"key":"k","value":{"stringValue":"v"}}],"eventName":"event a/b.rs:1"}""")
+		assertThat(TypedMetadata.fromJson(withName.toJson())).isEqualTo(withName)
+		assertThatThrownBy { TypedMetadata.fromJson("""{"eventName":1}""") }.isInstanceOf(IllegalArgumentException::class.java)
+	}
+
+	@Test
 	@DisplayName("모르는 경계나 필드는 거부한다")
 	fun rejectsUnknownShapes() {
 		assertThatThrownBy { TypedMetadata.fromJson("""{"records":[]}""") }.isInstanceOf(IllegalArgumentException::class.java)

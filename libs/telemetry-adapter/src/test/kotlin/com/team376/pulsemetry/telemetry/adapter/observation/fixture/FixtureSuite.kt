@@ -48,15 +48,21 @@ class FixtureSuite(
 
 	fun load(directory: String): List<FixtureCase> =
 		inputFiles(directory).map { input ->
-			val stem = input.name.removeSuffix(".otlp.jsonl")
-			val expected = input.resolveSibling("$stem.expected.jsonl")
-			require(Files.exists(expected)) { "$stem.expected.jsonl 가 없다" }
-			FixtureCase(
-				name = "$directory/$stem",
-				documents = lines(input).map { it as Map<*, *> },
-				expectations = lines(expected).map { it as Map<*, *> },
-			)
+			require(Files.exists(expectedOf(input))) { "${expectedOf(input).name} 가 없다" }
+			pair(directory, input)
 		}
+
+	/** 기대값이 있는 입력만 쌍으로 읽는다 — 기대값을 파일마다 차례로 붙이는 실캡처 디렉터리용. */
+	fun loadPaired(directory: String): List<FixtureCase> =
+		inputFiles(directory).filter { Files.exists(expectedOf(it)) }.map { pair(directory, it) }
+
+	private fun expectedOf(input: Path): Path = input.resolveSibling(input.name.removeSuffix(".otlp.jsonl") + ".expected.jsonl")
+
+	private fun pair(directory: String, input: Path): FixtureCase = FixtureCase(
+		name = "$directory/${input.name.removeSuffix(".otlp.jsonl")}",
+		documents = lines(input).map { it as Map<*, *> },
+		expectations = lines(expectedOf(input)).map { it as Map<*, *> },
+	)
 
 	/** 기대값 없이 입력만 읽는다 — 기대값을 아직 쓰지 않은 실캡처 추출본용. [checkInvariants] 와 짝이다. */
 	fun inputs(directory: String): List<FixtureCase> =

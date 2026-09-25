@@ -1,0 +1,5 @@
+{"spec":"ADR 0020 부록 C · §4","note":"검증하지 않은 producer 버전은 generic","events":[{"product":"codex","event_type":"vendor.unknown","mapping_status":"generic","mapping_version":"generic-v1","usage_role":"none","tokens_input":null,"metadata_json":{"$excludes":["eventName"]}}]}
+{"spec":"ADR 0020 부록 C","note":"Codex Desktop 은 배포 빌드 소스로 확인하지 못했다 — 같은 버전이어도 generic","events":[{"product":"codex","surface":"desktop","event_type":"vendor.unknown","mapping_status":"generic","usage_role":"none"}]}
+{"spec":"ADR 0020 부록 A.1 · 부록 C","note":"같은 소스의 CLI 표면은 매핑한다","events":[{"product":"codex","surface":"cli","event_type":"model.response.usage","mapping_status":"mapped","usage_role":"primary"}]}
+{"spec":"ADR 0020 부록 A.2 의미 이름이 없는 로그","note":"event.name 이 없으면 diagnostic, eventName 소스 위치를 의미 이름으로 쓰지 않는다","events":[{"event_type":"diagnostic","original_name":null,"mapping_status":"generic","usage_role":"none"}]}
+{"spec":"ADR 0020 부록 A.2 그 밖 미등록 이름","events":[{"event_type":"vendor.unknown","original_name":"codex.something_new","mapping_status":"generic"}]}

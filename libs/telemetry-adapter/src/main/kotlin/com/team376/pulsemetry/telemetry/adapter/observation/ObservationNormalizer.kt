@@ -49,7 +49,7 @@ public class ObservationNormalizer(
 		val run = Run(context, NormalizationStats())
 		Otlp.resourcesOf(request, signal).forEachIndexed { r, resourceX ->
 			val resource = Resource.of(resourceX)
-			val profile = profiles.find(resource.identity.product, resource.serviceVersion)
+			val profile = profiles.find(resource.identity.product, resource.identity.surface, resource.serviceVersion)
 			Otlp.scopesOf(resourceX, signal).forEachIndexed { s, scopeX ->
 				val scope = Scope.of(scopeX)
 				Otlp.recordsOf(scopeX, signal).forEachIndexed { k, record ->
@@ -129,6 +129,7 @@ public class ObservationNormalizer(
 				record = record,
 				attributes = attributes,
 				body = Otlp.message(record, "body")?.let { Otlp.anyValue(it) } ?: TypedValue.Empty,
+				eventName = Otlp.string(record, "event_name"),
 				resourceAttributes = resource.attributes,
 				scopeAttributes = scope.attributes,
 				scopeName = scope.name,
@@ -143,7 +144,9 @@ public class ObservationNormalizer(
 
 			val mapper = if (conflict) null else logs
 			val allowlist = mapper?.allowlist ?: GENERIC_ALLOWLIST
-			val metadata = allowlist.filter(resource.attributes, scope.attributes, attributes)
+			val metadata = allowlist.filter(resource.attributes, scope.attributes, attributes).let {
+				if (mapper?.keepsEventName == true && view.eventName.isNotEmpty()) it.copy(eventName = view.eventName) else it
+			}
 			val relation = relationIds(record, spanIdField = "span_id", parentField = null)
 			val envelope = envelope(
 				resource, scope, record, path, selection, if (conflict) ProductRegistry.UNKNOWN else resource.identity,

@@ -37,6 +37,9 @@ public data class TypedAttribute(val key: String, val value: TypedValue)
  * allowlist 를 통과한 속성의 typed 원형. resource·scope·record 경계를 유지하고, 각 경계 안의 원래 순서와
  * 중복 키를 그대로 둔다. metric point 의 exemplar 는 point 순서대로 [exemplars] 에 따로 둔다.
  *
+ * [eventName] 은 속성이 아니라 로그 레코드의 최상위 `eventName` 필드다. 그 값이 무엇인지 검증한 프로파일만
+ * 싣는다(예: producer 의 소스 위치 — `operation` 판별 근거, ADR 0020 §4). generic 경로는 싣지 않는다.
+ *
  * [toJson] 이 `metadata_json` 의 값이다. 형식은 OTLP/JSON 의 `KeyValue`·`AnyValue` 표기를 따른다 —
  * `intValue` 는 문자열, `bytesValue` 는 base64, 비유한 `doubleValue` 는 `"NaN"`·`"Infinity"`·`"-Infinity"` 문자열.
  * 같은 값이면 언제나 같은 바이트다. 순서를 정렬한 canonical 형태(해시 재료)는 이것과 따로다(ADR 0020 §2).
@@ -46,9 +49,10 @@ public data class TypedMetadata(
 	val scope: List<TypedAttribute> = emptyList(),
 	val record: List<TypedAttribute> = emptyList(),
 	val exemplars: List<List<TypedAttribute>> = emptyList(),
+	val eventName: String? = null,
 ) {
 
-	/** `resource`·`scope`·`record` 는 언제나 쓰고, `exemplars` 는 비어 있지 않을 때만 쓴다. */
+	/** `resource`·`scope`·`record` 는 언제나 쓰고, `eventName` 은 있을 때만, `exemplars` 는 비어 있지 않을 때만 쓴다. */
 	public fun toJson(): String {
 		val out = StringWriter()
 		FACTORY.createGenerator(out).use { generator ->
@@ -56,6 +60,7 @@ public data class TypedMetadata(
 			writeSection(generator, RESOURCE, resource)
 			writeSection(generator, SCOPE, scope)
 			writeSection(generator, RECORD, record)
+			eventName?.let { generator.writeStringProperty(EVENT_NAME, it) }
 			if (exemplars.isNotEmpty()) {
 				generator.writeName(EXEMPLARS)
 				generator.writeStartArray()
@@ -73,6 +78,7 @@ public data class TypedMetadata(
 		private const val SCOPE = "scope"
 		private const val RECORD = "record"
 		private const val EXEMPLARS = "exemplars"
+		private const val EVENT_NAME = "eventName"
 
 		public val EMPTY: TypedMetadata = TypedMetadata()
 
@@ -89,6 +95,10 @@ public data class TypedMetadata(
 						SCOPE -> metadata.copy(scope = readAttributes(parser))
 						RECORD -> metadata.copy(record = readAttributes(parser))
 						EXEMPLARS -> metadata.copy(exemplars = readArray(parser) { readAttributes(parser) })
+						EVENT_NAME -> {
+							expect(parser.currentToken(), JsonToken.VALUE_STRING)
+							metadata.copy(eventName = parser.string)
+						}
 						else -> throw IllegalArgumentException("모르는 metadata 경계: $name")
 					}
 				}

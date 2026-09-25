@@ -6,6 +6,7 @@ import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
 import com.team376.pulsemetry.telemetry.adapter.observation.MetadataAllowlist
 import com.team376.pulsemetry.telemetry.adapter.observation.MetricPointObservation
 import com.team376.pulsemetry.telemetry.adapter.observation.Product
+import com.team376.pulsemetry.telemetry.adapter.observation.Surface
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedAttribute
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedValue
 import com.team376.pulsemetry.telemetry.adapter.observation.semantics.SemanticsProfile
@@ -21,6 +22,12 @@ public interface ProductProfile {
 
 	/** 이 규칙이 적용되는 producer(`service.version`) 버전. */
 	public val versions: VersionSet
+
+	/**
+	 * 이 규칙이 적용되는 표면. null 이면 제품의 모든 표면이다. 같은 제품이라도 근거를 확인한 표면만 적는다 —
+	 * 소스를 확인하지 못한 표면은 generic 경로로 간다.
+	 */
+	public val surfaces: Set<Surface>? get() = null
 
 	/** 규칙의 버전. `mapping_version` 이다 — 규칙을 바꾸면 올린다(관측 ID 는 바뀌지 않는다). */
 	public val mappingVersion: String
@@ -48,6 +55,12 @@ public interface LogProfile {
 	 * (근거가 metadata 에 남아야 조회 계층이 해석한다).
 	 */
 	public val providerEvidenceKeys: List<String> get() = emptyList()
+
+	/**
+	 * 최상위 `eventName` 을 `metadata_json` 에 남기는가. 그 필드의 값이 무엇인지(예: producer 소스 위치) 검증한
+	 * 프로파일만 켠다 — 모르는 제품의 `eventName` 은 무엇이 들었는지 알 수 없다.
+	 */
+	public val keepsEventName: Boolean get() = false
 }
 
 public interface SpanProfile {
@@ -99,19 +112,20 @@ public class ProfileRegistry(private val profiles: List<ProductProfile>) {
 		}
 	}
 
-	public fun find(product: Product, version: String?): ProductProfile? =
-		profiles.firstOrNull { it.product == product && it.versions.contains(version) }
+	public fun find(product: Product, surface: Surface, version: String?): ProductProfile? =
+		profiles.firstOrNull { it.product == product && (it.surfaces?.contains(surface) ?: true) && it.versions.contains(version) }
 
 	public companion object {
 		public val EMPTY: ProfileRegistry = ProfileRegistry(emptyList())
 	}
 }
 
-/** 로그 레코드 하나와 그 문맥. [record] 는 원본 protobuf 다. */
+/** 로그 레코드 하나와 그 문맥. [record] 는 원본 protobuf 다. [eventName] 은 최상위 `eventName` 필드(없으면 빈 문자열)다. */
 public class LogRecordView(
 	public val record: MessageOrBuilder,
 	public val attributes: List<TypedAttribute>,
 	public val body: TypedValue,
+	public val eventName: String,
 	public val resourceAttributes: List<TypedAttribute>,
 	public val scopeAttributes: List<TypedAttribute>,
 	public val scopeName: String?,
