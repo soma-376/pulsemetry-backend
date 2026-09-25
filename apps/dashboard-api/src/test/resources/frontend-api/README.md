@@ -6,5 +6,7 @@
 | 파일 | 원본 |
 |---|---|
 | `overview-response.example.json` | `pulsemetry-frontend/docs/api/overview-response.example.json` |
+| `teams-response.example.json` | `pulsemetry-frontend/docs/api/teams-response.example.json` |
+| `team-users-response.example.json` | `pulsemetry-frontend/docs/api/team-users-response.example.json` |
 
 요청서의 예시가 바뀌면 원본을 그대로 다시 복사한다. 테스트를 통과시키려고 이 사본을 고치지 않는다.

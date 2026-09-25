@@ -5,6 +5,7 @@ import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
 import com.team376.pulsemetry.dashboard.store.ClickHouseParam
 import tools.jackson.databind.JsonNode
 import java.math.BigDecimal
+import java.time.Instant
 
 /**
  * **공통 계산기** — ready snapshot 의 payload(`dashboard_cache.snapshot_usage`) 하나에서 축별 [UsageTotals] 를 센다.
@@ -27,9 +28,19 @@ class UsageAggregator(
 		MEMBER(listOf("member_id")),
 		DAY(listOf("toString(toDate(source_time, {tz:String}))")),
 		TEAM_MODEL(listOf("team_id_as_of", "model_id")),
+		TEAM_DAY(listOf("team_id_as_of", "toString(toDate(source_time, {tz:String}))")),
+		MEMBER_MODEL(listOf("member_id", "model_id")),
 	}
 
-	fun totals(snapshot: SnapshotManifestStore.Manifest, side: Side, axis: Axis): Map<List<String?>, UsageTotals> {
+	/** 한 팀으로 좁히는 조건. [teamId] 가 null 이면 미배분(`team_id_as_of IS NULL`)이다. */
+	data class TeamScope(val teamId: String?)
+
+	fun totals(
+		snapshot: SnapshotManifestStore.Manifest,
+		side: Side,
+		axis: Axis,
+		team: TeamScope? = null,
+	): Map<List<String?>, UsageTotals> {
 		val keys = axis.expressions.mapIndexed { index, expression -> "$expression AS k$index" }
 		val select = (keys + COUNTERS).joinToString(",\n    ")
 		val groupBy = if (axis.expressions.isEmpty()) "" else "GROUP BY " + axis.expressions.indices.joinToString(", ") { "k$it" }
@@ -37,16 +48,23 @@ class UsageAggregator(
 			SELECT
 			    $select
 			FROM snapshot_usage
-			WHERE tenant_id = {tenant:String} AND snapshot_id = {snapshot:String} AND build_id = {build:String} AND ${side.column}
+			WHERE tenant_id = {tenant:String} AND snapshot_id = {snapshot:String} AND build_id = {build:String} AND ${side.column}${teamCondition(team)}
 			$groupBy
 		""".trimIndent()
-		val params = mapOf(
-			"tenant" to ClickHouseParam.string(snapshot.tenantId.toString()),
-			"snapshot" to ClickHouseParam.string(snapshot.snapshotId),
-			"build" to ClickHouseParam.string(snapshot.buildId.toString()),
-			"tz" to ClickHouseParam.string(snapshot.current.zone.id),
-		)
+		val params = buildMap {
+			put("tenant", ClickHouseParam.string(snapshot.tenantId.toString()))
+			put("snapshot", ClickHouseParam.string(snapshot.snapshotId))
+			put("build", ClickHouseParam.string(snapshot.buildId.toString()))
+			put("tz", ClickHouseParam.string(snapshot.current.zone.id))
+			team?.teamId?.let { put("team", ClickHouseParam.string(it)) }
+		}
 		return clickHouse.query(sql, params) { row -> axis.expressions.indices.map { text(row, "k$it") } to totals(row) }.toMap()
+	}
+
+	private fun teamCondition(team: TeamScope?): String = when {
+		team == null -> ""
+		team.teamId == null -> " AND isNull(team_id_as_of)"
+		else -> " AND team_id_as_of = {team:String}"
 	}
 
 	private fun totals(row: JsonNode) = UsageTotals(
@@ -66,6 +84,7 @@ class UsageAggregator(
 		cost = text(row, "cost")?.let(::BigDecimal),
 		unpricedRows = long(row, "unpriced_rows"),
 		multiTeamRows = long(row, "multi_team_rows"),
+		lastSourceTime = text(row, "last_source_time")?.let(Instant::parse),
 	)
 
 	private fun component(row: JsonNode, name: String) = UsageTotals.Component(text(row, name)?.toLong(), long(row, "${name}_missing"))
@@ -99,6 +118,8 @@ class UsageAggregator(
 			"sumOrNull(cost_estimated_usd) AS cost",
 			"countIf(isNull(cost_estimated_usd)) AS unpriced_rows",
 			"countIf(has(quality_flags, 'multi_team_membership')) AS multi_team_rows",
+			// 행이 없는 조직 축에서도 NULL 이 나오게 — max 는 빈 입력에 1970 을 낸다.
+			"if(count() = 0, NULL, max(source_time)) AS last_source_time",
 		)
 	}
 }

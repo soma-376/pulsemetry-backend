@@ -1,11 +1,15 @@
 package com.team376.pulsemetry.dashboard.config
 
+import com.team376.pulsemetry.dashboard.analytics.AnalyticsFrames
 import com.team376.pulsemetry.dashboard.analytics.ComparisonPolicy
 import com.team376.pulsemetry.dashboard.analytics.IngestStatusReader
 import com.team376.pulsemetry.dashboard.analytics.OverviewService
 import com.team376.pulsemetry.dashboard.analytics.SnapshotReferences
+import com.team376.pulsemetry.dashboard.analytics.TeamDirectoryService
+import com.team376.pulsemetry.dashboard.analytics.TeamsService
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator
 import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheClient
+import com.team376.pulsemetry.dashboard.request.PageCursorCodec
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
 import com.team376.pulsemetry.dashboard.source.ClickHouseSourceReader
 import com.team376.pulsemetry.persistence.telemetryops.TenantIngestSummaryStore
@@ -15,6 +19,7 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.jdbc.core.simple.JdbcClient
+import tools.jackson.databind.ObjectMapper
 import java.time.Clock
 
 /**
@@ -42,12 +47,29 @@ class AnalyticsConfig {
 	fun comparisonPolicy(): ComparisonPolicy = ComparisonPolicy.COMPLETE_ONLY
 
 	@Bean
-	fun overviewService(
+	fun analyticsFrames(
 		snapshots: SnapshotService,
-		aggregator: UsageAggregator,
 		references: SnapshotReferences,
 		ingest: IngestStatusReader,
 		comparison: ComparisonPolicy,
 		clock: Clock,
-	): OverviewService = OverviewService(snapshots, aggregator, references, ingest, comparison, clock)
+	): AnalyticsFrames = AnalyticsFrames(snapshots, references, ingest, comparison, clock)
+
+	@Bean
+	fun teamsService(
+		frames: AnalyticsFrames,
+		aggregator: UsageAggregator,
+		references: SnapshotReferences,
+		snapshots: SnapshotService,
+		codec: PageCursorCodec,
+	): TeamsService = TeamsService(frames, aggregator, references, snapshots, codec)
+
+	/** 현재 디렉터리는 원천 계정으로 읽는다. */
+	@Bean
+	fun teamDirectoryService(source: JdbcClient, codec: PageCursorCodec, mapper: ObjectMapper, clock: Clock): TeamDirectoryService =
+		TeamDirectoryService(source, codec, mapper, clock)
+
+	@Bean
+	fun overviewService(frames: AnalyticsFrames, aggregator: UsageAggregator, references: SnapshotReferences): OverviewService =
+		OverviewService(frames, aggregator, references)
 }

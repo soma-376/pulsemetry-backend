@@ -1,0 +1,360 @@
+{
+  "meta": {
+    "organizationId": "org_example",
+    "generatedAt": "2026-09-14T00:00:00Z",
+    "dataThrough": "2026-09-13T23:57:00Z",
+    "currency": "USD",
+    "startDate": "2026-09-07",
+    "endDate": "2026-09-13",
+    "timeZone": "Asia/Seoul",
+    "dayCount": 7,
+    "dataState": "ready",
+    "currentCoverage": {
+      "status": "complete",
+      "observedDays": 7
+    },
+    "pricingVersion": "example-rate-v1",
+    "snapshotId": "snapshot-analytics-example"
+  },
+  "team": {
+    "teamId": "team_platform",
+    "teamName": "플랫폼"
+  },
+  "summary": {
+    "usage": {
+      "activeUsers": 40,
+      "sessionCount": 400,
+      "tokens": {
+        "inputUncached": 20000000,
+        "output": 8000000,
+        "cacheRead": 10000000,
+        "cacheWrite": 2000000,
+        "total": 40000000
+      },
+      "equivalentCostUsd": "2000.000000"
+    },
+    "averageEquivalentCostUsd": "50.000000",
+    "cacheReadTokens": 10000000,
+    "cacheEligibleInputTokens": 32000000,
+    "cacheHitRatio": 0.3125,
+    "unidentifiedEquivalentCostUsd": "0.000000"
+  },
+  "users": {
+    "items": [
+      {
+        "memberId": "platform-user-001",
+        "account": "platform1@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      },
+      {
+        "memberId": "platform-user-002",
+        "account": "platform2@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      },
+      {
+        "memberId": "platform-user-003",
+        "account": "platform3@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      },
+      {
+        "memberId": "platform-user-004",
+        "account": "platform4@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      },
+      {
+        "memberId": "platform-user-005",
+        "account": "platform5@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      },
+      {
+        "memberId": "platform-user-006",
+        "account": "platform6@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      },
+      {
+        "memberId": "platform-user-007",
+        "account": "platform7@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      },
+      {
+        "memberId": "platform-user-008",
+        "account": "platform8@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      },
+      {
+        "memberId": "platform-user-009",
+        "account": "platform9@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      },
+      {
+        "memberId": "platform-user-010",
+        "account": "platform10@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      },
+      {
+        "memberId": "platform-user-011",
+        "account": "platform11@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      },
+      {
+        "memberId": "platform-user-012",
+        "account": "platform12@example.org",
+        "usage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "mainModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro"
+        },
+        "cache": {
+          "readTokens": 250000,
+          "eligibleInputTokens": 800000,
+          "hitRatio": 0.3125
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z"
+      }
+    ],
+    "totalCount": 40,
+    "nextCursor": "cursor-platform-users-page-2"
+  }
+}

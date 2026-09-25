@@ -3,15 +3,10 @@ package com.team376.pulsemetry.dashboard.analytics
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.Axis
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.Side
 import com.team376.pulsemetry.dashboard.organization.Organization
-import com.team376.pulsemetry.dashboard.request.CompareMode
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
-import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
 import org.slf4j.LoggerFactory
 import java.math.BigDecimal
-import java.time.Clock
-import java.time.Duration
-import java.time.LocalDate
 import java.util.UUID
 
 /**
@@ -32,114 +27,49 @@ import java.util.UUID
  * `dataThrough` 는 null 이다 — 공통 데이터 완료 경계를 보증할 근거가 없고, ledger 의 최대 수신 시각은 그 값이 아니다.
  */
 class OverviewService(
-	private val snapshots: SnapshotService,
+	private val frames: AnalyticsFrames,
 	private val aggregator: UsageAggregator,
 	private val references: SnapshotReferences,
-	private val ingest: IngestStatusReader,
-	private val comparison: ComparisonPolicy,
-	private val clock: Clock,
 ) {
 
 	private val log = LoggerFactory.getLogger(OverviewService::class.java)
 
 	fun overview(organization: Organization, requestedBy: UUID, period: ComparedPeriod): OverviewResponse {
-		val history = ingest.history(organization.id)
-		val snapshot = snapshots.create(organization.id, requestedBy, period)
-		val now = clock.instant()
-
-		val observed = references.observedDates(snapshot)
-		val currentDates = period.current.dates()
-		val currentCoverage = Coverage.of(currentDates.count { it in observed })
-		val previousCoverage = period.previous?.let { previous -> Coverage.of(previous.dates().count { it in observed }) }
-		val dataState = when {
-			currentCoverage.observedDays > 0 -> PARTIAL
-			history.hasReceipts -> NO_DATA
-			else -> NEVER_OBSERVED
-		}
-		val empty = dataState != PARTIAL
-		val pricingMixed = snapshot.pricingVersions.size > 1
-		val comparable = previousCoverage != null && comparison.comparable(currentCoverage, previousCoverage)
+		// 개요는 snapshot ID 를 받지도 내지도 않는다 — 요청마다 새로 만든다.
+		val frame = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId = null)
+		val snapshot = frame.snapshot
+		val pricingMixed = frame.pricingMixed
 
 		val organizationTotals = aggregator.totals(snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList())
-		val previousTotals = if (comparable) aggregator.totals(snapshot, Side.PREVIOUS, Axis.ORGANIZATION).getValue(emptyList()) else null
+		val previousTotals = if (frame.comparable) aggregator.totals(snapshot, Side.PREVIOUS, Axis.ORGANIZATION).getValue(emptyList()) else null
 		logCounters(snapshot, organizationTotals)
 
 		return OverviewResponse(
-			meta = OverviewResponse.Meta(
-				organizationId = organization.id.toString(),
-				generatedAt = now.toString(),
-				dataThrough = null,
-				currency = USD,
-				startDate = period.current.startDate.toString(),
-				endDate = period.current.endDate.toString(),
-				timeZone = period.current.zone.id,
-				dayCount = period.current.days,
-				dataState = dataState,
-				currentCoverage = currentCoverage,
-				pricingVersion = snapshot.pricingVersions.singleOrNull(),
-			),
-			comparison = comparisonOf(period, previousCoverage, comparable),
-			ingest = ingestOf(organization.id, history, now),
+			meta = frames.meta(frame),
+			comparison = frames.comparison(frame),
+			ingest = frames.ingest(frame),
 			usage = OverviewResponse.UsagePair(
-				current = if (empty) null else Usage.of(organizationTotals, pricingMixed),
+				current = if (frame.empty) null else Usage.of(organizationTotals, pricingMixed),
 				previous = previousTotals?.let { Usage.of(it, pricingMixed) },
 			),
 			seats = SEATS,
-			alerts = OverviewResponse.Alerts(Availability.UNAVAILABLE, Availability.EVALUATION_NOT_CONFIGURED, now.toString(), null, null, null),
-			trend = trendOf(snapshot, currentDates, observed, pricingMixed, empty),
-			modelMix = modelMixOf(snapshot, pricingMixed, empty),
+			alerts = OverviewResponse.Alerts(Availability.UNAVAILABLE, Availability.EVALUATION_NOT_CONFIGURED, frame.now.toString(), null, null, null),
+			trend = trendOf(frame),
+			modelMix = modelMixOf(snapshot, pricingMixed, frame.empty),
 			waste = WASTE,
-			teamUsage = teamUsageOf(snapshot, pricingMixed, empty, comparable),
+			teamUsage = teamUsageOf(snapshot, pricingMixed, frame.empty, frame.comparable),
 		)
 	}
 
-	private fun comparisonOf(period: ComparedPeriod, previousCoverage: Coverage?, comparable: Boolean): OverviewResponse.Comparison {
-		val previous = period.previous
-		if (period.mode == CompareMode.NONE || previous == null) {
-			return OverviewResponse.Comparison(CompareMode.NONE.wire, null, null, DISABLED, null, null)
-		}
-		return OverviewResponse.Comparison(
-			mode = period.mode.wire,
-			startDate = previous.startDate.toString(),
-			endDate = previous.endDate.toString(),
-			status = if (comparable) AVAILABLE_STATUS else UNAVAILABLE_STATUS,
-			reason = if (comparable) null else Availability.SOURCE_NOT_AVAILABLE,
-			coverage = previousCoverage,
-		)
-	}
-
-	private fun ingestOf(tenantId: UUID, history: IngestStatusReader.History, now: java.time.Instant): OverviewResponse.Ingest {
-		val empty = !history.hasReceipts
-		return OverviewResponse.Ingest(
-			// 수신 이력이 없으면 empty. 있으면 heartbeat·수집기 상태의 근거가 없어 healthy·delayed·down 을 추정하지 않는다.
-			status = if (empty) INGEST_EMPTY else INGEST_UNKNOWN,
-			reason = if (empty) null else Availability.SOURCE_NOT_AVAILABLE,
-			asOf = now.toString(),
-			firstObservedAt = history.summary?.firstObservedAt?.toString(),
-			lastReceivedAt = history.summary?.lastReceivedAt?.toString(),
-			windowMinutes = WINDOW.toMinutes().toInt(),
-			activeInstallations = null,
-			observedMembers = ingest.observedMembers(tenantId, now - WINDOW),
-			eligibleMembers = ingest.eligibleMembers(tenantId),
-			coverageRatio = null,
-		)
-	}
-
-	private fun trendOf(
-		snapshot: SnapshotManifestStore.Manifest,
-		dates: List<LocalDate>,
-		observed: Set<LocalDate>,
-		pricingMixed: Boolean,
-		empty: Boolean,
-	): OverviewResponse.Trend {
-		val byDay = if (empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.DAY)
-		val points = dates.map { date ->
+	private fun trendOf(frame: AnalyticsFrames.Frame): OverviewResponse.Trend {
+		val byDay = if (frame.empty) emptyMap() else aggregator.totals(frame.snapshot, Side.CURRENT, Axis.DAY)
+		val points = frame.period.current.dates().map { date ->
 			val totals = byDay[listOf(date.toString())] ?: UsageTotals.EMPTY
-			val seen = date in observed
+			val seen = frame.observed(date)
 			OverviewResponse.TrendPoint(
 				date = date.toString(),
 				observation = if (seen) PARTIAL_OBSERVATION else UNOBSERVED,
-				equivalentCostUsd = if (seen) totals.equivalentCost(pricingMixed)?.let(Money::format) else null,
+				equivalentCostUsd = if (seen) totals.equivalentCost(frame.pricingMixed)?.let(Money::format) else null,
 				allocatedSeatCostUsd = null,
 				totalTokens = if (seen) totals.apiTotal() else null,
 			)
@@ -264,20 +194,8 @@ class OverviewService(
 	}
 
 	companion object {
-		/** 화면 요청서가 제안한 운영 창. */
-		val WINDOW: Duration = Duration.ofMinutes(15)
-
-		private const val USD = "USD"
-		private const val PARTIAL = "partial"
-		private const val NO_DATA = "no_data"
-		private const val NEVER_OBSERVED = "never_observed"
 		private const val PARTIAL_OBSERVATION = "partial"
 		private const val UNOBSERVED = "unobserved"
-		private const val DISABLED = "disabled"
-		private const val AVAILABLE_STATUS = "available"
-		private const val UNAVAILABLE_STATUS = "unavailable"
-		private const val INGEST_EMPTY = "empty"
-		private const val INGEST_UNKNOWN = "unknown"
 		private const val DAY_BUCKET = "day"
 		private const val RANKING = "equivalentCostUsd_desc"
 		/** 사용 행의 source_time 당시 대표 팀(`team_id_as_of`)에 귀속한다 — 현재 팀 매핑이 아니다. */

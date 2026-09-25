@@ -29,6 +29,18 @@ class SnapshotReferences(
 			),
 		) { LocalDate.parse(it.path("d").asString()) }.toSet()
 
+	/** 로스터의 계정(이메일). 로스터에 없는 구성원은 빠진다. */
+	fun accounts(snapshot: SnapshotManifestStore.Manifest, memberIds: Collection<UUID>): Map<UUID, String> =
+		if (memberIds.isEmpty()) emptyMap() else
+			cache.sql(
+				"SELECT member_id, account FROM dashboard_cache.snapshot_members WHERE snapshot_id = :snapshot AND member_id = ANY(CAST(:ids AS uuid[]))",
+			)
+				.param("snapshot", snapshot.snapshotId)
+				.param("ids", memberIds.joinToString(",", "{", "}"))
+				.query { rs, _ -> rs.getObject("member_id", UUID::class.java) to rs.getString("account") }
+				.list()
+				.toMap()
+
 	fun teams(snapshot: SnapshotManifestStore.Manifest): List<Team> =
 		cache.sql("SELECT team_id, name, archived FROM dashboard_cache.snapshot_teams WHERE snapshot_id = :snapshot")
 			.param("snapshot", snapshot.snapshotId)

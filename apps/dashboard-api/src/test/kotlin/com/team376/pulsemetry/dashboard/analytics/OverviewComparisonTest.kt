@@ -51,13 +51,12 @@ class OverviewComparisonTest {
 			ClickHouseConnection(DashboardTestStores.clickHouseUrl(), "default", "default", "", Duration.ofSeconds(10), mapper),
 			Duration.ofSeconds(10), 100_000, 16_000_000,
 		)
+		val references = SnapshotReferences(assembly.clickHouse, DashboardTestStores.writer)
+		val ingest = IngestStatusReader(TenantIngestSummaryStore(dataSource), TenantSummaryBackfill(dataSource), ledger, DashboardTestStores.writer)
 		return OverviewService(
-			snapshots = assembly.service,
+			frames = AnalyticsFrames(assembly.service, references, ingest, policy, Clock.systemUTC()),
 			aggregator = UsageAggregator(assembly.clickHouse),
-			references = SnapshotReferences(assembly.clickHouse, DashboardTestStores.writer),
-			ingest = IngestStatusReader(TenantIngestSummaryStore(dataSource), TenantSummaryBackfill(dataSource), ledger, DashboardTestStores.writer),
-			comparison = policy,
-			clock = Clock.systemUTC(),
+			references = references,
 		)
 	}
 

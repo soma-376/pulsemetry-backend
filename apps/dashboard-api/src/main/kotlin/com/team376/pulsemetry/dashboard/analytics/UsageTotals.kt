@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.dashboard.analytics
 
 import java.math.BigDecimal
+import java.time.Instant
 
 /**
  * 한 그룹(조직·팀·모델·사용자·일자 중 하나의 축 값)의 사용량 카운터. snapshot payload 에서 원래 식별자로 다시 센 값이다 —
@@ -33,6 +34,8 @@ data class UsageTotals(
 	val cost: BigDecimal?,
 	val unpricedRows: Long,
 	val multiTeamRows: Long,
+	/** 그룹 안 사용량 행의 마지막 source_time. 기간·축으로 이미 좁힌 범위의 값이다. */
+	val lastSourceTime: Instant? = null,
 ) {
 	data class Component(val sum: Long?, val missingRows: Long)
 
@@ -50,6 +53,19 @@ data class UsageTotals(
 	fun apiTotal(): Long? = totalDerived.sum.takeIf { hasUsage && semanticsUniform && apiTotalMissingRows == 0L }
 
 	fun equivalentCost(pricingMixed: Boolean): BigDecimal? = cost.takeIf { hasUsage && unpricedRows == 0L && !pricingMixed }
+
+	/** 캐시 적중 분모 = inputUncached + cacheRead + cacheWrite. 셋 중 하나라도 없으면 없다. */
+	fun cacheEligibleInput(): Long? {
+		val parts = listOf(tokens(inputUncached), tokens(cacheRead), tokens(cacheWrite))
+		return if (parts.any { it == null }) null else parts.sumOf { it!! }
+	}
+
+	/** cacheRead / 분모. 분모가 없거나 0 이면 없다. */
+	fun cacheHitRatio(): Double? {
+		val read = tokens(cacheRead) ?: return null
+		val eligible = cacheEligibleInput()?.takeIf { it > 0 } ?: return null
+		return read.toDouble() / eligible
+	}
 
 	companion object {
 		/** 사용량 행이 없는 그룹. */
