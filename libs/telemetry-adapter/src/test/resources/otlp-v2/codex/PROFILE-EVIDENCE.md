@@ -110,10 +110,14 @@ Codex producer 가 내보내는 값의 **의미**를 producer 소스로 확인�
 
 - 같은 파일의 두 번째 `tracing::event!`(`:230` / `:256`)는 `codex_otel.trace_safe` 대상 — 로그가 아니라 스팬 이벤트로 나간다.
 - 세션 형식의 `endpoint` 값은 `core/src/client.rs` 의 `RequestRouteTelemetry::for_endpoint(…)` 가 정한다. 0.153.4·0.154:
-  `endpoint.path()`(`responses_endpoint(…)` 가 고른 Responses 경로), `/responses/compact`, `/memories/trace_summarize`.
+  `endpoint.path()`(`responses_endpoint(…)` 가 고른 경로 — `codex-api/src/endpoint/responses.rs` 의 `ResponsesEndpoint`:
+  `/responses`·`/guardian`·`/guardian-classifier`), `/responses/compact`, `/memories/trace_summarize`.
   0.155.0-alpha.2.6: `endpoint.path()`, `/memories/trace_summarize`. 0.155.0-alpha.9.2: `"/responses"`, `/memories/trace_summarize`.
   `log_request` 경로는 `"unknown"` 을 넘긴다. **즉 세션 형식의 위치는 여러 요청 경로가 공유한다** — 위치를 `responses` 로
-  대응시키면 compact·memories 요청도 `responses` 가 된다. operation 은 위치(세션 형식임을 확인)와 `endpoint` 값을 함께 봐야 한다.
+  대응시키면 compact·guardian·memories 요청도 `responses` 가 된다. operation 은 위치(세션 형식임을 확인)와 `endpoint` 값을 함께
+  봐야 한다 — 프로파일은 세션 형식 위치에서 `endpoint = "/responses"` 인 요청만 `responses` 로, 나머지 경로는 `unknown` 으로 둔다.
+- `codex.websocket_request` 는 경로를 싣지 않는다(`core/src/client.rs` 의 `on_ws_request` 가 `record_websocket_request` 에 경로를
+  넘기지 않는다) — operation 은 `unknown`. `codex.websocket_connect` 는 연결 관측이라 operation 이 해당 없음이다.
 - 이 네 버전에는 두 형식 모두 `endpoint` 속성이 **있다**(실캡처: `/models`, `/responses`).
 - fixture: `real/logs-*-requests.otlp.jsonl`. 세션 형식은 0.155.0-alpha.2.6 에만 캡처됐다.
 

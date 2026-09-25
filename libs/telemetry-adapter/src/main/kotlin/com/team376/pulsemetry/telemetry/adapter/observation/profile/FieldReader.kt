@@ -91,7 +91,8 @@ public class FieldReader(private val attributes: List<TypedAttribute>) {
 		is AttributeRead.Present -> read.value
 	}
 
-	private fun <T> invalid(): T? {
+	/** 프로파일이 필드별 범위 검사(예: HTTP 상태 0–65535)에 실패한 값을 버릴 때 쓴다 — null + `invalid_measurement`. */
+	public fun <T> invalid(): T? {
 		collected += QualityFlag.INVALID_MEASUREMENT
 		return null
 	}
