@@ -1,0 +1,1 @@
+{"spec":"ADR 0020 부록 A.4 · §2 관계 ID · 근거 PROFILE-EVIDENCE 8","events":[],"stats":{"received":7,"excluded_spans":7,"excluded_span_names":{"handle_responses":1,"try_run_sampling_request":1,"codex.hooks.mcp_tool":1,"run_turn":1,"session_task.run":1,"session_task.turn":1,"codex.exec":1},"rejected_count":7}}

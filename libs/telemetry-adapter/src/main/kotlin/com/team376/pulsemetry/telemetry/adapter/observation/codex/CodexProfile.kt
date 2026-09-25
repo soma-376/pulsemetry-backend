@@ -15,7 +15,8 @@ import com.team376.pulsemetry.telemetry.adapter.observation.profile.VersionSet
  * 표면은 `codex-app-server`·`codex_cli_rs` 두 곳이다. `Codex Desktop` 은 배포 빌드의 소스로 확인하지 못해 generic
  * 경로로 간다(ADR 0020 부록 C).
  *
- * 토큰 의미 프로파일(`semantics_profile`)은 아직 없다 — 사용량 관측의 파생 토큰은 null 이다.
+ * 로그는 [CodexLogs], 스팬 허용 목록은 [CodexSpans], 메트릭 family 는 [CodexMetrics] 가 정한다. 토큰 의미
+ * 프로파일(`semantics_profile`)은 아직 없다 — 사용량 관측의 파생 토큰은 null 이다.
  */
 public object CodexProfile : ProductProfile {
 
@@ -27,6 +28,6 @@ public object CodexProfile : ProductProfile {
 	override val surfaces: Set<Surface> = setOf(Surface.APP_SERVER, Surface.CLI)
 	override val mappingVersion: String = "codex-v1"
 	override val logs: LogProfile = CodexLogs
-	override val spans: SpanProfile? = null
-	override val metrics: MetricProfile? = null
+	override val spans: SpanProfile = CodexSpans
+	override val metrics: MetricProfile = CodexMetrics
 }

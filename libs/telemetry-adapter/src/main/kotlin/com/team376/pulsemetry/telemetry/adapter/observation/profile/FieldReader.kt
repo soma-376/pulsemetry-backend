@@ -91,6 +91,20 @@ public class FieldReader(private val attributes: List<TypedAttribute>) {
 		is AttributeRead.Present -> read.value
 	}
 
+	/**
+	 * 같은 의미의 두 키 표기(alias)를 하나로 읽는다. 둘 다 있으면 같은 값일 때만 그 값이고, 다르면 어느 쪽도 고르지
+	 * 않는다 — null + `ambiguous_attribute`. 비어 있는 문자열은 없는 것으로 본다.
+	 */
+	public fun aliasedText(primary: String, alias: String): String? {
+		val a = nonEmptyText(primary)
+		val b = nonEmptyText(alias)
+		if (a != null && b != null && a != b) {
+			collected += QualityFlag.AMBIGUOUS_ATTRIBUTE
+			return null
+		}
+		return a ?: b
+	}
+
 	/** 프로파일이 필드별 범위 검사(예: HTTP 상태 0–65535)에 실패한 값을 버릴 때 쓴다 — null + `invalid_measurement`. */
 	public fun <T> invalid(): T? {
 		collected += QualityFlag.INVALID_MEASUREMENT

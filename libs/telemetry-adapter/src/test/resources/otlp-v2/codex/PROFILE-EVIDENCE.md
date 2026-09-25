@@ -191,3 +191,33 @@ Codex producer 가 내보내는 값의 **의미**를 producer 소스로 확인�
 | `codex-app-server` 네 버전 | `evidence_only` | input 은 cache read 포함(producer 정의), reasoning ⊂ output, `tool_token_count` = total. cache write 는 unknown, 사용량 행의 provider 근거 없음 — 프로파일 확정과 fixture 기대값은 다음 단계 |
 | `codex_cli_rs` 같은 태그 | `evidence_only` | 같은 소스. 실캡처가 없어 fixture 없음 |
 | `Codex Desktop` 0.153.4·0.154.0-alpha.6.2 | `unknown` | 배포 빌드 소스 비공개 |
+
+## 8. 스팬과 메트릭
+
+소스는 메트릭이 캡처된 0.153.4·0.154.0-alpha.6.2 와, 스팬이 캡처된 0.154.0-alpha.6.2·0.155.0-alpha.9.2 를 읽었다.
+
+- **작업 스팬**(`core/src/tasks/mod.rs`): 작업마다 `info_span!("turn", otel.name = span_name, thread.id, turn.id = sub_id,
+  model = slug, codex.turn.reasoning_effort, codex.turn.token_usage.* = Empty)` 를 열고, 턴이 끝나면
+  `Span::current().record("codex.turn.token_usage.…", …)` 로 **세션 누적 사용량의 턴 시작 대비 증분**(음수는 0)을 적는다 — 정수
+  (`intValue`). 이름(`otel.name`)은 작업 종류의 `span_name()`: `session_task.turn`(regular)·`session_task.compact`(compact)·
+  `session_task.review`·`session_task.user_shell`(`core/src/tasks/*.rs`). 이 스팬의 `thread.id` 는 대화 스레드 ID 문자열이고,
+  OTel 브리지가 붙이는 OS 스레드 `thread.id`(정수)와 이름이 겹친다 — 세션으로 쓰지 않는다.
+- **`try_run_sampling_request`**(`core/src/session/turn.rs`): `#[instrument(fields(turn_id = sub_id, model = slug))]` — 같은 턴 ID 의
+  다른 키 표기다.
+- **`mcp.tools.call`**(`core/src/mcp_tool_call.rs` 의 `mcp_tool_call_span`): `otel.kind = "client"`, `rpc.system`·`rpc.method`·
+  `mcp.server.name`·`mcp.server.origin`·`mcp.transport`·`mcp.connector.id/name`·`tool.name`·`tool.call_id = call_id`·
+  `conversation.id = thread_id`·`session.id = thread_id`·`turn.id`, 오류 시 `error.type`·`codex.mcp.error.code`. `call_id` 는
+  `handle_mcp_tool_call(…, call_id, …)` 인자 — 모델이 준 도구 호출 ID 로, 도구 결과 로그의 `call_id` 와 같은 값의 공간이다.
+- **일반 도구 스팬**(`handle_tool_call`·`dispatch_tool_call_with_terminal_outcome`·`handle_tool_call_with_source`): 캡처에서 속성이 없다
+  (코드 위치 속성만). `code_mode.broker.invoke_tool` 은 `tool_name` 과 `runtime_tool_call_id`(code mode 실행기 안의 번호 — 모델의 호출
+  ID 가 아니다)를 싣는다. 도구 이름 + native 호출 ID 조건을 채우는 일반 도구 스팬이 없어 `tool` 행을 만들지 않는다.
+- **메트릭 이름**(`otel/src/metrics/names.rs`): `codex.tool.call`·`codex.tool.call.duration_ms`·`codex.turn.e2e_duration_ms`·
+  `codex.turn.ttft.duration_ms`·`codex.turn.ttfm.duration_ms`·`codex.turn.tool.call`·`codex.turn.token_usage`·
+  `codex.guardian.review.token_usage`·`codex.thread.started`. `codex.conversation.turn.count`·`codex.guardian_v2.classification.token_usage` 는
+  이 파일 밖에서 정의된다(실캡처에 있다).
+- **계측 타입**: `codex.turn.token_usage` 는 `session_telemetry.histogram(…, &[("token_type", …), tmp_mem])` — 턴 증분의 여섯 성분
+  (`total`·`input`·`cached_input`·`cache_write_input`·`output`·`reasoning_output`)을 point 로 낸다(`core/src/tasks/mod.rs`).
+  `codex.turn.tool.call` 은 histogram(턴당 도구 호출 수), `codex.turn.e2e_duration_ms` 는 timer, `codex.turn.ttfm.duration_ms` 는
+  `record_duration`(`core/src/turn_timing.rs`). 실캡처의 wire 타입: sum 은 delta·monotonic, histogram 은 delta, 시간 계열 단위 `ms`.
+  guardian token usage 의 `token_type` 에는 `non_cached_input` 도 있다.
+- 프로파일은 이름과 **이 타입이 함께 맞을 때만** family 를 붙인다(`CodexMetrics`). 단위 registry 는 두지 않았다.
