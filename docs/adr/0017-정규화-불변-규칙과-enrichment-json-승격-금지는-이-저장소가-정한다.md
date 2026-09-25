@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted — 부분 대체: [ADR 0020](0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md) 가 규칙 2·4·6 을 대체하고 규칙 7 의 승격 목록을 `team_ids_as_of`·`team_id_as_of`·`member_id` 로 넓힌다. 규칙 1·3·5·8 은 유효하다. 구 `enriched_events` 경로에는 원문이 그대로 적용된다.
 
 ## Context
 
