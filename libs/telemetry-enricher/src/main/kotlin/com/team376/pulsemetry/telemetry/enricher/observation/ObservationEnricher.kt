@@ -57,19 +57,27 @@ public class ObservationEnricher(
 	}
 
 	/** push 하나를 보강한다. 이벤트와 metric point 는 같은 조회 캐시를 쓴다. */
-	public fun enrich(batch: ObservationBatch): EnrichedBatch {
+	public fun enrich(batch: ObservationBatch): EnrichedBatch = enrich(listOf(batch)).single()
+
+	/**
+	 * push 하나의 여러 배치(아카이브 제품 문서마다 하나)를 보강한다. 배치들은 **한 조회 캐시**를 쓴다 — push 가 하나다.
+	 * 결과는 입력 배치와 같은 순서다.
+	 */
+	public fun enrich(batches: List<ObservationBatch>): List<EnrichedBatch> {
 		val push = Push()
-		return EnrichedBatch(
-			events = batch.events.map { event ->
-				val (org, flags) = push.attribute(event.envelope)
-				EnrichedEvent(event.withFlags(*flags), org)
-			},
-			metricPoints = batch.metricPoints.map { point ->
-				val (org, flags) = push.attribute(point.envelope)
-				EnrichedMetricPoint(point.copy(envelope = point.envelope.withFlags(*flags)), org)
-			},
-			stats = batch.stats,
-		)
+		return batches.map { batch ->
+			EnrichedBatch(
+				events = batch.events.map { event ->
+					val (org, flags) = push.attribute(event.envelope)
+					EnrichedEvent(event.withFlags(*flags), org)
+				},
+				metricPoints = batch.metricPoints.map { point ->
+					val (org, flags) = push.attribute(point.envelope)
+					EnrichedMetricPoint(point.copy(envelope = point.envelope.withFlags(*flags)), org)
+				},
+				stats = batch.stats,
+			)
+		}
 	}
 
 	/** push 하나의 작업 공간 — installation 조회 캐시와 provider 문맥. */

@@ -69,6 +69,20 @@ class ObservationEnricherLookupTest {
 	}
 
 	@Test
+	@DisplayName("한 push 의 여러 배치(제품 문서마다)는 조회 캐시 하나를 쓰고 순서를 지킨다")
+	fun batchesOfOnePushShareTheCache() {
+		given(installations.findMemberIdById(installationId)).willReturn(memberId)
+		given(memberships.findAllByMemberId(memberId)).willReturn(emptyList())
+		val other = UUID.randomUUID()
+
+		val enriched = enricher().enrich(listOf(batch(installationId), batch(other, installationId)))
+
+		assertThat(enriched.map { it.events.size }).containsExactly(1, 2)
+		assertThat(enriched[1].events.map { it.org.memberId }).containsExactly(null, memberId.toString())
+		verify(installations, times(1)).findMemberIdById(installationId)
+	}
+
+	@Test
 	@DisplayName("구성원이 없으면 소속 이력을 읽지 않는다")
 	fun noMembershipLookupWithoutMember() {
 		enricher().enrich(batch(installationId))
