@@ -24,6 +24,7 @@
 | 0020 | [정규화 계약 2판은 관측을 식별하고 의미 컬럼으로 교체 저장한다](0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md) | Accepted |
 | 0021 | [수집 운영 기록은 ClickHouse ledger 와 RDS telemetry_ops 스키마에 두고 그 RDS DDL 은 enrollment-api 가 적용한다](0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md) | Proposed |
 | 0022 | [대시보드 API 는 이 저장소의 별도 앱이고 인증은 포트 뒤에서 기본 거부하며 쓰기는 자기 캐시에 한정한다](0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) | Proposed |
+| 0023 | [대시보드 snapshot 은 dashboard_cache 의 불변 복사본과 RDS manifest 이고 대시보드 앱이 그 DDL 을 적용한다](0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md) | Proposed |
 
 Status 열은 각 ADR Status 줄의 **첫 토큰**만 싣는다. 부분 대체·부연은 해당 파일에서 확인한다.
 Status 첫 토큰이 바뀌는 커밋에서는 이 표도 같은 커밋에서 갱신한다.
