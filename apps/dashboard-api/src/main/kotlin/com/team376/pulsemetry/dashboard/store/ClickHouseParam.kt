@@ -1,4 +1,4 @@
-package com.team376.pulsemetry.dashboard.source
+package com.team376.pulsemetry.dashboard.store
 
 import java.time.Instant
 import java.time.LocalDate

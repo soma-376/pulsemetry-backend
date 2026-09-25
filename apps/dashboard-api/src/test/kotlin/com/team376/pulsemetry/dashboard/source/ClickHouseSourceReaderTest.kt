@@ -1,5 +1,10 @@
 package com.team376.pulsemetry.dashboard.source
 
+import com.team376.pulsemetry.dashboard.store.ClickHouseConnection
+import com.team376.pulsemetry.dashboard.store.ClickHouseParam
+import com.team376.pulsemetry.dashboard.store.StoreLimitExceededException
+import com.team376.pulsemetry.dashboard.store.StoreQueryRejectedException
+import com.team376.pulsemetry.dashboard.store.StoreUnavailableException
 import com.team376.pulsemetry.dashboard.support.DashboardTestStores
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -34,7 +39,12 @@ class ClickHouseSourceReaderTest {
 		queryTimeout: Duration = Duration.ofSeconds(10),
 		maxResultRows: Long = 1_000,
 		maxResultBytes: Long = 1_000_000,
-	) = ClickHouseSourceReader(url, "default", "default", password, queryTimeout, maxResultRows, maxResultBytes, mapper)
+	) = ClickHouseSourceReader(
+		ClickHouseConnection(url, "default", "default", password, queryTimeout, mapper),
+		queryTimeout,
+		maxResultRows,
+		maxResultBytes,
+	)
 
 	/** 시드는 앱 경로가 아니라 직접 보낸다. */
 	private fun admin(sql: String) {
@@ -92,9 +102,9 @@ class ClickHouseSourceReaderTest {
 		val before = count()
 
 		assertThatThrownBy { reader().query("INSERT INTO $table VALUES ('c', 1, 1, now64(9))") { it } }
-			.isInstanceOf(SourceQueryRejectedException::class.java)
+			.isInstanceOf(StoreQueryRejectedException::class.java)
 		assertThatThrownBy { reader().query("CREATE TABLE ${table}_x (id String) ENGINE = Memory") { it } }
-			.isInstanceOf(SourceQueryRejectedException::class.java)
+			.isInstanceOf(StoreQueryRejectedException::class.java)
 		assertThat(count()).isEqualTo(before)
 	}
 
@@ -102,7 +112,7 @@ class ClickHouseSourceReaderTest {
 	@DisplayName("행 상한을 넘으면 잘라 내지 않고 상한 초과로 실패한다")
 	fun rowLimitThrows() {
 		assertThatThrownBy { reader(maxResultRows = 5).query("SELECT number FROM numbers(10)") { it } }
-			.isInstanceOf(SourceLimitExceededException::class.java)
+			.isInstanceOf(StoreLimitExceededException::class.java)
 		assertThat(reader(maxResultRows = 10).query("SELECT number FROM numbers(10)") { it }).hasSize(10)
 	}
 
@@ -111,7 +121,7 @@ class ClickHouseSourceReaderTest {
 	fun byteLimitThrows() {
 		// 24.8 은 테이블 없이 상수로 접히는 한 행 결과에는 바이트 상한을 걸지 않는다(실측) — 행을 만드는 조회로 본다.
 		assertThatThrownBy { reader(maxResultBytes = 100).query("SELECT toString(number) || repeat('x', 1000) AS s FROM numbers(3)") { it } }
-			.isInstanceOf(SourceLimitExceededException::class.java)
+			.isInstanceOf(StoreLimitExceededException::class.java)
 	}
 
 	@Test
@@ -120,25 +130,25 @@ class ClickHouseSourceReaderTest {
 		assertThatThrownBy {
 			reader(queryTimeout = Duration.ofSeconds(1))
 				.query("SELECT sleepEachRow(0.3) FROM numbers(20) SETTINGS max_block_size = 1") { it }
-		}.isInstanceOf(SourceUnavailableException::class.java)
+		}.isInstanceOf(StoreUnavailableException::class.java)
 	}
 
 	@Test
 	@DisplayName("없는 테이블·문법 오류는 조회 거부(이 앱의 결함)다")
 	fun badQueriesAreRejected() {
 		assertThatThrownBy { reader().query("SELECT * FROM no_such_table_${System.nanoTime()}") { it } }
-			.isInstanceOf(SourceQueryRejectedException::class.java)
+			.isInstanceOf(StoreQueryRejectedException::class.java)
 		assertThatThrownBy { reader().query("SELEC 1") { it } }
-			.isInstanceOf(SourceQueryRejectedException::class.java)
+			.isInstanceOf(StoreQueryRejectedException::class.java)
 	}
 
 	@Test
 	@DisplayName("인증 실패와 연결 실패는 일시 장애다")
 	fun authenticationAndConnectionFailuresAreUnavailable() {
 		assertThatThrownBy { reader(password = "wrong").query("SELECT 1 AS x") { it } }
-			.isInstanceOf(SourceUnavailableException::class.java)
+			.isInstanceOf(StoreUnavailableException::class.java)
 		assertThatThrownBy { reader(url = "http://127.0.0.1:1").query("SELECT 1 AS x") { it } }
-			.isInstanceOf(SourceUnavailableException::class.java)
+			.isInstanceOf(StoreUnavailableException::class.java)
 	}
 
 	@Test

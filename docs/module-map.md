@@ -19,6 +19,7 @@
 [ADR 0020](adr/0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md) ·
 [ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md) ·
 [ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) ·
+[ADR 0023](adr/0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md) ·
 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)
@@ -41,6 +42,8 @@ pulsemetry-backend
 │                                    ├ organization/   조직(tenant) 읽기
 │                                    ├ request/        요청 ID · 조회 파라미터 해석(기간·비교·목록 cursor)
 │                                    ├ source/         원천 읽기 — ClickHouse 읽기 전용 클라이언트
+│                                    ├ cache/          dashboard_cache — 캐시 클라이언트 · 두 캐시 스키마 적용 (ADR 0023)
+│                                    ├ store/          ClickHouse 연결 · 파라미터 · 저장소 실패 분류(원천·캐시 공용)
 │                                    ├ error/          오류 본문 · 코드 · 예외 매핑
 │                                    └ config/
 └── libs/
@@ -84,6 +87,10 @@ pulsemetry-backend
 패키지다. 인증은 앱 안의 포트(`DashboardAuthenticator`)이고 기본 런타임 구현은 전부 거부한다 — 사용자 인증이 `:libs:security`에 서면
 그 검증을 잇는 어댑터가 포트를 구현한다. 필터 체인은 `telemetry-ingest`처럼 둘이고 기본 닫힘이다(`/api/v1/organizations` 아래만
 인증, 나머지는 `/v1/healthz`만 열고 404).
+`dashboard_cache`의 쓰는 주체는 이 앱 하나라 쓰기 소유가 앱에 있고, DDL도 이 앱이 기동 때 캐시 계정으로 적용한다 — ClickHouse는
+`clickhouse/dashboard-cache/`의 멱등 파일 전량(ADR 0015 규약), RDS는 `db/dashboard-cache/`의 별도 Flyway 인스턴스(이력
+`dashboard_cache.flyway_schema_history`)다([ADR 0023](adr/0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md)).
+두 번째 쓰는 주체가 생기면 `:libs:dashboard-persistence`로 내린다.
 원천 연결은 앱이 직접 세운다 — RDS는 `pulsemetry.dashboard.rds.source`로 만든 읽기 전용 주 DataSource(JPA·`JdbcClient`가 쓴다, Flyway는 끈다),
 ClickHouse는 `source/`의 읽기 전용 클라이언트다. 적재 모듈의 `ClickHouseHttpClient`와 따로 두는 것은 요구가 반대라서다(계정 인증·요청마다의
 `readonly`·결과 상한·행 해석이 필요하고 쓰기가 없다).
@@ -142,6 +149,7 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 | contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 관리자 API (미구현) |
 | telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` · `telemetry_ingest_ledger` | `:libs:telemetry-persistence` |
 | telemetry ops | RDS `telemetry_ops.tenant_ingest_summary` · `tenant_summary_backfill` · `tenant_retention_boundary` | `:libs:telemetry-ops-persistence` |
+| dashboard cache | RDS `dashboard_cache.snapshots` · `snapshot_teams` · `snapshot_members`, ClickHouse `dashboard_cache.snapshot_usage` · `snapshot_observed_days` · `snapshot_member_activity`(+ 입구 `snapshot_intake`·뷰 둘) | `:apps:dashboard-api` |
 
 **쓰기 소유는 모듈이다**(ADR 0008 규칙 1). 표가 앱 이름을 적은 행은 그 도메인의 쓰기가 아직 앱에
 직접 있다는 뜻이고, 규칙 5의 승격 트리거가 당겨지면 모듈로 내려간다. telemetry는 새 도메인이라

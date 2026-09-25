@@ -7,8 +7,7 @@ import java.time.Duration
  * 이 앱의 설정 표면.
  *
  * 운영 수치와 저장소 계정에는 **기본값이 없다**(ADR 0022 §4·§5). 비어 있으면 기동이 실패한다 —
- * 조용히 뜬 기본값이 배포 환경의 값처럼 보이면 안 된다. 저장소 계정은 역할마다 한 묶음이고(§4 표),
- * 캐시 쓰기용 두 묶음(`clickhouse.cache`·`rds.cache`)은 그 연결을 처음 쓰는 구현이 더한다.
+ * 조용히 뜬 기본값이 배포 환경의 값처럼 보이면 안 된다. 저장소 계정은 역할마다 한 묶음이다(§4 표 — 캐시 두 묶음의 권한은 ADR 0023 §3).
  */
 @ConfigurationProperties(prefix = "pulsemetry.dashboard")
 data class DashboardApiProperties(
@@ -29,6 +28,9 @@ data class DashboardApiProperties(
 	data class ClickHouse(
 		/** 분석 테이블·ledger 읽기. 계정은 SELECT 만 갖는다. */
 		val source: ClickHouseSource,
+
+		/** `dashboard_cache` DDL·쓰기·읽기와 snapshot 복사의 원본 읽기. */
+		val cache: ClickHouseCache,
 	)
 
 	/**
@@ -47,7 +49,7 @@ data class DashboardApiProperties(
 	) {
 		init {
 			require(url.isNotBlank()) { "pulsemetry.dashboard.clickhouse.source.url 이 비어 있다." }
-			require(database.isNotBlank()) { "pulsemetry.dashboard.clickhouse.source.database 가 비어 있다." }
+			require(IDENTIFIER.matches(database)) { "pulsemetry.dashboard.clickhouse.source.database 가 식별자 형식이 아니다: '$database'" }
 			require(username.isNotBlank()) { "pulsemetry.dashboard.clickhouse.source.username 이 비어 있다." }
 			require(queryTimeout.toSeconds() >= 1) { "pulsemetry.dashboard.clickhouse.source.query-timeout 은 1초 이상이어야 한다." }
 			require(maxResultRows >= 1) { "pulsemetry.dashboard.clickhouse.source.max-result-rows 는 1 이상이어야 한다." }
@@ -55,12 +57,34 @@ data class DashboardApiProperties(
 		}
 	}
 
+	/** 캐시 연결. 이 앱이 기동 때 `dashboard_cache` 의 DDL 을 적용한다(ADR 0023 §3). */
+	data class ClickHouseCache(
+		val url: String,
+		/** infra 가 만든 캐시 DB 의 이름. SQL 식별자로 쓰이므로 형식을 검사한다. */
+		val database: String,
+		val username: String,
+		/** 비어 있을 수 있다(로컬 기본 사용자). */
+		val password: String,
+		/** 서버의 `max_execution_time` 이자 HTTP 요청 제한 시간. */
+		val queryTimeout: Duration,
+	) {
+		init {
+			require(url.isNotBlank()) { "pulsemetry.dashboard.clickhouse.cache.url 이 비어 있다." }
+			require(IDENTIFIER.matches(database)) { "pulsemetry.dashboard.clickhouse.cache.database 가 식별자 형식이 아니다: '$database'" }
+			require(username.isNotBlank()) { "pulsemetry.dashboard.clickhouse.cache.username 이 비어 있다." }
+			require(queryTimeout.toSeconds() >= 1) { "pulsemetry.dashboard.clickhouse.cache.query-timeout 은 1초 이상이어야 한다." }
+		}
+	}
+
 	data class Rds(
 		/** RDS `enrollment`·`telemetry_ops` 읽기. 계정은 SELECT 만 갖는다. */
-		val source: RdsSource,
+		val source: RdsConnection,
+
+		/** RDS `dashboard_cache` DDL·쓰기·읽기와 공개 CAS 의 삭제 경계 읽기. */
+		val cache: RdsConnection,
 	)
 
-	data class RdsSource(
+	data class RdsConnection(
 		val url: String,
 		val username: String,
 		/** 비어 있을 수 있다. */
@@ -69,8 +93,13 @@ data class DashboardApiProperties(
 		val connectionTimeout: Duration,
 	) {
 		init {
-			require(url.isNotBlank()) { "pulsemetry.dashboard.rds.source.url 이 비어 있다." }
-			require(username.isNotBlank()) { "pulsemetry.dashboard.rds.source.username 이 비어 있다." }
+			require(url.isNotBlank()) { "pulsemetry.dashboard.rds.*.url 이 비어 있다." }
+			require(username.isNotBlank()) { "pulsemetry.dashboard.rds.*.username 이 비어 있다." }
 		}
+	}
+
+	private companion object {
+		/** DB 이름은 snapshot 복사 SQL 에 식별자로 들어간다. */
+		val IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
 	}
 }

@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.dashboard.error
 
-import com.team376.pulsemetry.dashboard.source.SourceQueryRejectedException
-import com.team376.pulsemetry.dashboard.source.SourceUnavailableException
+import com.team376.pulsemetry.dashboard.store.StoreQueryRejectedException
+import com.team376.pulsemetry.dashboard.store.StoreUnavailableException
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.slf4j.LoggerFactory
@@ -24,8 +24,8 @@ import org.springframework.web.servlet.resource.NoResourceFoundException
  * | 예외 | 응답 |
  * |---|---|
  * | [DashboardException] | 그 코드(400·403·404·409 …) |
- * | 원천 일시 장애·상한 초과([SourceUnavailableException]), RDS 연결·일시 장애 | 503 `unavailable` + `Retry-After` |
- * | 원천의 조회 거부([SourceQueryRejectedException]) | 500 `internal_error` — 이 앱의 조회 결함 |
+ * | ClickHouse 일시 장애·상한 초과([StoreUnavailableException]), RDS 연결·일시 장애 | 503 `unavailable` + `Retry-After` |
+ * | ClickHouse 의 문장 거부([StoreQueryRejectedException]) | 500 `internal_error` — 이 앱의 문장 결함 |
  * | 매핑 없는 경로 / 메서드 | 404 / 405 |
  * | 그 밖 | 500 `internal_error` |
  */
@@ -43,13 +43,13 @@ class DashboardExceptionHandler(
 		response: HttpServletResponse,
 	): ResponseEntity<ErrorResponse> = errors.entity(request, response, exception.code, exception.fieldErrors)
 
-	/** 원인 로그는 원천 클라이언트가 이미 남겼다. */
-	@ExceptionHandler(SourceUnavailableException::class)
-	fun handleSourceUnavailable(request: HttpServletRequest, response: HttpServletResponse): ResponseEntity<ErrorResponse> =
+	/** 원인 로그는 연결이 이미 남겼다. */
+	@ExceptionHandler(StoreUnavailableException::class)
+	fun handleStoreUnavailable(request: HttpServletRequest, response: HttpServletResponse): ResponseEntity<ErrorResponse> =
 		errors.entity(request, response, ErrorCode.UNAVAILABLE)
 
-	@ExceptionHandler(SourceQueryRejectedException::class)
-	fun handleSourceRejected(request: HttpServletRequest, response: HttpServletResponse): ResponseEntity<ErrorResponse> =
+	@ExceptionHandler(StoreQueryRejectedException::class)
+	fun handleStoreRejected(request: HttpServletRequest, response: HttpServletResponse): ResponseEntity<ErrorResponse> =
 		errors.entity(request, response, ErrorCode.INTERNAL_ERROR)
 
 	/** RDS 연결 실패·일시 장애. 커넥션 획득 제한 시간 초과도 여기로 온다. */

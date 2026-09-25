@@ -50,6 +50,15 @@ pulsemetry:
         max-result-rows: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_MAX_RESULT_ROWS:}
         max-result-bytes: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_MAX_RESULT_BYTES:}
 
+      # dashboard_cache 쓰기·읽기 + snapshot 복사의 원본(분석 테이블) SELECT. 기동 때 이 계정으로 dashboard_cache 의
+      # 테이블·뷰를 만든다 — DB 자체는 infra 가 만든다 (ADR 0023 §3).
+      cache:
+        url: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_CACHE_URL:}
+        database: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_CACHE_DATABASE:}
+        username: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_CACHE_USERNAME:}
+        password: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_CACHE_PASSWORD:}
+        query-timeout: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_CACHE_QUERY_TIMEOUT:}
+
     rds:
       # enrollment · telemetry_ops 읽기 — SELECT 만 가진 계정.
       source:
@@ -57,4 +66,12 @@ pulsemetry:
         username: ${PULSEMETRY_DASHBOARD_RDS_SOURCE_USERNAME:}
         password: ${PULSEMETRY_DASHBOARD_RDS_SOURCE_PASSWORD:}
         # enrollment-api · telemetry-ingest 의 connection-timeout(3000ms) 과 같은 값이다.
+        connection-timeout: 3s
+
+      # dashboard_cache 스키마 — 기동 때 이 계정으로 Flyway 를 돌린다. 공개 CAS 를 위해 telemetry_ops.tenant_retention_boundary 를
+      # SELECT 한다 (ADR 0023 §3).
+      cache:
+        url: ${PULSEMETRY_DASHBOARD_RDS_CACHE_URL:}
+        username: ${PULSEMETRY_DASHBOARD_RDS_CACHE_USERNAME:}
+        password: ${PULSEMETRY_DASHBOARD_RDS_CACHE_PASSWORD:}
         connection-timeout: 3s

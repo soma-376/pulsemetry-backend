@@ -130,6 +130,7 @@ docker compose up -d                              # 로컬 Postgres · ClickHous
   **배포된 `V*`를 고치지 마라** — `CREATE TABLE IF NOT EXISTS`는 이미 있는 테이블에 아무 일도 하지 않아
   변경이 조용히 무시된다. 컬럼은 다음 번호 파일에 `ALTER TABLE … ADD COLUMN IF NOT EXISTS`로 더한다.
   `IF NOT EXISTS`를 빠뜨린 문장은 **첫 기동에서는 성공하고 두 번째 기동에서 죽는다.**
+  대시보드 캐시(`apps/dashboard-api/src/main/resources/clickhouse/dashboard-cache/`)도 같은 규약이다(ADR 0023).
 - **분석 행은 모든 컬럼을 명시하는 typed 인코더로 쓴다**(ADR 0020 §1 · `AnalysisRowWriter`). 정수는 Double을
   거치지 않고, `Decimal(38, 12)`·`DateTime64(9)`(1900년 이전)·`FixedString(64)`·UInt 범위를 넘는 값은 **적재
   전에 거부**한다 — ClickHouse는 그런 값을 오류 없이 절삭·왜곡한다. Float64는 문자열로 보내 INSERT가

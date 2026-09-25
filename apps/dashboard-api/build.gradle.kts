@@ -9,6 +9,9 @@ dependencies {
 	// JPA·JDBC 를 api() 로 노출하므로 엔티티·리포지토리·JdbcClient 를 여기서 바로 쓴다.
 	implementation(project(":libs:enrollment-persistence"))
 
+	// dashboard_cache 스키마의 두 번째 Flyway 인스턴스(ADR 0023 §3). 자동설정 없이 API 만 쓴다 — 자동설정은 enrollment 용이고 꺼져 있다.
+	implementation(libs.flyway.core)
+
 	implementation(libs.spring.boot.starter.webmvc)
 	// 필터 체인 배선. starter 는 조립하는 앱이 켠다 — :libs: 에는 붙이지 않는다 (ADR 0011 · 0016).
 	implementation(libs.spring.boot.starter.security)

@@ -65,8 +65,14 @@ class DashboardApiPropertiesTest {
 			"pulsemetry.dashboard.clickhouse.source.query-timeout",
 			"pulsemetry.dashboard.clickhouse.source.max-result-rows",
 			"pulsemetry.dashboard.clickhouse.source.max-result-bytes",
+			"pulsemetry.dashboard.clickhouse.cache.url",
+			"pulsemetry.dashboard.clickhouse.cache.database",
+			"pulsemetry.dashboard.clickhouse.cache.username",
+			"pulsemetry.dashboard.clickhouse.cache.query-timeout",
 			"pulsemetry.dashboard.rds.source.url",
 			"pulsemetry.dashboard.rds.source.username",
+			"pulsemetry.dashboard.rds.cache.url",
+			"pulsemetry.dashboard.rds.cache.username",
 		],
 	)
 	@DisplayName("원천 계정·상한 값이 비면 기동이 실패한다 — 기본값이 없다")
@@ -88,5 +94,22 @@ class DashboardApiPropertiesTest {
 		"pulsemetry.dashboard.rds.source.username=dashboard_reader",
 		"pulsemetry.dashboard.rds.source.password=",
 		"pulsemetry.dashboard.rds.source.connection-timeout=3s",
+		"pulsemetry.dashboard.clickhouse.cache.url=http://localhost:8123",
+		"pulsemetry.dashboard.clickhouse.cache.database=dashboard_cache",
+		"pulsemetry.dashboard.clickhouse.cache.username=dashboard_cache_writer",
+		"pulsemetry.dashboard.clickhouse.cache.password=secret",
+		"pulsemetry.dashboard.clickhouse.cache.query-timeout=30s",
+		"pulsemetry.dashboard.rds.cache.url=jdbc:postgresql://localhost:5432/pulsemetry",
+		"pulsemetry.dashboard.rds.cache.username=dashboard_cache_writer",
+		"pulsemetry.dashboard.rds.cache.password=secret",
+		"pulsemetry.dashboard.rds.cache.connection-timeout=3s",
 	)
+
+	@ParameterizedTest
+	@ValueSource(strings = ["dashboard-cache", "cache; DROP", "1cache", "dashboard_cache.x"])
+	@DisplayName("DB 이름이 식별자 형식이 아니면 기동이 실패한다 — 복사 SQL 에 식별자로 들어간다")
+	fun databaseMustBeIdentifier(value: String) {
+		runner.withPropertyValues(*complete, "pulsemetry.dashboard.clickhouse.cache.database=$value").run { assertThat(it).hasFailed() }
+		runner.withPropertyValues(*complete, "pulsemetry.dashboard.clickhouse.source.database=$value").run { assertThat(it).hasFailed() }
+	}
 }

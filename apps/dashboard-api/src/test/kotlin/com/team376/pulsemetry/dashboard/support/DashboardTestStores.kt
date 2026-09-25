@@ -7,6 +7,10 @@ import org.springframework.test.context.DynamicPropertyRegistry
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.postgresql.PostgreSQLContainer
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.util.UUID
 
 /**
@@ -23,6 +27,9 @@ object DashboardTestStores {
 		PostgreSQLContainer(PostgresContainerConfig.POSTGRES_IMAGE).also { it.start() }
 	}
 
+	/** 캐시 DB. 운영에서는 infra 가 만든다(ADR 0023 §1) — 테스트는 컨테이너를 띄울 때 만든다. */
+	const val CACHE_DATABASE = "dashboard_cache"
+
 	/** 태그는 적재 모듈 테스트·infra 배포 이미지와 같다. */
 	val clickhouse: GenericContainer<*> by lazy {
 		GenericContainer("clickhouse/clickhouse-server:24.8-alpine")
@@ -30,10 +37,28 @@ object DashboardTestStores {
 			// 이게 없으면 entrypoint 가 default 유저를 루프백 전용으로 잠근다 (infra ADR-0019).
 			.withEnv("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1")
 			.waitingFor(Wait.forHttp("/ping").forPort(CLICKHOUSE_HTTP_PORT).forStatusCode(200))
-			.also { it.start() }
+			.also {
+				it.start()
+				clickHouseAdmin(clickHouseUrl(it), "CREATE DATABASE IF NOT EXISTS $CACHE_DATABASE")
+			}
 	}
 
-	fun clickHouseUrl(): String = "http://${clickhouse.host}:${clickhouse.getMappedPort(CLICKHOUSE_HTTP_PORT)}"
+	fun clickHouseUrl(): String = clickHouseUrl(clickhouse)
+
+	private fun clickHouseUrl(container: GenericContainer<*>): String =
+		"http://${container.host}:${container.getMappedPort(CLICKHOUSE_HTTP_PORT)}"
+
+	/** 앱 경로를 거치지 않는 관리 문장(시드·DB 생성). 결과 본문을 돌려준다. */
+	fun clickHouseAdmin(sql: String): String = clickHouseAdmin(clickHouseUrl(), sql)
+
+	private fun clickHouseAdmin(url: String, sql: String): String {
+		val response = HttpClient.newHttpClient().send(
+			HttpRequest.newBuilder(URI.create("$url/")).POST(HttpRequest.BodyPublishers.ofString(sql)).build(),
+			HttpResponse.BodyHandlers.ofString(),
+		)
+		check(response.statusCode() == 200) { "clickhouse ${response.statusCode()}: ${response.body()}" }
+		return response.body()
+	}
 
 	/** 시드·정리용 쓰기 연결. 앱의 연결과 다르다. */
 	val writer: JdbcClient by lazy {
@@ -52,6 +77,17 @@ object DashboardTestStores {
 		registry.add("pulsemetry.dashboard.clickhouse.source.query-timeout") { "10s" }
 		registry.add("pulsemetry.dashboard.clickhouse.source.max-result-rows") { "100000" }
 		registry.add("pulsemetry.dashboard.clickhouse.source.max-result-bytes") { "16777216" }
+
+		registry.add("pulsemetry.dashboard.clickhouse.cache.url") { clickHouseUrl() }
+		registry.add("pulsemetry.dashboard.clickhouse.cache.database") { CACHE_DATABASE }
+		registry.add("pulsemetry.dashboard.clickhouse.cache.username") { "default" }
+		registry.add("pulsemetry.dashboard.clickhouse.cache.password") { "" }
+		registry.add("pulsemetry.dashboard.clickhouse.cache.query-timeout") { "30s" }
+
+		// 캐시 계정은 쓰기 권한이 있다 — 테스트는 컨테이너의 관리 계정을 쓴다.
+		registry.add("pulsemetry.dashboard.rds.cache.url") { postgres.jdbcUrl }
+		registry.add("pulsemetry.dashboard.rds.cache.username") { postgres.username }
+		registry.add("pulsemetry.dashboard.rds.cache.password") { postgres.password }
 
 		// 운영의 앱은 Flyway 를 끈다(enrollment-api 가 소유). 테스트는 격리된 컨테이너라 스키마를 만들 주체가 없으므로
 		// 여기서만 켠다 — 앱 연결이 읽기 전용이므로 Flyway 에는 자기 연결(spring.flyway.url)을 준다.
