@@ -45,6 +45,26 @@ public class NormalizationStats {
 		excludedSpans++
 	}
 
+	/**
+	 * 제외한 스팬을 이름별로도 센다. 이름이 동적일 수 있어 서로 다른 이름을 [MAX_EXCLUDED_NAMES] 개까지만 두고
+	 * 나머지는 [OTHER_NAMES] 에 합친다(ADR 0020 부록 A.4 — cardinality 제한).
+	 */
+	public fun recordExcludedSpan(name: String) {
+		recordExcludedSpan()
+		val key = if (name in excludedNames || excludedNames.size < MAX_EXCLUDED_NAMES) name else OTHER_NAMES
+		excludedNames.merge(key, 1, Int::plus)
+	}
+
+	private val excludedNames = linkedMapOf<String, Int>()
+
+	/** 제외한 스팬의 이름별 수. 진단용이다. */
+	public val excludedSpanNames: Map<String, Int> get() = excludedNames.toMap()
+
+	public companion object {
+		public const val MAX_EXCLUDED_NAMES: Int = 64
+		public const val OTHER_NAMES: String = "(other)"
+	}
+
 	/** 분석 테이블로 가는 관측의 시각을 범위에 더한다. */
 	public fun recordAccepted(sourceTime: EpochNanos) {
 		if (sourceTimeMin == null || sourceTime < sourceTimeMin!!) sourceTimeMin = sourceTime

@@ -61,6 +61,8 @@ class AnalysisHashTest {
 		assertThat(AnalysisHash.of(event(receivedTime = 999))).isEqualTo(base)
 		assertThat(AnalysisHash.of(event(archiveRef = "s3://raw/codex/logs/x.json"))).isEqualTo(base)
 		assertThat(AnalysisHash.of(event(maskingVersion = "masking-v9"))).isEqualTo(base)
+		val missing = event().let { it.copy(envelope = it.envelope.copy(qualityFlags = listOf(QualityFlag.ARCHIVE_RECEIPT_MISSING))) }
+		assertThat(AnalysisHash.of(missing)).isEqualTo(base)
 	}
 
 	@Test
