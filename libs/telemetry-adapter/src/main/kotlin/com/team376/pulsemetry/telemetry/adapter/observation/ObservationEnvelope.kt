@@ -71,6 +71,10 @@ public data class ObservationEnvelope(
 	}
 }
 
+/** 품질 플래그를 더한 사본. 플래그는 중복 없이 선언 순서로 둔다. */
+public fun ObservationEnvelope.withFlags(vararg flags: QualityFlag): ObservationEnvelope =
+	if (flags.isEmpty()) this else copy(qualityFlags = (qualityFlags + flags).distinct().sortedBy { it.ordinal })
+
 /**
  * 조직 보강 단계가 채우는 봉투 다섯 컬럼(ADR 0020 §5). 셋 다 `observation_id`·`analysis_hash` 의 재료가 아니다.
  */

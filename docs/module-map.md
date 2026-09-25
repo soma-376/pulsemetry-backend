@@ -46,7 +46,8 @@ pulsemetry-backend
     │                                └ observation/ 정규화 계약 2판의 관측 모델 (ADR 0020)
     ├── telemetry-enricher/          com.team376.pulsemetry.telemetry.enricher
     │                                사원 정보 결합 — as-of 조인 · provider 주석
-    │                                └ provider/   EnrichmentProvider 와 그 구현
+    │                                ├ provider/   EnrichmentProvider 와 그 구현
+    │                                └ observation/ 정규화 계약 2판 관측의 보강 (ADR 0020)
     ├── telemetry-persistence/       com.team376.pulsemetry.persistence.telemetry
     │                                ClickHouse 스키마 · 적재 — 쓰기 소유 모듈
     └── telemetry-ops-persistence/   com.team376.pulsemetry.persistence.telemetryops
@@ -87,10 +88,13 @@ HTTP 라우팅과 인증 체인은 `:apps:telemetry-ingest`가 붙인다.
 직접 받는다**([ADR 0014](adr/0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md)). 수집의
 `SignalConsumer`에 변환을 잇는 배선은 여전히 조립 앱의 몫이다(ADR 0011).
 
-`:libs:telemetry-enricher`는 세 번째 단계 모듈이다(PROJ-104). 하위 패키지는 `provider/` 하나이고,
+`:libs:telemetry-enricher`는 세 번째 단계 모듈이다(PROJ-104). 하위 패키지는 `provider/`·`observation/` 둘이고,
 `Enriched`와 `Enricher`는 모듈 루트 패키지에 둔다. **RDS를 읽는 provider는 `org` 하나뿐이며**
 PROJ-101이 만든 `TeamMembershipRepository.findActiveTeamMembershipsByInstallationId`와
 `TeamMembership.coversAt`를 그대로 쓴다 — 읽기 전용이고 `team_memberships`의 쓰기 소유는 그대로다.
+정규화 2판 관측의 보강은 `observation/`의 `ObservationEnricher`가 한다. 구성원은 installation 단독 조회
+(`InstallationRepository.findMemberIdById`), 대표 팀은 팀 상태를 보지 않는 소속 이력(`findAllByMemberId`)에서
+정한다(ADR 0020 §5). `enrichment_json`의 provider 항목은 같은 `EnrichmentProvider`의 `annotate`가 쓴다.
 
 `:libs:telemetry-persistence`는 단계가 아니라 **역할** 모듈이라 어순이 뒤집힌다(ADR 0010).
 ClickHouse 테이블(`enriched_events`, 정규화 2판의 `telemetry_events`·`telemetry_metric_points`)의 DDL과

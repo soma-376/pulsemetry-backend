@@ -76,6 +76,18 @@ class AnalysisHashTest {
 	}
 
 	@Test
+	@DisplayName("조직 보강이 붙이는 플래그도 재료가 아니다 — 다른 품질 플래그는 재료다")
+	fun enrichmentFlagsAreNotMaterial() {
+		val base = AnalysisHash.of(event())
+		val attributed = event().let {
+			it.copy(envelope = it.envelope.withFlags(QualityFlag.MEMBER_UNRESOLVED, QualityFlag.MULTI_TEAM_MEMBERSHIP))
+		}
+
+		assertThat(AnalysisHash.of(attributed)).isEqualTo(base)
+		assertThat(AnalysisHash.of(event().withFlags(QualityFlag.COST_CONFLICT))).isNotEqualTo(base)
+	}
+
+	@Test
 	@DisplayName("측정값·분류가 다르면 다른 hash 다 — null 과 0 도 다르다")
 	fun analysisOutputIsMaterial() {
 		val base = AnalysisHash.of(event())

@@ -12,8 +12,9 @@ import kotlin.reflect.full.primaryConstructor
  *
  * 재료는 관측 타입의 모든 필드다 — 분류·품질·측정값·metadata·계산 근거. 다음은 **뺀다**:
  * `analysis_hash` 자신, 서버 수신 시각(`received_time`), 영수증에서 온 값(`archive_ref`·`archive_selector`·
- * `masking_version`, 그리고 영수증이 없다는 사실인 `archive_receipt_missing` 플래그). 조직 보강과 `row_version` 은
- * 관측 타입에 없으므로 애초에 재료가 아니다.
+ * `masking_version`, 그리고 영수증이 없다는 사실인 `archive_receipt_missing` 플래그), 조직 보강이 붙이는 플래그
+ * (`member_unresolved`·`multi_team_membership`). 조직 보강의 다섯 컬럼과 `row_version` 은 관측 타입에 없으므로 애초에
+ * 재료가 아니다. 보강 플래그를 빼는 이유도 같다 — 소속 편집 뒤 재처리한 두 행의 hash 가 같아야 한다.
  *
  * `metadata_json` 은 문자열 그대로가 아니라 경계마다 속성을 canonical 순서로 정렬한 뒤 쓴다 — 속성 순서만 다른
  * 두 결과는 같은 hash 다. 중복 개수는 남는다. 돈은 값이 같으면 같은 표기다(`0.020` 과 `0.02`).
@@ -26,6 +27,13 @@ public object AnalysisHash {
 	public val PLACEHOLDER: String = "0".repeat(64)
 
 	private val EXCLUDED = setOf("analysisHash", "receivedTime", "archiveRef", "archiveSelector", "maskingVersion")
+
+	/** 정규화 뒤 단계가 붙이는 플래그 — 영수증 부재와 조직 보강의 결과다. */
+	private val EXCLUDED_FLAGS = setOf(
+		QualityFlag.ARCHIVE_RECEIPT_MISSING,
+		QualityFlag.MEMBER_UNRESOLVED,
+		QualityFlag.MULTI_TEAM_MEMBERSHIP,
+	)
 
 	public fun of(observation: EventObservation): String = Canonical.sha256Hex(encode(observation))
 
@@ -82,7 +90,7 @@ public object AnalysisHash {
 			val v = property.get(value)
 			when (property.name) {
 				"metadataJson" -> writeMetadata(out, v as String)
-				"qualityFlags" -> write(out, (v as List<*>).filter { it != QualityFlag.ARCHIVE_RECEIPT_MISSING })
+				"qualityFlags" -> write(out, (v as List<*>).filter { it !in EXCLUDED_FLAGS })
 				else -> write(out, v)
 			}
 		}
