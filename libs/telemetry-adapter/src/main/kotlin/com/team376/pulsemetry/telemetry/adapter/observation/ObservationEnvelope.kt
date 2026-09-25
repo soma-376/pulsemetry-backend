@@ -99,8 +99,4 @@ public data class RowVersioning(
 
 internal const val UINT16_MAX: Int = 65_535
 
-private val HEX64 = Regex("^[0-9a-f]{64}$")
-
-internal fun requireHex64(column: String, value: String) {
-	require(HEX64.matches(value)) { "$column 은 64자리 소문자 hex 다: $value" }
-}
+internal fun requireHex64(column: String, value: String) = Hex64.require(column, value)
