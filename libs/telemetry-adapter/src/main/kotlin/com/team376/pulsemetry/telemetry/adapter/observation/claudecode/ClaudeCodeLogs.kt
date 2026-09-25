@@ -11,8 +11,6 @@ import com.team376.pulsemetry.telemetry.adapter.observation.MetadataAllowlist
 import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
 import com.team376.pulsemetry.telemetry.adapter.observation.ReportedCostBasis
 import com.team376.pulsemetry.telemetry.adapter.observation.StopReason
-import com.team376.pulsemetry.telemetry.adapter.observation.ToolAction
-import com.team376.pulsemetry.telemetry.adapter.observation.ToolOrigin
 import com.team376.pulsemetry.telemetry.adapter.observation.TtftScope
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedValue
 import com.team376.pulsemetry.telemetry.adapter.observation.UsageRole
@@ -217,15 +215,15 @@ internal object ClaudeCodeLogs : LogProfile {
 	 */
 	private fun toolResult(fields: FieldReader, common: EventObservation): EventObservation {
 		val toolName = fields.nonEmptyText("tool_name")
-		val mcp = fields.has("mcp_server_scope") || isMcpName(toolName)
+		val mcp = fields.has("mcp_server_scope") || ClaudeCodeTools.isMcpName(toolName)
 		val errorType = fields.nonEmptyText("error_type")
 		return common.copy(
 			eventType = EventType.TOOL_RESULT,
 			callId = fields.nonEmptyText("tool_use_id"),
 			callIdNamespace = fields.nonEmptyText("tool_use_id")?.let { TOOL_USE_NAMESPACE },
 			toolName = toolName,
-			toolOrigin = origin(toolName, if (mcp) "mcp" else null),
-			toolAction = action(toolName, mcp),
+			toolOrigin = ClaudeCodeTools.origin(toolName, if (mcp) "mcp" else null),
+			toolAction = ClaudeCodeTools.action(toolName, mcp),
 			success = fields.bool("success", BoolWire.STRING),
 			durationNs = fields.millisAsNanos("duration_ms", NumberWire.DECIMAL_STRING),
 			errorType = when {
@@ -250,8 +248,8 @@ internal object ClaudeCodeLogs : LogProfile {
 			callId = fields.nonEmptyText("tool_use_id"),
 			callIdNamespace = fields.nonEmptyText("tool_use_id")?.let { TOOL_USE_NAMESPACE },
 			toolName = toolName,
-			toolOrigin = origin(toolName, fields.text("tool_source")),
-			toolAction = action(toolName, fields.text("tool_source") == "mcp" || isMcpName(toolName)),
+			toolOrigin = ClaudeCodeTools.origin(toolName, fields.text("tool_source")),
+			toolAction = ClaudeCodeTools.action(toolName, fields.text("tool_source") == "mcp" || ClaudeCodeTools.isMcpName(toolName)),
 			decision = when (raw) {
 				"accept" -> Decision.ACCEPT
 				"reject" -> Decision.REJECT
@@ -266,20 +264,6 @@ internal object ClaudeCodeLogs : LogProfile {
 			decisionScope = DecisionScope.UNKNOWN,
 		)
 	}
-
-	/** MCP 도구 이름 — producer 가 가린 표기(`mcp_tool`)와 `mcp__<서버>__<도구>`. 출처의 근거일 뿐 동작의 근거는 아니다. */
-	private fun isMcpName(name: String?): Boolean = name == MCP_TOOL || name?.startsWith("mcp__") == true
-
-	/** 출처: 명시 속성(`tool_source` 등) > MCP 이름 > 문서화된 내장 도구 이름. 그 밖은 unknown. */
-	private fun origin(toolName: String?, declared: String?): ToolOrigin = when {
-		declared == "mcp" || isMcpName(toolName) -> ToolOrigin.MCP
-		declared == "builtin" || toolName in BUILTIN_TOOLS -> ToolOrigin.BUILTIN
-		else -> ToolOrigin.UNKNOWN
-	}
-
-	/** 동작: 내장 도구 중 동작이 분명한 이름만. MCP 도구와 그 밖은 unknown. */
-	private fun action(toolName: String?, mcp: Boolean): ToolAction =
-		if (mcp) ToolAction.UNKNOWN else BUILTIN_ACTIONS[toolName] ?: ToolAction.UNKNOWN
 
 	/** HTTP 상태 코드(0–65535). 범위 밖은 invalid. */
 	private fun httpStatus(fields: FieldReader, key: String): Int? {
@@ -312,33 +296,8 @@ internal object ClaudeCodeLogs : LogProfile {
 
 	/** 모델의 `tool_use` 블록 ID. */
 	const val TOOL_USE_NAMESPACE: String = "claude_code.tool_use"
-	private const val MCP_TOOL = "mcp_tool"
 	private val ERROR_CLASS = Regex("[A-Za-z0-9_:.\\-]{1,64}")
 	private val USER_SOURCES = setOf("user_permanent", "user_temporary", "user_abort", "user_reject")
-
-	/** 공식 도구 목록의 내장 도구 이름(근거 문서 5). */
-	private val BUILTIN_TOOLS = setOf(
-		"Agent", "Artifact", "AskUserQuestion", "Bash", "CronCreate", "CronDelete", "CronList", "Edit", "EndConversation", "EnterPlanMode",
-		"EnterWorktree", "ExitPlanMode", "ExitWorktree", "Glob", "Grep", "ListAgents", "ListMcpResourcesTool", "LSP", "Monitor",
-		"NotebookEdit", "PowerShell", "PushNotification", "Read", "ReadMcpResourceTool", "RemoteTrigger", "ReportFindings",
-		"ScheduleWakeup", "SendFeedback", "SendMessage", "SendUserFile", "ShareOnboardingGuide", "Skill", "SubagentHandback",
-		"TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate", "TodoWrite", "ToolSearch", "WaitForMcpServers",
-		"WebFetch", "WebSearch", "Workflow", "Write",
-	)
-
-	/** 동작이 분명한 내장 도구. */
-	private val BUILTIN_ACTIONS = mapOf(
-		"Read" to ToolAction.READ,
-		"Write" to ToolAction.WRITE,
-		"Edit" to ToolAction.EDIT,
-		"NotebookEdit" to ToolAction.EDIT,
-		"Glob" to ToolAction.SEARCH,
-		"Grep" to ToolAction.SEARCH,
-		"WebSearch" to ToolAction.SEARCH,
-		"WebFetch" to ToolAction.FETCH,
-		"Bash" to ToolAction.EXEC,
-		"PowerShell" to ToolAction.EXEC,
-	)
 
 	private val REFUSAL = StopReason("refusal")
 	private const val UINT16_MAX = 65_535L

@@ -90,3 +90,18 @@ generic 목록(`internal_error`·`plugin_installed`·`plugin_loaded`·`at_mentio
 부록 A.2 대로 매핑하되, 정수 필드(`status_code`·`attempt`·`duration_ms`·`total_attempts`·`total_retry_duration_ms`)는 wire 를 확인하지
 못해 intValue·10진 문자열을 모두 받는다. 필드 이름은 문서 요약과 참조 분석이 일부 어긋나(`attempts` 대 `total_attempts` 등) 실캡처로
 확인하기 전까지 명세 사례(`synthetic/errors`)만 고정한다.
+
+## 8. 스팬과 메트릭
+
+- 스팬 여섯(`claude_code.interaction`·`llm_request`·`tool`·`tool.execution`·`tool.blocked_on_user`·`hook`)만 행이 된다. 실캡처에
+  `claude_code.hook` 은 없다(문서는 상세 추적 설정에서만 난다고 적는다). 모든 스팬이 `session.id` 를 싣는다.
+- `llm_request` 의 토큰 네 필드(int)는 같은 요청의 `api_request` 로그와 **같은 값**이다 — 실캡처에서 `client_request_id` 로 짝이 맞는
+  666 요청이 전부 일치했다. 그래서 스팬 토큰은 진단용이고 사용량에 더하지 않는다. `stop_reason` 은 API 응답의 값(`end_turn`·
+  `tool_use`·`stop_sequence` — 실캡처; `max_tokens`·`pause_turn`·`refusal` — 문서)만 옮긴다. `gen_ai.response.id` 는 실캡처에서
+  `request_id` 와 같은 값이라 응답 ID 로 쓰지 않는다.
+- 도구 스팬: `tool_use_id` = `gen_ai.tool.call.id`(실캡처에서 같은 값 — 다르면 null). 스팬의 `tool_name` 은 MCP 도구를
+  `mcp__<서버>__<도구>` 원문으로 싣고 `tool_name_safe` 는 `mcp_other` 로 가린다 — 컬럼은 `tool_name_safe`. `full_command`·
+  `file_path`·`user_prompt` 는 싣지 않는다.
+- 메트릭 여덟은 실캡처에서 전부 `sum`(cumulative, monotonic)이다. 프로파일은 이름 + sum 일 때만 family 를 붙인다. 단위는
+  `USD`·`tokens`·`s` 등 원형 그대로(`raw_unit`), 단위 registry 는 두지 않았다. `token.usage` 의 `type` 라벨 `input`·`output`·
+  `cacheRead`·`cacheCreation` → `token_component`. 카운터의 `query_source` 는 범주 셋(`main`·`subagent`·`auxiliary` — 문서)이다.
