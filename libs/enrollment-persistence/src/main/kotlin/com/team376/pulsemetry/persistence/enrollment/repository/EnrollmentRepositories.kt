@@ -62,6 +62,13 @@ interface TeamRepository : JpaRepository<Team, UUID> {
 
 interface TeamMembershipRepository : JpaRepository<TeamMembership, UUID> {
 
+	/**
+	 * 구성원의 소속 이력 전부. **팀 상태로 거르지 않는다** — archived 팀의 과거 소속도 온다.
+	 *
+	 * 관측 보강(ADR 0020 §5)의 as-of 조회가 이것을 쓴다. 이벤트 시점의 소속만 보고 팀의 현재 상태는 보지
+	 * 않는 규칙이라, 아래 [findActiveTeamMembershipsByInstallationId] 는 그 자리를 받을 수 없다.
+	 * 시점 판정은 SQL 이 아니라 [TeamMembership.coversAt] 이 한다.
+	 */
 	fun findAllByMemberId(memberId: UUID): List<TeamMembership>
 
 	/**
@@ -103,6 +110,15 @@ interface InstallationRepository : JpaRepository<Installation, UUID> {
 	 */
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	fun findWithLockById(id: UUID): Installation?
+
+	/**
+	 * installation 이 귀속된 구성원 ID 만 읽는다. 없으면 null 이다.
+	 *
+	 * **상태를 보지 않는다** — revoked installation 도 구성원을 돌려준다. 과거 사용량은 그 사람의 것이다
+	 * (ADR 0020 §5). 소속 조회와 독립이라 무소속 구성원도 식별된다. 잠그지 않는 읽기 전용 조회다.
+	 */
+	@Query("SELECT i.memberId FROM Installation i WHERE i.id = :id")
+	fun findMemberIdById(@Param("id") id: UUID): UUID?
 }
 
 interface InstallationCredentialRepository : JpaRepository<InstallationCredential, UUID> {

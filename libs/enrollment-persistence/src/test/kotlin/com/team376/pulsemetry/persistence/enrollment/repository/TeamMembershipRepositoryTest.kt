@@ -107,6 +107,23 @@ class TeamMembershipRepositoryTest : AbstractPersistenceIntegrationTest() {
 			.containsExactlyInAnyOrder(teamA, teamB)
 	}
 
+	@Test
+	@DisplayName("구성원의 소속 이력은 팀 상태로 거르지 않는다 — archived 팀의 과거 소속도 온다")
+	fun memberHistoryKeepsArchivedTeams() {
+		val archived = teams
+			.saveAndFlush(EnrollmentFixtures.team(tenantId, name = "해체된팀", status = TeamStatus.archived))
+			.id
+		val active = teams.saveAndFlush(EnrollmentFixtures.team(tenantId, name = "살아있는팀")).id
+		memberships.saveAndFlush(
+			EnrollmentFixtures.teamMembership(archived, memberId, joinedAt = at.minus(90, ChronoUnit.DAYS), leftAt = at),
+		)
+		memberships.saveAndFlush(EnrollmentFixtures.teamMembership(active, memberId, joinedAt = at))
+
+		assertThat(memberships.findAllByMemberId(memberId))
+			.extracting<UUID> { it.teamId }
+			.containsExactlyInAnyOrder(archived, active)
+	}
+
 	// ── installation → 소속 이력 조회 ────────────────────────────────────────
 
 	@Test
