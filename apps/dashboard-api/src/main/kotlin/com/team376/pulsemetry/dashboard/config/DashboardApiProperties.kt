@@ -20,6 +20,8 @@ data class DashboardApiProperties(
 	val rds: Rds,
 
 	val snapshot: Snapshot,
+
+	val members: Members,
 ) {
 	init {
 		require(retryAfter.toSeconds() >= 1) {
@@ -127,7 +129,19 @@ data class DashboardApiProperties(
 		}
 	}
 
+	/** 구성원 화면의 정책 값. 저장된 조직 정책이 아직 없어 설정으로 받는다 — 기본값이 없다. */
+	data class Members(
+		/** 회수 후보의 유휴 기준 일수. 요청서가 정한 값(7·14·30·60) 중 하나. */
+		val idleDays: Int,
+	) {
+		init {
+			require(idleDays in IDLE_DAYS) { "pulsemetry.dashboard.members.idle-days 는 $IDLE_DAYS 중 하나여야 한다: $idleDays" }
+		}
+	}
+
 	private companion object {
+		val IDLE_DAYS = setOf(7, 14, 30, 60)
+
 		/** DB 이름은 snapshot 복사 SQL 에 식별자로 들어간다. */
 		val IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
 	}

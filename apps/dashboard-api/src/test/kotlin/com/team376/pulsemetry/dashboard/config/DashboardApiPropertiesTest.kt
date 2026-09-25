@@ -115,7 +115,15 @@ class DashboardApiPropertiesTest {
 		"pulsemetry.dashboard.snapshot.max-copy-rows=1000000",
 		"pulsemetry.dashboard.snapshot.max-copy-bytes=1000000000",
 		"pulsemetry.dashboard.snapshot.cleanup-interval=5m",
+		"pulsemetry.dashboard.members.idle-days=30",
 	)
+
+	@ParameterizedTest
+	@ValueSource(strings = ["0", "10", "90", ""])
+	@DisplayName("유휴 기준 일수는 요청서의 네 값 중 하나여야 한다")
+	fun idleDaysMustBeOneOfTheContractValues(value: String) {
+		runner.withPropertyValues(*complete, "pulsemetry.dashboard.members.idle-days=$value").run { assertThat(it).hasFailed() }
+	}
 
 	@ParameterizedTest
 	@ValueSource(strings = ["dashboard-cache", "cache; DROP", "1cache", "dashboard_cache.x"])

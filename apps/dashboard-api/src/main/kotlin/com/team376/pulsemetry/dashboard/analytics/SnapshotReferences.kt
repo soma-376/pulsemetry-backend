@@ -3,7 +3,10 @@ package com.team376.pulsemetry.dashboard.analytics
 import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheClient
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
 import com.team376.pulsemetry.dashboard.store.ClickHouseParam
+import com.team376.pulsemetry.persistence.enrollment.entity.MemberRole
 import org.springframework.jdbc.core.simple.JdbcClient
+import java.time.Instant
+import java.time.OffsetDateTime
 import java.time.LocalDate
 import java.util.UUID
 
@@ -28,6 +31,48 @@ class SnapshotReferences(
 				"build" to ClickHouseParam.string(snapshot.buildId.toString()),
 			),
 		) { LocalDate.parse(it.path("d").asString()) }.toSet()
+
+	/** build 때의 로스터 한 사람. [role]·[status] 는 enrollment 의 값 그대로다. */
+	data class RosterMember(
+		val id: UUID,
+		val account: String,
+		val displayName: String?,
+		val role: MemberRole,
+		val status: String,
+		val currentTeamIds: List<UUID>,
+		val updatedAt: Instant,
+	)
+
+	fun roster(snapshot: SnapshotManifestStore.Manifest): List<RosterMember> =
+		cache.sql(
+			"SELECT member_id, account, display_name, role::text AS role, status::text AS status, current_team_ids, updated_at " +
+				"FROM dashboard_cache.snapshot_members WHERE snapshot_id = :snapshot",
+		)
+			.param("snapshot", snapshot.snapshotId)
+			.query { rs, _ ->
+				RosterMember(
+					id = rs.getObject("member_id", UUID::class.java),
+					account = rs.getString("account"),
+					displayName = rs.getString("display_name"),
+					role = MemberRole.valueOf(rs.getString("role")),
+					status = rs.getString("status"),
+					currentTeamIds = (rs.getArray("current_team_ids").array as Array<*>).map { it as UUID },
+					updatedAt = rs.getObject("updated_at", OffsetDateTime::class.java).toInstant(),
+				)
+			}
+			.list()
+
+	/** 구성원별 마지막 사용 — build 의 기준 시각(asOf)까지, 팀과 무관한 사용량 행의 최댓값(snapshot 에 고정한 별도 결과). */
+	fun lastUsed(snapshot: SnapshotManifestStore.Manifest): Map<String, Instant> =
+		clickHouse.query(
+			"SELECT member_id AS m, last_used_at AS t FROM snapshot_member_activity " +
+				"WHERE tenant_id = {tenant:String} AND snapshot_id = {snapshot:String} AND build_id = {build:String}",
+			mapOf(
+				"tenant" to ClickHouseParam.string(snapshot.tenantId.toString()),
+				"snapshot" to ClickHouseParam.string(snapshot.snapshotId),
+				"build" to ClickHouseParam.string(snapshot.buildId.toString()),
+			),
+		) { it.path("m").asString() to Instant.parse(it.path("t").asString()) }.toMap()
 
 	/** 로스터의 계정(이메일). 로스터에 없는 구성원은 빠진다. */
 	fun accounts(snapshot: SnapshotManifestStore.Manifest, memberIds: Collection<UUID>): Map<UUID, String> =

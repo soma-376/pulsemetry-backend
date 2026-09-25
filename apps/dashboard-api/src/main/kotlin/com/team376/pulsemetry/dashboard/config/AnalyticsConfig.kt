@@ -2,7 +2,9 @@ package com.team376.pulsemetry.dashboard.config
 
 import com.team376.pulsemetry.dashboard.analytics.AnalyticsFrames
 import com.team376.pulsemetry.dashboard.analytics.ComparisonPolicy
+import com.team376.pulsemetry.dashboard.analytics.CurrentStateTokens
 import com.team376.pulsemetry.dashboard.analytics.IngestStatusReader
+import com.team376.pulsemetry.dashboard.analytics.MembersService
 import com.team376.pulsemetry.dashboard.analytics.OverviewService
 import com.team376.pulsemetry.dashboard.analytics.SnapshotReferences
 import com.team376.pulsemetry.dashboard.analytics.TeamDirectoryService
@@ -64,10 +66,25 @@ class AnalyticsConfig {
 		codec: PageCursorCodec,
 	): TeamsService = TeamsService(frames, aggregator, references, snapshots, codec)
 
+	@Bean
+	fun currentStateTokens(mapper: ObjectMapper): CurrentStateTokens = CurrentStateTokens(mapper)
+
 	/** 현재 디렉터리는 원천 계정으로 읽는다. */
 	@Bean
-	fun teamDirectoryService(source: JdbcClient, codec: PageCursorCodec, mapper: ObjectMapper, clock: Clock): TeamDirectoryService =
-		TeamDirectoryService(source, codec, mapper, clock)
+	fun teamDirectoryService(source: JdbcClient, codec: PageCursorCodec, tokens: CurrentStateTokens, clock: Clock): TeamDirectoryService =
+		TeamDirectoryService(source, codec, tokens, clock)
+
+	@Bean
+	fun membersService(
+		properties: DashboardApiProperties,
+		frames: AnalyticsFrames,
+		aggregator: UsageAggregator,
+		references: SnapshotReferences,
+		snapshots: SnapshotService,
+		codec: PageCursorCodec,
+		tokens: CurrentStateTokens,
+		clock: Clock,
+	): MembersService = MembersService(frames, aggregator, references, snapshots, codec, tokens, properties.members.idleDays, clock)
 
 	@Bean
 	fun overviewService(frames: AnalyticsFrames, aggregator: UsageAggregator, references: SnapshotReferences): OverviewService =

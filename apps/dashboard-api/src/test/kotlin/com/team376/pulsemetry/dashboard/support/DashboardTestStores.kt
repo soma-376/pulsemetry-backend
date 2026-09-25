@@ -108,6 +108,7 @@ object DashboardTestStores {
 		registry.add("pulsemetry.dashboard.snapshot.max-copy-bytes") { "1000000000" }
 		// 테스트 중에는 정리 작업이 돌지 않게 길게 둔다 — 정리는 SnapshotLifecycleTest 가 직접 부른다.
 		registry.add("pulsemetry.dashboard.snapshot.cleanup-interval") { "1h" }
+		registry.add("pulsemetry.dashboard.members.idle-days") { "14" }
 
 		// 운영의 앱은 Flyway 를 끈다(enrollment-api 가 소유). 테스트는 격리된 컨테이너라 스키마를 만들 주체가 없으므로
 		// 여기서만 켠다 — 앱 연결이 읽기 전용이므로 Flyway 에는 자기 연결(spring.flyway.url)을 준다.

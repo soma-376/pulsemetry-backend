@@ -85,3 +85,7 @@ pulsemetry:
       max-copy-rows: ${PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_COPY_ROWS:}
       max-copy-bytes: ${PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_COPY_BYTES:}
       cleanup-interval: ${PULSEMETRY_DASHBOARD_SNAPSHOT_CLEANUP_INTERVAL:}
+
+    # 구성원 화면의 정책 값 — 저장된 조직 정책이 없어 설정으로 받는다. 7·14·30·60 중 하나, 기본값 없음.
+    members:
+      idle-days: ${PULSEMETRY_DASHBOARD_MEMBERS_IDLE_DAYS:}
