@@ -46,21 +46,29 @@ class FixtureSuite(
 	private val pricing: PricingStage = PricingStage.NONE,
 ) {
 
-	fun load(directory: String): List<FixtureCase> {
+	fun load(directory: String): List<FixtureCase> =
+		inputFiles(directory).map { input ->
+			val stem = input.name.removeSuffix(".otlp.jsonl")
+			val expected = input.resolveSibling("$stem.expected.jsonl")
+			require(Files.exists(expected)) { "$stem.expected.jsonl 가 없다" }
+			FixtureCase(
+				name = "$directory/$stem",
+				documents = lines(input).map { it as Map<*, *> },
+				expectations = lines(expected).map { it as Map<*, *> },
+			)
+		}
+
+	/** 기대값 없이 입력만 읽는다 — 기대값을 아직 쓰지 않은 실캡처 추출본용. [checkInvariants] 와 짝이다. */
+	fun inputs(directory: String): List<FixtureCase> =
+		inputFiles(directory).map { input ->
+			FixtureCase("$directory/${input.name.removeSuffix(".otlp.jsonl")}", lines(input).map { it as Map<*, *> }, emptyList())
+		}
+
+	private fun inputFiles(directory: String): List<Path> {
 		val root = Path.of(requireNotNull(FixtureSuite::class.java.getResource("/otlp-v2/$directory")) { "otlp-v2/$directory 가 없다" }.toURI())
 		return Files.list(root).use { files -> files.map { it }.toList() }
 			.filter { it.name.endsWith(".otlp.jsonl") }
 			.sortedBy { it.name }
-			.map { input ->
-				val stem = input.name.removeSuffix(".otlp.jsonl")
-				val expected = input.resolveSibling("$stem.expected.jsonl")
-				require(Files.exists(expected)) { "$stem.expected.jsonl 가 없다" }
-				FixtureCase(
-					name = "$directory/$stem",
-					documents = lines(input).map { it as Map<*, *> },
-					expectations = lines(expected).map { it as Map<*, *> },
-				)
-			}
 	}
 
 	private fun lines(path: Path): List<Any?> = path.readLines().filter { it.isNotBlank() }.map { JsonTree.parse(it) }
@@ -87,6 +95,18 @@ class FixtureSuite(
 		return errors
 	}
 
+	/** 기대값 대조 없이 문서마다 파이프라인을 태워 공통 불변식만 검사한다. 비어 있으면 통과다. */
+	fun checkInvariants(case: FixtureCase): List<String> {
+		val errors = mutableListOf<String>()
+		case.documents.forEachIndexed { index, document ->
+			val where = "[${case.name}] 문서 #$index"
+			val context = context(case, index, null)
+			val request = request(document)
+			invariants(where, request, context, pipeline().run(request, context), errors)
+		}
+		return errors
+	}
+
 	private fun pipeline() = ObservationPipeline(ObservationNormalizer(registry), pricing)
 
 	private fun requireSpec(expectation: Map<*, *>, where: String, errors: MutableList<String>) {
@@ -102,7 +122,8 @@ class FixtureSuite(
 		return ObservationContext(TENANT, INSTALLATION, RECEIVED, "masking-v2", "stamp-v1", archive)
 	}
 
-	private fun request(document: Map<*, *>): Message {
+	/** OTLP/JSON 문서 하나를 export 요청으로 읽는다. 모르는 필드는 실패한다([OtlpJsonV2]). */
+	fun request(document: Map<*, *>): Message {
 		val builder = when {
 			"resourceLogs" in document -> ExportLogsServiceRequest.newBuilder()
 			"resourceSpans" in document -> ExportTraceServiceRequest.newBuilder()

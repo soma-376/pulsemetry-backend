@@ -19,6 +19,9 @@
 
 합성 입력은 명세의 한 규칙을 드러내려고 손으로 쓴 것이고 실제 제품의 wire 형식을 주장하지 않는다.
 
+`<product>/real/` 은 기대값 없이 입력만 둘 수 있다. 그때는 모든 문서가 읽히고 레코드가 빠짐없이 옮겨지며 아래
+공통 불변식을 지키는지만 본다(`FixtureSuite.inputs`·`checkInvariants`). 추출·익명화 도구는 `scripts/otlp-fixtures/` 다.
+
 ## 파일 쌍
 
 - `<case>.otlp.jsonl` — 한 줄이 OTLP/JSON export 문서(push) 하나. 최상위 키(`resourceLogs`·`resourceSpans`·
