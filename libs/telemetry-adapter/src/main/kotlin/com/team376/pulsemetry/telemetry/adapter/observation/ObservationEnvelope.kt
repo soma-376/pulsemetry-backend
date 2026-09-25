@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import java.time.Instant
+
 /**
  * 두 분석 테이블이 공유하는 봉투 49컬럼 중 **정규화 단계가 채우는 42컬럼**(ADR 0020 §1).
  *
@@ -86,7 +88,12 @@ public data class OrgAttribution(
 	public val enrichmentVersion: String,
 )
 
-/** 적재 단계가 채우는 봉투 두 컬럼. `row_version = (normalizer_rev << 32) | ingest_seq`(ADR 0020 §3). */
+/**
+ * 적재 단계가 채우는 봉투 두 컬럼. `row_version = (normalizer_rev << 32) | ingest_seq`(ADR 0020 §3).
+ *
+ * live 수신은 [live] 로 만든다. 재처리 경로는 자기 `ingest_seq` 를 [of] 에 넘긴다 — 그 번호의 규칙은 재처리 기능을 만들 때
+ * 정한다(ADR 0020 Follow-up).
+ */
 public data class RowVersioning(
 	public val normalizerRev: UInt,
 	public val rowVersion: ULong,
@@ -96,8 +103,24 @@ public data class RowVersioning(
 	}
 
 	public companion object {
+		/**
+		 * 배포된 정규화 규칙의 버전(ADR 0020 §3). 매핑·스키마·의미 프로파일·가격 프로파일·보강 규칙 중 하나라도 바뀌면
+		 * 올린다 — 높은 값이 언제나 이기므로 구 규칙의 결과가 늦게 와도 새 결과를 되돌리지 못한다. 1 부터 시작한다.
+		 */
+		public const val NORMALIZER_REV: UInt = 1u
+
 		public fun of(normalizerRev: UInt, ingestSeq: UInt): RowVersioning =
 			RowVersioning(normalizerRev, (normalizerRev.toULong() shl 32) or ingestSeq.toULong())
+
+		/**
+		 * live 수신의 버전 — `ingest_seq` 는 archive receipt 수신 시각의 epoch 초다(ADR 0020 §3). UInt32 범위 밖의 시각은
+		 * 거부한다. 실행 시각이 아니라 receipt 의 시각을 받는다 — 같은 push 의 행은 모두 같은 버전이다.
+		 */
+		public fun live(receivedAt: Instant, normalizerRev: UInt = NORMALIZER_REV): RowVersioning {
+			val seconds = receivedAt.epochSecond
+			require(seconds in 0..UInt.MAX_VALUE.toLong()) { "ingest_seq 는 UInt32 다 — receipt 수신 시각이 범위 밖이다: $receivedAt" }
+			return of(normalizerRev, seconds.toUInt())
+		}
 	}
 }
 

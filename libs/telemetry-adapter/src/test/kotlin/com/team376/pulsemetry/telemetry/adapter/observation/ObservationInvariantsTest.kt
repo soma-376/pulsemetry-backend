@@ -104,6 +104,19 @@ class ObservationInvariantsTest {
 	}
 
 	@Test
+	@DisplayName("live 수신의 ingest_seq 는 receipt 수신 시각의 epoch 초다 — UInt32 밖은 거부, normalizer_rev 는 1 부터")
+	fun liveVersioning() {
+		val receivedAt = Instant.parse("2026-01-01T00:00:05.999Z")
+
+		assertThat(RowVersioning.NORMALIZER_REV).isEqualTo(1u)
+		assertThat(RowVersioning.live(receivedAt)).isEqualTo(RowVersioning.of(1u, 1_767_225_605u))
+		assertThat(RowVersioning.live(Instant.ofEpochSecond(0xFFFF_FFFFL), normalizerRev = 2u).rowVersion)
+			.isEqualTo((2uL shl 32) or 0xFFFF_FFFFuL)
+		assertThatThrownBy { RowVersioning.live(Instant.ofEpochSecond(0x1_0000_0000L)) }.isInstanceOf(IllegalArgumentException::class.java)
+		assertThatThrownBy { RowVersioning.live(Instant.parse("1969-12-31T23:59:59Z")) }.isInstanceOf(IllegalArgumentException::class.java)
+	}
+
+	@Test
 	@DisplayName("EpochNanos 는 나노초까지 Instant 와 왕복한다")
 	fun epochNanosRoundTrip() {
 		val instant = Instant.parse("2026-09-25T01:02:03.123456789Z")
