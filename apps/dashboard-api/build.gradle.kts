@@ -5,12 +5,20 @@ plugins {
 }
 
 dependencies {
+	// enrollment 스키마(조직·팀·구성원)를 읽는다. 쓰기 소유는 그대로다 — 이 앱의 RDS 계정은 SELECT 만 갖는다 (ADR 0022 §2·§4).
+	// JPA·JDBC 를 api() 로 노출하므로 엔티티·리포지토리·JdbcClient 를 여기서 바로 쓴다.
+	implementation(project(":libs:enrollment-persistence"))
+
 	implementation(libs.spring.boot.starter.webmvc)
 	// 필터 체인 배선. starter 는 조립하는 앱이 켠다 — :libs: 에는 붙이지 않는다 (ADR 0011 · 0016).
 	implementation(libs.spring.boot.starter.security)
 	implementation(libs.jackson.module.kotlin)
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
+	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
+	testImplementation(libs.testcontainers.postgresql)
+	// ClickHouse 는 GenericContainer 로 띄운다 — 전용 모듈은 JDBC 드라이버를 요구한다.
+	testImplementation(libs.testcontainers)
 }
 
 // 실행 산출물은 bootJar 하나다. plain jar 를 만들면 Dockerfile 이 둘 중 하나를 골라내야 한다.

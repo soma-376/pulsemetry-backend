@@ -3,13 +3,15 @@ package com.team376.pulsemetry.dashboard.config
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.env.StandardEnvironment
 import java.time.Duration
 
-/** 기본값 없는 필수 설정 (ADR 0022 §5). */
+/** 기본값 없는 필수 설정 (ADR 0022 §4·§5). */
 class DashboardApiPropertiesTest {
 
 	@Configuration(proxyBeanMethods = false)
@@ -32,21 +34,59 @@ class DashboardApiPropertiesTest {
 	@Test
 	@DisplayName("retry-after 가 비어 있으면 기동이 실패한다 — application.yaml 의 환경변수 자리가 빈 경우")
 	fun blankRetryAfterFails() {
-		runner.withPropertyValues("pulsemetry.dashboard.retry-after=").run { assertThat(it).hasFailed() }
+		runner.withPropertyValues(*complete, "pulsemetry.dashboard.retry-after=").run { assertThat(it).hasFailed() }
 	}
 
 	@Test
 	@DisplayName("retry-after 가 1초 미만이면 기동이 실패한다")
 	fun subSecondRetryAfterFails() {
-		runner.withPropertyValues("pulsemetry.dashboard.retry-after=500ms").run { assertThat(it).hasFailed() }
+		runner.withPropertyValues(*complete, "pulsemetry.dashboard.retry-after=500ms").run { assertThat(it).hasFailed() }
 	}
 
 	@Test
-	@DisplayName("retry-after 를 주면 그 값으로 뜬다")
-	fun retryAfterBinds() {
-		runner.withPropertyValues("pulsemetry.dashboard.retry-after=3s").run {
+	@DisplayName("값을 모두 주면 그 값으로 뜬다")
+	fun everythingBinds() {
+		runner.withPropertyValues(*complete).run {
 			assertThat(it).hasNotFailed()
-			assertThat(it.getBean(DashboardApiProperties::class.java).retryAfter).isEqualTo(Duration.ofSeconds(3))
+			val properties = it.getBean(DashboardApiProperties::class.java)
+			assertThat(properties.retryAfter).isEqualTo(Duration.ofSeconds(3))
+			assertThat(properties.clickhouse.source.maxResultRows).isEqualTo(100)
+			assertThat(properties.rds.source.connectionTimeout).isEqualTo(Duration.ofSeconds(3))
+			assertThat(properties.rds.source.password).isEmpty()
 		}
 	}
+
+	@ParameterizedTest
+	@ValueSource(
+		strings = [
+			"pulsemetry.dashboard.clickhouse.source.url",
+			"pulsemetry.dashboard.clickhouse.source.database",
+			"pulsemetry.dashboard.clickhouse.source.username",
+			"pulsemetry.dashboard.clickhouse.source.query-timeout",
+			"pulsemetry.dashboard.clickhouse.source.max-result-rows",
+			"pulsemetry.dashboard.clickhouse.source.max-result-bytes",
+			"pulsemetry.dashboard.rds.source.url",
+			"pulsemetry.dashboard.rds.source.username",
+		],
+	)
+	@DisplayName("원천 계정·상한 값이 비면 기동이 실패한다 — 기본값이 없다")
+	fun blankSourceSettingFails(key: String) {
+		runner.withPropertyValues(*complete.filterNot { it.startsWith("$key=") }.toTypedArray(), "$key=")
+			.run { assertThat(it).hasFailed() }
+	}
+
+	private val complete = arrayOf(
+		"pulsemetry.dashboard.retry-after=3s",
+		"pulsemetry.dashboard.clickhouse.source.url=http://localhost:8123",
+		"pulsemetry.dashboard.clickhouse.source.database=default",
+		"pulsemetry.dashboard.clickhouse.source.username=dashboard_reader",
+		"pulsemetry.dashboard.clickhouse.source.password=secret",
+		"pulsemetry.dashboard.clickhouse.source.query-timeout=10s",
+		"pulsemetry.dashboard.clickhouse.source.max-result-rows=100",
+		"pulsemetry.dashboard.clickhouse.source.max-result-bytes=1000",
+		"pulsemetry.dashboard.rds.source.url=jdbc:postgresql://localhost:5432/pulsemetry",
+		"pulsemetry.dashboard.rds.source.username=dashboard_reader",
+		"pulsemetry.dashboard.rds.source.password=",
+		"pulsemetry.dashboard.rds.source.connection-timeout=3s",
+	)
 }

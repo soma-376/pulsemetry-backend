@@ -4,6 +4,7 @@ import com.team376.pulsemetry.dashboard.authentication.DashboardAuthenticator
 import com.team376.pulsemetry.dashboard.authentication.DashboardPrincipal
 import com.team376.pulsemetry.dashboard.authentication.RejectingDashboardAuthenticator
 import com.team376.pulsemetry.dashboard.authentication.Role
+import com.team376.pulsemetry.dashboard.support.AbstractDashboardContextTest
 import com.team376.pulsemetry.dashboard.support.DashboardHttp
 import com.team376.pulsemetry.dashboard.support.TestDashboardAuthenticator
 import org.assertj.core.api.Assertions.assertThat
@@ -16,10 +17,10 @@ import java.util.UUID
 
 /**
  * **기본 런타임 구현**으로 뜬 앱 (ADR 0022 §3). 테스트 인증을 끼우지 않으므로 컨텍스트가 하나 더 뜬다 —
- * 저장소 없이 뜨는 컨텍스트라 싸고, 배포될 배선을 그대로 보는 유일한 자리다.
+ * 원천 저장소 컨테이너는 공유하고, 배포될 배선을 그대로 보는 유일한 자리다.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class DefaultAuthenticationTest {
+class DefaultAuthenticationTest : AbstractDashboardContextTest() {
 
 	@LocalServerPort
 	private var port: Int = 0

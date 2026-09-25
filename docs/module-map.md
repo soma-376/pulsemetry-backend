@@ -36,9 +36,12 @@ pulsemetry-backend
 │   └── dashboard-api/               com.team376.pulsemetry.dashboard
 │                                    분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐 (ADR 0022)
 │                                    ├ api/            HTTP 표현 계층
-│                                    ├ authentication/ 인증 포트 · 기본 거부 구현 · 필터
+│                                    ├ authentication/ 인증 포트 · 기본 거부 구현 · 필터 · 역할 대응
+│                                    ├ authorization/  인가 포트 · 기본 정책(관리자만) · 조직 경로 공통 관문
+│                                    ├ organization/   조직(tenant) 읽기
+│                                    ├ request/        요청 ID · 조회 파라미터 해석(기간·비교·목록 cursor)
+│                                    ├ source/         원천 읽기 — ClickHouse 읽기 전용 클라이언트
 │                                    ├ error/          오류 본문 · 코드 · 예외 매핑
-│                                    ├ request/        요청 ID
 │                                    └ config/
 └── libs/
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
@@ -81,6 +84,9 @@ pulsemetry-backend
 패키지다. 인증은 앱 안의 포트(`DashboardAuthenticator`)이고 기본 런타임 구현은 전부 거부한다 — 사용자 인증이 `:libs:security`에 서면
 그 검증을 잇는 어댑터가 포트를 구현한다. 필터 체인은 `telemetry-ingest`처럼 둘이고 기본 닫힘이다(`/api/v1/organizations` 아래만
 인증, 나머지는 `/v1/healthz`만 열고 404).
+원천 연결은 앱이 직접 세운다 — RDS는 `pulsemetry.dashboard.rds.source`로 만든 읽기 전용 주 DataSource(JPA·`JdbcClient`가 쓴다, Flyway는 끈다),
+ClickHouse는 `source/`의 읽기 전용 클라이언트다. 적재 모듈의 `ClickHouseHttpClient`와 따로 두는 것은 요구가 반대라서다(계정 인증·요청마다의
+`readonly`·결과 상한·행 해석이 필요하고 쓰기가 없다).
 
 `:libs:security`에는 아직 **OTLP 경로의 `ptt_` 검증만** 있다(PROJ-102). 관리자 API 경로의 AT 검증은
 PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 — 지금은 내용물 묶음이 하나뿐이라

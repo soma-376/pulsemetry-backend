@@ -11,12 +11,50 @@ spring:
       # 정적 자원을 서빙하지 않는다. 매핑이 없는 경로는 컨트롤러 계층의 404 not_found 가 된다.
       add-mappings: false
 
+  jpa:
+    hibernate:
+      # 스키마의 진실원은 Flyway 다. 이 앱은 읽기 전용 소비자이고, Hibernate 는 엔티티가
+      # 스키마와 어긋나면 기동을 막는 역할만 한다.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: enrollment
+    open-in-view: false
+
+  flyway:
+    # enrollment 스키마를 마이그레이션하는 주체는 :apps:enrollment-api 하나다 (ADR 0004 · 0022 §2).
+    # spring-boot-starter-flyway 가 :libs:enrollment-persistence 를 타고 런타임 클래스패스에 오르므로 끈다 —
+    # 켜 두면 읽기 전용 계정으로 마이그레이션을 시도한다.
+    enabled: false
+
 logging:
   pattern:
     # 요청 ID(X-Request-Id)를 로그 상관 키로 싣는다 — RequestIds.MDC_KEY 와 맞춘다.
     correlation: "[%X{requestId:-}] "
 
+# 기본값이 없는 값은 비어 있으면 기동이 실패한다 (ADR 0022 §4·§5). 계정·상한은 infra 가 정한다.
 pulsemetry:
   dashboard:
-    # 503 응답의 Retry-After. 기본값이 없다 — 비어 있으면 기동이 실패한다 (ADR 0022 §5).
+    # 503 응답의 Retry-After.
     retry-after: ${PULSEMETRY_DASHBOARD_RETRY_AFTER:}
+
+    clickhouse:
+      # 분석 테이블·ledger 읽기 — SELECT 만 가진 계정. 계정 프로필은 readonly=2 이하여야 한다
+      # (요청마다 readonly=2 와 상한 설정을 싣는다 — readonly=1 프로필은 설정 변경을 거부한다).
+      source:
+        url: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_URL:}
+        database: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_DATABASE:}
+        username: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_USERNAME:}
+        password: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_PASSWORD:}
+        query-timeout: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_QUERY_TIMEOUT:}
+        max-result-rows: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_MAX_RESULT_ROWS:}
+        max-result-bytes: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_MAX_RESULT_BYTES:}
+
+    rds:
+      # enrollment · telemetry_ops 읽기 — SELECT 만 가진 계정.
+      source:
+        url: ${PULSEMETRY_DASHBOARD_RDS_SOURCE_URL:}
+        username: ${PULSEMETRY_DASHBOARD_RDS_SOURCE_USERNAME:}
+        password: ${PULSEMETRY_DASHBOARD_RDS_SOURCE_PASSWORD:}
+        # enrollment-api · telemetry-ingest 의 connection-timeout(3000ms) 과 같은 값이다.
+        connection-timeout: 3s
