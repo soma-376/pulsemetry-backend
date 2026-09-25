@@ -6,6 +6,7 @@ import com.team376.pulsemetry.telemetry.collector.PermanentIngestException
 import com.team376.pulsemetry.telemetry.collector.Signal
 import com.team376.pulsemetry.telemetry.collector.SignalConsumer
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveWriter
+import com.team376.pulsemetry.telemetry.collector.archive.ArchivedObject
 import com.team376.pulsemetry.telemetry.collector.archive.Product
 import com.team376.pulsemetry.telemetry.config.TelemetryIngestProperties
 import org.assertj.core.api.Assertions.assertThat
@@ -59,7 +60,7 @@ class OtlpStatusContractTest {
 
 	// ------------------------------------------------------------------ 도구
 
-	private fun consumer(block: () -> Unit): SignalConsumer = SignalConsumer { _, _ -> block() }
+	private fun consumer(block: () -> Unit): SignalConsumer = SignalConsumer { _, _, _ -> block() }
 
 	private fun post(next: SignalConsumer): MockHttpServletResponse =
 		mockMvc(next)
@@ -73,7 +74,7 @@ class OtlpStatusContractTest {
 
 	private fun mockMvc(next: SignalConsumer): MockMvc {
 		val archive = object : ArchiveWriter {
-			override fun write(product: Product, signal: Signal, body: ByteArray) = Unit
+			override fun write(product: Product, signal: Signal, body: ByteArray) = ArchivedObject("memory://0")
 		}
 		val handler = OtlpIngestHandler(archive = archive, next = next)
 		val properties = TelemetryIngestProperties(tokenHashSecret = "test-token-hash-secret")

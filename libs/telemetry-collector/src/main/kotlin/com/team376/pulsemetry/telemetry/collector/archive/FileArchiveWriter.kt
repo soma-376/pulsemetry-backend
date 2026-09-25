@@ -1,6 +1,8 @@
 package com.team376.pulsemetry.telemetry.collector.archive
 
 import com.team376.pulsemetry.telemetry.collector.Signal
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -31,15 +33,30 @@ public class FileArchiveWriter(
 	private val root: Path,
 ) : ArchiveWriter {
 
-	override fun write(product: Product, signal: Signal, body: ByteArray) {
+	/**
+	 * 한 줄을 덧붙이고 그 줄의 바이트 위치를 돌려준다.
+	 *
+	 * 위치를 알려면 "파일 끝을 읽고 → 쓴다" 사이에 다른 쓰기가 끼면 안 되므로 **이 writer 의 쓰기를
+	 * 직렬화한다.** 로컬 dev·테스트 전용이라(배포는 S3) 처리량보다 위치의 정확성이 중요하다.
+	 * 같은 파일에 다른 프로세스가 동시에 쓰는 구성은 지원하지 않는다.
+	 */
+	override fun write(product: Product, signal: Signal, body: ByteArray): ArchivedObject {
 		val file = root.resolve(product.archiveSegment).resolve("${signal.fileStem}.jsonl")
-		// 현행 설정의 create_directory: true 에 해당한다. 없으면 기동 직후 죽는다.
-		Files.createDirectories(file.parent)
-		// 본문과 개행을 한 번의 write 로 쓴다. APPEND 는 write 한 번의 원자성만 보장하므로,
-		// 둘로 나누면 동시 요청의 줄이 섞인다.
-		val line = body.copyOf(body.size + 1).also { it[body.size] = '\n'.code.toByte() }
-		Files.newOutputStream(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND).use { out ->
-			out.write(line)
+		synchronized(this) {
+			// 현행 설정의 create_directory: true 에 해당한다. 없으면 기동 직후 죽는다.
+			Files.createDirectories(file.parent)
+			// 본문과 개행을 한 번의 write 로 쓴다 — 줄이 둘로 나뉘어 남는 일이 없게 한다.
+			val line = ByteBuffer.wrap(body.copyOf(body.size + 1).also { it[body.size] = '\n'.code.toByte() })
+			val offset = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND).use { channel ->
+				val start = channel.size()
+				while (line.hasRemaining()) channel.write(line)
+				start
+			}
+			return ArchivedObject(
+				uri = file.toAbsolutePath().normalize().toUri().toString(),
+				byteOffset = offset,
+				byteLength = body.size.toLong(),
+			)
 		}
 	}
 }

@@ -53,8 +53,10 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		data.clear()
 		truncateEnrichedEvents()
 		// 파일 아카이브는 append 전용이라 실행마다 쌓인다. 이전 실행의 내용에 좌우되지 않게 비운다.
-		for (signal in listOf("logs", "traces")) {
-			Files.deleteIfExists(Path.of(archiveDir, "claude_code", "$signal.jsonl"))
+		for (product in listOf("claude_code", "codex", "unknown")) {
+			for (signal in listOf("logs", "traces")) {
+				Files.deleteIfExists(Path.of(archiveDir, product, "$signal.jsonl"))
+			}
 		}
 	}
 
@@ -106,6 +108,22 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		assertThat(archived).contains(seeded.tenantId.toString())
 		assertThat(archived).contains(seeded.installationId.toString())
 		assertThat(archived).doesNotContain(BOGUS_TENANT)
+	}
+
+	@Test
+	@DisplayName("codex-app-server 는 codex 구간에, 별칭 표에 없는 서비스는 unknown 구간에 아카이브된다")
+	fun codexAppServerAndUnregisteredServicesAreArchived() {
+		val seeded = data.seed()
+
+		val codex = post("/v1/logs", seeded.rawToken, oneLogFrom("codex-app-server"))
+		val unknown = post("/v1/logs", seeded.rawToken, oneLogFrom("node_repl"))
+
+		assertThat(codex.statusCode()).isEqualTo(200)
+		assertThat(unknown.statusCode()).isEqualTo(200)
+		assertThat(Files.readString(Path.of(archiveDir, "codex", "logs.jsonl")))
+			.contains("codex-app-server").contains(seeded.tenantId.toString())
+		assertThat(Files.readString(Path.of(archiveDir, "unknown", "logs.jsonl")))
+			.contains("node_repl").contains(seeded.tenantId.toString())
 	}
 
 	@Test
@@ -259,6 +277,18 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 			   "attributes":[
 			     {"key":"session.id","value":{"stringValue":"e2e-session"}},
 			     {"key":"prompt_length","value":{"intValue":"42"}}]}]}]}]}
+		""".trimIndent().toByteArray()
+	}
+
+	/** [serviceName] 이 보낸 로그 하나. 적재 대상인지와 무관하게 아카이브는 남아야 한다. */
+	private fun oneLogFrom(serviceName: String): ByteArray {
+		val now = Instant.now()
+		val nanos = now.epochSecond * 1_000_000_000L + now.nano
+		return """
+			{"resourceLogs":[{"resource":{"attributes":[
+			  {"key":"service.name","value":{"stringValue":"$serviceName"}}]},
+			 "scopeLogs":[{"logRecords":[{"timeUnixNano":"$nanos",
+			   "attributes":[{"key":"event.name","value":{"stringValue":"codex.user_prompt"}}]}]}]}]}
 		""".trimIndent().toByteArray()
 	}
 

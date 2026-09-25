@@ -8,6 +8,7 @@ import com.team376.pulsemetry.telemetry.adapter.model.Normalized
 import com.team376.pulsemetry.telemetry.collector.PermanentIngestException
 import com.team376.pulsemetry.telemetry.collector.Signal
 import com.team376.pulsemetry.telemetry.collector.SignalConsumer
+import com.team376.pulsemetry.telemetry.collector.archive.ArchiveReceipt
 import com.team376.pulsemetry.telemetry.enricher.Enricher
 import org.springframework.dao.NonTransientDataAccessException
 import org.springframework.dao.NonTransientDataAccessResourceException
@@ -46,7 +47,11 @@ class IngestPipeline(
 	private val normalize: (Message) -> List<Normalized> = { Normalizer.normalize(it) },
 ) : SignalConsumer {
 
-	override fun consume(signal: Signal, request: Message) {
+	/**
+	 * [receipt] 는 받기만 한다. 이 경로(`enriched_events`)는 원본 참조를 저장하지 않는다 — 영수증을 쓰는 적재는
+	 * 정규화 2판 경로가 맡는다(ADR 0020 §6).
+	 */
+	override fun consume(signal: Signal, request: Message, receipt: ArchiveReceipt) {
 		val events = try {
 			normalize(request)
 		} catch (exception: RuntimeException) {

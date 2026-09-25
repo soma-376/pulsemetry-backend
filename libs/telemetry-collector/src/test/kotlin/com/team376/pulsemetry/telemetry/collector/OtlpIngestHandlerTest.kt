@@ -1,8 +1,11 @@
 package com.team376.pulsemetry.telemetry.collector
 
 import com.google.protobuf.Message
+import com.team376.pulsemetry.telemetry.collector.archive.ArchiveReceipt
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveWriter
+import com.team376.pulsemetry.telemetry.collector.archive.ArchivedObject
 import com.team376.pulsemetry.telemetry.collector.archive.Product
+import com.team376.pulsemetry.telemetry.collector.masking.MaskingPolicy
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
@@ -14,6 +17,10 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
 import org.junit.jupiter.params.provider.ValueSource
 import java.io.ByteArrayOutputStream
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
+import java.util.UUID
 import java.util.zip.GZIPOutputStream
 
 /** 수집 진입점의 특성화 테스트. 상위 `receiver/otlpreceiver/otlphttp.go` 가 사양이다. */
@@ -21,13 +28,18 @@ class OtlpIngestHandlerTest {
 
 	private val archive = RecordingArchiveWriter()
 	private val consumed = mutableListOf<Pair<Signal, Message>>()
+	private val receipts = mutableListOf<ArchiveReceipt>()
 	private var downstream: (Signal, Message) -> Unit = { s, m -> consumed += s to m }
 	private var identity: StampedIdentity? = null
 
 	private val handler = OtlpIngestHandler(
 		archive = archive,
-		next = { signal, request -> downstream(signal, request) },
+		next = { signal, request, receipt ->
+			receipts += receipt
+			downstream(signal, request)
+		},
 		identity = { identity },
+		clock = Clock.fixed(RECEIVED_AT, ZoneOffset.UTC),
 	)
 
 	// ------------------------------------------------------------------ 상태 매핑
@@ -280,15 +292,87 @@ class OtlpIngestHandlerTest {
 			.contains("\"a\"").doesNotContain("\"b\"")
 	}
 
+	@ParameterizedTest(name = "service.name={0} -> unknown")
+	@ValueSource(strings = ["node_repl", "Claude-Code", "codex", "codex-app-server-2", ""])
+	@DisplayName("별칭 표에 없는 서비스는 버리지 않고 unknown 구간에 아카이브한다 — 정확 일치만 제품이다")
+	fun unregisteredServicesAreArchivedAsUnknown(serviceName: String) {
+		handler.handle(request(body = oneLogRecord(serviceName = serviceName)))
+
+		assertThat(archive.written.map { it.product }).containsExactly(Product.UNKNOWN)
+		assertThat(consumed).hasSize(1)
+	}
+
 	@Test
-	@DisplayName("service.name 이 없으면 어느 아카이브에도 남지 않는다 — 하류는 그대로 받는다")
-	fun dropsUnknownProductFromEveryArchive() {
-		// OTTL 의 nil != "codex_cli_rs" 가 참이라 양쪽 필터가 모두 버린다.
-		// 양쪽에 남는 것으로 오해하기 쉬운 자리다.
+	@DisplayName("service.name 이 없어도 unknown 구간에 아카이브한다 — 이식 원본은 양쪽 필터가 모두 버렸다")
+	fun missingServiceNameIsArchivedAsUnknown() {
 		handler.handle(request(body = oneLogRecord(serviceName = null)))
 
-		assertThat(archive.written).isEmpty()
+		assertThat(archive.written.map { it.product }).containsExactly(Product.UNKNOWN)
 		assertThat(consumed).hasSize(1)
+	}
+
+	@ParameterizedTest(name = "service.name={0} -> codex")
+	@ValueSource(strings = ["codex_cli_rs", "codex-app-server", "Codex Desktop"])
+	@DisplayName("Codex 의 세 서비스 이름은 codex 구간이다")
+	fun codexAliasesShareTheCodexSegment(serviceName: String) {
+		handler.handle(request(body = oneLogRecord(serviceName = serviceName)))
+
+		assertThat(archive.written.map { it.product }).containsExactly(Product.CODEX)
+	}
+
+	// ------------------------------------------------------------------ 영수증
+
+	@Test
+	@DisplayName("영수증이 수신 시각·시그널·검증된 신원·정책 버전과 실제로 쓴 위치를 담는다")
+	fun theReceiptCarriesWhatWasActuallyWritten() {
+		identity = StampedIdentity(tenantId = "ten-1", installationId = "inst-1")
+
+		handler.handle(request(body = oneLogRecord()))
+
+		val receipt = receipts.single()
+		assertThat(UUID.fromString(receipt.receiptId)).isNotNull()
+		assertThat(receipt.receivedAt).isEqualTo(RECEIVED_AT)
+		assertThat(receipt.signal).isEqualTo(Signal.LOGS)
+		assertThat(receipt.tenantId).isEqualTo("ten-1")
+		assertThat(receipt.installationId).isEqualTo("inst-1")
+		assertThat(receipt.maskingVersion).isEqualTo(MaskingPolicy.VERSION)
+		assertThat(receipt.identityVersion).isEqualTo("stamp-v1")
+		assertThat(receipt.documents.single().location.uri).isEqualTo("memory://0")
+	}
+
+	@Test
+	@DisplayName("요청마다 새 영수증이다 — 같은 본문의 재전송도 다른 receiptId 다")
+	fun everyRequestGetsItsOwnReceipt() {
+		handler.handle(request(body = oneLogRecord()))
+		handler.handle(request(body = oneLogRecord()))
+
+		assertThat(receipts.map { it.receiptId }.toSet()).hasSize(2)
+	}
+
+	@Test
+	@DisplayName("요청의 모든 resource 가 정확히 한 문서에 들어가고, 요청 경로가 문서 안 경로로 옮겨진다")
+	fun everyResourceMapsToExactlyOneDocument() {
+		val body = """
+			{"resourceLogs":[
+			 {"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"codex-app-server"}}]},
+			  "scopeLogs":[{"logRecords":[{"body":{"stringValue":"a"}}]}]},
+			 {"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"node_repl"}}]},
+			  "scopeLogs":[{"logRecords":[{"body":{"stringValue":"b"}}]}]},
+			 {"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"Codex Desktop"}}]},
+			  "scopeLogs":[{"logRecords":[{"body":{"stringValue":"c"}},{"body":{"stringValue":"d"}}]}]}]}
+		""".trimIndent().toByteArray()
+
+		handler.handle(request(body = body))
+
+		val receipt = receipts.single()
+		assertThat(receipt.documents.map { it.product }).containsExactly(Product.CODEX, Product.UNKNOWN)
+		assertThat(receipt.documents.map { it.resourceIndexes }).containsExactly(listOf(0, 2), listOf(1))
+		// 요청의 세 번째 resource, 첫 scope, 두 번째 레코드("d")는 codex 문서의 두 번째 resource 다.
+		val (document, selector) = receipt.selectorOf(listOf(2, 0, 1))!!
+		assertThat(document.product).isEqualTo(Product.CODEX)
+		assertThat(selector.path).containsExactly(1, 0, 1)
+		assertThat(receipt.selectorOf(listOf(1, 0, 0))!!.second.path).containsExactly(0, 0, 0)
+		assertThat(receipt.selectorOf(listOf(3, 0, 0))).isNull()
 	}
 
 	@Test
@@ -300,6 +384,8 @@ class OtlpIngestHandlerTest {
 
 		assertThat(response.status).isEqualTo(503)
 		assertThat(consumed).isEmpty()
+		// 영수증을 만들지 않는다 — 가상의 참조를 발급하지 않는다.
+		assertThat(receipts).isEmpty()
 	}
 
 	// ------------------------------------------------------------------ 실측 fixture
@@ -523,9 +609,14 @@ class OtlpIngestHandlerTest {
 		val written = mutableListOf<ArchiveEntry>()
 		var failWith: RuntimeException? = null
 
-		override fun write(product: Product, signal: Signal, body: ByteArray) {
+		override fun write(product: Product, signal: Signal, body: ByteArray): ArchivedObject {
 			failWith?.let { throw it }
 			written += ArchiveEntry(product, signal, body)
+			return ArchivedObject(uri = "memory://${written.size - 1}")
 		}
+	}
+
+	private companion object {
+		val RECEIVED_AT: Instant = Instant.parse("2026-09-25T01:02:03.123456789Z")
 	}
 }

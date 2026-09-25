@@ -1,14 +1,19 @@
 package com.team376.pulsemetry.telemetry.collector
 
 import com.google.protobuf.Message
+import com.team376.pulsemetry.telemetry.collector.archive.ArchiveReceipt
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveWriter
+import com.team376.pulsemetry.telemetry.collector.archive.ArchivedDocument
 import com.team376.pulsemetry.telemetry.collector.archive.ProductRouter
 import com.team376.pulsemetry.telemetry.collector.masking.AttributeWalker
+import com.team376.pulsemetry.telemetry.collector.masking.MaskingPolicy
 import com.team376.pulsemetry.telemetry.collector.masking.SecretMasker
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
 import io.opentelemetry.proto.metrics.v1.Metric
+import java.time.Clock
+import java.util.UUID
 
 /**
  * 수집 단계의 진입점. OTLP 수신 → 마스킹 → 원본 아카이브 → 다음 단계.
@@ -22,8 +27,8 @@ import io.opentelemetry.proto.metrics.v1.Metric
  * ```
  * 1. 마스킹      logs·traces 만. metrics 는 현행 설정에 redaction 이 없다 (Signal.masked)
  * 2. 신원 스탬프  검증된 tenant·installation 을 리소스 속성으로 승격한다
- * 3. 아카이브     제품별로 갈라 외부 저장소에 쓴다
- * 4. 다음 단계    변환·보강·적재
+ * 3. 아카이브     제품 구간별로 갈라 외부 저장소에 쓰고, 실제로 쓴 위치로 영수증을 만든다
+ * 4. 다음 단계    변환·보강·적재 — 전체 요청과 영수증을 함께 받는다
  * ```
  *
  * **스탬프가 아카이브보다 먼저다.** 신원은 멱등 키의 재료이기 때문이다 — 변환 단계가
@@ -53,12 +58,16 @@ public class OtlpIngestHandler(
 	private val next: SignalConsumer,
 	private val identity: IdentitySource = IdentitySource { null },
 	maxDecompressedBytes: Long = OtlpRequestDecoder.DEFAULT_MAX_DECOMPRESSED_BYTES,
+	/** 영수증의 수신 시각을 재는 서버 시계. */
+	private val clock: Clock = Clock.systemUTC(),
 ) {
 
 	private val decoder = OtlpRequestDecoder(maxDecompressedBytes)
 	private val walker = AttributeWalker(SecretMasker())
 
 	public fun handle(request: OtlpHttpRequest): OtlpHttpResponse {
+		// 서버 수신 시각은 요청이 여기 닿은 때다 — 디코드·마스킹에 걸린 시간을 섞지 않는다.
+		val receivedAt = clock.instant()
 		if (!request.method.equals("POST", ignoreCase = true)) return methodNotAllowed()
 
 		// 상위는 설정된 경로에만 라우트를 등록하므로 그 밖의 경로는 mux 가 404 를 낸다.
@@ -88,15 +97,31 @@ public class OtlpIngestHandler(
 		if (signal.masked) mask(signal, builder)
 
 		// 아카이브보다 먼저다. 빌더에 찍으므로 아카이브와 다음 단계가 같은 값을 본다.
-		identity.current()?.let { IdentityStamper.stamp(builder, it) }
+		val stamped = identity.current()
+		stamped?.let { IdentityStamper.stamp(builder, it) }
 
 		val message = builder.build()
 
 		return try {
-			ProductRouter.split(message).forEach { (product, document) ->
-				archive.write(product, signal, OtlpJson.toJson(document))
+			// 모든 resource 가 정확히 한 문서에 들어간다. 하나라도 실패하면 영수증 없이 503 이다.
+			val documents = ProductRouter.split(message).map { routed ->
+				ArchivedDocument(
+					product = routed.product,
+					location = archive.write(routed.product, signal, OtlpJson.toJson(routed.document)),
+					resourceIndexes = routed.resourceIndexes,
+				)
 			}
-			next.consume(signal, message)
+			val receipt = ArchiveReceipt(
+				receiptId = UUID.randomUUID().toString(),
+				receivedAt = receivedAt,
+				signal = signal,
+				tenantId = stamped?.tenantId?.takeIf { it.isNotEmpty() },
+				installationId = stamped?.installationId?.takeIf { it.isNotEmpty() },
+				maskingVersion = MaskingPolicy.VERSION,
+				identityVersion = IdentityStamper.VERSION,
+				documents = documents,
+			)
+			next.consume(signal, message, receipt)
 			success(signal, encoding)
 		} catch (e: PermanentIngestException) {
 			// 영구 오류. 재시도해도 같으므로 클라이언트가 배치를 버리게 한다 — 그러려면 4xx 여야 한다.

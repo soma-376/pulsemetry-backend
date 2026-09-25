@@ -16,6 +16,7 @@ import com.team376.pulsemetry.telemetry.pipeline.IngestPipeline
 import com.team376.pulsemetry.telemetry.pipeline.SecurityContextIdentitySource
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import java.time.Clock
 
 /**
  * 다섯 단계를 잇는다. **여기가 조립의 전부다** — 단계 모듈은 서로의 seam 을 구현하지 않고
@@ -55,10 +56,13 @@ class PipelineConfig {
 		next: SignalConsumer,
 		identity: IdentitySource,
 		properties: TelemetryIngestProperties,
+		clock: Clock,
 	): OtlpIngestHandler = OtlpIngestHandler(
 		archive = archive,
 		next = next,
 		identity = identity,
 		maxDecompressedBytes = properties.telemetry.ingest.maxDecompressedBytes,
+		// 아카이브 영수증의 수신 시각. S3 키 파티션과 같은 시계다.
+		clock = clock,
 	)
 }

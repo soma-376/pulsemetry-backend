@@ -55,6 +55,12 @@ public fun interface IdentitySource {
  */
 internal object IdentityStamper {
 
+	/**
+	 * 이 규칙의 버전. 아카이브 영수증의 `identityVersion` 이 이 값이다 — 심는 키·덮어쓰기 규칙이 바뀌면
+	 * 재처리가 원래 신원 문맥을 구별할 수 있게 올린다.
+	 */
+	const val VERSION: String = "stamp-v1"
+
 	private const val TENANT_ID = "tenant.id"
 	private const val INSTALLATION_ID = "developer.installation_id"
 

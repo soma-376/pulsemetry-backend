@@ -7,6 +7,7 @@ import com.team376.pulsemetry.persistence.telemetry.EnrichedEventsSink
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
 import com.team376.pulsemetry.telemetry.collector.PermanentIngestException
 import com.team376.pulsemetry.telemetry.collector.Signal
+import com.team376.pulsemetry.telemetry.collector.archive.ArchiveReceipt
 import com.team376.pulsemetry.telemetry.enricher.Enriched
 import com.team376.pulsemetry.telemetry.enricher.Enricher
 import com.team376.pulsemetry.telemetry.enricher.provider.AiAnalysisProvider
@@ -64,7 +65,7 @@ class IngestPipelineTest {
 		val pipeline = pipeline()
 		status = 400
 
-		assertThatThrownBy { pipeline.consume(Signal.LOGS, oneUserPrompt()) }
+		assertThatThrownBy { pipeline.consume(Signal.LOGS, oneUserPrompt(), receipt(Signal.LOGS)) }
 			.isInstanceOf(PermanentIngestException::class.java)
 			.hasMessageContaining("clickhouse 400")
 	}
@@ -75,7 +76,7 @@ class IngestPipelineTest {
 		val pipeline = pipeline()
 		status = 503
 
-		assertThatThrownBy { pipeline.consume(Signal.LOGS, oneUserPrompt()) }
+		assertThatThrownBy { pipeline.consume(Signal.LOGS, oneUserPrompt(), receipt(Signal.LOGS)) }
 			.isInstanceOf(TelemetrySinkUnavailableException::class.java)
 	}
 
@@ -86,7 +87,7 @@ class IngestPipelineTest {
 		val pipeline = pipeline(startupAttempts = 0)
 		requests.clear()
 
-		pipeline.consume(Signal.LOGS, oneUserPrompt())
+		pipeline.consume(Signal.LOGS, oneUserPrompt(), receipt(Signal.LOGS))
 
 		// 첫 요청이 DDL 이고 그다음이 INSERT 다. 순서가 뒤집히면 테이블 없는 INSERT 가 나간다.
 		assertThat(requests.first()).contains("CREATE+TABLE").doesNotContain("INSERT")
@@ -99,7 +100,7 @@ class IngestPipelineTest {
 		val pipeline = pipeline(provider = throwing { InvalidDataAccessResourceUsageException("column gone") })
 		requests.clear()
 
-		assertThatThrownBy { pipeline.consume(Signal.LOGS, oneUserPrompt()) }
+		assertThatThrownBy { pipeline.consume(Signal.LOGS, oneUserPrompt(), receipt(Signal.LOGS)) }
 			.isInstanceOf(PermanentIngestException::class.java)
 			.hasMessageContaining("column gone")
 		assertThat(requests).isEmpty()
@@ -110,7 +111,7 @@ class IngestPipelineTest {
 	fun aResourceFailureInEnrichmentStaysTransient() {
 		val pipeline = pipeline(provider = throwing { DataAccessResourceFailureException("rds down") })
 
-		assertThatThrownBy { pipeline.consume(Signal.LOGS, oneUserPrompt()) }
+		assertThatThrownBy { pipeline.consume(Signal.LOGS, oneUserPrompt(), receipt(Signal.LOGS)) }
 			.isInstanceOf(DataAccessResourceFailureException::class.java)
 	}
 
@@ -120,7 +121,7 @@ class IngestPipelineTest {
 		val pipeline = pipeline(normalize = { throw IllegalStateException("unreadable span") })
 		requests.clear()
 
-		assertThatThrownBy { pipeline.consume(Signal.TRACES, oneUserPrompt()) }
+		assertThatThrownBy { pipeline.consume(Signal.TRACES, oneUserPrompt(), receipt(Signal.TRACES)) }
 			.isInstanceOf(PermanentIngestException::class.java)
 			.hasMessageContaining("/v1/traces")
 			.hasMessageContaining("unreadable span")
@@ -133,7 +134,7 @@ class IngestPipelineTest {
 		val pipeline = pipeline()
 		requests.clear()
 
-		pipeline.consume(Signal.LOGS, ExportLogsServiceRequest.getDefaultInstance())
+		pipeline.consume(Signal.LOGS, ExportLogsServiceRequest.getDefaultInstance(), receipt(Signal.LOGS))
 
 		assertThat(requests).isEmpty()
 	}
@@ -186,4 +187,16 @@ class IngestPipelineTest {
 		.setKey(key)
 		.setValue(AnyValue.newBuilder().setStringValue(value))
 		.build()
+
+	/** 이 경로는 영수증을 쓰지 않는다 — 받기만 한다는 것을 보이려고 최소 값만 채운다. */
+	private fun receipt(signal: Signal): ArchiveReceipt = ArchiveReceipt(
+		receiptId = "00000000-0000-0000-0000-000000000000",
+		receivedAt = Instant.EPOCH,
+		signal = signal,
+		tenantId = null,
+		installationId = null,
+		maskingVersion = "test",
+		identityVersion = "test",
+		documents = emptyList(),
+	)
 }

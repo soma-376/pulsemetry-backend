@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.telemetry.collector
 
 import com.google.protobuf.Message
+import com.team376.pulsemetry.telemetry.collector.archive.ArchiveReceipt
 
 /**
  * 수신한 OTLP 요청. 서블릿·WebFlux 어느 쪽에도 매이지 않는다 — 이 모듈은 라이브러리이고
@@ -25,12 +26,16 @@ public class OtlpHttpResponse(
  * 마스킹·아카이브를 마친 시그널을 받는 다음 단계. 조립 앱이 변환·보강·적재를 여기 잇는다
  * (ADR 0011 · 0013).
  *
+ * [request] 는 제품 구간으로 가르기 **전의** 전체 요청이고, [receipt] 는 그 요청을 아카이브한 영수증이다
+ * — 요청 기준 경로를 [ArchiveReceipt.selectorOf] 로 아카이브 문서의 selector 로 옮길 수 있다(ADR 0020 §6).
+ * 아카이브가 실패하면 이 단계는 불리지 않으므로 영수증은 언제나 있다.
+ *
  * 여기서 던진 예외는 재시도 가능으로 보고 **503** 이 된다 — 상태가 실리지 않은 오류의 기본이다.
  * 재시도가 무의미한 영구 오류라면 [PermanentIngestException] 을 던진다. 그래야 **400** 이 되어
  * 클라이언트가 배치를 폐기한다.
  */
 public fun interface SignalConsumer {
-	public fun consume(signal: Signal, request: Message)
+	public fun consume(signal: Signal, request: Message, receipt: ArchiveReceipt)
 }
 
 /**

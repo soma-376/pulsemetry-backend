@@ -26,11 +26,14 @@ import com.team376.pulsemetry.telemetry.collector.Signal
 public interface ArchiveWriter {
 
 	/**
-	 * 한 번의 수신을 아카이브 한 건으로 쓴다.
+	 * 한 번의 수신을 아카이브 한 건으로 쓰고, **실제로 쓴 위치**를 돌려준다.
+	 *
+	 * 쓰기에 실패하면 예외를 던진다 — 위치를 추정해 돌려주지 않는다. 호출자는 그 예외로 503 을 낸다
+	 * (ADR 0020 §6).
 	 *
 	 * @param product 제품 구간. [ProductRouter] 가 resource 의 `service.name` 으로 골랐다.
 	 * @param signal 시그널 구간.
 	 * @param body OTLP/JSON 로 직렬화한 문서 하나. 현행 file exporter 의 `format: json` 과 같다.
 	 */
-	public fun write(product: Product, signal: Signal, body: ByteArray)
+	public fun write(product: Product, signal: Signal, body: ByteArray): ArchivedObject
 }
