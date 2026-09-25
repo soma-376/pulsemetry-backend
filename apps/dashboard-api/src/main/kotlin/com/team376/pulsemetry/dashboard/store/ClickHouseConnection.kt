@@ -53,18 +53,22 @@ class ClickHouseConnection(
 		settings: Map<String, String>,
 		params: Map<String, ClickHouseParam>,
 		row: (JsonNode) -> T,
-	): List<T> = send(sql, settings + ("default_format" to "JSONEachRow"), params)
+	): List<T> = send(sql, settings + ("default_format" to "JSONEachRow"), params).body
 		.lineSequence()
 		.filter { it.isNotEmpty() }
 		.map { row(mapper.readTree(it)) }
 		.toList()
 
-	/** 결과가 없는 문장(DDL·`INSERT … SELECT`). */
-	fun execute(sql: String, settings: Map<String, String>, params: Map<String, ClickHouseParam>) {
-		send(sql, settings, params)
-	}
+	/**
+	 * 결과가 없는 문장(DDL·`INSERT … SELECT`). 서버가 보고한 쓴 행 수(`X-ClickHouse-Summary` 의 `written_rows`)를 돌려준다 —
+	 * 구체화 뷰가 있으면 입구와 모든 뷰 대상 테이블에 쓴 행의 합이다(24.8 실측).
+	 */
+	fun execute(sql: String, settings: Map<String, String>, params: Map<String, ClickHouseParam>): Long =
+		send(sql, settings, params).writtenRows
 
-	private fun send(sql: String, settings: Map<String, String>, params: Map<String, ClickHouseParam>): String {
+	private data class Sent(val body: String, val writtenRows: Long)
+
+	private fun send(sql: String, settings: Map<String, String>, params: Map<String, ClickHouseParam>): Sent {
 		val request = HttpRequest.newBuilder(uri(settings, params))
 			.timeout(timeout)
 			.header(USER_HEADER, username)
@@ -85,7 +89,10 @@ class ClickHouseConnection(
 		if (response.statusCode() != OK || exceptionCode != null) {
 			throw classify(response.statusCode(), exceptionCode, response.body())
 		}
-		return response.body()
+		val written = response.headers().firstValue(SUMMARY_HEADER).orElse(null)
+			?.let { runCatching { mapper.readTree(it).path("written_rows").asString().toLong() }.getOrNull() }
+			?: 0
+		return Sent(response.body(), written)
 	}
 
 	private fun uri(settings: Map<String, String>, params: Map<String, ClickHouseParam>): URI {
@@ -125,6 +132,7 @@ class ClickHouseConnection(
 		private const val USER_HEADER = "X-ClickHouse-User"
 		private const val KEY_HEADER = "X-ClickHouse-Key"
 		private const val EXCEPTION_CODE_HEADER = "X-ClickHouse-Exception-Code"
+		private const val SUMMARY_HEADER = "X-ClickHouse-Summary"
 		private const val OK = 200
 		private const val SERVER_ERROR = 500
 		private const val MAX_ERROR_DETAIL = 500

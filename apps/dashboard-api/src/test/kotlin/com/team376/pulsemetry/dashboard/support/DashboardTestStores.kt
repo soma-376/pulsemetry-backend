@@ -76,6 +76,8 @@ object DashboardTestStores {
 	}
 
 	fun register(registry: DynamicPropertyRegistry) {
+		// 운영에서 다른 앱이 적용하는 원천 스키마(telemetry_ops 는 enrollment-api, 분석 테이블은 ingest)를 컨텍스트보다 먼저 세운다.
+		ensureSchemas()
 		registry.add("pulsemetry.dashboard.rds.source.url") { postgres.jdbcUrl }
 		registry.add("pulsemetry.dashboard.rds.source.username") { postgres.username }
 		registry.add("pulsemetry.dashboard.rds.source.password") { postgres.password }
@@ -101,6 +103,11 @@ object DashboardTestStores {
 
 		registry.add("pulsemetry.dashboard.snapshot.build-timeout") { "60s" }
 		registry.add("pulsemetry.dashboard.snapshot.purge-grace") { "60s" }
+		registry.add("pulsemetry.dashboard.snapshot.max-concurrent-builds") { "4" }
+		registry.add("pulsemetry.dashboard.snapshot.max-copy-rows") { "1000000" }
+		registry.add("pulsemetry.dashboard.snapshot.max-copy-bytes") { "1000000000" }
+		// 테스트 중에는 정리 작업이 돌지 않게 길게 둔다 — 정리는 SnapshotLifecycleTest 가 직접 부른다.
+		registry.add("pulsemetry.dashboard.snapshot.cleanup-interval") { "1h" }
 
 		// 운영의 앱은 Flyway 를 끈다(enrollment-api 가 소유). 테스트는 격리된 컨테이너라 스키마를 만들 주체가 없으므로
 		// 여기서만 켠다 — 앱 연결이 읽기 전용이므로 Flyway 에는 자기 연결(spring.flyway.url)을 준다.

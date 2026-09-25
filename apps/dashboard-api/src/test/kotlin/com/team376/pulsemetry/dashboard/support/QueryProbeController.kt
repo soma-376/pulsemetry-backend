@@ -5,6 +5,7 @@ import com.team376.pulsemetry.dashboard.authorization.DashboardAction
 import com.team376.pulsemetry.dashboard.authorization.OrganizationAccess
 import com.team376.pulsemetry.dashboard.request.PageCursorCodec
 import com.team376.pulsemetry.dashboard.request.QueryReader
+import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.boot.test.context.TestComponent
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -22,7 +23,21 @@ import java.util.UUID
 class QueryProbeController(
 	private val access: OrganizationAccess,
 	private val codec: PageCursorCodec,
+	private val snapshots: SnapshotService,
 ) {
+
+	/** 공통 snapshot 을 얻는다 — `snapshotId` 가 있으면 재사용, 없으면 새로 만든다. */
+	@GetMapping("/api/v1/organizations/{organizationId}/probe/snapshot")
+	fun snapshot(
+		@AuthenticationPrincipal principal: DashboardPrincipal,
+		@PathVariable organizationId: String,
+		request: HttpServletRequest,
+	): Map<String, Any?> {
+		val organization = access.require(principal, organizationId, DashboardAction.TEAM_ANALYTICS)
+		val period = QueryReader(request::getParameter).read { comparedPeriod() }
+		val manifest = snapshots.obtain(organization.id, principal.memberId, period, usesComparison = true, request.getParameter("snapshotId"))
+		return mapOf("snapshotId" to manifest.snapshotId, "usageRows" to manifest.usageRows, "expiresAt" to manifest.expiresAt.toString())
+	}
 
 	@GetMapping("/api/v1/organizations/{organizationId}/probe/compared")
 	fun compared(

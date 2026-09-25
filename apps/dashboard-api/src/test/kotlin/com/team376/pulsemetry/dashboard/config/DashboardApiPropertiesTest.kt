@@ -75,6 +75,10 @@ class DashboardApiPropertiesTest {
 			"pulsemetry.dashboard.rds.cache.username",
 			"pulsemetry.dashboard.snapshot.build-timeout",
 			"pulsemetry.dashboard.snapshot.purge-grace",
+			"pulsemetry.dashboard.snapshot.max-concurrent-builds",
+			"pulsemetry.dashboard.snapshot.max-copy-rows",
+			"pulsemetry.dashboard.snapshot.max-copy-bytes",
+			"pulsemetry.dashboard.snapshot.cleanup-interval",
 		],
 	)
 	@DisplayName("원천 계정·상한 값이 비면 기동이 실패한다 — 기본값이 없다")
@@ -107,6 +111,10 @@ class DashboardApiPropertiesTest {
 		"pulsemetry.dashboard.rds.cache.connection-timeout=3s",
 		"pulsemetry.dashboard.snapshot.build-timeout=60s",
 		"pulsemetry.dashboard.snapshot.purge-grace=0s",
+		"pulsemetry.dashboard.snapshot.max-concurrent-builds=2",
+		"pulsemetry.dashboard.snapshot.max-copy-rows=1000000",
+		"pulsemetry.dashboard.snapshot.max-copy-bytes=1000000000",
+		"pulsemetry.dashboard.snapshot.cleanup-interval=5m",
 	)
 
 	@ParameterizedTest

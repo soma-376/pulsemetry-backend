@@ -1,13 +1,12 @@
 package com.team376.pulsemetry.dashboard.snapshot
 
-import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheClient
 import com.team376.pulsemetry.dashboard.request.CompareMode
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
 import com.team376.pulsemetry.dashboard.request.DatePeriod
 import com.team376.pulsemetry.dashboard.request.QueryReader
-import com.team376.pulsemetry.dashboard.store.ClickHouseConnection
 import com.team376.pulsemetry.dashboard.store.StoreQueryRejectedException
 import com.team376.pulsemetry.dashboard.support.DashboardTestStores
+import com.team376.pulsemetry.dashboard.support.SnapshotAssembly
 import com.team376.pulsemetry.dashboard.support.SourceFixtures
 import com.team376.pulsemetry.dashboard.support.SourceFixtures.Event
 import org.assertj.core.api.Assertions.assertThat
@@ -18,10 +17,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.jdbc.datasource.DriverManagerDataSource
-import tools.jackson.databind.json.JsonMapper
 import java.math.BigDecimal
-import java.time.Clock
-import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -34,8 +30,6 @@ import java.util.UUID
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class SnapshotBuilderTest {
 
-	private val mapper = JsonMapper.builder().build()
-
 	@BeforeAll
 	fun schemas() {
 		DashboardTestStores.ensureSchemas()
@@ -45,24 +39,7 @@ class SnapshotBuilderTest {
 		resolution: ModelResolution = ModelResolution.NONE,
 		sourceDatabase: String = "default",
 		source: JdbcClient = DashboardTestStores.writer,
-	): SnapshotBuilder {
-		val cache = DashboardTestStores.writer
-		val clickHouse = ClickHouseCacheClient(
-			ClickHouseConnection(DashboardTestStores.clickHouseUrl(), DashboardTestStores.CACHE_DATABASE, "default", "", Duration.ofSeconds(30), mapper),
-			Duration.ofSeconds(30),
-		)
-		return SnapshotBuilder(
-			boundaries = RetentionBoundaryReader(source),
-			cache = cache,
-			references = SnapshotReferenceCopier(source, cache),
-			clickHouse = clickHouse,
-			sql = SnapshotCopySql(sourceDatabase, resolution),
-			resolution = resolution,
-			buildTimeout = Duration.ofSeconds(60),
-			purgeGrace = Duration.ofSeconds(60),
-			clock = Clock.systemUTC(),
-		)
-	}
+	): SnapshotBuilder = SnapshotAssembly(resolution = resolution, sourceDatabase = sourceDatabase, source = source).builder
 
 	private fun period(start: String, end: String, mode: CompareMode = CompareMode.NONE) =
 		ComparedPeriod(DatePeriod(LocalDate.parse(start), LocalDate.parse(end), QueryReader.SEOUL), mode)

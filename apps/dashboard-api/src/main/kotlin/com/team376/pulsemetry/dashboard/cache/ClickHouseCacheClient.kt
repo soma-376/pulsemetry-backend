@@ -20,9 +20,9 @@ class ClickHouseCacheClient(
 		"max_execution_time" to queryTimeout.toSeconds().toString(),
 	)
 
-	fun execute(sql: String, params: Map<String, ClickHouseParam> = emptyMap(), extraSettings: Map<String, String> = emptyMap()) {
+	/** 서버가 보고한 쓴 행 수를 돌려준다([ClickHouseConnection.execute]). */
+	fun execute(sql: String, params: Map<String, ClickHouseParam> = emptyMap(), extraSettings: Map<String, String> = emptyMap()): Long =
 		connection.execute(sql, settings + extraSettings, params)
-	}
 
 	fun <T> query(sql: String, params: Map<String, ClickHouseParam> = emptyMap(), row: (JsonNode) -> T): List<T> =
 		connection.query(sql, settings, params, row)

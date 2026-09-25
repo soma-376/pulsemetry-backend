@@ -43,7 +43,7 @@ pulsemetry-backend
 │                                    ├ request/        요청 ID · 조회 파라미터 해석(기간·비교·목록 cursor)
 │                                    ├ source/         원천 읽기 — ClickHouse 읽기 전용 클라이언트
 │                                    ├ cache/          dashboard_cache — 캐시 클라이언트 · 두 캐시 스키마 적용 (ADR 0023)
-│                                    ├ snapshot/       snapshot build — 원본 한 번 선택 · 참조 복제 · 공급자·모델 해석
+│                                    ├ snapshot/       snapshot — build(원본 한 번 선택·참조 복제·공급자·모델 해석) · 공개 CAS · 만료 · 정리
 │                                    ├ store/          ClickHouse 연결 · 파라미터 · 저장소 실패 분류(원천·캐시 공용)
 │                                    ├ error/          오류 본문 · 코드 · 예외 매핑
 │                                    └ config/

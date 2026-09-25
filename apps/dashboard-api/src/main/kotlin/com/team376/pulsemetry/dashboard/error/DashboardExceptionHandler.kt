@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.dashboard.error
 
+import com.team376.pulsemetry.dashboard.snapshot.SnapshotUnavailableException
 import com.team376.pulsemetry.dashboard.store.StoreQueryRejectedException
 import com.team376.pulsemetry.dashboard.store.StoreUnavailableException
 import jakarta.servlet.http.HttpServletRequest
@@ -25,6 +26,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException
  * |---|---|
  * | [DashboardException] | 그 코드(400·403·404·409 …) |
  * | ClickHouse 일시 장애·상한 초과([StoreUnavailableException]), RDS 연결·일시 장애 | 503 `unavailable` + `Retry-After` |
+ * | snapshot 을 지금 만들 수 없음([SnapshotUnavailableException] — 동시 build 한도·공개 CAS 거부·복사 검증 실패) | 503 `unavailable` + `Retry-After` |
  * | ClickHouse 의 문장 거부([StoreQueryRejectedException]) | 500 `internal_error` — 이 앱의 문장 결함 |
  * | 매핑 없는 경로 / 메서드 | 404 / 405 |
  * | 그 밖 | 500 `internal_error` |
@@ -46,6 +48,11 @@ class DashboardExceptionHandler(
 	/** 원인 로그는 연결이 이미 남겼다. */
 	@ExceptionHandler(StoreUnavailableException::class)
 	fun handleStoreUnavailable(request: HttpServletRequest, response: HttpServletResponse): ResponseEntity<ErrorResponse> =
+		errors.entity(request, response, ErrorCode.UNAVAILABLE)
+
+	/** 생성 중·실패의 HTTP 표현은 프론트와 합의 전이다 — 합의 전 기본값은 503 + `Retry-After`. 원인 로그는 snapshot 쪽이 남겼다. */
+	@ExceptionHandler(SnapshotUnavailableException::class)
+	fun handleSnapshotUnavailable(request: HttpServletRequest, response: HttpServletResponse): ResponseEntity<ErrorResponse> =
 		errors.entity(request, response, ErrorCode.UNAVAILABLE)
 
 	@ExceptionHandler(StoreQueryRejectedException::class)

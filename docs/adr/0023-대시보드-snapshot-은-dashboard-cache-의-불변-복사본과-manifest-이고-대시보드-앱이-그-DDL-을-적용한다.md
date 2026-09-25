@@ -116,8 +116,22 @@ Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-te
 - snapshot 을 읽는 모든 요청은 먼저 manifest 를 본다 — tenant 가 같고, `status = 'ready'` 이고, 무효화되지 않았고, `expires_at` 이 지나지 않았고,
   `policy_epoch` 가 **지금의** 삭제 정책 epoch 와 같을 때만 payload 를 읽는다. 하나라도 어긋나면 `409 snapshot_expired` 다. 삭제 경계가 바뀌면 이 비교만으로
   기존 snapshot 이 무효가 된다 — 경계를 바꾸는 쪽이 캐시에 쓸 필요가 없다.
-- 공개는 RDS 의 조건부 갱신 한 문장이다 — 같은 build 가 아직 `building` 이고, 무효화되지 않았고, 현재 epoch 가 시작 epoch 와 같을 때만 `ready` 가 된다.
-  공개 전에 조회에 쓸 ClickHouse 연결로 build 의 행 수를 세어 manifest 에 적는다. 이 저장소가 쓰는 ClickHouse 는 단일 노드라 그 연결이 곧 조회 경로다.
+- 공개는 RDS 의 조건부 갱신 한 문장이다 — 같은 build 가 아직 `building` 이고, 무효화되지 않았고, 마감(`build_deadline`) 전이고, 현재 epoch 가
+  시작 epoch 와 같을 때만 `ready` 가 되고 `expires_at = ready_at + 10분` 이 적힌다. 하나라도 어긋나면 그 build 는 `failed` 다.
+- **공개 전 검증.** 조회에 쓸 ClickHouse 연결로 build 의 행을 세어, 복사 문장에 서버가 보고한 쓴 행 수(`written_rows` — 입구와 모든 뷰 대상에 쓴 행의 합)와
+  맞춘다. 입구의 모든 행은 관측 일자의 개수로 한 번씩 세이므로 `written_rows = Σ observations + 사용량 행 + 관측 일자 행` 이어야 한다. 어긋나면 공개하지
+  않는다. 이 저장소가 쓰는 ClickHouse 는 단일 노드라 그 연결이 곧 조회 경로다.
+- **한도.** tenant 별 동시 build 수(셈과 manifest 쓰기를 tenant advisory lock 아래 한 트랜잭션에서 한다 — 마감이 지난 building 은 세지 않는다), 복사 문장이
+  원본에서 읽는 행·바이트(`max_rows_to_read`·`max_bytes_to_read`, `read_overflow_mode = throw`), 실행 시간(build 제한 시간). 모두 기본값 없는 설정이다.
+  넘으면 build 는 `failed` 이고 부분 결과를 공개하지 않는다.
+- **생성 중의 응답.** snapshot 은 그것을 처음 요구한 요청 안에서 동기로 만든다. 동시 한도·상한 초과·저장소 장애·공개 CAS 거부는 `503 unavailable` +
+  `Retry-After` 다. 생성 중·실패 상태의 HTTP 표현은 프론트와 합의 전이며 이것이 합의 전 기본값이다.
+- **재사용.** 요청이 snapshot ID 를 실으면 그 manifest 의 현재 기간·시간대가 요청과 같아야 하고, 비교를 쓰는 화면이면 비교 방식도 같아야 한다. 다르면 409 다 —
+  날짜·필터가 바뀌면 새 조회다. cursor 는 그 snapshot ID 와 목록 범위(endpoint·필터·정렬)에 묶이고, 다르면 400 `invalid_cursor` 다.
+- **무효화.** 권한·정책이 바뀌어 기존 snapshot 을 보여 줄 수 없을 때 tenant 의 snapshot 을 무효화하는 수단을 둔다(이벤트 원천이 없어 호출자가 부른다).
+  무효화와 별개로 매 요청이 조직·행위 권한을 다시 검사하므로 회수된 권한은 곧바로 403 이다.
+- **정리 작업.** 주기(기본값 없는 설정)마다 마감이 지난 `building` 을 `failed`(`abandoned`)로 바꾸고, 실패한 build 와 물리 정리 시각이 지난 build 의 캐시 행을
+  지운 뒤 manifest 를 지운다. 자기 캐시 행만 지운다. 늦거나 빠져도 응답은 달라지지 않는다 — 유효기간은 manifest 가 정한다.
 - 실패했거나 결과가 불확실한 build 의 행은 어떤 조회도 읽지 않는다(`build_id` 가 ready manifest 에 없다). 그 행은 TTL 또는 정리 작업이 지운다.
 
 ## Alternatives

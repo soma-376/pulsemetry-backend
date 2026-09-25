@@ -77,6 +77,11 @@ pulsemetry:
         connection-timeout: 3s
 
     # snapshot 수명의 운영 수치 (ADR 0023 §1). 물리 정리 시각 = build 시작 + build-timeout + 10분 + purge-grace.
+    # 한도(동시 build·복사 행·바이트·시간)를 넘으면 부분 결과를 공개하지 않고 503 이다. 값은 대표 규모의 측정으로 정한다.
     snapshot:
       build-timeout: ${PULSEMETRY_DASHBOARD_SNAPSHOT_BUILD_TIMEOUT:}
       purge-grace: ${PULSEMETRY_DASHBOARD_SNAPSHOT_PURGE_GRACE:}
+      max-concurrent-builds: ${PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_CONCURRENT_BUILDS:}
+      max-copy-rows: ${PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_COPY_ROWS:}
+      max-copy-bytes: ${PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_COPY_BYTES:}
+      cleanup-interval: ${PULSEMETRY_DASHBOARD_SNAPSHOT_CLEANUP_INTERVAL:}

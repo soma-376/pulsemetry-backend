@@ -104,14 +104,26 @@ data class DashboardApiProperties(
 	 * snapshot 수명의 운영 수치 (ADR 0023 §1). 물리 정리 시각 = build 시작 + [buildTimeout] + API 수명 10분 + [purgeGrace].
 	 */
 	data class Snapshot(
-		/** build 한 번의 제한 시간. manifest 의 `build_deadline` 이다. */
+		/** build 한 번의 제한 시간. manifest 의 `build_deadline` 이고 복사 문장의 `max_execution_time` 이다. */
 		val buildTimeout: Duration,
 		/** API 만료 뒤 진행 중인 조회를 위해 물리 행을 더 남기는 유예. */
 		val purgeGrace: Duration,
+		/** tenant 별 동시 build 수. 차 있으면 새 build 를 시작하지 않는다(503). */
+		val maxConcurrentBuilds: Int,
+		/** 복사 문장이 원본에서 읽을 수 있는 행 수(`max_rows_to_read`). 넘으면 잘라 내지 않고 실패한다. */
+		val maxCopyRows: Long,
+		/** 복사 문장이 원본에서 읽을 수 있는 바이트(`max_bytes_to_read`). */
+		val maxCopyBytes: Long,
+		/** 정리 작업의 주기. */
+		val cleanupInterval: Duration,
 	) {
 		init {
 			require(buildTimeout.toSeconds() >= 1) { "pulsemetry.dashboard.snapshot.build-timeout 은 1초 이상이어야 한다." }
 			require(!purgeGrace.isNegative) { "pulsemetry.dashboard.snapshot.purge-grace 는 음수일 수 없다." }
+			require(maxConcurrentBuilds >= 1) { "pulsemetry.dashboard.snapshot.max-concurrent-builds 는 1 이상이어야 한다." }
+			require(maxCopyRows >= 1) { "pulsemetry.dashboard.snapshot.max-copy-rows 는 1 이상이어야 한다." }
+			require(maxCopyBytes >= 1) { "pulsemetry.dashboard.snapshot.max-copy-bytes 는 1 이상이어야 한다." }
+			require(cleanupInterval.toSeconds() >= 1) { "pulsemetry.dashboard.snapshot.cleanup-interval 은 1초 이상이어야 한다." }
 		}
 	}
 
