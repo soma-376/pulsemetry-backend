@@ -1,5 +1,8 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.codex
 
+import com.team376.pulsemetry.telemetry.adapter.observation.Decision
+import com.team376.pulsemetry.telemetry.adapter.observation.DecisionScope
+import com.team376.pulsemetry.telemetry.adapter.observation.DecisionSource
 import com.team376.pulsemetry.telemetry.adapter.observation.ErrorType
 import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
 import com.team376.pulsemetry.telemetry.adapter.observation.EventType
@@ -8,6 +11,8 @@ import com.team376.pulsemetry.telemetry.adapter.observation.MetadataAllowlist
 import com.team376.pulsemetry.telemetry.adapter.observation.Operation
 import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
 import com.team376.pulsemetry.telemetry.adapter.observation.ReasoningEffort
+import com.team376.pulsemetry.telemetry.adapter.observation.ToolAction
+import com.team376.pulsemetry.telemetry.adapter.observation.ToolOrigin
 import com.team376.pulsemetry.telemetry.adapter.observation.TtftScope
 import com.team376.pulsemetry.telemetry.adapter.observation.UsageRole
 import com.team376.pulsemetry.telemetry.adapter.observation.UsageScope
@@ -67,6 +72,41 @@ internal object CodexLogs : LogProfile {
 			"codex.api_request" -> apiRequest(fields, view, common(fields, base))
 			"codex.websocket_connect" -> websocketConnect(fields, common(fields, base))
 			"codex.websocket_request" -> websocketRequest(fields, common(fields, base))
+			"codex.tool_result" -> toolResult(fields, common(fields, base))
+			"codex.tool_decision" -> toolDecision(fields, common(fields, base))
+			"codex.sandbox_outcome" -> common(fields, base).copy(
+				eventType = EventType.SANDBOX_OUTCOME,
+				callId = callId(fields),
+				callIdNamespace = callId(fields)?.let { CALL_NAMESPACE },
+				toolName = fields.nonEmptyText("tool_name"),
+				// 초기 실행 시간. 상승(escalated) 실행 시간과 outcome 은 metadata 에 남는다.
+				durationNs = fields.millisAsNanos("initial_duration_ms", NumberWire.INT),
+			)
+			"codex.turn_ttft" -> common(fields, base).copy(
+				eventType = EventType.TURN_FIRST_TOKEN,
+				ttftNs = fields.millisAsNanos("duration_ms", NumberWire.DECIMAL_STRING),
+				ttftScope = TtftScope.TURN,
+			)
+			// 프롬프트 제출 관측 — 본문은 싣지 않는다. 고유 턴 수가 아니다.
+			"codex.user_prompt" -> common(fields, base).copy(
+				eventType = EventType.PROMPT_SUBMITTED,
+				promptLength = fields.count("prompt_length", NumberWire.DECIMAL_STRING),
+			)
+			// 정책·provider·auth 설정은 metadata 에만 — 이 세션의 다른 행으로 옮기지 않는다.
+			"codex.conversation_starts" -> common(fields, base).copy(
+				eventType = EventType.CONVERSATION_STARTED,
+				reasoningEffort = reasoningEffort(fields.text("reasoning_effort")),
+			)
+			"codex.startup_phase" -> common(fields, base).copy(
+				eventType = EventType.STARTUP_PHASE,
+				durationNs = fields.millisAsNanos("duration_ms", NumberWire.DECIMAL_STRING),
+			)
+			"codex.auth_recovery" -> common(fields, base).copy(eventType = EventType.AUTH_EVENT).let {
+				val requestId = fields.nonEmptyText("auth.request_id")
+				it.copy(requestId = requestId, requestIdNamespace = requestId?.let { UPSTREAM_REQUEST_NAMESPACE })
+			}
+			// communication ID·kind·state·sender/receiver 만 metadata 에. content 는 allowlist 밖이다.
+			"codex.agent_communication" -> common(fields, base).copy(eventType = EventType.AGENT_COMMUNICATION)
 			else -> return null
 		}
 		return MappedEvent(mapped.withFlags(*fields.flags.toTypedArray()))
@@ -193,6 +233,54 @@ internal object CodexLogs : LogProfile {
 	}
 
 	/**
+	 * `codex.tool_result` → `tool.result`. `tool_result_seq` 는 producer 프로세스 안의 결과 기록 순번이다 — 같은 `call_id` 의
+	 * 다른 순번은 다른 관측이다. 도구 출처는 producer 가 쓰는 규칙 그대로 `mcp_server` 가 비었으면 builtin, 있으면 mcp 다.
+	 * 동작(`tool_action`)은 도구 이름별 검증 registry 가 없어 unknown 이다. success 는 문자열 true/false 만 읽는다.
+	 */
+	private fun toolResult(fields: FieldReader, common: EventObservation): EventObservation {
+		val mcpServer = fields.text("mcp_server")
+		return common.copy(
+			eventType = EventType.TOOL_RESULT,
+			callId = callId(fields),
+			callIdNamespace = callId(fields)?.let { CALL_NAMESPACE },
+			toolResultSeq = fields.count("tool_result_seq", NumberWire.INT),
+			toolName = fields.nonEmptyText("tool_name"),
+			toolNamespace = fields.nonEmptyText("tool_namespace"),
+			mcpServer = mcpServer?.takeIf { it.isNotEmpty() },
+			toolOrigin = when {
+				mcpServer == null -> ToolOrigin.UNKNOWN
+				mcpServer.isEmpty() -> ToolOrigin.BUILTIN
+				else -> ToolOrigin.MCP
+			},
+			toolAction = ToolAction.UNKNOWN,
+			durationNs = fields.millisAsNanos("duration_ms", NumberWire.DECIMAL_STRING),
+			success = fields.bool("success", BoolWire.STRING),
+		)
+	}
+
+	/**
+	 * `codex.tool_decision` → `tool.decision`. 결정 원문은 `decision_raw` 에 두고, producer 의 결정 표기(근거 문서의
+	 * `ReviewDecision` 목록)를 accept·reject·abort 로 옮긴다. 결정하지 못한 시간 초과와 모르는 값은 unknown 이다.
+	 * 출처는 producer 의 세 값만 옮기고, 없거나 모르면 unknown 이다 — user·system 으로 채우지 않는다.
+	 */
+	private fun toolDecision(fields: FieldReader, common: EventObservation): EventObservation {
+		val raw = fields.nonEmptyText("decision")
+		return common.copy(
+			eventType = EventType.TOOL_DECISION,
+			callId = callId(fields),
+			callIdNamespace = callId(fields)?.let { CALL_NAMESPACE },
+			toolName = fields.nonEmptyText("tool_name"),
+			toolNamespace = fields.nonEmptyText("tool_namespace"),
+			decision = raw?.let { DECISIONS[it] ?: Decision.UNKNOWN } ?: Decision.UNKNOWN,
+			decisionRaw = raw,
+			decisionSource = DECISION_SOURCES[fields.text("source")] ?: DecisionSource.UNKNOWN,
+			decisionScope = DecisionScope.UNKNOWN,
+		)
+	}
+
+	private fun callId(fields: FieldReader): String? = fields.nonEmptyText("call_id")
+
+	/**
 	 * producer 의 추론 강도 표기(`ReasoningEffort` 의 wire 값) 중 이 컬럼의 어휘와 겹치지 않는 값만 옮긴다. 원본의
 	 * `none`(추론 없음)은 이 컬럼의 `none`(해당 없음)과 뜻이 달라 `unknown` 으로 두고, 모르는 값도 `unknown` 이다 —
 	 * 원래 값은 metadata 에 남는다.
@@ -207,6 +295,23 @@ internal object CodexLogs : LogProfile {
 
 	/** 인증 오류 응답이 실어 온 upstream 요청 ID. */
 	const val UPSTREAM_REQUEST_NAMESPACE: String = "codex.upstream_request"
+	/** 도구 호출 ID(`call_id`) — producer 가 모델 응답에서 받은 호출 ID 다. */
+	const val CALL_NAMESPACE: String = "codex.call"
+	private val DECISIONS = mapOf(
+		"approved" to Decision.ACCEPT,
+		"approved_with_amendment" to Decision.ACCEPT,
+		"approved_for_session" to Decision.ACCEPT,
+		"approved_mcp_policy_amendment" to Decision.ACCEPT,
+		"approved_with_network_policy_allow" to Decision.ACCEPT,
+		"denied" to Decision.REJECT,
+		"denied_with_network_policy_deny" to Decision.REJECT,
+		"abort" to Decision.ABORT,
+	)
+	private val DECISION_SOURCES = mapOf(
+		"Config" to DecisionSource.CONFIG,
+		"AutomatedReviewer" to DecisionSource.AUTOMATED_REVIEWER,
+		"User" to DecisionSource.USER,
+	)
 	private const val MODELS_ENDPOINT = "/models"
 	private const val RESPONSES_ENDPOINT = "/responses"
 	private const val UINT16_MAX = 65_535L

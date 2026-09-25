@@ -42,6 +42,7 @@ class VocabularyTest {
 		assertThat(wires<Decision>()).containsExactly("accept", "reject", "abort", "unknown", "none")
 		assertThat(DecisionSource.CONFIG.wire).isEqualTo("config")
 		assertThat(DecisionSource.AUTOMATED_REVIEWER.wire).isEqualTo("automated_reviewer")
+		assertThat(DecisionSource.USER.wire).isEqualTo("user")
 		assertThat(listOf(DecisionScope.NONE, DecisionScope.UNKNOWN).map { it.wire }).containsExactly("none", "unknown")
 		assertThat(listOf(ErrorType.NONE, StopReason.NONE, ReasoningEffort.NONE).map { it.wire }).containsOnly("none")
 	}

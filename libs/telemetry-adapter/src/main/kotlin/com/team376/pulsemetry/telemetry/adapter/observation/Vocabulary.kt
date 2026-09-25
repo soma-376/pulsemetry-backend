@@ -253,6 +253,9 @@ public value class DecisionSource(override val wire: String) : WireValue {
 	public companion object {
 		public val CONFIG: DecisionSource = DecisionSource("config")
 		public val AUTOMATED_REVIEWER: DecisionSource = DecisionSource("automated_reviewer")
+
+		/** producer 가 사용자 결정이라고 명시한 값. 모르는 출처를 이것으로 바꾸지 않는다. */
+		public val USER: DecisionSource = DecisionSource("user")
 		public val UNKNOWN: DecisionSource = DecisionSource("unknown")
 		public val NONE: DecisionSource = DecisionSource("none")
 	}
