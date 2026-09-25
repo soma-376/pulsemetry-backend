@@ -304,6 +304,68 @@ class ObservationNormalizerTest {
 		assertThat(ObservationPipeline().run(request, context()).events.single()).isEqualTo(first)
 	}
 
+	// ── 공급자 근거·파이프라인 순서 ───────────────────────────────────────────
+
+	private fun usageRequest(vararg extra: KeyValue) =
+		logs(resource(kv("service.name", "codex-app-server")), record("codex.sse_event", *extra))
+
+	@Test
+	@DisplayName("사용량 관측 — 검증된 공급자 키의 값이 하나면 근거가 있고, 없거나 서로 다르면 provider_unresolved")
+	fun providerEvidence() {
+		val registry = ProfileRegistry(listOf(TestCodexProfile))
+		fun flags(vararg extra: KeyValue) = normalize(usageRequest(*extra), registry).events.single().observation.envelope.qualityFlags
+
+		assertThat(flags(kv("provider", "openai"))).doesNotContain(QualityFlag.PROVIDER_UNRESOLVED)
+		assertThat(flags()).contains(QualityFlag.PROVIDER_UNRESOLVED)
+		assertThat(flags(kv("provider", "openai"), kv("provider", "azure"))).contains(QualityFlag.PROVIDER_UNRESOLVED)
+		// 사용량이 아닌 관측에는 붙이지 않는다.
+		assertThat(normalize(logs(resource(kv("service.name", "codex-app-server")), record()), registry).events.single().observation.envelope.qualityFlags)
+			.doesNotContain(QualityFlag.PROVIDER_UNRESOLVED)
+	}
+
+	@Test
+	@DisplayName("공급자 근거 키는 allowlist 에 있어야 한다 — 근거가 metadata 에 남아야 한다")
+	fun providerKeysMustBeAllowlisted() {
+		val broken = object : ProductProfile by TestCodexProfile {
+			override val logs = object : LogProfile by TestCodexProfile.logs {
+				override val providerEvidenceKeys = listOf("model_provider")
+			}
+		}
+
+		org.assertj.core.api.Assertions.assertThatThrownBy { ProfileRegistry(listOf(broken)) }
+			.isInstanceOf(IllegalArgumentException::class.java).hasMessageContaining("model_provider")
+	}
+
+	@Test
+	@DisplayName("파이프라인 순서 — 매핑 → 파생 토큰 → 가격 → hash. 가격이 바뀌면 hash 도 바뀐다")
+	fun pipelineOrder() {
+		val registry = ProfileRegistry(listOf(TestCodexProfile))
+		val pricing = com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage(
+			com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingProfile(
+				"prices-test-1",
+				listOf(
+					com.team376.pulsemetry.telemetry.adapter.observation.pricing.ModelPrice(
+						"model-a", EpochNanos(0), null, setOf(TestSemanticsHolder.value.id),
+						java.math.BigDecimal("1"), java.math.BigDecimal("2"), java.math.BigDecimal("0.5"), null,
+					),
+				),
+			),
+		)
+		val request = usageRequest(kv("provider", "openai"))
+
+		val unpriced = ObservationPipeline(ObservationNormalizer(registry)).run(request, context()).events.single()
+		val priced = ObservationPipeline(ObservationNormalizer(registry), pricing).run(request, context()).events.single()
+
+		assertThat(unpriced.tokensInputUncached).isEqualTo(60)
+		assertThat(unpriced.tokensTotalDerived).isEqualTo(120)
+		assertThat(unpriced.costEstimatedUsd).isNull()
+		// 60×1 + 20×2 + 40×0.5 = 120 → 0.000120 USD. cache write 는 해당 없음 프로파일이라 항이 없다.
+		assertThat(priced.costEstimatedUsd).isEqualByComparingTo("0.000120")
+		assertThat(priced.pricingVersion).isEqualTo("prices-test-1")
+		assertThat(priced.envelope.analysisHash).isNotEqualTo(unpriced.envelope.analysisHash)
+		assertThat(AnalysisHash.of(priced)).isEqualTo(priced.envelope.analysisHash)
+	}
+
 	/** 테스트 전용 Codex 프로파일 — 이름 두 개와 스팬 하나만 안다. 실제 Codex 매핑이 아니다. */
 	private object TestCodexProfile : ProductProfile {
 		override val product = Product.CODEX
@@ -311,20 +373,30 @@ class ObservationNormalizerTest {
 		override val mappingVersion = "test-codex-v1"
 		override val metrics = null
 		override val logs = object : LogProfile {
-			override val allowlist = MetadataAllowlist("test-v1", resource = setOf("service.name"), record = setOf("event.name", "prompt_length"))
+			override val allowlist = MetadataAllowlist("test-v1", resource = setOf("service.name"), record = setOf("event.name", "prompt_length", "provider"))
+			override val providerEvidenceKeys = listOf("provider")
 			override fun semanticName(view: LogRecordView) = view.attributes.singleString("event.name")
-			override fun map(name: String, view: LogRecordView, base: EventObservation): MappedEvent? =
-				if (name != "codex.user_prompt") {
-					null
-				} else {
-					MappedEvent(
-						observation = base.copy(
-							envelope = base.envelope.copy(mappingStatus = MappingStatus.MAPPED),
-							eventType = EventType.PROMPT_SUBMITTED,
+			override fun map(name: String, view: LogRecordView, base: EventObservation): MappedEvent? = when (name) {
+				"codex.user_prompt" -> MappedEvent(
+					observation = base.copy(
+						envelope = base.envelope.copy(mappingStatus = MappingStatus.MAPPED),
+						eventType = EventType.PROMPT_SUBMITTED,
+					),
+					nativeIdentity = NativeIdentity("test.prompt", "prompt-1"),
+				)
+				// 테스트용 사용량 — 토큰은 설명용 예시 값이다.
+				"codex.sse_event" -> MappedEvent(
+					observation = base.copy(
+						envelope = base.envelope.copy(
+							mappingStatus = MappingStatus.MAPPED, usageRole = UsageRole.PRIMARY, usageScope = UsageScope.RESPONSE, model = "model-a",
 						),
-						nativeIdentity = NativeIdentity("test.prompt", "prompt-1"),
-					)
-				}
+						eventType = EventType.MODEL_RESPONSE_USAGE,
+						tokensInput = 100, tokensOutput = 20, tokensCacheRead = 40,
+					),
+					semantics = TestSemanticsHolder.value,
+				)
+				else -> null
+			}
 		}
 		override val spans = object : SpanProfile {
 			override val allowlist = MetadataAllowlist("test-v1", resource = setOf("service.name"))
@@ -332,5 +404,17 @@ class ObservationNormalizerTest {
 			override fun map(view: SpanView, base: EventObservation) =
 				MappedEvent(base.copy(envelope = base.envelope.copy(mappingStatus = MappingStatus.MAPPED), eventType = EventType.TURN))
 		}
+	}
+
+	/** object 안에서 바깥 인스턴스 값을 쓸 수 없어 따로 둔다. */
+	private object TestSemanticsHolder {
+		val value = com.team376.pulsemetry.telemetry.adapter.observation.semantics.SemanticsProfile(
+			id = "test-codex-semantics",
+			inputSemantics = InputSemantics.INCLUSIVE_CACHE,
+			outputSemantics = OutputSemantics.INCLUSIVE_REASONING_TOOL,
+			cacheWrite = com.team376.pulsemetry.telemetry.adapter.observation.semantics.CacheWriteStatus.NOT_APPLICABLE,
+			scope = com.team376.pulsemetry.telemetry.adapter.observation.semantics.SemanticsScope(Product.CODEX, "test", "unknown", "test"),
+			evidencePath = "test/EVIDENCE.md",
+		)
 	}
 }

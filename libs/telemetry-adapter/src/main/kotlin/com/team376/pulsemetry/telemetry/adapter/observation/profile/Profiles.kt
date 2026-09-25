@@ -41,6 +41,13 @@ public interface LogProfile {
 
 	/** registry 에 있는 이름이면 매핑한 결과, 없으면 null — generic(`vendor.unknown`)이다. */
 	public fun map(name: String, view: LogRecordView, base: EventObservation): MappedEvent?
+
+	/**
+	 * 사용량 관측의 공급자 근거가 실리는 레코드 속성 키(ADR 0020 §4). 검증된 위치만 적는다 — 없으면 빈 목록이고,
+	 * 그 제품의 사용량 관측은 전부 `provider_unresolved` 다. 키는 [allowlist] 의 레코드 목록에 있어야 한다
+	 * (근거가 metadata 에 남아야 조회 계층이 해석한다).
+	 */
+	public val providerEvidenceKeys: List<String> get() = emptyList()
 }
 
 public interface SpanProfile {
@@ -84,6 +91,14 @@ public fun interface VersionSet {
 
 /** 제품별 프로파일 목록. 같은 제품에서 버전이 겹치는 두 프로파일이 있으면 앞의 것이 쓰인다. */
 public class ProfileRegistry(private val profiles: List<ProductProfile>) {
+	init {
+		for (profile in profiles) {
+			val logs = profile.logs ?: continue
+			val missing = logs.providerEvidenceKeys.filterNot { it in logs.allowlist.record }
+			require(missing.isEmpty()) { "${profile.product.wire} 의 공급자 근거 키가 allowlist 에 없다: $missing" }
+		}
+	}
+
 	public fun find(product: Product, version: String?): ProductProfile? =
 		profiles.firstOrNull { it.product == product && it.versions.contains(version) }
 

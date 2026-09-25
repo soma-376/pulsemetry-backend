@@ -100,3 +100,7 @@ public data class EventObservation(
 }
 
 internal const val UINT8_MAX: Int = 255
+
+/** 품질 플래그를 더한 사본. 플래그는 중복 없이 선언 순서로 둔다. */
+public fun EventObservation.withFlags(vararg flags: QualityFlag): EventObservation =
+	if (flags.isEmpty()) this else copy(envelope = envelope.copy(qualityFlags = (envelope.qualityFlags + flags).distinct().sortedBy { it.ordinal }))
