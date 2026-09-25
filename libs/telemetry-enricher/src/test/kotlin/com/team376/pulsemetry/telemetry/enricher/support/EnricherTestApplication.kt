@@ -12,7 +12,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories
  * `SecurityTestApplication` 과 같은 모양이다.
  *
  * 이 클래스가 조립의 예행이다 — 라이브러리는 스테레오타입을 달지 않으므로(ADR 0011)
- * `OrgProvider` 와 `Enricher` 를 엮는 일은 언제나 앱이나 테스트가 한다.
+ * 리포지토리와 `ObservationEnricher` 를 엮는 일은 언제나 앱이나 테스트가 한다.
  */
 @SpringBootApplication
 @EntityScan(basePackages = ["com.team376.pulsemetry.persistence.enrollment.entity"])

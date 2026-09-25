@@ -16,8 +16,8 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 /**
- * org enrichment 의 as-of 조인이 딛는 두 축을 본다 — installation 으로 소속 이력을 읽어 오는 조회와,
- * 그 이력을 이벤트 시각으로 자르는 경계 판정이다 (허브 `contracts/data-model.md` D-3).
+ * 관측 보강의 as-of 조인이 딛는 두 축을 본다 — 구성원의 소속 이력을 읽어 오는 조회와,
+ * 그 이력을 이벤트 시각으로 자르는 경계 판정이다 (허브 `contracts/data-model.md` D-3 · ADR 0020 §5).
  *
  * 경계는 **좌폐우개**(`joined_at <= at < left_at`)다. 현행 파이프라인의
  * `test_org_provider.py` 가 고정한 것과 같은 경계이며, 이관 후에도 같아야 한다.
@@ -38,17 +38,10 @@ class TeamMembershipRepositoryTest : AbstractPersistenceIntegrationTest() {
 	private lateinit var memberships: TeamMembershipRepository
 
 	@Autowired
-	private lateinit var invitations: InvitationRepository
-
-	@Autowired
-	private lateinit var installations: InstallationRepository
-
-	@Autowired
 	private lateinit var jdbcClient: JdbcClient
 
 	private lateinit var tenantId: UUID
 	private lateinit var memberId: UUID
-	private lateinit var installationId: UUID
 
 	/** 소속 판정의 기준 시각. 아래 구간들은 전부 이 시각을 기준으로 놓인다. */
 	private val at: Instant = Instant.parse("2026-06-01T00:00:00Z")
@@ -57,10 +50,6 @@ class TeamMembershipRepositoryTest : AbstractPersistenceIntegrationTest() {
 	fun setUp() {
 		tenantId = tenants.saveAndFlush(EnrollmentFixtures.tenant()).id
 		memberId = members.saveAndFlush(EnrollmentFixtures.member(tenantId)).id
-		val invitationId = invitations.saveAndFlush(EnrollmentFixtures.invitation(tenantId, memberId)).id
-		installationId = installations
-			.saveAndFlush(EnrollmentFixtures.installation(tenantId, memberId, invitationId))
-			.id
 	}
 
 	// ── 매핑 ─────────────────────────────────────────────────────────────────
@@ -124,38 +113,7 @@ class TeamMembershipRepositoryTest : AbstractPersistenceIntegrationTest() {
 			.containsExactlyInAnyOrder(archived, active)
 	}
 
-	// ── installation → 소속 이력 조회 ────────────────────────────────────────
-
-	@Test
-	@DisplayName("installation 으로 그 구성원의 소속 이력을 읽는다 — 시점 필터는 걸지 않는다")
-	fun loadsMembershipHistoryByInstallation() {
-		val past = teams.saveAndFlush(EnrollmentFixtures.team(tenantId, name = "예전팀")).id
-		val current = teams.saveAndFlush(EnrollmentFixtures.team(tenantId, name = "지금팀")).id
-		memberships.saveAndFlush(
-			EnrollmentFixtures.teamMembership(past, memberId, joinedAt = at.minus(90, ChronoUnit.DAYS), leftAt = at),
-		)
-		memberships.saveAndFlush(EnrollmentFixtures.teamMembership(current, memberId, joinedAt = at))
-
-		val loaded = memberships.findActiveTeamMembershipsByInstallationId(installationId)
-
-		// 지난 소속도 함께 온다. 과거 이벤트를 그 시각의 팀으로 귀속해야 하기 때문이다.
-		assertThat(loaded).extracting<UUID> { it.teamId }.containsExactlyInAnyOrder(past, current)
-	}
-
-	@Test
-	@DisplayName("archived 팀의 소속은 빠진다 — 조회가 활성 팀만 본다")
-	fun archivedTeamMembershipIsExcluded() {
-		val archived = teams
-			.saveAndFlush(EnrollmentFixtures.team(tenantId, name = "해체된팀", status = TeamStatus.archived))
-			.id
-		val active = teams.saveAndFlush(EnrollmentFixtures.team(tenantId, name = "살아있는팀")).id
-		memberships.saveAndFlush(EnrollmentFixtures.teamMembership(archived, memberId))
-		memberships.saveAndFlush(EnrollmentFixtures.teamMembership(active, memberId))
-
-		val loaded = memberships.findActiveTeamMembershipsByInstallationId(installationId)
-
-		assertThat(loaded).extracting<UUID> { it.teamId }.containsExactly(active)
-	}
+	// ── 구성원 → 소속 이력 조회 ─────────────────────────────────────────────
 
 	@Test
 	@DisplayName("다른 구성원의 소속은 섞이지 않는다")
@@ -164,7 +122,7 @@ class TeamMembershipRepositoryTest : AbstractPersistenceIntegrationTest() {
 		val otherMemberId = members.saveAndFlush(EnrollmentFixtures.member(tenantId)).id
 		memberships.saveAndFlush(EnrollmentFixtures.teamMembership(teamId, otherMemberId))
 
-		assertThat(memberships.findActiveTeamMembershipsByInstallationId(installationId)).isEmpty()
+		assertThat(memberships.findAllByMemberId(memberId)).isEmpty()
 	}
 
 	// ── as-of 경계 (좌폐우개) ────────────────────────────────────────────────
@@ -209,7 +167,7 @@ class TeamMembershipRepositoryTest : AbstractPersistenceIntegrationTest() {
 		)
 
 		val teamIdsAsOf = memberships
-			.findActiveTeamMembershipsByInstallationId(installationId)
+			.findAllByMemberId(memberId)
 			.filter { it.coversAt(at) }
 			.map { it.teamId }
 
@@ -229,7 +187,7 @@ class TeamMembershipRepositoryTest : AbstractPersistenceIntegrationTest() {
 		)
 
 		val teamIdsAsOf = memberships
-			.findActiveTeamMembershipsByInstallationId(installationId)
+			.findAllByMemberId(memberId)
 			.filter { it.coversAt(at) }
 
 		assertThat(teamIdsAsOf).isEmpty()

@@ -1,4 +1,5 @@
-// telemetry 도메인의 적재 모듈 (ADR 0010). enriched_events 의 DDL 과 쓰기를 소유한다 —
+// telemetry 도메인의 적재 모듈 (ADR 0010). ClickHouse 테이블(분석 테이블 둘·수신 ledger·보존만 하는 구
+// enriched_events)의 DDL 과 쓰기를 소유한다 —
 // DDL 파일이 이 모듈 아래 있는 것이 쓰기 소유의 근거다 (ADR 0008 규칙 1 의 판정법).
 // 라이브러리 모듈이므로 Spring Boot 플러그인을 적용하지 않는다 — 실행 가능한 산출물이 아니다.
 plugins {
@@ -6,8 +7,8 @@ plugins {
 }
 
 dependencies {
-	// 적재 대상 타입. insert(items: List<Enriched>) 가 이 모듈의 공개 시그니처다 (ADR 0014).
-	// 어댑터의 model/ 과 NormalizedJson 은 이 간선을 타고 전이로 따라온다 — raw_json 이 그 값이다.
+	// 적재 대상 타입. insert(events: List<EnrichedEvent>, …) 가 이 모듈의 공개 시그니처다 (ADR 0014).
+	// 어댑터의 관측 타입은 이 간선을 타고 전이로 따라온다.
 	api(project(":libs:telemetry-enricher"))
 
 	// ClickHouse 접속에 드라이버를 쓰지 않는다. JDK 의 HttpClient 로 HTTP 인터페이스를 직접 부른다 —
@@ -20,6 +21,4 @@ dependencies {
 	// GenericContainer 로 띄운다. 전용 모듈은 JDBC 드라이버를 요구하는데 이 모듈은 HTTP 로만 말한다.
 	testImplementation(libs.testcontainers)
 	testImplementation(libs.testcontainers.junit.jupiter)
-	// golden 이벤트와 그 리더는 보강 모듈이 testFixtures 로 노출한다 (ADR 0008 규칙 6).
-	testImplementation(testFixtures(project(":libs:telemetry-enricher")))
 }

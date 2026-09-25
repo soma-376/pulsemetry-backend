@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
-import com.team376.pulsemetry.telemetry.adapter.JsonReader
-import com.team376.pulsemetry.telemetry.adapter.OtlpJsonFixtureParser
+import com.team376.pulsemetry.telemetry.adapter.observation.fixture.JsonTree
+import com.team376.pulsemetry.telemetry.adapter.observation.fixture.OtlpJsonV2
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
 import io.opentelemetry.proto.common.v1.AnyValue
@@ -11,10 +11,10 @@ import io.opentelemetry.proto.logs.v1.LogRecord
 import io.opentelemetry.proto.logs.v1.ResourceLogs
 import io.opentelemetry.proto.logs.v1.ScopeLogs
 import io.opentelemetry.proto.resource.v1.Resource
+import kotlin.reflect.full.primaryConstructor
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
-import kotlin.reflect.full.primaryConstructor
 
 /** 관측 ID(ADR 0020 §2). 기대값은 규칙에서 나온 관계(같다·다르다)이지 구현의 출력이 아니다. */
 class ObservationIdsTest {
@@ -66,7 +66,7 @@ class ObservationIdsTest {
 			    {"key":"event.name","value":{"stringValue":"codex.tool_result"}}]}]}]}]}
 		""".trimIndent()
 		val builder = ExportLogsServiceRequest.newBuilder()
-		OtlpJsonFixtureParser.merge(JsonReader.readObject(json), builder)
+		OtlpJsonV2.merge(JsonTree.parse(json) as Map<*, *>, builder)
 		val fromJson = builder.build().getResourceLogs(0)
 		val viaBytes = LogRecord.parseFrom(record().toByteArray())
 
@@ -153,7 +153,7 @@ class ObservationIdsTest {
 			  {"timeUnixNano":"5","asInt":"2","attributes":[{"key":"tool","value":{"stringValue":"apply_patch"}}]}]}}]}]}]}
 		""".trimIndent()
 		val builder = ExportMetricsServiceRequest.newBuilder()
-		OtlpJsonFixtureParser.merge(JsonReader.readObject(json), builder)
+		OtlpJsonV2.merge(JsonTree.parse(json) as Map<*, *>, builder)
 		val metric = builder.build().getResourceMetrics(0).getScopeMetrics(0).getMetrics(0)
 		val metricMaterial = material.copy(signal = ObservationSignal.METRIC, sourceTime = EpochNanos(5))
 

@@ -21,7 +21,7 @@ import java.security.MessageDigest
  *
  * 기대값은 ADR 0020 의 규칙에서 나온다. `row_version` 은 `(normalizer_rev << 32) | ingest_seq` 다.
  *
- * 컨테이너 구성은 [EnrichedEventsSinkTest] 와 같다(배포 이미지 태그, `default` 유저 네트워크 접근).
+ * 컨테이너 구성은 [TelemetryAnalysisSinksTest] 와 같다(배포 이미지 태그, `default` 유저 네트워크 접근).
  */
 @Testcontainers
 class TelemetryAnalysisTablesTest {

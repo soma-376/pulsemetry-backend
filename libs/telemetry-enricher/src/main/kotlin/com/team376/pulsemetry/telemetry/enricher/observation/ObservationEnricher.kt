@@ -25,7 +25,7 @@ import java.util.UUID
  *   정렬한 것이다. 팀의 현재 상태는 보지 않는다.
  * - `team_id_as_of` 는 그 목록이 하나면 그 팀, 둘 이상이면 null + `multi_team_membership`, 없으면 null 이다. 하나를
  *   고르는 규칙은 두지 않는다 — 대표 팀 정책은 제품 결정으로 남아 있다(ADR 0020 Follow-up).
- * - `enrichment_json` 은 구 경로와 같은 모양이다 — `org` 항목의 `team_ids` 와 provider 마다의 항목(스텁 셋은 빈 객체,
+ * - `enrichment_json` 은 이전 적재(`enriched_events`)가 쓰던 모양 그대로다 — `org` 항목의 `team_ids` 와 provider 마다의 항목(스텁 셋은 빈 객체,
  *   ADR 0017 규칙 8). 승격 컬럼 셋은 이 항목이 아니다(규칙 7).
  *
  * `observation_id` 와 `analysis_hash` 는 다시 계산하지 않는다. 보강 결과는 둘의 재료가 아니다(§3).
@@ -36,8 +36,8 @@ import java.util.UUID
  * 캐시는 호출을 넘지 않는다 — 소속 변경은 다음 push 부터 반영되고, 이미 적재된 행은 재처리로 갱신된다.
  * `enrollment` 스키마는 읽기만 한다(허브 `contracts/data-model.md` D-2).
  *
- * 오류 분류는 구 `OrgProvider` 와 같다 — 연결·트랜잭션 시작 실패·실행 중 끊김만 [EnrichmentUnavailableException]
- * (앱이 503)이고 나머지는 그대로 전파한다. **넓히지 마라**(그 예외의 KDoc).
+ * 오류 분류: 연결·트랜잭션 시작 실패·실행 중 끊김만 [EnrichmentUnavailableException](앱이 503)이고 나머지는 그대로
+ * 전파한다 — 스키마 드리프트 같은 영구 오류는 앱이 400 으로 돌린다. **넓히지 마라**(그 예외의 KDoc).
  *
  * @param providers `enrichment_json` 에 항목을 쓰는 provider. 이름이 겹치거나 `org` 이면 거부한다 — `org` 항목은 이
  *   클래스가 쓴다.
@@ -128,7 +128,7 @@ public class ObservationEnricher(
 		}
 	}
 
-	/** 일시 장애만 [EnrichmentUnavailableException] 으로 감싼다. 구 `OrgProvider` 의 분류와 같다. */
+	/** 일시 장애만 [EnrichmentUnavailableException] 으로 감싼다. */
 	private inline fun <T> classified(block: () -> T): T =
 		try {
 			block()

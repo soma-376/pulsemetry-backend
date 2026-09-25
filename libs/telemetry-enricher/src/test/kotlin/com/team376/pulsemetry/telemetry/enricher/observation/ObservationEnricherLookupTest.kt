@@ -6,7 +6,6 @@ import com.team376.pulsemetry.telemetry.adapter.observation.ObservationEnvelope
 import com.team376.pulsemetry.telemetry.enricher.EnrichmentUnavailableException
 import com.team376.pulsemetry.telemetry.enricher.provider.EnrichmentProvider
 import com.team376.pulsemetry.telemetry.enricher.provider.GithubProvider
-import com.team376.pulsemetry.telemetry.enricher.provider.OrgProvider
 import com.team376.pulsemetry.telemetry.enricher.support.TestObservations
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -29,8 +28,9 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * 조회 횟수·오류 분류·provider 목록 — DB 없이 볼 수 있는 것. 오류 분류는 구 `OrgProviderErrorClassificationTest` 와
- * 같은 경계다. **넓히지 마라.** 일시 장애만 [EnrichmentUnavailableException](앱이 503)이고 영구 오류는 그대로 전파된다.
+ * 조회 횟수·오류 분류·provider 목록 — DB 없이 볼 수 있는 것. 오류 분류를 좁게 고정한다. **넓히지 마라.** 일시
+ * 장애만 [EnrichmentUnavailableException](앱이 503)이고 영구 오류는 그대로 전파된다. 적재 단계도 같은 원칙이다(허브
+ * ADR 0006) — `ClickHouseErrorClassificationTest` 와 나란히 읽는다.
  */
 class ObservationEnricherLookupTest {
 
@@ -144,7 +144,11 @@ class ObservationEnricherLookupTest {
 	@Test
 	@DisplayName("org 항목은 이 클래스가 쓴다 — 목록에 org provider 를 넣으면 거부한다")
 	fun orgProviderIsRejected() {
-		assertThatThrownBy { enricher(listOf(OrgProvider(memberships))) }
+		val org = object : EnrichmentProvider {
+			override val name = ObservationEnricher.ORG
+		}
+
+		assertThatThrownBy { enricher(listOf(org)) }
 			.isInstanceOf(IllegalArgumentException::class.java)
 	}
 
@@ -160,11 +164,6 @@ class ObservationEnricherLookupTest {
 	fun providerAnnotationsAreWritten() {
 		val counting = object : EnrichmentProvider {
 			override val name = "counter"
-
-			override fun enrich(
-				item: com.team376.pulsemetry.telemetry.enricher.Enriched,
-				ctx: MutableMap<String, Any?>,
-			): Map<String, Any?> = emptyMap()
 
 			override fun annotate(envelope: ObservationEnvelope, ctx: MutableMap<String, Any?>): Map<String, Any?> {
 				val seen = (ctx["counter.seen"] as Int? ?: 0) + 1

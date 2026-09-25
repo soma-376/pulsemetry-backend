@@ -19,7 +19,7 @@ import java.nio.charset.StandardCharsets
  * 그 밖의 4xx 는 [TelemetrySinkRejectedException](영구 오류 → 400)이다.
  *
  * 근거는 허브 ADR 0006 이다. 그 ADR 없이 분류를 넓히지 마라. 보강 단계도 같은 원칙이다 —
- * `OrgProviderErrorClassificationTest` 와 나란히 읽는다.
+ * `ObservationEnricherLookupTest` 와 나란히 읽는다.
  *
  * ClickHouse 없이 돈다. 판정 대상이 상태 코드의 분류이지 ClickHouse 의 동작이 아니다.
  */

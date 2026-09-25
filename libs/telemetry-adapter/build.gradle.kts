@@ -11,7 +11,7 @@ dependencies {
 	// OTLP 요청 타입은 main 시그니처에 나타나지 않는다. fixture 를 요청 메시지로 만드는 테스트만 쓴다.
 	testImplementation(libs.opentelemetry.proto)
 
-	// canonical JSON 인코더가 쓰는 스트리밍 생성기. 계약에 나타나지 않으므로 implementation 이다.
+	// typed metadata 의 JSON 표기(TypedMetadata)가 쓰는 스트리밍 파서·생성기. 계약에 나타나지 않으므로 implementation 이다.
 	// databind 는 쓰지 않는다 — 수집 모듈과 같은 이유로 디스크립터·모델을 직접 순회한다.
 	implementation(libs.jackson.core)
 

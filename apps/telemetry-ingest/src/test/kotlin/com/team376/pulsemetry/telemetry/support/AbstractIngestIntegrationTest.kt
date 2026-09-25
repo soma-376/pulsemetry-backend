@@ -48,7 +48,7 @@ abstract class AbstractIngestIntegrationTest {
 	companion object {
 		private const val HTTP_PORT: Int = 8123
 
-		/** 태그를 infra 의 배포 이미지와 `EnrichedEventsSinkTest` 에 맞춘다. */
+		/** 태그를 infra 의 배포 이미지와 `TelemetryAnalysisTablesTest` 에 맞춘다. */
 		@JvmStatic
 		val clickhouse: GenericContainer<*> =
 			GenericContainer("clickhouse/clickhouse-server:24.8-alpine")

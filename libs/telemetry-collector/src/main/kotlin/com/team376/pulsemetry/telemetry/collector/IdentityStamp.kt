@@ -34,10 +34,10 @@ public fun interface IdentitySource {
  *
  * ## 왜 필요한가
  *
- * 변환 단계는 신원을 리소스 속성에서 읽는다 — `tenant.id` 와 `developer.installation_id` 다.
- * 그 값을 심는 것이 이 코드이고, 심지 않으면 `enriched_events` 의 `tenant_id`·`installation_id`
- * 가 빈 문자열이 되고 팀 소속 조회가 아예 일어나지 않는다. **기동도 되고 행도 쌓이므로
- * 빠졌을 때 조용하다.**
+ * 아카이브 원본이 신원을 담아야 한다 — `tenant.id` 와 `developer.installation_id` 다. live 경로의 정규화는 신원을
+ * 영수증에서 받지만, 재처리는 아카이브 원본에 심긴 값으로 원래 문맥을 재현한다. 심지 않으면 재처리한 관측의
+ * `observation_id` 재료(`tenant_id`·`installation_id`, ADR 0020 §2)가 실시간 경로와 달라진다. **기동도 되고 행도
+ * 쌓이므로 빠졌을 때 조용하다.** 클라이언트가 보낸 같은 키는 이 값으로 덮어써져 자기신고가 신원이 되지 않는다.
  *
  * 헤더로 신원을 나르던 경로는 허브 ADR 0005 가 폐기했지만 **승격 자체는 남아야 한다** —
  * 사라진 것은 운반 수단이지 신원이 파이프라인에 들어가는 경로가 아니다.
