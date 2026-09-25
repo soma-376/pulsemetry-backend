@@ -3,13 +3,17 @@ package com.team376.pulsemetry.persistence.telemetry
 import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.event
 import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
 import com.team376.pulsemetry.telemetry.adapter.observation.EventType
+import com.team376.pulsemetry.telemetry.adapter.observation.MetricType
 import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
 import com.team376.pulsemetry.telemetry.adapter.observation.ReportedCostBasis
 import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
+import com.team376.pulsemetry.telemetry.adapter.observation.SeriesIdentityStatus
+import com.team376.pulsemetry.telemetry.adapter.observation.Temporality
 import com.team376.pulsemetry.telemetry.adapter.observation.UsageRole
 import com.team376.pulsemetry.telemetry.adapter.observation.UsageScope
 import com.team376.pulsemetry.telemetry.adapter.observation.withFlags
 import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
+import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedMetricPoint
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
@@ -97,14 +101,79 @@ class TelemetryAnalysisRowsTest {
 		assertThat(select(EVENTS, *nullable.map { "isNull($it)" }.toTypedArray())).containsOnly("1").hasSize(nullable.size)
 	}
 
+	@Test
+	@DisplayName("metric point 행이 값 그대로 저장된다 — UInt64 최댓값, 음수 Int64, Float64 는 비트까지 같다")
+	fun metricPointValuesRoundTrip() {
+		// 입력 포맷의 Float64 파서가 가장 가까운 double 로 읽지 않는 값들이다 — 문자열 + toFloat64 경로가 비트를 지킨다.
+		val tricky = listOf(1.23456789, 2.7216092808335446e276, 6.665830898196862e-279, 4.9E-324, 0.1 + 0.2, -0.0, 1.7976931348623157E308)
+		val histogram = AnalysisSamples.metricPointObservation(AnalysisSamples.hex('1')).copy(
+			metricType = MetricType.HISTOGRAM,
+			seriesId = AnalysisSamples.hex('d'),
+			seriesIdentityStatus = SeriesIdentityStatus.VERIFIED,
+			startTime = EpochNanos(1),
+			histCount = ULong.MAX_VALUE,
+			histSum = tricky[0],
+			histMin = tricky[1],
+			histMax = tricky[2],
+			histBucketsPresent = true,
+			explicitBounds = tricky,
+			bucketCounts = listOf(ULong.MAX_VALUE, 9_007_199_254_740_993uL),
+			pointFlags = UInt.MAX_VALUE,
+		)
+		val gauge = AnalysisSamples.metricPointObservation(AnalysisSamples.hex('2')).copy(
+			metricType = MetricType.GAUGE, temporality = Temporality.NONE, valueInt = Long.MIN_VALUE, temporalityCode = null,
+		)
+		val summary = AnalysisSamples.metricPointObservation(AnalysisSamples.hex('3')).copy(
+			metricType = MetricType.SUMMARY, summaryCount = 3uL, summarySum = tricky[3], quantiles = listOf(0.0, 0.5, 1.0),
+			quantileValues = tricky.take(3),
+		)
+		insertPoints(AnalysisSamples.metricPoint(histogram), AnalysisSamples.metricPoint(gauge), AnalysisSamples.metricPoint(summary))
+
+		fun bits(values: List<Double>) = values.joinToString(",", "[", "]") { java.lang.Double.doubleToRawLongBits(it).toULong().toString() }
+
+		assertThat(selectWhere(METRICS, "observation_id = '${AnalysisSamples.hex('1')}'",
+			"toString(hist_count)", "toString(bucket_counts)", "toString(reinterpretAsUInt64(hist_sum))",
+			"toString(reinterpretAsUInt64(hist_min))", "toString(reinterpretAsUInt64(hist_max))",
+			"toString(arrayMap(x -> reinterpretAsUInt64(x), explicit_bounds))", "toString(point_flags)", "series_id",
+			"toString(start_time)", "toString(hist_buckets_present)", "toString(value_int)",
+		)).containsExactly(
+			"18446744073709551615", "[18446744073709551615,9007199254740993]", bits(tricky.take(1)).trim('[', ']'),
+			bits(tricky.subList(1, 2)).trim('[', ']'), bits(tricky.subList(2, 3)).trim('[', ']'),
+			bits(tricky), "4294967295", AnalysisSamples.hex('d'),
+			"1970-01-01 00:00:00.000000001", "true", NULL,
+		)
+		assertThat(selectWhere(METRICS, "observation_id = '${AnalysisSamples.hex('2')}'", "toString(value_int)", "toString(temporality_code)", "metric_type"))
+			.containsExactly("-9223372036854775808", NULL, "gauge")
+		assertThat(selectWhere(METRICS, "observation_id = '${AnalysisSamples.hex('3')}'",
+			"toString(summary_count)", "toString(reinterpretAsUInt64(summary_sum))", "toString(quantiles)",
+			"toString(arrayMap(x -> reinterpretAsUInt64(x), quantile_values))",
+		)).containsExactly("3", bits(tricky.subList(3, 4)).trim('[', ']'), "[0,0.5,1]", bits(tricky.take(3)))
+	}
+
+	@Test
+	@DisplayName("미보고 metric point 의 Nullable 컬럼은 전부 NULL 이다")
+	fun unreportedMetricPointColumnsAreNull() {
+		insertPoints(AnalysisSamples.metricPoint(org = AnalysisSamples.org(memberId = null)))
+
+		val nullable = AnalysisColumns.METRIC_POINTS.filter { it.nullable }.map { it.name }
+		assertThat(select(METRICS, *nullable.map { "isNull($it)" }.toTypedArray())).containsOnly("1").hasSize(nullable.size)
+	}
+
+	private fun insertPoints(vararg points: EnrichedMetricPoint) {
+		val body = points.joinToString("\n", postfix = "\n") { TelemetryMetricPointRow.toJson(it, versioning) }
+		client.execute(AnalysisInsert.query(METRICS, AnalysisColumns.METRIC_POINTS), body.toByteArray())
+	}
+
 	private fun insert(vararg events: EnrichedEvent) {
 		val body = events.joinToString("\n", postfix = "\n") { TelemetryEventRow.toJson(it, versioning) }
 		client.execute(AnalysisInsert.query(EVENTS, AnalysisColumns.EVENTS), body.toByteArray())
 	}
 
 	/** 한 행의 식을 탭으로 나눈 원문. */
-	private fun select(table: String, vararg expressions: String): List<String> =
-		client.execute("SELECT ${expressions.joinToString(", ")} FROM $table FINAL FORMAT TSVRaw").trimEnd('\n').split('\t')
+	private fun select(table: String, vararg expressions: String): List<String> = selectWhere(table, "1", *expressions)
+
+	private fun selectWhere(table: String, where: String, vararg expressions: String): List<String> =
+		client.execute("SELECT ${expressions.joinToString(", ")} FROM $table FINAL WHERE $where FORMAT TSVRaw").trimEnd('\n').split('\t')
 
 	private fun columns(table: String): List<Pair<String, String>> =
 		client.execute(
