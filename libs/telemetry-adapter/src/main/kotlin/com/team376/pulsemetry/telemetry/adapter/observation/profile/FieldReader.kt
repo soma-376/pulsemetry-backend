@@ -12,6 +12,11 @@ public enum class NumberWire {
 
 	/** `stringValue` 의 엄격한 10진 표기 — `0` 또는 0 으로 시작하지 않는 숫자열. 부호·공백·소수점은 허용하지 않는다. */
 	DECIMAL_STRING,
+
+	/**
+	 * 둘 다. 실캡처가 없어 producer 가 어느 표기로 보내는지 확인하지 못한 필드에만 쓴다 — 확인되면 하나로 좁힌다.
+	 */
+	INT_OR_DECIMAL_STRING,
 }
 
 /** 불리언이 허용하는 wire 표기. */
@@ -48,9 +53,20 @@ public class FieldReader(private val attributes: List<TypedAttribute>) {
 		val value = present(key) ?: return null
 		val number = when (wire) {
 			NumberWire.INT -> (value as? TypedValue.Int)?.value
-			NumberWire.DECIMAL_STRING -> (value as? TypedValue.Str)?.value?.takeIf { DECIMAL.matches(it) }?.toLongOrNull()
+			NumberWire.DECIMAL_STRING -> decimal(value)
+			NumberWire.INT_OR_DECIMAL_STRING -> (value as? TypedValue.Int)?.value ?: decimal(value)
 		}
 		return number?.takeIf { it >= 0 } ?: invalid()
+	}
+
+	/**
+	 * 음이 아닌 유한 `doubleValue` 금액을 Decimal 로. double 의 가장 짧은 10진 표기를 그대로 옮긴다(이진 근사를 늘려 쓰지
+	 * 않는다). 다른 타입·음수·비유한 값은 invalid.
+	 */
+	public fun nonNegativeDouble(key: String): java.math.BigDecimal? {
+		val value = present(key) ?: return null
+		val number = (value as? TypedValue.Double)?.value?.takeIf { it.isFinite() && it >= 0.0 } ?: return invalid()
+		return java.math.BigDecimal(number.toString())
 	}
 
 	/** 밀리초로 보고된 음이 아닌 시간을 나노초로. 나노초로 표현할 수 없으면 invalid 다. */
@@ -81,6 +97,8 @@ public class FieldReader(private val attributes: List<TypedAttribute>) {
 
 	/** 비어 있지 않은 문자열. */
 	public fun nonEmptyText(key: String): String? = text(key)?.takeIf { it.isNotEmpty() }
+
+	private fun decimal(value: TypedValue): Long? = (value as? TypedValue.Str)?.value?.takeIf { DECIMAL.matches(it) }?.toLongOrNull()
 
 	private fun present(key: String): TypedValue? = when (val read = AttributeRead.of(attributes, key)) {
 		AttributeRead.Absent -> null

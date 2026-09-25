@@ -27,7 +27,7 @@ Claude Code 로그는 의미 이름을 **두 곳**에 싣는다 — 본문 문�
 
 | kind | 담은 것 |
 |---|---|
-| `api` | `api_request` — `cost_usd`·`cost_usd_micros` 둘 다 있음/`cost_usd` 만/비용 없음, MCP·스킬이 걸린 요청, `query_source` 값마다 하나(메인·compact·내장 subagent·요약 등); `assistant_response` |
+| `api` | `api_request` — MCP·스킬이 걸린 요청, `query_source` 값마다 하나(메인·compact·내장 subagent·요약 등); `assistant_response`. 캡처의 `api_request` 는 전부 `cost_usd`·`cost_usd_micros` 를 함께 싣는다(비용 한쪽만·비용 없음 행은 없었다) |
 | `tools` | `tool_result` — 실패·MCP·도구 이름별, `tool_decision` — 거절·출처별 |
 | `session` | `user_prompt`(내장·사용자 정의 명령, 명령 없음), `compaction`, `subagent_completed`, `skill_activated`, `permission_mode_changed`, `mcp_server_connection`(상태별), `auth`, `hook_registered`·`hook_execution_start`·`hook_execution_complete` |
 | `generic` | `at_mention`·`feedback_survey`·`retention_sweep`·`plugin_loaded`·`managed_settings_resolved`, `node_repl` 의 `codex.browser_use.security_check` |
