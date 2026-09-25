@@ -1,6 +1,14 @@
 package com.team376.pulsemetry.dashboard.support
 
+import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheClient
+import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheSchema
+import com.team376.pulsemetry.dashboard.cache.RdsCacheSchema
+import com.team376.pulsemetry.dashboard.store.ClickHouseConnection
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
+import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
+import com.team376.pulsemetry.persistence.telemetry.ClickHouseSchemaMigrator
+import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsSchemaMigrator
+import org.flywaydb.core.Flyway
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.jdbc.datasource.DriverManagerDataSource
 import org.springframework.test.context.DynamicPropertyRegistry
@@ -11,7 +19,9 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.time.Duration
 import java.util.UUID
+import tools.jackson.databind.json.JsonMapper
 
 /**
  * 테스트 JVM 하나에 한 벌만 뜨는 원천 저장소 둘. 앱은 설정 키(`pulsemetry.dashboard.*.source`)로만 연결하므로
@@ -89,6 +99,9 @@ object DashboardTestStores {
 		registry.add("pulsemetry.dashboard.rds.cache.username") { postgres.username }
 		registry.add("pulsemetry.dashboard.rds.cache.password") { postgres.password }
 
+		registry.add("pulsemetry.dashboard.snapshot.build-timeout") { "60s" }
+		registry.add("pulsemetry.dashboard.snapshot.purge-grace") { "60s" }
+
 		// 운영의 앱은 Flyway 를 끈다(enrollment-api 가 소유). 테스트는 격리된 컨테이너라 스키마를 만들 주체가 없으므로
 		// 여기서만 켠다 — 앱 연결이 읽기 전용이므로 Flyway 에는 자기 연결(spring.flyway.url)을 준다.
 		registry.add("spring.flyway.enabled") { "true" }
@@ -99,6 +112,27 @@ object DashboardTestStores {
 		registry.add("spring.flyway.schemas") { "enrollment" }
 		registry.add("spring.flyway.default-schema") { "enrollment" }
 	}
+
+	private val schemas: Unit by lazy {
+		val dataSource = DriverManagerDataSource(postgres.jdbcUrl, postgres.username, postgres.password)
+		Flyway.configure().dataSource(dataSource).schemas("enrollment").defaultSchema("enrollment")
+			.locations("classpath:db/migration").load().migrate()
+		TelemetryOpsSchemaMigrator(dataSource).migrate()
+		RdsCacheSchema(dataSource).migrate()
+		ClickHouseSchemaMigrator(ClickHouseHttpClient(clickHouseUrl())).apply()
+		ClickHouseCacheSchema(
+			ClickHouseCacheClient(
+				ClickHouseConnection(clickHouseUrl(), CACHE_DATABASE, "default", "", Duration.ofSeconds(30), JsonMapper.builder().build()),
+				Duration.ofSeconds(30),
+			),
+		).apply()
+	}
+
+	/**
+	 * 원천·캐시 스키마를 전부 세운다 — enrollment(Flyway), telemetry_ops, 분석 테이블(`default`), 두 캐시 스키마. 앱 컨텍스트 없이 도는 테스트가
+	 * 부른다. 모두 멱등이라 앱 기동의 적용과 겹쳐도 된다.
+	 */
+	fun ensureSchemas() = schemas
 
 	/** 조직 하나를 넣는다. [deleted] 면 삭제 표시를 단다. */
 	fun insertTenant(id: UUID = UUID.randomUUID(), name: String = "테스트 조직", deleted: Boolean = false): UUID {

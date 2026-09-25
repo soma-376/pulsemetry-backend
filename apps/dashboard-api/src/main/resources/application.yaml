@@ -75,3 +75,8 @@ pulsemetry:
         username: ${PULSEMETRY_DASHBOARD_RDS_CACHE_USERNAME:}
         password: ${PULSEMETRY_DASHBOARD_RDS_CACHE_PASSWORD:}
         connection-timeout: 3s
+
+    # snapshot 수명의 운영 수치 (ADR 0023 §1). 물리 정리 시각 = build 시작 + build-timeout + 10분 + purge-grace.
+    snapshot:
+      build-timeout: ${PULSEMETRY_DASHBOARD_SNAPSHOT_BUILD_TIMEOUT:}
+      purge-grace: ${PULSEMETRY_DASHBOARD_SNAPSHOT_PURGE_GRACE:}

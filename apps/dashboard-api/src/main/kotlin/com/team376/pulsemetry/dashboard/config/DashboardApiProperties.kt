@@ -18,6 +18,8 @@ data class DashboardApiProperties(
 	val clickhouse: ClickHouse,
 
 	val rds: Rds,
+
+	val snapshot: Snapshot,
 ) {
 	init {
 		require(retryAfter.toSeconds() >= 1) {
@@ -95,6 +97,21 @@ data class DashboardApiProperties(
 		init {
 			require(url.isNotBlank()) { "pulsemetry.dashboard.rds.*.url 이 비어 있다." }
 			require(username.isNotBlank()) { "pulsemetry.dashboard.rds.*.username 이 비어 있다." }
+		}
+	}
+
+	/**
+	 * snapshot 수명의 운영 수치 (ADR 0023 §1). 물리 정리 시각 = build 시작 + [buildTimeout] + API 수명 10분 + [purgeGrace].
+	 */
+	data class Snapshot(
+		/** build 한 번의 제한 시간. manifest 의 `build_deadline` 이다. */
+		val buildTimeout: Duration,
+		/** API 만료 뒤 진행 중인 조회를 위해 물리 행을 더 남기는 유예. */
+		val purgeGrace: Duration,
+	) {
+		init {
+			require(buildTimeout.toSeconds() >= 1) { "pulsemetry.dashboard.snapshot.build-timeout 은 1초 이상이어야 한다." }
+			require(!purgeGrace.isNegative) { "pulsemetry.dashboard.snapshot.purge-grace 는 음수일 수 없다." }
 		}
 	}
 

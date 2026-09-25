@@ -73,6 +73,8 @@ class DashboardApiPropertiesTest {
 			"pulsemetry.dashboard.rds.source.username",
 			"pulsemetry.dashboard.rds.cache.url",
 			"pulsemetry.dashboard.rds.cache.username",
+			"pulsemetry.dashboard.snapshot.build-timeout",
+			"pulsemetry.dashboard.snapshot.purge-grace",
 		],
 	)
 	@DisplayName("원천 계정·상한 값이 비면 기동이 실패한다 — 기본값이 없다")
@@ -103,6 +105,8 @@ class DashboardApiPropertiesTest {
 		"pulsemetry.dashboard.rds.cache.username=dashboard_cache_writer",
 		"pulsemetry.dashboard.rds.cache.password=secret",
 		"pulsemetry.dashboard.rds.cache.connection-timeout=3s",
+		"pulsemetry.dashboard.snapshot.build-timeout=60s",
+		"pulsemetry.dashboard.snapshot.purge-grace=0s",
 	)
 
 	@ParameterizedTest

@@ -19,6 +19,9 @@ dependencies {
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
+	// 원천 스키마를 테스트 저장소에 세운다 — 분석 테이블(ClickHouse)과 telemetry_ops(RDS). 운영에서는 각 소유자가 적용한다.
+	testImplementation(project(":libs:telemetry-persistence"))
+	testImplementation(project(":libs:telemetry-ops-persistence"))
 	testImplementation(libs.testcontainers.postgresql)
 	// ClickHouse 는 GenericContainer 로 띄운다 — 전용 모듈은 JDBC 드라이버를 요구한다.
 	testImplementation(libs.testcontainers)
