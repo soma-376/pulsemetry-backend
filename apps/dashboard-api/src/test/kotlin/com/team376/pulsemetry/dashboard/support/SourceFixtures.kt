@@ -135,6 +135,69 @@ object SourceFixtures {
 		).param("tenant", tenantId).param("before", java.sql.Timestamp.from(deletedBefore)).param("epoch", policyEpoch).update()
 	}
 
+	/** tenant 생애 요약 한 행(ADR 0021). 운영에서는 ingest 가 쓴다. */
+	fun setSummary(
+		tenantId: UUID,
+		firstReceivedAt: Instant? = null,
+		firstObservedAt: Instant? = null,
+		lastReceivedAt: Instant? = null,
+		hasPreLedgerHistory: Boolean = false,
+	) {
+		DashboardTestStores.writer.sql(
+			"INSERT INTO telemetry_ops.tenant_ingest_summary (tenant_id, first_received_at, first_observed_at, last_received_at, has_pre_ledger_history) " +
+				"VALUES (:tenant, :first_received, :first_observed, :last_received, :pre)",
+		).param("tenant", tenantId)
+			.param("first_received", firstReceivedAt?.let(java.sql.Timestamp::from))
+			.param("first_observed", firstObservedAt?.let(java.sql.Timestamp::from))
+			.param("last_received", lastReceivedAt?.let(java.sql.Timestamp::from))
+			.param("pre", hasPreLedgerHistory)
+			.update()
+	}
+
+	private const val BACKFILL = "pre-ledger-enriched-events"
+
+	/** 요약 도입 전 이력의 백필이 끝났다는 기록(전역 한 행). 없으면 요약 부재를 "수집한 적 없음"으로 읽을 수 없다. */
+	fun completeBackfill() {
+		DashboardTestStores.writer.sql(
+			"INSERT INTO telemetry_ops.tenant_summary_backfill (backfill, source, completed_at, tenants_marked) " +
+				"VALUES ('$BACKFILL', 'enriched_events', now(), 0) ON CONFLICT (backfill) DO NOTHING",
+		).update()
+	}
+
+	fun removeBackfill() {
+		DashboardTestStores.writer.sql("DELETE FROM telemetry_ops.tenant_summary_backfill WHERE backfill = '$BACKFILL'").update()
+	}
+
+	/** 수신 ledger 한 행(ADR 0021). */
+	fun insertLedger(tenantId: UUID, installationId: UUID, receivedTime: Instant) {
+		val line = json(
+			"tenant_id" to tenantId.toString(),
+			"installation_id" to installationId.toString(),
+			"received_time" to DATETIME64.format(receivedTime),
+			"receipt_id" to UUID.randomUUID().toString(),
+			"signal" to "logs",
+			"product" to "claude_code",
+			"record_count" to 1L,
+			"rejected_count" to 0L,
+			"masking_version" to "masking-v2",
+		)
+		DashboardTestStores.clickHouseAdmin("INSERT INTO default.telemetry_ingest_ledger FORMAT JSONEachRow\n$line")
+	}
+
+	/** 구성원의 설치 하나 — 초대를 거쳐야 하는 외래 키를 채운다. */
+	fun insertInstallation(tenantId: UUID, memberId: UUID): UUID {
+		val invitation = UUID.randomUUID()
+		DashboardTestStores.writer.sql(
+			"INSERT INTO enrollment.invitations (id, tenant_id, target_member_id, created_by_member_id, code_hash, expires_at) " +
+				"VALUES (:id, :tenant, :member, :member, :hash, now() + interval '1 day')",
+		).param("id", invitation).param("tenant", tenantId).param("member", memberId).param("hash", observationId(invitation.toString())).update()
+		val installation = UUID.randomUUID()
+		DashboardTestStores.writer.sql(
+			"INSERT INTO enrollment.installations (id, tenant_id, member_id, invitation_id, platform) VALUES (:id, :tenant, :member, :invitation, 'linux')",
+		).param("id", installation).param("tenant", tenantId).param("member", memberId).param("invitation", invitation).update()
+		return installation
+	}
+
 	private fun json(vararg fields: Pair<String, Any?>): String =
 		fields.joinToString(",", "{", "}") { (key, value) -> "\"$key\":${literal(value)}" }
 

@@ -8,6 +8,8 @@ dependencies {
 	// enrollment 스키마(조직·팀·구성원)를 읽는다. 쓰기 소유는 그대로다 — 이 앱의 RDS 계정은 SELECT 만 갖는다 (ADR 0022 §2·§4).
 	// JPA·JDBC 를 api() 로 노출하므로 엔티티·리포지토리·JdbcClient 를 여기서 바로 쓴다.
 	implementation(project(":libs:enrollment-persistence"))
+	// 수집 운영 기록(tenant 생애 요약·백필 완료)을 읽는다 — 쓰기 소유는 그 모듈이고 DDL 은 enrollment-api 가 적용한다 (ADR 0021).
+	implementation(project(":libs:telemetry-ops-persistence"))
 
 	// dashboard_cache 스키마의 두 번째 Flyway 인스턴스(ADR 0023 §3). 자동설정 없이 API 만 쓴다 — 자동설정은 enrollment 용이고 꺼져 있다.
 	implementation(libs.flyway.core)
@@ -19,9 +21,8 @@ dependencies {
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
-	// 원천 스키마를 테스트 저장소에 세운다 — 분석 테이블(ClickHouse)과 telemetry_ops(RDS). 운영에서는 각 소유자가 적용한다.
+	// 분석 테이블(ClickHouse) 스키마를 테스트 저장소에 세운다. 운영에서는 ingest 가 적용한다.
 	testImplementation(project(":libs:telemetry-persistence"))
-	testImplementation(project(":libs:telemetry-ops-persistence"))
 	testImplementation(libs.testcontainers.postgresql)
 	// ClickHouse 는 GenericContainer 로 띄운다 — 전용 모듈은 JDBC 드라이버를 요구한다.
 	testImplementation(libs.testcontainers)

@@ -133,6 +133,8 @@ Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-te
 - **정리 작업.** 주기(기본값 없는 설정)마다 마감이 지난 `building` 을 `failed`(`abandoned`)로 바꾸고, 실패한 build 와 물리 정리 시각이 지난 build 의 캐시 행을
   지운 뒤 manifest 를 지운다. 자기 캐시 행만 지운다. 늦거나 빠져도 응답은 달라지지 않는다 — 유효기간은 manifest 가 정한다.
 - 실패했거나 결과가 불확실한 build 의 행은 어떤 조회도 읽지 않는다(`build_id` 가 ready manifest 에 없다). 그 행은 TTL 또는 정리 작업이 지운다.
+- **팀 귀속은 이벤트 당시다.** 팀별 합계는 사용 행의 `source_time` 당시 대표 팀(`team_id_as_of` — ADR 0020 §5)으로 묶는다. 현재 팀 매핑으로
+  다시 귀속하지 않는다. 응답의 `attributionBasis = "event_time"` 이 이것이다.
 
 ## Alternatives
 

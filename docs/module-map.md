@@ -36,7 +36,8 @@ pulsemetry-backend
 │   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
 │   └── dashboard-api/               com.team376.pulsemetry.dashboard
 │                                    분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐 (ADR 0022)
-│                                    ├ api/            HTTP 표현 계층
+│                                    ├ api/            HTTP 표현 계층 — 화면별 컨트롤러
+│                                    ├ analytics/      공통 계산기(축별 합계·null 규칙) · 화면별 응답 조립
 │                                    ├ authentication/ 인증 포트 · 기본 거부 구현 · 필터 · 역할 대응
 │                                    ├ authorization/  인가 포트 · 기본 정책(관리자만) · 조직 경로 공통 관문
 │                                    ├ organization/   조직(tenant) 읽기

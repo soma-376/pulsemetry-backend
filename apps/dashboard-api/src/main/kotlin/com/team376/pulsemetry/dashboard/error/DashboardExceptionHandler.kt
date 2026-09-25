@@ -1,8 +1,10 @@
 package com.team376.pulsemetry.dashboard.error
 
+import com.team376.pulsemetry.dashboard.analytics.IngestHistoryUnknownException
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotUnavailableException
 import com.team376.pulsemetry.dashboard.store.StoreQueryRejectedException
 import com.team376.pulsemetry.dashboard.store.StoreUnavailableException
+import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsUnavailableException
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.slf4j.LoggerFactory
@@ -27,6 +29,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException
  * | [DashboardException] | 그 코드(400·403·404·409 …) |
  * | ClickHouse 일시 장애·상한 초과([StoreUnavailableException]), RDS 연결·일시 장애 | 503 `unavailable` + `Retry-After` |
  * | snapshot 을 지금 만들 수 없음([SnapshotUnavailableException] — 동시 build 한도·공개 CAS 거부·복사 검증 실패) | 503 `unavailable` + `Retry-After` |
+ * | 수신 이력을 판정할 근거 없음([IngestHistoryUnknownException] — 요약도 백필 완료 기록도 없다), `telemetry_ops` 일시 장애 | 503 `unavailable` + `Retry-After` |
  * | ClickHouse 의 문장 거부([StoreQueryRejectedException]) | 500 `internal_error` — 이 앱의 문장 결함 |
  * | 매핑 없는 경로 / 메서드 | 404 / 405 |
  * | 그 밖 | 500 `internal_error` |
@@ -54,6 +57,17 @@ class DashboardExceptionHandler(
 	@ExceptionHandler(SnapshotUnavailableException::class)
 	fun handleSnapshotUnavailable(request: HttpServletRequest, response: HttpServletResponse): ResponseEntity<ErrorResponse> =
 		errors.entity(request, response, ErrorCode.UNAVAILABLE)
+
+	/** 요약 부재를 "수집한 적 없음"으로 바꾸지 않는다 — 판정할 수 없으면 503 이다. `dataState` 에 unknown 이 없다(합의 전). */
+	@ExceptionHandler(IngestHistoryUnknownException::class, TelemetryOpsUnavailableException::class)
+	fun handleIngestHistoryUnknown(
+		exception: Exception,
+		request: HttpServletRequest,
+		response: HttpServletResponse,
+	): ResponseEntity<ErrorResponse> {
+		log.warn("수신 이력을 판정할 수 없다 — 503 으로 돌린다: {}", exception.message)
+		return errors.entity(request, response, ErrorCode.UNAVAILABLE)
+	}
 
 	@ExceptionHandler(StoreQueryRejectedException::class)
 	fun handleStoreRejected(request: HttpServletRequest, response: HttpServletResponse): ResponseEntity<ErrorResponse> =
