@@ -16,6 +16,8 @@
 [ADR 0015](adr/0015-clickhouse-ddl-은-번호-붙은-멱등-파일이고-기동-시-적용한다.md) ·
 [ADR 0016](adr/0016-조립-앱은-인증-체인과-단계-호출을-배선하고-스키마-적용-실패를-견딘다.md) ·
 [ADR 0017](adr/0017-정규화-불변-규칙과-enrichment-json-승격-금지는-이-저장소가-정한다.md) ·
+[ADR 0020](adr/0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md) ·
+[ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md) ·
 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)
@@ -40,18 +42,20 @@ pulsemetry-backend
     │                                ├ masking/    blocked_values 14종 값 마스킹
     │                                └ archive/    제품별 원본 적재 (S3 · 파일)
     ├── telemetry-adapter/           com.team376.pulsemetry.telemetry.adapter
-    │                                OTLP 읽기 · record_id 생성 · call_id 페어링
-    │                                ├ model/      공통 스키마 (봉투 · payload · enum)
-    │                                ├ source/     벤더별 매핑 (claude_code · codex)
     │                                └ observation/ 정규화 계약 2판의 관측 모델 (ADR 0020)
+    │                                  ├ profile/   제품 프로파일 SPI · 엄격한 필드 읽기
+    │                                  ├ codex/     Codex 프로파일
+    │                                  ├ claudecode/ Claude Code 프로파일
+    │                                  ├ semantics/ 토큰 의미 프로파일 · 파생 토큰
+    │                                  └ pricing/   가격 단계 (추정 비용)
     ├── telemetry-enricher/          com.team376.pulsemetry.telemetry.enricher
-    │                                사원 정보 결합 — as-of 조인 · provider 주석
+    │                                사원 정보 결합 — member_id · 대표 팀 as-of · provider 주석
     │                                ├ provider/   EnrichmentProvider 와 그 구현
-    │                                └ observation/ 정규화 계약 2판 관측의 보강 (ADR 0020)
+    │                                └ observation/ 관측 보강 (ADR 0020 §5)
     ├── telemetry-persistence/       com.team376.pulsemetry.persistence.telemetry
-    │                                ClickHouse 스키마 · 적재 — 쓰기 소유 모듈
+    │                                ClickHouse 스키마 · 분석 테이블 sink · 수신 ledger sink — 쓰기 소유 모듈
     └── telemetry-ops-persistence/   com.team376.pulsemetry.persistence.telemetryops
-                                     RDS telemetry_ops 스키마(수집 운영 기록) · 마이그레이션
+                                     RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필
 ```
 
 `settings.gradle.kts`의 `include`는 이 아홉뿐이다. **5절이 예고한 모듈이 전부 섰다.**
@@ -70,35 +74,36 @@ PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 —
 `:libs:telemetry-collector`는 5절이 예고한 단계 모듈 중 첫 번째다(PROJ-114). 하위 패키지는 5절이
 정한 대로 `masking/`·`archive/` 둘이고, 수신 관련 타입은 모듈 루트 패키지에 둔다.
 HTTP 라우팅과 인증 체인은 `:apps:telemetry-ingest`가 붙인다.
-**검증된 신원을 리소스 속성으로 승격하는 것도 이 모듈이다**(`IdentitySource`) — 변환 단계가
-`tenant.id`·`developer.installation_id`를 거기서 읽고, 그 값이 `record_id` 해시의 재료다.
-심는 자리는 마스킹 뒤·아카이브 앞이다(ADR 0016).
+**검증된 신원을 리소스 속성으로 승격하는 것도 이 모듈이다**(`IdentitySource`) — 아카이브 원본이 신원을 담아야
+재처리가 원래 문맥(`observation_id` 재료의 `tenant_id`·`installation_id`)을 재현한다. live 경로의 정규화는 같은
+신원을 영수증(`ArchiveReceipt`)에서 받는다. 심는 자리는 마스킹 뒤·아카이브 앞이다(ADR 0016).
 적재 대상은 [ADR 0012](adr/0012-원본-아카이브를-S3에-쓰고-파일-구현은-로컬에만-남긴다.md)가 정했다 —
 배포는 S3, 로컬 dev는 파일이고 어느 쪽을 쓸지는 조립 앱이 고른다.
 
-`:libs:telemetry-adapter`는 두 번째 단계 모듈이다(PROJ-103). 하위 패키지는 5절이 정한 대로
-`model/`·`source/` 둘이고, 읽기·키 생성·페어링은 모듈 루트 패키지에 둔다.
+`:libs:telemetry-adapter`는 두 번째 단계 모듈이다(PROJ-103). 정규화 계약 2판
+([ADR 0020](adr/0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md))으로 전환한 뒤 하위 패키지는
+`observation/` 하나이고, 그 아래를 제품 프로파일(`codex/`·`claudecode/`), 프로파일 SPI(`profile/`), 토큰 의미
+(`semantics/`), 가격(`pricing/`)으로 나눈다. 구 `model/`·`source/`는 지웠다.
 **입력은 수집 단계가 넘겨주는 protobuf 요청이다**
 ([ADR 0013](adr/0013-정규화-입력은-protobuf-이고-원본-해시는-정규-json-으로-되살린다.md)).
-`model/`의 봉투와 payload 타입은 **모듈 경계를 넘는 공개 API**다 — 보강·적재 단계가 그대로 받는다.
-정규화가 지키는 불변 규칙 다섯(프롬프트 원문 미취급 · billable 합산 · 없으면 `null` · `call_id` 조인 키 ·
-신호 간 조인은 다운스트림)은 [ADR 0017](adr/0017-정규화-불변-규칙과-enrichment-json-승격-금지는-이-저장소가-정한다.md)이
-소유한다.
+관측 타입(`EventObservation`·`MetricPointObservation`·`ObservationEnvelope`)은 **모듈 경계를 넘는 공개 API**다 —
+보강·적재 단계가 그대로 받는다. 정규화 불변 규칙은
+[ADR 0017](adr/0017-정규화-불변-규칙과-enrichment-json-승격-금지는-이-저장소가-정한다.md)이 소유하고 ADR 0020이
+그중 규칙 2·4·6을 대체했다.
 **단계 모듈은 이웃의 seam 인터페이스를 구현하지 않지만, 공개된 데이터 타입은 `project()` 간선으로
 직접 받는다**([ADR 0014](adr/0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md)). 수집의
 `SignalConsumer`에 변환을 잇는 배선은 여전히 조립 앱의 몫이다(ADR 0011).
 
-`:libs:telemetry-enricher`는 세 번째 단계 모듈이다(PROJ-104). 하위 패키지는 `provider/`·`observation/` 둘이고,
-`Enriched`와 `Enricher`는 모듈 루트 패키지에 둔다. **RDS를 읽는 provider는 `org` 하나뿐이며**
-PROJ-101이 만든 `TeamMembershipRepository.findActiveTeamMembershipsByInstallationId`와
-`TeamMembership.coversAt`를 그대로 쓴다 — 읽기 전용이고 `team_memberships`의 쓰기 소유는 그대로다.
-정규화 2판 관측의 보강은 `observation/`의 `ObservationEnricher`가 한다. 구성원은 installation 단독 조회
-(`InstallationRepository.findMemberIdById`), 대표 팀은 팀 상태를 보지 않는 소속 이력(`findAllByMemberId`)에서
-정한다(ADR 0020 §5). `enrichment_json`의 provider 항목은 같은 `EnrichmentProvider`의 `annotate`가 쓴다.
+`:libs:telemetry-enricher`는 세 번째 단계 모듈이다(PROJ-104). 하위 패키지는 `provider/`·`observation/` 둘이다.
+보강은 `observation/`의 `ObservationEnricher`가 한다. **RDS를 읽는 것은 이 클래스 하나뿐이며** 구성원은
+installation 단독 조회(`InstallationRepository.findMemberIdById`), 대표 팀은 팀 상태를 보지 않는 소속 이력
+(`TeamMembershipRepository.findAllByMemberId`)을 `TeamMembership.coversAt`으로 잘라 정한다(ADR 0020 §5) — 읽기
+전용이고 `team_memberships`의 쓰기 소유는 그대로다. `enrichment_json`의 provider 항목은 `provider/`의
+`EnrichmentProvider.annotate`가 쓴다.
 
 `:libs:telemetry-persistence`는 단계가 아니라 **역할** 모듈이라 어순이 뒤집힌다(ADR 0010).
-ClickHouse 테이블(`enriched_events`, 정규화 2판의 `telemetry_events`·`telemetry_metric_points`)의 DDL과
-쓰기를 소유하고, ClickHouse HTTP 인터페이스를 JDK `HttpClient`로 직접
+ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_points`, 수신 ledger
+`telemetry_ingest_ledger`, 새 행을 받지 않고 보존만 하는 `enriched_events`)의 DDL과 쓰기를 소유하고, ClickHouse HTTP 인터페이스를 JDK `HttpClient`로 직접
 부른다 — 드라이버를 넣으면 자체 오류 매핑이 상태 코드별 처분을 덮는데, 그 분류가 곧 HTTP
 계약이다(허브 ADR 0006 — 연결 계열과 `5xx`·`429`·`408`은 일시 장애, 그 밖의 4xx는 영구 오류).
 
@@ -222,13 +227,13 @@ libs/
 │                                    ├ masking/    서버 마스킹 — 허브 Masker 노드의 소재
 │                                    └ archive/    마스킹 후 원본의 외부 저장소 적재
 ├── telemetry-adapter/               com.team376.pulsemetry.telemetry.adapter    ← 있다 (1절)
-│                                    OTLP 읽기 · record_id 생성 · call_id 페어링 · 공시가 환산
+│                                    정규화 — 관측 모델 2판 · 제품 프로파일 · 가격 단계
 │                                    (재처리 읽기는 아직 없다 — 재처리 리더가 생길 때 이 모듈에 붙는다)
-│                                    ├ model/      공통 스키마
-│                                    └ source/     벤더별 매핑 (claude_code · codex)
+│                                    └ observation/ 관측 모델과 그 하위 패키지 (1절)
 ├── telemetry-enricher/              com.team376.pulsemetry.telemetry.enricher    ← 있다 (1절)
 │                                    사원 정보 결합
-│                                    └ provider/   EnrichmentProvider 와 그 구현
+│                                    ├ provider/   EnrichmentProvider 와 그 구현
+│                                    └ observation/ 관측 보강
 └── telemetry-persistence/           com.team376.pulsemetry.persistence.telemetry ← 있다 (1절)
                                      ClickHouse 스키마 · 적재 — 쓰기 소유 모듈
 ```

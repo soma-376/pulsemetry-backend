@@ -449,7 +449,8 @@ export SPRING_PROFILES_ACTIVE=local        # local 프로파일 시더를 켠다
 기동 로그에 찍힌다.
 
 **팀 소속은 시드된 owner 에게 걸려 있다.** 다른 이메일로 초대하면 새 member 가 만들어져 소속이
-없고, 그러면 `enriched_events.team_ids_as_of` 가 빈 배열이 된다 — 보강 배선이 틀린 것이 아니다.
+없고, 그러면 `telemetry_events.team_id_as_of` 가 null·`team_ids_as_of` 가 빈 배열이 된다(`member_id` 는
+채워진다) — 보강 배선이 틀린 것이 아니다.
 
 ### 10.1 파이프라인까지 로컬에서 돌리기
 
@@ -472,9 +473,20 @@ export SPRING_PROFILES_ACTIVE=local        # local 프로파일 시더를 켠다
 # 시드된 초대 코드로 등록하면 installation 과 telemetry token 이 만들어진다.
 pulsemetry enroll --invite E2E0-0000-0001 --server http://localhost:8080
 
-# 적재 확인
+# 적재 확인 — 분석 테이블(ADR 0020). 구 enriched_events 는 새 행을 받지 않는다.
 curl -s http://localhost:8123 --data-urlencode \
-  "query=SELECT tenant_id, installation_id, team_ids_as_of FROM enriched_events FINAL LIMIT 5"
+  "query=SELECT tenant_id, installation_id, member_id, team_id_as_of, product, event_type, archive_ref FROM telemetry_events FINAL LIMIT 5"
+```
+
+수집 운영 기록(수신 ledger·tenant 생애 요약, ADR 0021)은 기본으로 꺼져 있다. 로컬에서 보려면
+`PULSEMETRY_TELEMETRY_OPS_ENABLED=true` 로 ingest 를 띄운다 — `telemetry_ops` 스키마는 `:apps:enrollment-api`
+기동이 이미 적용한다.
+
+```sh
+curl -s http://localhost:8123 --data-urlencode \
+  "query=SELECT receipt_id, signal, product, record_count, rejected_count FROM telemetry_ingest_ledger FINAL LIMIT 5"
+psql postgresql://pulsemetry:pulsemetry@localhost:5432/pulsemetry \
+  -c "SELECT * FROM telemetry_ops.tenant_ingest_summary"
 ```
 
 토큰 없이 `POST http://localhost:4316/v1/traces` 를 부르면
