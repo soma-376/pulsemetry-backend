@@ -52,3 +52,41 @@ Claude Code producer 가 내보내는 값의 의미를 확인한 기록이다. �
 | `compact` | `compaction` — 작업 목적일 뿐 사용량에서 빼지 않는다(primary) |
 | `subagent`·`agent:<종류>:<이름>` | `subagent` |
 | 그 밖(보조 작업·모르는 값) | `unknown` |
+
+## 5. 도구와 결정
+
+- 호출 ID 는 모델의 `tool_use` 블록 ID(`tool_use_id`) — 문서가 `tool_result`·`tool_decision`·`claude_code.tool` 스팬에서 같은 값이라
+  적고, 실캡처의 세 곳이 같은 모양이다.
+- `tool_result`: `success` 는 문자열 `"true"`/`"false"`, `duration_ms` 는 10진 문자열(실캡처). `error_type` 은 오류 분류 식별자
+  (`ShellError`·`McpToolCallError`·`chrome_computer_action_failed` — 실캡처)라 식별자 꼴이면 `error_type` 컬럼으로, 아니면 unknown.
+  `tool_input`·`tool_parameters`·`error` 는 싣지 않는다. 거절된 호출에는 이 이벤트가 없다(문서).
+- MCP 도구: 로그의 `tool_name` 은 producer 가 가린 `mcp_tool` 이고, `tool_result` 는 `mcp_server_scope`, `tool_decision` 은
+  `tool_source = mcp` 를 싣는다(실캡처). 이것이 출처(`tool_origin = mcp`)의 근거다 — 동작의 근거는 아니다.
+- 내장 도구: 공식 도구 목록(`code.claude.com/docs/en/tools-reference`)의 이름 46개를 `builtin` 으로 본다. 실캡처의 도구 이름
+  (Bash·Read·Write·Edit·Agent·Skill·ToolSearch·AskUserQuestion·ExitPlanMode·Artifact)은 모두 그 목록에 있다. 동작은 목록의 설명이
+  분명한 것만: Read → read, Write → write, Edit·NotebookEdit → edit, Glob·Grep·WebSearch → search, WebFetch → fetch,
+  Bash·PowerShell → exec. 나머지는 unknown.
+- `tool_decision`: `decision` 은 `accept`·`reject`, `source` 는 `config`·`hook`·`user_permanent`·`user_temporary`·`user_abort`·
+  `user_reject`(문서; 실캡처는 `config`·`user_temporary`·`user_reject`). `config` → config, `user_*` 넷 → user, `hook` 은
+  `decision_source` 어휘에 없어 unknown(원래 값은 metadata).
+
+## 6. 생애주기 이벤트
+
+| 이벤트 | event_type | 실캡처 wire | 매핑 |
+|---|---|---|---|
+| `user_prompt` | `prompt.submitted` | `prompt_length` 10진 문자열, `command_name`·`command_source` | 길이, 내장(`command_source = builtin`) 명령 이름만 컬럼. 사용자 정의 명령 이름(실캡처에 그대로 실린다)은 싣지 않는다 |
+| `compaction` | `context.compacted` | `pre_tokens`·`post_tokens`·`duration_ms` 10진 문자열, `success` 문자열 | 전후 토큰은 컨텍스트 크기 — metadata 에만 |
+| `subagent_completed` | `agent.completed` | `total_tokens`·`duration_ms` int | `total_tokens` 는 마지막 요청의 컨텍스트 크기 — metadata 에만 |
+| `mcp_server_connection` | `mcp.connection` | `duration_ms` 10진 문자열, `server_name`·`status`·`transport_type`·`server_scope` | `server_name` 은 사용자 설정 서버면 producer 가 `custom` 으로 가린다(문서) — `mcp_server` 컬럼 |
+| `auth` | `auth.event` | `success` 문자열, `action`·`auth_method` | |
+| `skill_activated`·`permission_mode_changed`·`hook_registered`·`hook_execution_start`·`hook_execution_complete` | `skill.activated`·`permission.changed`·`hook.registered`·`hook.started`·`hook.completed` | `total_duration_ms` 10진 문자열 | 허용 metadata. 훅 시작과 완료를 시간으로 잇지 않는다 |
+
+generic 목록(`internal_error`·`plugin_installed`·`plugin_loaded`·`at_mention`·`hook_plugin_metrics`·`feedback_survey`·`retention_sweep`)과
+그 밖의 이름(`managed_settings_resolved` 등)은 `vendor.unknown` 이다.
+
+## 7. 실캡처가 없는 이벤트
+
+`api_error`·`api_retries_exhausted`·`api_refusal`·`api_request_body`·`api_response_body` 는 캡처 사본에 없다. 이벤트 이름과 역할은
+부록 A.2 대로 매핑하되, 정수 필드(`status_code`·`attempt`·`duration_ms`·`total_attempts`·`total_retry_duration_ms`)는 wire 를 확인하지
+못해 intValue·10진 문자열을 모두 받는다. 필드 이름은 문서 요약과 참조 분석이 일부 어긋나(`attempts` 대 `total_attempts` 등) 실캡처로
+확인하기 전까지 명세 사례(`synthetic/errors`)만 고정한다.

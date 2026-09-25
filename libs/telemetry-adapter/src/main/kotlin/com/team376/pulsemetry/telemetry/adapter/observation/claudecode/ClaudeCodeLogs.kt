@@ -1,5 +1,8 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.claudecode
 
+import com.team376.pulsemetry.telemetry.adapter.observation.Decision
+import com.team376.pulsemetry.telemetry.adapter.observation.DecisionScope
+import com.team376.pulsemetry.telemetry.adapter.observation.DecisionSource
 import com.team376.pulsemetry.telemetry.adapter.observation.ErrorType
 import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
 import com.team376.pulsemetry.telemetry.adapter.observation.EventType
@@ -8,11 +11,14 @@ import com.team376.pulsemetry.telemetry.adapter.observation.MetadataAllowlist
 import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
 import com.team376.pulsemetry.telemetry.adapter.observation.ReportedCostBasis
 import com.team376.pulsemetry.telemetry.adapter.observation.StopReason
+import com.team376.pulsemetry.telemetry.adapter.observation.ToolAction
+import com.team376.pulsemetry.telemetry.adapter.observation.ToolOrigin
 import com.team376.pulsemetry.telemetry.adapter.observation.TtftScope
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedValue
 import com.team376.pulsemetry.telemetry.adapter.observation.UsageRole
 import com.team376.pulsemetry.telemetry.adapter.observation.UsageScope
 import com.team376.pulsemetry.telemetry.adapter.observation.WorkloadKind
+import com.team376.pulsemetry.telemetry.adapter.observation.profile.BoolWire
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.FieldReader
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.LogProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.LogRecordView
@@ -46,6 +52,16 @@ internal object ClaudeCodeLogs : LogProfile {
 			// 오류·재시도·응답·본문 메타데이터 — 오류 원문·본문·body_ref 는 뺀다.
 			"status_code", "attempt", "error_class", "total_attempts", "total_retry_duration_ms", "response_length", "category",
 			"server_fallback_hop", "truncated",
+			// 도구·결정 — 인자·입력·오류 원문은 뺀다.
+			// error_type 은 식별자 꼴일 때만 error_type 컬럼에 옮긴다 — 원문이 자유 텍스트일 수 있어 metadata 에는 싣지 않는다.
+			"tool_name", "tool_name_safe", "tool_use_id", "success", "decision", "source", "tool_source", "decision_type",
+			"decision_source", "tool_input_size_bytes", "tool_result_size_bytes", "mcp_server_scope",
+			// 생애주기 — 사용자 정의 명령 이름은 뺀다(내장 명령만 command_name 컬럼에).
+			"prompt_length", "command_source", "trigger", "pre_tokens", "post_tokens", "precompute_reuse", "agent_type", "agent.source",
+			"is_built_in", "is_async", "total_tool_uses", "final_model", "model_swapped", "total_tokens", "invocation_trigger", "skill.source",
+			"from_mode", "to_mode", "status", "transport_type", "server_scope", "is_plugin", "server_name", "action", "auth_method",
+			"hook_event", "hook_name", "hook_source", "hook_type", "num_hooks", "num_success", "num_blocking", "num_non_blocking_error",
+			"num_cancelled", "total_duration_ms", "managed_only", "safe_mode",
 		),
 	)
 
@@ -86,6 +102,40 @@ internal object ClaudeCodeLogs : LogProfile {
 			"api_request_body", "api_response_body" -> common(fields, base).copy(
 				eventType = EventType.MODEL_BODY_METADATA,
 				attempt = fields.count("attempt", NumberWire.INT_OR_DECIMAL_STRING),
+			)
+			"tool_result" -> toolResult(fields, common(fields, base))
+			"tool_decision" -> toolDecision(fields, common(fields, base))
+			// 프롬프트 제출 — 길이와 내장 명령 이름만. 본문·사용자 정의 명령 이름은 싣지 않는다.
+			"user_prompt" -> common(fields, base).copy(
+				eventType = EventType.PROMPT_SUBMITTED,
+				promptLength = fields.count("prompt_length", NumberWire.DECIMAL_STRING),
+				commandName = fields.nonEmptyText("command_name")?.takeIf { fields.text("command_source") == "builtin" },
+			)
+			// 전후 토큰은 컨텍스트 크기이지 소비 사용량이 아니다 — metadata 에만.
+			"compaction" -> common(fields, base).copy(
+				eventType = EventType.CONTEXT_COMPACTED,
+				durationNs = fields.millisAsNanos("duration_ms", NumberWire.DECIMAL_STRING),
+				success = fields.bool("success", BoolWire.STRING),
+			)
+			// total_tokens 는 마지막 요청의 컨텍스트 크기다 — 누적 사용량으로 올리지 않는다(metadata 에만).
+			"subagent_completed" -> common(fields, base).copy(
+				eventType = EventType.AGENT_COMPLETED,
+				durationNs = fields.millisAsNanos("duration_ms", NumberWire.INT),
+			)
+			"skill_activated" -> common(fields, base).copy(eventType = EventType.SKILL_ACTIVATED)
+			"permission_mode_changed" -> common(fields, base).copy(eventType = EventType.PERMISSION_CHANGED)
+			"mcp_server_connection" -> common(fields, base).copy(
+				eventType = EventType.MCP_CONNECTION,
+				durationNs = fields.millisAsNanos("duration_ms", NumberWire.DECIMAL_STRING),
+				mcpServer = fields.nonEmptyText("server_name"),
+			)
+			"auth" -> common(fields, base).copy(eventType = EventType.AUTH_EVENT, success = fields.bool("success", BoolWire.STRING))
+			// 시작과 완료를 시간 근접으로 잇지 않는다 — 각자의 관측이다.
+			"hook_registered" -> common(fields, base).copy(eventType = EventType.HOOK_REGISTERED)
+			"hook_execution_start" -> common(fields, base).copy(eventType = EventType.HOOK_STARTED)
+			"hook_execution_complete" -> common(fields, base).copy(
+				eventType = EventType.HOOK_COMPLETED,
+				durationNs = fields.millisAsNanos("total_duration_ms", NumberWire.DECIMAL_STRING),
 			)
 			else -> return null
 		}
@@ -160,6 +210,77 @@ internal object ClaudeCodeLogs : LogProfile {
 		}
 	}
 
+	/**
+	 * `tool_result` → `tool.result`. 호출 ID 는 모델의 `tool_use` 블록 ID(`tool_use_id`)다. 오류 분류(`error_type`)는
+	 * producer 가 정한 식별자 꼴일 때만 옮기고 오류 원문은 싣지 않는다. 거절된 호출에는 이 이벤트가 없다 — 결과가 없는 것이
+	 * 유실은 아니다.
+	 */
+	private fun toolResult(fields: FieldReader, common: EventObservation): EventObservation {
+		val toolName = fields.nonEmptyText("tool_name")
+		val mcp = fields.has("mcp_server_scope") || isMcpName(toolName)
+		val errorType = fields.nonEmptyText("error_type")
+		return common.copy(
+			eventType = EventType.TOOL_RESULT,
+			callId = fields.nonEmptyText("tool_use_id"),
+			callIdNamespace = fields.nonEmptyText("tool_use_id")?.let { TOOL_USE_NAMESPACE },
+			toolName = toolName,
+			toolOrigin = origin(toolName, if (mcp) "mcp" else null),
+			toolAction = action(toolName, mcp),
+			success = fields.bool("success", BoolWire.STRING),
+			durationNs = fields.millisAsNanos("duration_ms", NumberWire.DECIMAL_STRING),
+			errorType = when {
+				errorType == null -> ErrorType.NONE
+				ERROR_CLASS.matches(errorType) -> ErrorType(errorType)
+				else -> ErrorType.UNKNOWN
+			},
+		)
+	}
+
+	/**
+	 * `tool_decision` → `tool.decision`. 결정은 `accept`·`reject` 만 옮기고 원문은 `decision_raw`. 출처는 설정(`config`)과
+	 * 사용자의 네 표기(`user_permanent`·`user_temporary`·`user_abort`·`user_reject`)만 옮긴다 — 훅·모르는 값은 unknown
+	 * (원래 값은 metadata). 결정의 범위(영구·이번만)는 어휘가 검증되지 않아 unknown.
+	 */
+	private fun toolDecision(fields: FieldReader, common: EventObservation): EventObservation {
+		val toolName = fields.nonEmptyText("tool_name")
+		val raw = fields.nonEmptyText("decision")
+		val source = fields.text("source")
+		return common.copy(
+			eventType = EventType.TOOL_DECISION,
+			callId = fields.nonEmptyText("tool_use_id"),
+			callIdNamespace = fields.nonEmptyText("tool_use_id")?.let { TOOL_USE_NAMESPACE },
+			toolName = toolName,
+			toolOrigin = origin(toolName, fields.text("tool_source")),
+			toolAction = action(toolName, fields.text("tool_source") == "mcp" || isMcpName(toolName)),
+			decision = when (raw) {
+				"accept" -> Decision.ACCEPT
+				"reject" -> Decision.REJECT
+				else -> Decision.UNKNOWN
+			},
+			decisionRaw = raw,
+			decisionSource = when {
+				source == "config" -> DecisionSource.CONFIG
+				source in USER_SOURCES -> DecisionSource.USER
+				else -> DecisionSource.UNKNOWN
+			},
+			decisionScope = DecisionScope.UNKNOWN,
+		)
+	}
+
+	/** MCP 도구 이름 — producer 가 가린 표기(`mcp_tool`)와 `mcp__<서버>__<도구>`. 출처의 근거일 뿐 동작의 근거는 아니다. */
+	private fun isMcpName(name: String?): Boolean = name == MCP_TOOL || name?.startsWith("mcp__") == true
+
+	/** 출처: 명시 속성(`tool_source` 등) > MCP 이름 > 문서화된 내장 도구 이름. 그 밖은 unknown. */
+	private fun origin(toolName: String?, declared: String?): ToolOrigin = when {
+		declared == "mcp" || isMcpName(toolName) -> ToolOrigin.MCP
+		declared == "builtin" || toolName in BUILTIN_TOOLS -> ToolOrigin.BUILTIN
+		else -> ToolOrigin.UNKNOWN
+	}
+
+	/** 동작: 내장 도구 중 동작이 분명한 이름만. MCP 도구와 그 밖은 unknown. */
+	private fun action(toolName: String?, mcp: Boolean): ToolAction =
+		if (mcp) ToolAction.UNKNOWN else BUILTIN_ACTIONS[toolName] ?: ToolAction.UNKNOWN
+
 	/** HTTP 상태 코드(0–65535). 범위 밖은 invalid. */
 	private fun httpStatus(fields: FieldReader, key: String): Int? {
 		val status = fields.count(key, NumberWire.INT_OR_DECIMAL_STRING) ?: return null
@@ -188,6 +309,36 @@ internal object ClaudeCodeLogs : LogProfile {
 
 	/** 클라이언트가 만든 요청 ID. */
 	const val CLIENT_REQUEST_NAMESPACE: String = "claude_code.client_request"
+
+	/** 모델의 `tool_use` 블록 ID. */
+	const val TOOL_USE_NAMESPACE: String = "claude_code.tool_use"
+	private const val MCP_TOOL = "mcp_tool"
+	private val ERROR_CLASS = Regex("[A-Za-z0-9_:.\\-]{1,64}")
+	private val USER_SOURCES = setOf("user_permanent", "user_temporary", "user_abort", "user_reject")
+
+	/** 공식 도구 목록의 내장 도구 이름(근거 문서 5). */
+	private val BUILTIN_TOOLS = setOf(
+		"Agent", "Artifact", "AskUserQuestion", "Bash", "CronCreate", "CronDelete", "CronList", "Edit", "EndConversation", "EnterPlanMode",
+		"EnterWorktree", "ExitPlanMode", "ExitWorktree", "Glob", "Grep", "ListAgents", "ListMcpResourcesTool", "LSP", "Monitor",
+		"NotebookEdit", "PowerShell", "PushNotification", "Read", "ReadMcpResourceTool", "RemoteTrigger", "ReportFindings",
+		"ScheduleWakeup", "SendFeedback", "SendMessage", "SendUserFile", "ShareOnboardingGuide", "Skill", "SubagentHandback",
+		"TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate", "TodoWrite", "ToolSearch", "WaitForMcpServers",
+		"WebFetch", "WebSearch", "Workflow", "Write",
+	)
+
+	/** 동작이 분명한 내장 도구. */
+	private val BUILTIN_ACTIONS = mapOf(
+		"Read" to ToolAction.READ,
+		"Write" to ToolAction.WRITE,
+		"Edit" to ToolAction.EDIT,
+		"NotebookEdit" to ToolAction.EDIT,
+		"Glob" to ToolAction.SEARCH,
+		"Grep" to ToolAction.SEARCH,
+		"WebSearch" to ToolAction.SEARCH,
+		"WebFetch" to ToolAction.FETCH,
+		"Bash" to ToolAction.EXEC,
+		"PowerShell" to ToolAction.EXEC,
+	)
 
 	private val REFUSAL = StopReason("refusal")
 	private const val UINT16_MAX = 65_535L
