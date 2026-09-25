@@ -81,7 +81,7 @@ Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-te
 
 1. **경계 발효와 snapshot 무효화.** `advance(tenant, 후보)`. 커밋되는 순간부터 ingest 의 sink 직전 검사와 새 snapshot build 가 새 경계를 쓰고, 기존
    snapshot 은 epoch 비교로 더는 공개되지도 읽히지도 않는다(ADR 0023 §4) — **이 비교가 무효화다.** 보존 작업은 `dashboard_cache` 에 쓰지 않는다.
-   그 snapshot 의 물리 행은 대시보드 앱의 snapshot 정리 작업이 지운다 — epoch 가 지금과 다른 manifest 를 무효화된 것과 같이 다룬다.
+   그 snapshot 의 물리 행은 대시보드 앱의 snapshot 정리 작업이 무효화·만료된 snapshot 과 같은 규칙(생성 뒤 유효기간과 유예가 지나면)으로 지운다.
 2. **fence 기록.** RDS 에 커밋된 `(deleted_before, policy_epoch)` 를 `telemetry_retention_fence` 에 쓴다(동기 INSERT). 이미 있으면 같은 값이라 무해하다.
 3. **drain.** fence INSERT 가 반환된 **뒤에** `system.processes` 에서 `query_kind = 'Insert'` 인 쿼리의 `query_id` 집합 S 를 읽고, S 의 어느 것도 목록에 남지
    않을 때까지 기다린다. 근거는 서버의 process list 다 — Context 의 측정 2·3·4 에 따라, 그 순간 목록에 없는 INSERT 는 이미 끝났거나(그 파트는 DELETE 가

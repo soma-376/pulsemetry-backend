@@ -35,6 +35,9 @@ class TelemetryAnalysisSinksTest {
 	private val first = RowVersioning.live(Instant.parse("2026-01-01T00:00:05Z"))
 	private val later = RowVersioning.live(Instant.parse("2026-01-01T00:10:00Z"))
 
+	/** 삭제 경계가 없는 tenant — 이 테스트는 교체 저장만 본다(경계는 `AnalysisWriteBoundaryTest`). */
+	private val open = AnalysisWriteBoundary(AnalysisSamples.TENANT, deletedBefore = null, policyEpoch = 0)
+
 	@BeforeEach
 	fun setUp() {
 		client = ClickHouseHttpClient(url())
@@ -59,10 +62,10 @@ class TelemetryAnalysisSinksTest {
 	@Test
 	@DisplayName("두 sink 가 행 수를 돌려주고 두 테이블에 쓴다 — 빈 배치는 요청을 보내지 않는다")
 	fun insertsIntoBothTables() {
-		assertThat(events.insert(listOf(event(usage('1', 10)), event(usage('2', 20))), first)).isEqualTo(2)
-		assertThat(points.insert(listOf(metricPoint()), first)).isEqualTo(1)
-		assertThat(events.insert(emptyList(), first)).isZero()
-		assertThat(TelemetryEventsSink(ClickHouseHttpClient("http://127.0.0.1:1")).insert(emptyList(), first)).isZero()
+		assertThat(events.insert(listOf(event(usage('1', 10)), event(usage('2', 20))), first, open)).isEqualTo(2)
+		assertThat(points.insert(listOf(metricPoint()), first, open)).isEqualTo(1)
+		assertThat(events.insert(emptyList(), first, open)).isZero()
+		assertThat(TelemetryEventsSink(ClickHouseHttpClient("http://127.0.0.1:1")).insert(emptyList(), first, open)).isZero()
 
 		assertThat(query("SELECT count() FROM ${TelemetryEventsSink.TABLE} FINAL")).isEqualTo("2")
 		assertThat(query("SELECT count() FROM ${TelemetryMetricPointsSink.TABLE} FINAL")).isEqualTo("1")
@@ -74,8 +77,8 @@ class TelemetryAnalysisSinksTest {
 	@DisplayName("같은 배치를 다시 적재하면 한 행으로 수렴한다 — 재시도는 멱등이다")
 	fun retryingTheSameBatchConverges() {
 		val batch = listOf(event(usage('1', 10)), event(usage('2', 20)))
-		events.insert(batch, first)
-		events.insert(batch, first)
+		events.insert(batch, first, open)
+		events.insert(batch, first, open)
 
 		assertThat(query("SELECT count() FROM ${TelemetryEventsSink.TABLE} FINAL")).isEqualTo("2")
 		assertThat(query("SELECT groupArray(tokens_input) FROM (SELECT tokens_input FROM ${TelemetryEventsSink.TABLE} FINAL ORDER BY observation_id)"))
@@ -85,8 +88,8 @@ class TelemetryAnalysisSinksTest {
 	@Test
 	@DisplayName("소속 편집 뒤 재처리 — 나중 receipt 의 행(새 귀속)이 이기고 analysis_hash 는 같다")
 	fun laterReceiptWins() {
-		events.insert(listOf(event(usage('1', 10), AnalysisSamples.org(teamIds = listOf("team-a")))), first)
-		events.insert(listOf(event(usage('1', 10), AnalysisSamples.org(teamIds = listOf("team-b")))), later)
+		events.insert(listOf(event(usage('1', 10), AnalysisSamples.org(teamIds = listOf("team-a")))), first, open)
+		events.insert(listOf(event(usage('1', 10), AnalysisSamples.org(teamIds = listOf("team-b")))), later, open)
 
 		assertThat(query("SELECT team_id_as_of, analysis_hash FROM ${TelemetryEventsSink.TABLE} FINAL FORMAT TSV"))
 			.isEqualTo("team-b\t${hex('b')}")
@@ -95,13 +98,13 @@ class TelemetryAnalysisSinksTest {
 	@Test
 	@DisplayName("높은 normalizer_rev 가 언제나 이긴다 — 구 규칙의 결과가 늦게 와도 되돌리지 못하고 null 정정도 유지된다")
 	fun higherRevisionAlwaysWins() {
-		events.insert(listOf(event(usage('1', 10, BigDecimal("0.5")))), RowVersioning.live(Instant.parse("2026-01-01T00:00:05Z"), normalizerRev = 2u))
-		events.insert(listOf(event(usage('1', 99, BigDecimal("9.9")))), RowVersioning.live(Instant.parse("2026-06-01T00:00:00Z"), normalizerRev = 1u))
+		events.insert(listOf(event(usage('1', 10, BigDecimal("0.5")))), RowVersioning.live(Instant.parse("2026-01-01T00:00:05Z"), normalizerRev = 2u), open)
+		events.insert(listOf(event(usage('1', 99, BigDecimal("9.9")))), RowVersioning.live(Instant.parse("2026-06-01T00:00:00Z"), normalizerRev = 1u), open)
 
 		assertThat(query("SELECT tokens_input, toString(cost_reported_usd), normalizer_rev FROM ${TelemetryEventsSink.TABLE} FINAL FORMAT TSV"))
 			.isEqualTo("10\t0.5\t2")
 
-		events.insert(listOf(event(usage('1', 10, null))), RowVersioning.live(Instant.parse("2026-01-02T00:00:00Z"), normalizerRev = 2u))
+		events.insert(listOf(event(usage('1', 10, null))), RowVersioning.live(Instant.parse("2026-01-02T00:00:00Z"), normalizerRev = 2u), open)
 		assertThat(query("SELECT toString(cost_reported_usd) FROM ${TelemetryEventsSink.TABLE} FINAL")).isEqualTo("\\N")
 	}
 
@@ -110,7 +113,7 @@ class TelemetryAnalysisSinksTest {
 	fun oneInvalidRowRejectsTheBatchBeforeSending() {
 		val batch = listOf(event(usage('1', 10)), event(usage('2', 20, BigDecimal("0.0000000000001"))))
 
-		assertThatThrownBy { events.insert(batch, first) }.isInstanceOf(TelemetrySinkRejectedException::class.java)
+		assertThatThrownBy { events.insert(batch, first, open) }.isInstanceOf(TelemetrySinkRejectedException::class.java)
 		assertThat(query("SELECT count() FROM ${TelemetryEventsSink.TABLE}")).isEqualTo("0")
 	}
 
@@ -119,9 +122,9 @@ class TelemetryAnalysisSinksTest {
 	fun clickHouseFailuresKeepTheirClassification() {
 		val batch = listOf<EnrichedEvent>(event())
 
-		assertThatThrownBy { TelemetryEventsSink(ClickHouseHttpClient(url(), database = "missing_database")).insert(batch, first) }
+		assertThatThrownBy { TelemetryEventsSink(ClickHouseHttpClient(url(), database = "missing_database")).insert(batch, first, open) }
 			.isInstanceOf(TelemetrySinkRejectedException::class.java)
-		assertThatThrownBy { TelemetryMetricPointsSink(ClickHouseHttpClient("http://127.0.0.1:1")).insert(listOf(metricPoint(metricPointObservation())), first) }
+		assertThatThrownBy { TelemetryMetricPointsSink(ClickHouseHttpClient("http://127.0.0.1:1")).insert(listOf(metricPoint(metricPointObservation())), first, open) }
 			.isInstanceOf(TelemetrySinkUnavailableException::class.java)
 	}
 

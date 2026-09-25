@@ -20,6 +20,7 @@
 [ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md) ·
 [ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) ·
 [ADR 0023](adr/0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md) ·
+[ADR 0024](adr/0024-조직별-보존-삭제-경계는-RDS-가-진실원이고-분석-INSERT-는-ClickHouse-fence-를-서버에서-다시-검사한다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md) ·
 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)
@@ -133,7 +134,7 @@ installation 단독 조회(`InstallationRepository.findMemberIdById`), 대표 �
 
 `:libs:telemetry-persistence`는 단계가 아니라 **역할** 모듈이라 어순이 뒤집힌다(ADR 0010).
 ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_points`, 수신 ledger
-`telemetry_ingest_ledger`, 새 행을 받지 않고 보존만 하는 `enriched_events`)의 DDL과 쓰기를 소유하고, ClickHouse HTTP 인터페이스를 JDK `HttpClient`로 직접
+`telemetry_ingest_ledger`, 보존 삭제의 쓰기 fence `telemetry_retention_fence`, 새 행을 받지 않고 보존만 하는 `enriched_events`)의 DDL과 쓰기를 소유하고, ClickHouse HTTP 인터페이스를 JDK `HttpClient`로 직접
 부른다 — 드라이버를 넣으면 자체 오류 매핑이 상태 코드별 처분을 덮는데, 그 분류가 곧 HTTP
 계약이다(허브 ADR 0006 — 연결 계열과 `5xx`·`429`·`408`은 일시 장애, 그 밖의 4xx는 영구 오류).
 
@@ -149,7 +150,7 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 | enrollment | `invitations` · `installations` · `installation_credentials` · `telemetry_tokens` · `installation_manifest_assignments` | `enrollment-api` |
 | policy | `manifests` | 관리자 API (미구현) |
 | contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 관리자 API (미구현) |
-| telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` · `telemetry_ingest_ledger` | `:libs:telemetry-persistence` |
+| telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` · `telemetry_ingest_ledger` · `telemetry_retention_fence` | `:libs:telemetry-persistence` |
 | telemetry ops | RDS `telemetry_ops.tenant_ingest_summary` · `tenant_summary_backfill` · `tenant_retention_boundary` | `:libs:telemetry-ops-persistence` |
 | dashboard cache | RDS `dashboard_cache.snapshots` · `snapshot_teams` · `snapshot_members`, ClickHouse `dashboard_cache.snapshot_usage` · `snapshot_observed_days` · `snapshot_member_activity`(+ 입구 `snapshot_intake`·뷰 둘) | `:apps:dashboard-api` |
 

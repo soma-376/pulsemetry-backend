@@ -5,7 +5,6 @@ import com.team376.pulsemetry.persistence.telemetry.IngestLedgerSink
 import com.team376.pulsemetry.persistence.telemetry.LedgerReceipt
 import com.team376.pulsemetry.persistence.telemetryops.SummaryOrigin
 import com.team376.pulsemetry.persistence.telemetryops.TenantIngestSummaryStore
-import com.team376.pulsemetry.telemetry.adapter.observation.NormalizationStats
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationSignal
 import com.team376.pulsemetry.telemetry.collector.Signal
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveReceipt
@@ -14,8 +13,8 @@ import java.util.UUID
 /** push 하나의 수집 운영 기록을 남기는 자리. [IngestPipeline] 이 적재 결과에 따라 둘 중 하나를 부른다(ADR 0021 §1). */
 interface IngestOperations {
 
-	/** 분석 테이블까지 적재한 push. 문서마다 정규화 집계를 옮긴다. */
-	fun loaded(receipt: ArchiveReceipt, parts: List<Pair<ReceiptPart, NormalizationStats>>)
+	/** 분석 테이블까지 적재한 push. 문서마다 정규화 집계와 삭제 경계로 뺀 수를 옮긴다([LoadedPart]). */
+	fun loaded(receipt: ArchiveReceipt, parts: List<Pair<ReceiptPart, LoadedPart>>)
 
 	/** 분석 테이블에 아무것도 넣지 않은 push(정규화·보강·적재의 영구 실패). 받은 것 전부가 거부다. */
 	fun unloaded(receipt: ArchiveReceipt, parts: List<ReceiptPart>)
@@ -35,11 +34,21 @@ class IngestOperationsRecorder(
 	private val summaries: TenantIngestSummaryStore,
 ) : IngestOperations {
 
-	override fun loaded(receipt: ArchiveReceipt, parts: List<Pair<ReceiptPart, NormalizationStats>>) {
+	override fun loaded(receipt: ArchiveReceipt, parts: List<Pair<ReceiptPart, LoadedPart>>) {
 		val ledgerReceipt = ledgerReceipt(receipt)
 		record(
 			receipt,
-			parts.map { (part, stats) -> IngestLedgerEntry.normalized(ledgerReceipt, part.product, part.archived?.location?.uri, stats) },
+			parts.map { (part, loaded) ->
+				IngestLedgerEntry.normalized(
+					ledgerReceipt,
+					part.product,
+					part.archived?.location?.uri,
+					loaded.stats,
+					beforeBoundary = loaded.beforeBoundary,
+					sourceTimeMin = loaded.sourceTimeMin,
+					sourceTimeMax = loaded.sourceTimeMax,
+				)
+			},
 		)
 	}
 

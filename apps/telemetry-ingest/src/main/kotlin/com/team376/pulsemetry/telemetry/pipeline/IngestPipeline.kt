@@ -28,14 +28,17 @@ import org.springframework.dao.NonTransientDataAccessResourceException
  * 2. 조각마다 정규화 2판(가격·`analysis_hash` 포함, [ObservationPipeline])을 돈다. 신원·수신 시각·마스킹 버전은
  *    영수증에서만 온다 — 레코드의 자기신고 값은 신원이 아니다(ADR 0020 §5).
  * 3. 조각 전부를 한 번에 보강한다(push 단위 조회 캐시).
- * 4. 두 분석 테이블에 적재한다. 행은 모두 `RowVersioning.live(receipt 수신 시각)` 이다. 한 push 는 한 시그널이라
- *    실제로는 둘 중 하나만 쓰인다. 구 `enriched_events` 에는 쓰지 않는다.
- * 5. 수집 운영 기록(ledger·요약)을 쓴다([IngestOperations]). **정규화·보강·적재가 영구 실패해도 기록한 뒤
+ * 4. tenant 의 삭제 경계를 읽고(push 마다, 캐시 없음) 경계 이전 관측을 뺀다([RetainedBatch] — ADR 0024 §3). 읽지 못하면
+ *    503 이다 — 경계를 모른 채 과거 행을 허용하지 않는다. 뺀 관측은 ledger 의 거부로 센다(§6).
+ * 5. 두 분석 테이블에 적재한다. 행은 모두 `RowVersioning.live(receipt 수신 시각)` 이다. 한 push 는 한 시그널이라
+ *    실제로는 둘 중 하나만 쓰인다. 구 `enriched_events` 에는 쓰지 않는다. sink 는 같은 경계로 다시 거르고, INSERT 는 서버에서
+ *    fence 를 한 번 더 검사한다 — 경계가 읽힌 뒤 움직여도 보존 작업의 삭제를 되살리지 않는다.
+ * 6. 수집 운영 기록(ledger·요약)을 쓴다([IngestOperations]). **정규화·보강·적재가 영구 실패해도 기록한 뒤
  *    400 을 낸다** — 인증·마스킹·아카이브를 통과한 push 는 수신 사실이다(ADR 0021 §1). 일시 실패(503)면 기록하지
  *    않는다 — 재전송이 새 receipt 로 기록된다. 기록이 실패하면 503 이다(성공을 돌려주지 않는다).
  *
- * 운영 기록은 ADR 0021 이 Proposed 인 동안 설정으로 켠다(`pulsemetry.telemetry.ops.enabled`). 꺼져 있으면 5 를
- * 건너뛴다 — [operations] 가 null 이다.
+ * 운영 기록은 ADR 0021 이 Proposed 인 동안 설정으로 켠다(`pulsemetry.telemetry.ops.enabled`). 꺼져 있으면 6 을
+ * 건너뛴다 — [operations] 가 null 이다. 삭제 경계(4)는 설정과 무관하게 언제나 읽는다 — 집행을 끌 수 있으면 삭제가 되살아난다.
  *
  * ## `@Transactional` 을 붙이지 마라
  *
@@ -53,7 +56,7 @@ import org.springframework.dao.NonTransientDataAccessResourceException
  * | 정규화가 던진 것 — 정규화 실패 | 400 | 같은 입력은 재시도해도 같다. 원본은 아카이브에 있다. 개별 관측의 미지원·측정 오류는 예외가 아니라 generic 행·품질 플래그다 |
  * | 보강의 `NonTransientDataAccessException`, 단 자원 계열(`NonTransientDataAccessResourceException`) 제외 | 400 | RDS 스키마 드리프트 같은 영구 오류. 자원 계열은 연결 실패라 일시 장애다 |
  * | `TelemetrySinkRejectedException` — ClickHouse 4xx, 또는 컬럼 타입에 들어가지 않는 값의 적재 전 거부 | 400 | 요청이 거부됐다. 다시 보내도 같다 |
- * | `EnrichmentUnavailableException` · `TelemetrySinkUnavailableException` · `TelemetryOpsUnavailableException` | 503 | RDS·ClickHouse 에 닿지 못했거나 운영 스키마가 아직 적용되지 않았다 |
+ * | `EnrichmentUnavailableException` · `TelemetrySinkUnavailableException` · `TelemetryOpsUnavailableException` | 503 | RDS·ClickHouse 에 닿지 못했거나 운영 스키마가 아직 적용되지 않았다. 삭제 경계 조회 실패도 여기다 |
  * | 그 밖의 예외 | 503 | 상태가 실리지 않은 오류의 기본. **기본을 영구 오류로 바꾸지 마라** — 잘못 재시도하는 비용은 데몬의 3회 예산으로 막혀 있지만, 잘못 폐기하는 비용은 되돌릴 수 없다 |
  * | 인증 조회의 `RuntimeException` — 이 파이프라인 **앞**, 필터 단계 | 503 | RDS 에 닿지 못했다. `SecurityConfig` 가 필터에 넘긴 핸들러가 같은 본문·`Retry-After` 로 쓴다. 401 이면 데몬이 토큰을 폐기한다 |
  */
@@ -64,6 +67,7 @@ class IngestPipeline(
 	private val events: TelemetryEventsSink,
 	private val metricPoints: TelemetryMetricPointsSink,
 	private val schema: ClickHouseSchema,
+	private val boundaries: RetentionBoundaries,
 	private val operations: IngestOperations?,
 ) : SignalConsumer {
 
@@ -90,15 +94,19 @@ class IngestPipeline(
 		// 테이블이 없는 채로 INSERT 하면 404 → 영구 오류 → 즉시 폐기다. 그 앞에서 막는다.
 		schema.ensureApplied()
 
+		// sink 직전의 삭제 경계(ADR 0024 §3). 읽지 못하면 예외 그대로 503 — 아무것도 쓰지 않고 기록도 남기지 않는다.
+		val boundary = boundaries.read(checkNotNull(receipt.tenantId) { "검증된 tenant 가 없는 영수증이다" })
+		val retained = enriched.map { RetainedBatch.of(it, boundary) }
+
 		val versioning = RowVersioning.live(receipt.receivedAt)
 		try {
-			events.insert(enriched.flatMap { it.events }, versioning)
-			metricPoints.insert(enriched.flatMap { it.metricPoints }, versioning)
+			events.insert(retained.flatMap { it.events }, versioning, boundary)
+			metricPoints.insert(retained.flatMap { it.metricPoints }, versioning, boundary)
 		} catch (exception: TelemetrySinkRejectedException) {
 			throw permanent(receipt, parts, exception.message.orEmpty(), exception)
 		}
 
-		operations?.loaded(receipt, parts.zip(batches.map { it.stats }))
+		operations?.loaded(receipt, parts.zip(retained.map { it.loaded }))
 	}
 
 	/** 영구 실패 — 수신 사실을 기록한 뒤 400 으로 올린다. 기록이 실패하면 그 예외(503)가 대신 나간다. */

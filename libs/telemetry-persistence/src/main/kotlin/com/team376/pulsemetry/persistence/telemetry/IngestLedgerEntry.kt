@@ -39,7 +39,7 @@ public data class IngestLedgerEntry(
 	public val sourceTimeMax: EpochNanos?,
 	/** 받은 레코드 수(로그 레코드·스팬·metric point). 사용량이 아니다. */
 	public val recordCount: Int,
-	/** 분석 테이블에 넣지 않은 레코드 수 — `source_time` 거부와 허용 목록 밖 스팬. */
+	/** 분석 테이블에 넣지 않은 레코드 수 — `source_time` 거부, 허용 목록 밖 스팬, 삭제 경계 이전 관측(ADR 0024 §6). */
 	public val rejectedCount: Int,
 	/** 이 문서가 들어 있는 아카이브 객체. 없으면 null. */
 	public val archiveRef: String?,
@@ -52,9 +52,22 @@ public data class IngestLedgerEntry(
 	}
 
 	public companion object {
-		/** 정규화를 마친 문서 — 받은 수·거부 수·시각 범위를 [stats] 에서 옮긴다. */
-		public fun normalized(receipt: LedgerReceipt, product: String, archiveRef: String?, stats: NormalizationStats): IngestLedgerEntry =
-			IngestLedgerEntry(receipt, product, stats.sourceTimeMin, stats.sourceTimeMax, stats.received, stats.rejectedCount, archiveRef)
+		/**
+		 * 정규화를 마친 문서 — 받은 수와 정규화의 거부 수는 [stats] 에서 옮긴다. 삭제 경계로 뺀 관측([beforeBoundary])은 거부에 더하고,
+		 * 시각 범위는 실제로 적재한 관측의 것이다(ADR 0024 §6). 뺀 것이 없으면 [stats] 의 범위 그대로다.
+		 */
+		public fun normalized(
+			receipt: LedgerReceipt,
+			product: String,
+			archiveRef: String?,
+			stats: NormalizationStats,
+			beforeBoundary: Int = 0,
+			sourceTimeMin: EpochNanos? = stats.sourceTimeMin,
+			sourceTimeMax: EpochNanos? = stats.sourceTimeMax,
+		): IngestLedgerEntry {
+			require(beforeBoundary >= 0) { "경계로 뺀 수가 음수다: $beforeBoundary" }
+			return IngestLedgerEntry(receipt, product, sourceTimeMin, sourceTimeMax, stats.received, stats.rejectedCount + beforeBoundary, archiveRef)
+		}
 
 		/** 정규화가 통째로 실패한 문서 — 받은 것 전부가 분석 테이블 밖이다. */
 		public fun unnormalized(receipt: LedgerReceipt, product: String, archiveRef: String?, received: Int): IngestLedgerEntry =

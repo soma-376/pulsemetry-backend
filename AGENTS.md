@@ -169,5 +169,11 @@ docker compose up -d                              # 로컬 Postgres · ClickHous
 - **인증 조회의 DB 장애는 401도 403도 아니다.** 데몬은 그 둘을 같은 칸에 두고 토큰을 폐기·재발급한다.
   필터에 넘긴 `TelemetryTokenUnavailableHandler`가 503 + `Retry-After`를 쓴다. 예외를 컨테이너까지
   흘리지 마라.
+- **분석 INSERT 의 fence 조건과 `async_insert = 0` 을 빼지 마라**(ADR 0024). 두 분석 sink 의 INSERT
+  (`AnalysisInsert.fenced`)는 서버에서 `telemetry_retention_fence` 를 다시 읽어 tenant 경계 이전 행을 쓰지 않는다.
+  보존 작업이 "구 경계로 검사한 쓰기가 끝났다"고 판정하는 근거가 이 조건과 process list 다(시작 때 한 번 평가 —
+  `RetentionFenceEvidenceTest`). ingest 는 push 마다 RDS 경계를 읽고(캐시 없음, 설정으로 끄지 않음) 읽지 못하면 503 이다.
+  sink 는 `AnalysisWriteBoundary` 없이 쓰지 않는다 — 재처리 경로도 같은 sink 를 지난다. 경계는 MAX 로만 움직인다
+  (`TenantRetentionBoundaryStore.advance`). ClickHouse 이미지를 올리면 증거 테스트가 먼저 통과해야 한다.
 - ADR을 추가하면 `0018`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.
