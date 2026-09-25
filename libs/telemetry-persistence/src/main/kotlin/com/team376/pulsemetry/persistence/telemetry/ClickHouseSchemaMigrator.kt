@@ -1,8 +1,8 @@
 package com.team376.pulsemetry.persistence.telemetry
 
 /**
- * ClickHouse 스키마(`enriched_events` 와 정규화 2판의 두 분석 테이블)를 적용한다.
- * **매 기동마다 전량이다** (ADR 0015 · ADR 0020).
+ * ClickHouse 스키마(`enriched_events`, 정규화 2판의 두 분석 테이블, 수신 ledger)를 적용한다.
+ * **매 기동마다 전량이다** (ADR 0015 · ADR 0020 · ADR 0021).
  *
  * Flyway 가 ClickHouse 를 다루지 못해(허브 ADR 0004) 여기가 그 자리를 받는다. 원장 테이블도
  * 체크섬도 두지 않는 대신 **모든 문장이 멱등이어야 한다**는 규약을 진다 — 그러면 두 인스턴스가
@@ -46,6 +46,7 @@ public class ClickHouseSchemaMigrator(
 		public val MIGRATIONS: List<String> = listOf(
 			"V1__enriched_events.sql",
 			"V2__telemetry_analysis_tables.sql",
+			"V3__telemetry_ingest_ledger.sql",
 		)
 
 		public const val LOCATION: String = "/clickhouse/"

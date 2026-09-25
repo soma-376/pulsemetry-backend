@@ -8,6 +8,9 @@ dependencies {
 	// telemetry token 해시. 발급(이 앱)과 검증(:libs:security)이 같은 연산을 써야 하므로
 	// 정의를 한 벌로 둔다 (ADR 0008 규칙 3·5). 이 의존은 필터 체인을 켜지 않는다 — ADR 0011.
 	implementation(project(":libs:security"))
+	// telemetry_ops 스키마의 마이그레이션. 이 앱이 RDS 마이그레이션을 실행하는 유일한 프로세스라 그 몫을
+	// 함께 진다 (ADR 0021). 요약 writer 는 ingest 가 쓰고, 이 앱은 DDL 만 적용한다.
+	implementation(project(":libs:telemetry-ops-persistence"))
 	implementation(libs.spring.boot.starter.webmvc)
 	implementation(libs.jackson.module.kotlin)
 

@@ -46,11 +46,15 @@ pulsemetry-backend
     ├── telemetry-enricher/          com.team376.pulsemetry.telemetry.enricher
     │                                사원 정보 결합 — as-of 조인 · provider 주석
     │                                └ provider/   EnrichmentProvider 와 그 구현
-    └── telemetry-persistence/       com.team376.pulsemetry.persistence.telemetry
-                                     ClickHouse 스키마 · 적재 — 쓰기 소유 모듈
+    ├── telemetry-persistence/       com.team376.pulsemetry.persistence.telemetry
+    │                                ClickHouse 스키마 · 적재 — 쓰기 소유 모듈
+    └── telemetry-ops-persistence/   com.team376.pulsemetry.persistence.telemetryops
+                                     RDS telemetry_ops 스키마(수집 운영 기록) · 마이그레이션
 ```
 
-`settings.gradle.kts`의 `include`는 이 여덟뿐이다. **5절이 예고한 모듈이 전부 섰다.**
+`settings.gradle.kts`의 `include`는 이 아홉뿐이다. **5절이 예고한 모듈이 전부 섰다.**
+`:libs:telemetry-ops-persistence`는 5절 밖에서 더해졌다 — 수집 운영 기록의 RDS 쪽이 ClickHouse와 아웃바운드
+기술이 달라 나뉜다([ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md)).
 
 `:apps:telemetry-ingest`는 조립 앱이다(PROJ-105). 도메인 로직을 담지 않는다 — 빈 등록·필터 체인
 배선·설정 바인딩과 단계 호출이 전부이고, 그것이 ADR 0011이 라이브러리에서 걷어낸 몫이다.
@@ -105,7 +109,8 @@ ClickHouse 테이블(`enriched_events`, 정규화 2판의 `telemetry_events`·`t
 | enrollment | `invitations` · `installations` · `installation_credentials` · `telemetry_tokens` · `installation_manifest_assignments` | `enrollment-api` |
 | policy | `manifests` | 관리자 API (미구현) |
 | contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 관리자 API (미구현) |
-| telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` | `:libs:telemetry-persistence` |
+| telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` · `telemetry_ingest_ledger` | `:libs:telemetry-persistence` |
+| telemetry ops | RDS `telemetry_ops.tenant_ingest_summary` · `tenant_summary_backfill` · `tenant_retention_boundary` | `:libs:telemetry-ops-persistence` |
 
 **쓰기 소유는 모듈이다**(ADR 0008 규칙 1). 표가 앱 이름을 적은 행은 그 도메인의 쓰기가 아직 앱에
 직접 있다는 뜻이고, 규칙 5의 승격 트리거가 당겨지면 모듈로 내려간다. telemetry는 새 도메인이라
@@ -118,6 +123,10 @@ ClickHouse 테이블(`enriched_events`, 정규화 2판의 `telemetry_events`·`t
 ([ADR 0015](adr/0015-clickhouse-ddl-은-번호-붙은-멱등-파일이고-기동-시-적용한다.md)가
 허브 ADR 0004 Follow-up이 넘긴 이 항목을 닫는다). **모든 문장은 `IF NOT EXISTS` 형태여야 하고,
 `V1`을 고치는 대신 새 번호 파일을 더한다** — 그것이 원장 테이블과 분산 락을 대신하는 규약이다.
+
+**`telemetry_ops`는 `enrollment`와 다른 Flyway 인스턴스다** — 스키마·이력(`telemetry_ops.flyway_schema_history`)·
+SQL 위치(`db/telemetry-ops`)가 따로이고, 실행은 `:apps:enrollment-api` 기동이 한다. `:apps:telemetry-ingest`는
+Flyway를 끈 채로 두며 이 DDL도 실행하지 않는다([ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md)).
 
 **이 표는 테이블만 다룬다.** Raw Signal Object Storage에는 `CREATE TABLE`이 없어 규칙 1의 판정법이
 닿지 않으므로 표에 넣지 않는다. 그 쓰기 주체는 `:libs:telemetry-collector`의 `archive` 패키지다(5절).

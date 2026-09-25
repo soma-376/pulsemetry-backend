@@ -92,11 +92,11 @@ class ClickHouseSchemaMigratorTest {
 	}
 
 	@Test
-	@DisplayName("V1 은 문장 하나, V2 는 두 분석 테이블 — 헤더가 전부 벗겨져 CREATE TABLE 셋만 순서대로 나간다")
+	@DisplayName("V1 은 문장 하나, V2 는 두 분석 테이블, V3 는 ledger — 헤더가 전부 벗겨져 CREATE TABLE 넷만 순서대로 나간다")
 	fun migrationsSendTheirCreateStatementsInOrder() {
 		migrator().apply()
 
-		assertThat(received).hasSize(3)
+		assertThat(received).hasSize(4)
 		assertThat(received).allSatisfy { assertThat(it).doesNotContain("--") }
 		assertThat(received[0])
 			.startsWith("CREATE TABLE IF NOT EXISTS enriched_events")
@@ -107,6 +107,9 @@ class ClickHouseSchemaMigratorTest {
 		assertThat(received[2])
 			.startsWith("CREATE TABLE IF NOT EXISTS telemetry_metric_points")
 			.endsWith("ORDER BY (tenant_id, source_time, installation_id, observation_id)")
+		assertThat(received[3])
+			.startsWith("CREATE TABLE IF NOT EXISTS telemetry_ingest_ledger")
+			.endsWith("ORDER BY (tenant_id, installation_id, received_time, receipt_id, signal, product)")
 	}
 
 	@Test
