@@ -184,13 +184,40 @@ Codex producer 가 내보내는 값의 **의미**를 producer 소스로 확인�
 `Codex Desktop` 은 배포 빌드의 소스가 공개돼 있지 않다. 캡처의 `eventName` 이 공개 태그의 위치와 행까지 같아 같은
 `codex-rs` 를 포함한 것으로 보이지만, 그 빌드의 소스로 확인한 것이 아니므로 **unknown** 으로 둔다.
 
-## 부록 C 반영
+## 부록 C 반영 — 의미 프로파일을 등록하지 않는다
 
-| service | 상태 | 이유 |
+이 범위의 Codex 사용량에는 **토큰 의미 프로파일(`semantics_profile`)을 등록하지 않는다.** 모든 Codex 사용량 행의
+`input_semantics`·`output_semantics` 는 unknown, 파생 토큰(`tokens_input_uncached`·`tokens_total_derived`)은 null,
+`usage_semantics_unverified` 다. 이유:
+
+1. **cache write 가 input 안인지 확정하지 못했다.** `inclusive_cache` 는 input 이 두 캐시 성분(read·write)을 모두 포함한다는
+   뜻이다. producer 는 read 를 input 의 일부로 정의하지만(1) write 에 대해서는 아무것도 정하지 않는다 — `non_cached_input` 이
+   write 를 빼지 않고, 필드 위치(`input_tokens_details`)만으로는 API 수준의 포함을 확정할 수 없다(2). 그래서 input 의미를
+   `inclusive_cache` 로 적을 수 없고, 총계(`input + output`)도 write 가 input 밖이면 틀린다.
+2. **cache write 의 0 이 측정인지 미보고인지 구별할 수 없다.** producer 가 필드가 없으면 0 으로 채운다(2). "해당 없음"도,
+   "보고됨"도 확정할 근거가 아니다. 실캡처 4,762 행이 전부 0 인 것도 같은 이유로 근거가 되지 않는다.
+3. **사용량 행에 provider 근거가 없다**(4). 같은 파서가 모든 Responses wire provider 에 쓰이므로 성분 의미는 backend 에 달렸고,
+   행의 provider 를 모르면 적용 범위를 정할 수 없다. 배포 설정(설정 유효 구간·적용 installation)의 원천도 없다.
+4. 공식 문서(Responses API usage 필드 정의)는 이 환경에서 읽지 못했다 — 문서만으로 verified 를 주지도 않는다.
+
+| service | 상태 | 확인한 것 | 확인하지 못한 것 |
+|---|---|---|---|
+| `codex-app-server` 네 버전 | `unknown` | read ⊂ input(producer 정의), reasoning ⊂ output, `tool_token_count` = 총계, 필드별 wire 타입 | write 의 input 포함·해당 없음, 행 provider |
+| `codex_cli_rs` 같은 태그 | `unknown` | 같은 소스 | 위와 같음 + 실캡처 fixture 없음 |
+| `Codex Desktop` 0.153.4·0.154.0-alpha.6.2 | `unknown` | 캡처 `eventName` 이 공개 태그의 위치·행과 일치 | 배포 빌드 소스 |
+
+verified 가 되려면 필요한 것: (a) cache write 필드의 API 의미(`input_tokens` 포함 여부)를 확인한 원천과, write 가 0 이 아닌
+실캡처(또는 미보고와 0 을 구별하는 producer 버전), (b) 사용량 행 자체의 provider 근거 또는 배포 설정 근거의 원천.
+
+### 수용 사례와 fixture
+
+| 사례 | fixture | 결과 |
 |---|---|---|
-| `codex-app-server` 네 버전 | `evidence_only` | input 은 cache read 포함(producer 정의), reasoning ⊂ output, `tool_token_count` = total. cache write 는 unknown, 사용량 행의 provider 근거 없음 — 프로파일 확정과 fixture 기대값은 다음 단계 |
-| `codex_cli_rs` 같은 태그 | `evidence_only` | 같은 소스. 실캡처가 없어 fixture 없음 |
-| `Codex Desktop` 0.153.4·0.154.0-alpha.6.2 | `unknown` | 배포 빌드 소스 비공개 |
+| cache write 미보고 + 프로파일 unknown | `synthetic/acceptance` 문서 0 | `tokens_cache_create`·파생 null |
+| 세션 없는 primary 행 | `synthetic/acceptance` 문서 1, `synthetic/sse-branches` 문서 0 | `session_id = null`, 대체값 없음 |
+| write "해당 없음" 검증 범위의 저장 total | — | **검증 불가**(위 1·2). `synthetic/acceptance` 문서 2 는 보고된 0 이 0 으로 남고 파생 total 이 null 임을 고정한다 |
+| provider 근거 없는 행·세션 시작 값 전파 금지 | `synthetic/acceptance` 문서 3, `synthetic/tools-and-events` 문서 4, `real/logs-*-sse`(전 사용량 행 `provider_unresolved`) | provider 미상 그대로, 파생·가격 null |
+| 범위 밖 버전 | `synthetic/acceptance` 문서 4, `synthetic/profile-scope` | 매핑·파생 없음 |
 
 ## 8. 스팬과 메트릭
 

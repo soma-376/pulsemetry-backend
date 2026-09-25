@@ -15,8 +15,10 @@ import com.team376.pulsemetry.telemetry.adapter.observation.profile.VersionSet
  * 표면은 `codex-app-server`·`codex_cli_rs` 두 곳이다. `Codex Desktop` 은 배포 빌드의 소스로 확인하지 못해 generic
  * 경로로 간다(ADR 0020 부록 C).
  *
- * 로그는 [CodexLogs], 스팬 허용 목록은 [CodexSpans], 메트릭 family 는 [CodexMetrics] 가 정한다. 토큰 의미
- * 프로파일(`semantics_profile`)은 아직 없다 — 사용량 관측의 파생 토큰은 null 이다.
+ * 로그는 [CodexLogs], 스팬 허용 목록은 [CodexSpans], 메트릭 family 는 [CodexMetrics] 가 정한다.
+ *
+ * 토큰 의미 프로파일(`semantics_profile`)은 **등록하지 않는다**(ADR 0020 부록 C — Codex 행 unknown): cache write 가 input
+ * 안인지와 행의 provider 를 확정하지 못했다. 사용량 관측의 파생 토큰은 null + `usage_semantics_unverified` 다.
  */
 public object CodexProfile : ProductProfile {
 
