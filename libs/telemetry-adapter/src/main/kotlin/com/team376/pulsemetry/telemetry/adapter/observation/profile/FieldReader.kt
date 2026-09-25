@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.profile
 
 import com.team376.pulsemetry.telemetry.adapter.observation.AttributeRead
+import com.team376.pulsemetry.telemetry.adapter.observation.Money
 import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedAttribute
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedValue
@@ -61,12 +62,13 @@ public class FieldReader(private val attributes: List<TypedAttribute>) {
 
 	/**
 	 * 음이 아닌 유한 `doubleValue` 금액을 Decimal 로. double 의 가장 짧은 10진 표기를 그대로 옮긴다(이진 근사를 늘려 쓰지
-	 * 않는다). 다른 타입·음수·비유한 값은 invalid.
+	 * 않는다). 다른 타입·음수·비유한 값, 그리고 정수부가 금액 컬럼([Money])의 범위를 넘는 값은 invalid 다. 소수 자릿수를
+	 * 컬럼에 맞추는 규칙은 호출자(프로파일)가 정한다.
 	 */
 	public fun nonNegativeDouble(key: String): java.math.BigDecimal? {
 		val value = present(key) ?: return null
 		val number = (value as? TypedValue.Double)?.value?.takeIf { it.isFinite() && it >= 0.0 } ?: return invalid()
-		return java.math.BigDecimal(number.toString())
+		return java.math.BigDecimal(number.toString()).takeIf { Money.fitsIntegerPart(it) } ?: invalid()
 	}
 
 	/** 밀리초로 보고된 음이 아닌 시간을 나노초로. 나노초로 표현할 수 없으면 invalid 다. */
