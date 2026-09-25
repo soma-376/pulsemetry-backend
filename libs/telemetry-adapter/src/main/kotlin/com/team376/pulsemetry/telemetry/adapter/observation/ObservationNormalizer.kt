@@ -220,6 +220,8 @@ public class ObservationNormalizer(
 				val exemplars = Otlp.repeated(body.point, "exemplars").map { Otlp.attributes(it, "filtered_attributes") }
 				val allowlist = mapper?.allowlist ?: GENERIC_ALLOWLIST
 				val metadata = allowlist.filter(resource.attributes, scope.attributes, pointAttributes, exemplars)
+				// 원래 비유한 값은 typed metadata 에만 남긴다 — attrs(조회용 문자열)에는 싣지 않는다.
+				val annotated = metadata.copy(record = metadata.record + body.annotations)
 				val single = MetricPoints.single(metric, index)
 				val series = SeriesIds.of(
 					context.tenantId, context.installationId, resource.message, resource.schemaUrl, scope.message,
@@ -233,10 +235,13 @@ public class ObservationNormalizer(
 					metadata = metadata,
 					extraFlags = body.flags,
 					signal = ObservationSignal.METRIC,
-				)
+				).copy(metadataJson = annotated.toJson())
 				val base = body.toObservation(envelope, name, Otlp.string(metric, "description"), Otlp.string(metric, "unit"), series)
 				val view = MetricPointView(metric, name, body.point, pointAttributes, resource.attributes, scope.attributes, scope.name)
-				points += mapper?.map(view, base) ?: base
+				val mapped = mapper?.map(view, base) ?: base
+				// metric point 는 사용량 대표 신호가 아니다 — 토큰·비용 metric 도 diagnostic 이다(ADR 0020 §4).
+				check(mapped.envelope.usageRole != UsageRole.PRIMARY) { "metric point 는 primary 가 될 수 없다: $name" }
+				points += mapped
 			}
 		}
 
