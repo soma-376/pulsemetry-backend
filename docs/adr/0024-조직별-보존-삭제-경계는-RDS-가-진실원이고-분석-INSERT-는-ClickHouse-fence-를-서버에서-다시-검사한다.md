@@ -169,7 +169,7 @@ Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-te
 
 ## Follow-up
 
-- 보존 작업 `:apps:retention-worker`·작업 기록 테이블·drain·검증의 구현.
+- **완료** — 보존 작업 `:apps:retention-worker`·작업 기록 테이블(`telemetry_ops.retention_operations`)·drain·검증의 구현.
 - 조직 설정 변경을 보존 작업으로 잇는 제품 흐름과 작업 ID·상태 조회 — 프론트 계약과 합의한다.
 - 물리 제거 SLA.
 - ClickHouse 복제·분산 — 모든 replica 의 process list 와 fence 가시성을 기준으로 §4 를 다시 정한다.

@@ -35,19 +35,22 @@ pulsemetry-backend
 │   ├── enrollment-api/              com.team376.pulsemetry.enrollment
 │   ├── telemetry-ingest/            com.team376.pulsemetry.telemetry
 │   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
-│   └── dashboard-api/               com.team376.pulsemetry.dashboard
-│                                    분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐 (ADR 0022)
-│                                    ├ api/            HTTP 표현 계층 — 화면별 컨트롤러
-│                                    ├ analytics/      공통 계산기(축별 합계·null 규칙) · 화면별 응답 조립
-│                                    ├ authentication/ 인증 포트 · 기본 거부 구현 · 필터 · 역할 대응
-│                                    ├ authorization/  인가 포트 · 기본 정책(관리자만) · 조직 경로 공통 관문
-│                                    ├ organization/   조직(tenant) 읽기
-│                                    ├ request/        요청 ID · 조회 파라미터 해석(기간·비교·목록 cursor)
-│                                    ├ source/         원천 읽기 — ClickHouse 읽기 전용 클라이언트
-│                                    ├ cache/          dashboard_cache — 캐시 클라이언트 · 두 캐시 스키마 적용 (ADR 0023)
-│                                    ├ snapshot/       snapshot — build(원본 한 번 선택·참조 복제·공급자·모델 해석) · 공개 CAS · 만료 · 정리
-│                                    ├ store/          ClickHouse 연결 · 파라미터 · 저장소 실패 분류(원천·캐시 공용)
-│                                    ├ error/          오류 본문 · 코드 · 예외 매핑
+│   ├── dashboard-api/               com.team376.pulsemetry.dashboard
+│   │                                분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐 (ADR 0022)
+│   │                                ├ api/            HTTP 표현 계층 — 화면별 컨트롤러
+│   │                                ├ analytics/      공통 계산기(축별 합계·null 규칙) · 화면별 응답 조립
+│   │                                ├ authentication/ 인증 포트 · 기본 거부 구현 · 필터 · 역할 대응
+│   │                                ├ authorization/  인가 포트 · 기본 정책(관리자만) · 조직 경로 공통 관문
+│   │                                ├ organization/   조직(tenant) 읽기
+│   │                                ├ request/        요청 ID · 조회 파라미터 해석(기간·비교·목록 cursor)
+│   │                                ├ source/         원천 읽기 — ClickHouse 읽기 전용 클라이언트
+│   │                                ├ cache/          dashboard_cache — 캐시 클라이언트 · 두 캐시 스키마 적용 (ADR 0023)
+│   │                                ├ snapshot/       snapshot — build(원본 한 번 선택·참조 복제·공급자·모델 해석) · 공개 CAS · 만료 · 정리
+│   │                                ├ store/          ClickHouse 연결 · 파라미터 · 저장소 실패 분류(원천·캐시 공용)
+│   │                                ├ error/          오류 본문 · 코드 · 예외 매핑
+│   │                                └ config/
+│   └── retention-worker/            com.team376.pulsemetry.retention
+│                                    조직별 보존 삭제 — 일회성 실행, 분석 원본 DELETE 는 여기뿐 (ADR 0024)
 │                                    └ config/
 └── libs/
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
@@ -70,9 +73,9 @@ pulsemetry-backend
     │                                ├ provider/   EnrichmentProvider 와 그 구현
     │                                └ observation/ 관측 보강 (ADR 0020 §5)
     ├── telemetry-persistence/       com.team376.pulsemetry.persistence.telemetry
-    │                                ClickHouse 스키마 · 분석 테이블 sink · 수신 ledger sink — 쓰기 소유 모듈
+    │                                ClickHouse 스키마 · 분석 테이블 sink · 수신 ledger sink · 보존 fence·삭제 — 쓰기 소유 모듈
     └── telemetry-ops-persistence/   com.team376.pulsemetry.persistence.telemetryops
-                                     RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필
+                                     RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필 · 삭제 경계 · 보존 작업 기록
 ```
 
 `settings.gradle.kts`의 `include`는 이 열뿐이다. **5절이 예고한 모듈이 전부 섰다.**
@@ -93,6 +96,12 @@ pulsemetry-backend
 `dashboard_cache`의 쓰는 주체는 이 앱 하나라 쓰기 소유가 앱에 있고, DDL도 이 앱이 기동 때 캐시 계정으로 적용한다 — ClickHouse는
 `clickhouse/dashboard-cache/`의 멱등 파일 전량(ADR 0015 규약), RDS는 `db/dashboard-cache/`의 별도 Flyway 인스턴스(이력
 `dashboard_cache.flyway_schema_history`)다([ADR 0023](adr/0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md)).
+
+`:apps:retention-worker`는 조직별 보존 삭제 작업이다([ADR 0024](adr/0024-조직별-보존-삭제-경계는-RDS-가-진실원이고-분석-INSERT-는-ClickHouse-fence-를-서버에서-다시-검사한다.md), Proposed).
+서버가 아니라 명령 하나(`--tenant --retention-months --as-of`)를 실행하고 종료 코드로 끝난다. 쓰는 대상 — 경계·작업 기록(RDS `telemetry_ops`),
+fence·두 분석 테이블의 DELETE(ClickHouse) — 의 코드는 각 쓰기 소유 모듈(`:libs:telemetry-ops-persistence`·`:libs:telemetry-persistence`)에
+있고 이 앱은 조립만 한다. DDL 은 적용하지 않는다. 분석 테이블 모듈이 보강 단계를 타고 `:libs:enrollment-persistence`를 끌어오므로
+JPA·Flyway 자동설정을 끈다 — 켜 두면 대상 DB 의 `public`에 Flyway 이력 테이블이 생긴다.
 두 번째 쓰는 주체가 생기면 `:libs:dashboard-persistence`로 내린다.
 원천 연결은 앱이 직접 세운다 — RDS는 `pulsemetry.dashboard.rds.source`로 만든 읽기 전용 주 DataSource(JPA·`JdbcClient`가 쓴다, Flyway는 끈다),
 ClickHouse는 `source/`의 읽기 전용 클라이언트다. 적재 모듈의 `ClickHouseHttpClient`와 따로 두는 것은 요구가 반대라서다(계정 인증·요청마다의

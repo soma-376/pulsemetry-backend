@@ -21,6 +21,7 @@ Kotlin + Spring Boot, Gradle 멀티모듈. 시스템 아키텍처의 **Auth Serv
 apps/enrollment-api/         enrollment · manifest · 부트스트랩 서빙 (HTTP)
 apps/telemetry-ingest/       조립 앱 — OTLP 수신부터 적재까지 한 프로세스. 배선만 한다
 apps/dashboard-api/          분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐. 인증은 포트 뒤 기본 거부 (ADR 0022)
+apps/retention-worker/       조직별 보존 삭제 — 서버가 아닌 일회성 실행. 분석 원본 DELETE 권한은 여기뿐 (ADR 0024)
 libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이그레이션
 libs/security/               횡단 인증 라이브러리 — OTLP 경로 ptt_ 검증 · telemetry token 해시
 libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 신원 스탬프 · 원본 아카이브
@@ -89,6 +90,7 @@ libs/telemetry-ops-persistence/ 수집 운영 기록의 RDS 쪽 — telemetry_op
 ./gradlew :apps:enrollment-api:bootRun            # enrollment 서버 (8080)
 ./gradlew :apps:telemetry-ingest:bootRun          # OTLP 수집 서버 (4316)
 ./gradlew :apps:dashboard-api:bootRun             # 분석 조회 API (8081) — PULSEMETRY_DASHBOARD_RETRY_AFTER 필수
+./gradlew :apps:retention-worker:bootRun --args='--tenant=<uuid> --retention-months=<N> --as-of=<ISO-8601>'  # 보존 삭제 한 번 — 설정 전부 필수, 종료 코드 0·1·2·3
 docker compose up -d                              # 로컬 Postgres · ClickHouse
 ```
 
@@ -175,5 +177,7 @@ docker compose up -d                              # 로컬 Postgres · ClickHous
   `RetentionFenceEvidenceTest`). ingest 는 push 마다 RDS 경계를 읽고(캐시 없음, 설정으로 끄지 않음) 읽지 못하면 503 이다.
   sink 는 `AnalysisWriteBoundary` 없이 쓰지 않는다 — 재처리 경로도 같은 sink 를 지난다. 경계는 MAX 로만 움직인다
   (`TenantRetentionBoundaryStore.advance`). ClickHouse 이미지를 올리면 증거 테스트가 먼저 통과해야 한다.
+  삭제는 `:apps:retention-worker` 만 한다 — 발효 → fence → drain → DELETE → 남은 행 0 확인의 순서를 바꾸지 마라(ADR 0024 §4).
+  그 앱은 JPA·Flyway 자동설정을 `spring.autoconfigure.exclude` 로 끈다 — 분석 테이블 모듈이 enrollment-persistence 를 끌어온다.
 - ADR을 추가하면 `0018`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

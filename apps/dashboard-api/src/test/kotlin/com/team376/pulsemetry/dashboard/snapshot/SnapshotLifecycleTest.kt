@@ -16,12 +16,14 @@ import com.team376.pulsemetry.dashboard.support.MutableClock
 import com.team376.pulsemetry.dashboard.support.SnapshotAssembly
 import com.team376.pulsemetry.dashboard.support.SourceFixtures
 import com.team376.pulsemetry.dashboard.support.SourceFixtures.Event
+import com.team376.pulsemetry.persistence.telemetryops.TenantRetentionBoundaryStore
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import org.springframework.jdbc.datasource.DriverManagerDataSource
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -177,6 +179,36 @@ class SnapshotLifecycleTest {
 
 		// 새 build 는 새 epoch 로 시작해 공개된다.
 		assertThat(SnapshotAssembly().service.create(tenant, UUID.randomUUID(), week).policyEpoch).isEqualTo(7)
+	}
+
+	@Test
+	@DisplayName("사례 27 — 보존 작업의 경계 발효(advance)만으로 ready snapshot 은 409, 진행 중 build 는 공개 CAS 실패다 — 캐시에 쓰지 않는다")
+	fun retentionAdvanceInvalidatesWithoutTouchingTheCache() {
+		val boundaries = TenantRetentionBoundaryStore(
+			DriverManagerDataSource(DashboardTestStores.postgres.jdbcUrl, DashboardTestStores.postgres.username, DashboardTestStores.postgres.password),
+		)
+		val tenant = UUID.randomUUID()
+		seed(tenant)
+		val assembly = SnapshotAssembly()
+		val ready = assembly.service.create(tenant, UUID.randomUUID(), week)
+		val hook = LossyHttpClient(
+			matches = { it.uri().rawQuery.contains("param_current_from") },
+			loseResponse = false,
+			onMatched = { boundaries.advance(tenant, kst("2026-01-01T00:00:00")) },
+		)
+
+		assertThatThrownBy { SnapshotAssembly(httpClient = hook).service.create(tenant, UUID.randomUUID(), week) }
+			.isInstanceOfSatisfying(SnapshotUnavailableException::class.java) { assertThat(it.reason).isEqualTo("publish_rejected") }
+		expectExpired { assembly.service.requireReady(ready.snapshotId, tenant) }
+		// 보존 작업은 manifest 를 무효화하지 않았다 — epoch 비교가 무효화다.
+		val invalidated = DashboardTestStores.writer.sql("SELECT count(*) FROM dashboard_cache.snapshots WHERE tenant_id = :t AND invalidated_at IS NOT NULL")
+			.param("t", tenant).query(Long::class.java).single()
+		assertThat(invalidated).isZero()
+
+		// 같은 경계로 다시 발효해도 epoch 는 그대로 — 새 epoch 로 만든 snapshot 은 계속 읽힌다.
+		val fresh = SnapshotAssembly().service.create(tenant, UUID.randomUUID(), week)
+		boundaries.advance(tenant, kst("2026-01-01T00:00:00"))
+		assertThat(assembly.service.requireReady(fresh.snapshotId, tenant).policyEpoch).isEqualTo(1)
 	}
 
 	@Test
