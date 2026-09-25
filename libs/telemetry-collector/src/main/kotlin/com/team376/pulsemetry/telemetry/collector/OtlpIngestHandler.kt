@@ -25,7 +25,7 @@ import java.util.UUID
  * ## 순서가 계약이다
  *
  * ```
- * 1. 마스킹      logs·traces 만. metrics 는 현행 설정에 redaction 이 없다 (Signal.masked)
+ * 1. 마스킹      세 시그널 모두 (Signal.masked · AttributeWalker)
  * 2. 신원 스탬프  검증된 tenant·installation 을 리소스 속성으로 승격한다
  * 3. 아카이브     제품 구간별로 갈라 외부 저장소에 쓰고, 실제로 쓴 위치로 영수증을 만든다
  * 4. 다음 단계    변환·보강·적재 — 전체 요청과 영수증을 함께 받는다
@@ -152,8 +152,7 @@ public class OtlpIngestHandler(
 		when (signal) {
 			Signal.LOGS -> walker.maskLogs(builder as ExportLogsServiceRequest.Builder)
 			Signal.TRACES -> walker.maskTraces(builder as ExportTraceServiceRequest.Builder)
-			// Signal.masked 가 false 라 여기 오지 않는다. when 을 닫아 두려고 남긴다.
-			Signal.METRICS -> Unit
+			Signal.METRICS -> walker.maskMetrics(builder as ExportMetricsServiceRequest.Builder)
 		}
 	}
 

@@ -134,8 +134,10 @@ docker compose up -d                              # 로컬 Postgres · ClickHous
 - **`enrichment_json`에는 no-op provider 스텁 셋(github·jira·ai_analysis)의 빈 항목도 들어간다.**
   구 registry가 발견된 모든 provider에 항상 항목을 쓰기 때문이고, 스텁을 지우면 저장되는 값이
   현행과 달라진다. 그래서 아무것도 하지 않는 클래스 셋이 일부러 남아 있다.
-- **metrics는 마스킹하지 않는다**(`Signal.METRICS.masked = false`). 현행 설정을 그대로 옮긴 것이고
-  허브 계약 §5가 M6로 등록한 결함이다. 고치는 것은 별도 티켓이며 ADR 0012 Negative가 대가를 적어 뒀다.
+- **metrics도 마스킹한다**(`Signal.METRICS.masked = true` — 허브 계약 §5 M6 해소, ADR 0012 Follow-up).
+  상위 redaction v0.157.0은 metrics의 resource·scope·data point 속성만 보지만, 이식본은 exemplar의
+  `filteredAttributes`까지 덮는다(`AttributeWalker` KDoc). 마스킹 정책(규칙·순서·대상 시그널)을 바꾸면
+  `MaskingPolicy.VERSION`을 올린다 — 아카이브 영수증과 분석 행의 `masking_version`이 그 값이다.
 - **상태 코드가 곧 크로스레포 계약이다**(허브 ADR 0006). 영구 실패는 **400**, 일시 실패는
   **503 + `Retry-After`** 다. telemetryctl 데몬이 4xx만 즉시 폐기하고 5xx는 전부 재시도하므로,
   영구 실패를 5xx로 돌리면 스키마 오류가 매 push마다 재시도 예산을 태우고도 드러나지 않는다.

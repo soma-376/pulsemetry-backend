@@ -256,21 +256,26 @@ class OtlpIngestHandlerTest {
 	}
 
 	@Test
-	@DisplayName("metrics 는 마스킹하지 않는다 — 현행 설정에 redaction 이 없다(M6)")
-	fun leavesMetricsUnmasked() {
+	@DisplayName("metrics 도 마스킹한다 — resource·point 속성과 exemplar 의 비밀이 아카이브와 하류 모두에서 가려진다(M6 해소)")
+	fun masksMetrics() {
 		val secret = "sk-abcdefghij1234567890"
 		val body = """
 			{"resourceMetrics":[{"resource":{"attributes":[
 			  {"key":"service.name","value":{"stringValue":"claude-code"}},
 			  {"key":"leak","value":{"stringValue":"$secret"}}]},
-			 "scopeMetrics":[{"metrics":[{"name":"m","gauge":{"dataPoints":[{"asInt":"1"}]}}]}]}]}
+			 "scopeMetrics":[{"metrics":[{"name":"m","sum":{"aggregationTemporality":1,"dataPoints":[
+			   {"asInt":"1","attributes":[{"key":"point","value":{"stringValue":"token $secret"}},
+			                              {"key":"model","value":{"stringValue":"claude-sonnet"}}],
+			    "exemplars":[{"asInt":"1","filteredAttributes":[{"key":"ex","value":{"stringValue":"$secret"}}]}]}]}}]}]}]}
 		""".trimIndent().toByteArray()
 
 		handler.handle(request(path = "/v1/metrics", body = body))
 
-		// 이 단언이 깨졌다면 M6 를 고친 것이다. 그것은 별도 티켓이고, 고친다면
-		// Signal.METRICS.masked 와 AttributeWalker · ADR 0012 를 함께 바꿔야 한다.
-		assertThat(archive.written.single().body.toString(Charsets.UTF_8)).contains(secret)
+		val archived = archive.written.single().body.toString(Charsets.UTF_8)
+		assertThat(archived).doesNotContain(secret).contains("token ****").contains("claude-sonnet")
+		val downstream = consumed.single().second as ExportMetricsServiceRequest
+		assertThat(downstream.toString()).doesNotContain(secret)
+		assertThat(receipts.single().maskingVersion).isEqualTo("masking-v2")
 	}
 
 	@Test

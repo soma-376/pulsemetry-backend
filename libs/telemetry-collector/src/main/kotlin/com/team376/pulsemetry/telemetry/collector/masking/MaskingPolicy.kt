@@ -11,7 +11,8 @@ package com.team376.pulsemetry.telemetry.collector.masking
  * | 버전 | 내용 |
  * |---|---|
  * | `masking-v1` | logs·traces 에 `blocked_values` 열넷을 선언 순서로. metrics 는 마스킹하지 않는다(허브 계약 §5 M6) |
+ * | `masking-v2` | v1 + metrics 의 resource·scope·data point 속성과 exemplar `filteredAttributes`(M6 해소) |
  */
 public object MaskingPolicy {
-	public const val VERSION: String = "masking-v1"
+	public const val VERSION: String = "masking-v2"
 }

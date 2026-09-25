@@ -13,10 +13,8 @@ import com.team376.pulsemetry.telemetry.collector.Signal
  * ## 여기 오는 것은 이미 마스킹을 마친 데이터다
  *
  * 허브 `glossary.md` 가 못박은 대로 "raw" 는 **가공 전**이지 마스킹 전이 아니다.
- * 단 **metrics 는 예외다** — 현행 설정의 metrics 파이프라인에 `redaction/secrets` 가 없어서
- * 마스킹을 거치지 않은 채 여기로 온다(허브 계약 §5 의 M6, `Signal.METRICS.masked = false`).
- * 이식은 동작 동일성이 기준이라 고치지 않았다. 보존 기간이 있는 저장소에 쓰는 구현이라면
- * 그 사실이 곧 위험이므로 ADR 0012 의 Negative 가 이것을 적어 두고 있다.
+ * 세 시그널 모두 마스킹을 거친 뒤 여기 온다 — metrics 가 마스킹 없이 오던 결함(허브 계약 §5 의 M6)은
+ * 해소했다(ADR 0012 Follow-up).
  *
  * ## 구현이 둘인 이유
  *

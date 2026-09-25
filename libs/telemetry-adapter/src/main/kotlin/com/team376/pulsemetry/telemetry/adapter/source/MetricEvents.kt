@@ -22,8 +22,8 @@ import com.team376.pulsemetry.telemetry.adapter.model.NormalizedMetric
  *
  * ⚠️ **속성이 걸러지지 않고 통째로 실린다.** 다른 이벤트들은 승격 대상을 화이트리스트로
  * 열거하는데 여기만 데이터포인트 속성 전체가 [MetricPoint.attrs] 로 들어간다. 수집 단계가
- * 메트릭에 마스킹을 걸지 않으므로(허브 계약 §5 의 M6) 시크릿이 메트릭 속성으로 오면
- * 그대로 남는다. 현행 동작이고 고치는 것은 별도 티켓이다.
+ * 메트릭도 마스킹하므로(허브 계약 §5 의 M6 해소) `blocked_values` 에 걸리는 시크릿은 가려져
+ * 오지만, 그 밖의 속성은 거르지 않고 그대로 실린다. 현행 동작이고 고치는 것은 별도 티켓이다.
  */
 internal object MetricEvents {
 
