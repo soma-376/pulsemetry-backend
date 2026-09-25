@@ -1,0 +1,95 @@
+{
+  "services": ["claude-code", "node_repl"],
+  "groups": [
+    {
+      "kind": "api",
+      "signal": "logs",
+      "select": [
+        {"name": "api_request", "has": ["cost_usd", "cost_usd_micros"], "cap": 1},
+        {"name": "api_request", "has": ["cost_usd"], "missing": ["cost_usd_micros"], "cap": 1},
+        {"name": "api_request", "missing": ["cost_usd"], "cap": 1},
+        {"name": "api_request", "has": ["mcp_server.name"], "cap": 1},
+        {"name": "api_request", "has": ["skill.name"], "cap": 1},
+        {"name": "api_request", "distinct_by": "query_source", "per_value": 1, "cap": 10},
+        {"name": "assistant_response", "cap": 2},
+        {"name": "api_error", "cap": 2},
+        {"name": "api_retries_exhausted", "cap": 2},
+        {"name": "api_refusal", "cap": 2},
+        {"name": "api_request_body", "cap": 1},
+        {"name": "api_response_body", "cap": 1}
+      ]
+    },
+    {
+      "kind": "tools",
+      "signal": "logs",
+      "select": [
+        {"name": "tool_result", "match": {"success": "false"}, "cap": 1},
+        {"name": "tool_result", "match": {"tool_source": "mcp"}, "cap": 1},
+        {"name": "tool_result", "distinct_by": "tool_name", "per_value": 1, "cap": 3},
+        {"name": "tool_decision", "match": {"decision": "reject"}, "cap": 1},
+        {"name": "tool_decision", "distinct_by": "source", "per_value": 1, "cap": 3}
+      ]
+    },
+    {
+      "kind": "session",
+      "signal": "logs",
+      "select": [
+        {"name": "user_prompt", "has": ["command_name"], "distinct_by": "command_source", "per_value": 1, "cap": 2},
+        {"name": "user_prompt", "missing": ["command_name"], "cap": 1},
+        {"name": "compaction", "cap": 2},
+        {"name": "subagent_completed", "cap": 2},
+        {"name": "skill_activated", "cap": 2},
+        {"name": "permission_mode_changed", "cap": 1},
+        {"name": "mcp_server_connection", "distinct_by": "status", "per_value": 1, "cap": 3},
+        {"name": "auth", "cap": 1},
+        {"name": "hook_registered", "cap": 1},
+        {"name": "hook_execution_start", "cap": 1},
+        {"name": "hook_execution_complete", "cap": 1}
+      ]
+    },
+    {
+      "kind": "generic",
+      "signal": "logs",
+      "select": [
+        {"name": "at_mention", "cap": 1},
+        {"name": "feedback_survey", "cap": 1},
+        {"name": "retention_sweep", "cap": 1},
+        {"name": "plugin_loaded", "cap": 1},
+        {"name": "managed_settings_resolved", "cap": 1},
+        {"name": "internal_error", "cap": 1},
+        {"name": "plugin_installed", "cap": 1},
+        {"name": "hook_plugin_metrics", "cap": 1},
+        {"name": "codex.browser_use.security_check", "cap": 2}
+      ]
+    },
+    {
+      "kind": "spans",
+      "signal": "traces",
+      "select": [
+        {"name": "claude_code.interaction", "cap": 2},
+        {"name": "claude_code.llm_request", "has": ["error"], "cap": 1},
+        {"name": "claude_code.llm_request", "distinct_by": "query_source_safe", "per_value": 1, "cap": 3},
+        {"name": "claude_code.tool", "has": ["file_path"], "cap": 1},
+        {"name": "claude_code.tool", "cap": 1},
+        {"name": "claude_code.tool.execution", "has": ["error"], "cap": 1},
+        {"name": "claude_code.tool.execution", "cap": 1},
+        {"name": "claude_code.tool.blocked_on_user", "cap": 2},
+        {"name": "claude_code.hook", "cap": 2}
+      ]
+    },
+    {
+      "kind": "metrics",
+      "signal": "metrics",
+      "select": [
+        {"name": "claude_code.session.count", "cap": 1, "max_points": 2},
+        {"name": "claude_code.lines_of_code.count", "cap": 1, "max_points": 2},
+        {"name": "claude_code.pull_request.count", "cap": 1, "max_points": 1},
+        {"name": "claude_code.commit.count", "cap": 1, "max_points": 1},
+        {"name": "claude_code.cost.usage", "cap": 1, "max_points": 2},
+        {"name": "claude_code.token.usage", "cap": 1, "max_points": 4},
+        {"name": "claude_code.code_edit_tool.decision", "cap": 1, "max_points": 2},
+        {"name": "claude_code.active_time.total", "cap": 1, "max_points": 2}
+      ]
+    }
+  ]
+}

@@ -55,13 +55,16 @@ enum 꼴 한 토큰 값(`[A-Za-z0-9_.:+-]`, 80자 이하 — 버전·모델·상
 | 남기는 값 안에 박힌 uuid·12자 이상 hex | 같은 대응표로 가짜 |
 | 이메일(키 또는 값 모양) | `userN@example.test` |
 | `host.name` | `host-redacted` |
-| 경로 키(`cwd`·`code.file.path`·`file_path` 등), 구분자가 든 `path`·`directory` | `/redacted/pathN` |
+| 경로 키(`cwd`·`code.file.path`·`file_path` 등), 구분자가 든 `path`·`directory`·`bash_argv0` | `/redacted/pathN` |
 | 저장소·브랜치 키, 사람 이름 키, 비밀꼴(`sk-`·`ghp_`·`Bearer `·JWT 등) | `<redacted len=N>` |
-| MCP 서버·커넥터·플러그인·스킬 이름 | `serverN`·`connectorN`·`pluginN`·`skillN`(`none`·`unknown`·`unattributed`·`stdio`·`local` 은 그대로) |
+| MCP 서버·커넥터·플러그인·마켓플레이스·스킬 이름 | `serverN`·`connectorN`·`pluginN`·`marketplaceN`·`skillN`(`none`·`unknown`·`unattributed`·`stdio`·`local`·`builtin` 은 그대로) |
+| `mcp__<서버>__<도구>` 꼴 값(어느 키든), `mcp_tool.name` | `mcp__serverN__mcp_toolN`, `mcp_toolN` |
+| 에이전트 종류(`agent.name`·`agent_type`·`subagent_type`), `query_source` 의 `agent:<builtin\|custom>:<이름>` | 제품 내장 이름(`Explore`·`general-purpose`·`Plan` 등)만 그대로, 그 밖은 `agentN` |
+| 명령 이름(`command_name`) | 같은 레코드의 `command_source = builtin` 이면 그대로, 사용자 정의면 `commandN` |
 | MCP 네임스페이스 `mcp__<서버>`, MCP 레코드의 도구 이름 | `mcp__serverN`, `mcp_toolN`(같은 서버 이름은 같은 번호). `mcp__<서버><도구>` 로 붙어 온 값은 풀리면 쌍으로, 아니면 가린다 |
 | MCP 서버 origin(URL) | `https://originN.example.test` |
 | 하위 에이전트 이름 `/root/<이름>` | `/root/agentN`(루트 `/root` 는 그대로) |
-| 내용 키(`prompt`·`content`·`arguments`·`output`·`tool_parameters`·`mcp_servers` 등), 로그 `body` | 빈 문자열 — 키와 wire 타입은 남아 존재 여부가 보존된다 |
+| 내용 키(`prompt`·`user_prompt`·`response`·`content`·`arguments`·`output`·`tool_input`·`tool_parameters`·`full_command`·`mcp_servers` 등), 로그 `body` | 빈 문자열 — 키와 wire 타입은 남아 존재 여부가 보존된다. 단 본문이 정확히 `<접두사>.<같은 레코드의 event.name>` 이면(Claude Code 처럼 이벤트 이름을 두 곳에 싣는 제품) 그대로 둔다 |
 | 그 밖의 문자열(자유 텍스트·오류 메시지·스팬 status 메시지) | `<redacted len=N>` |
 | 시각(`*UnixNano`), ISO 시각 문자열(`event.timestamp` 등) | 모든 레코드에 같은 오프셋(밀리초 배수)을 뺀다 — 가장 이른 시각이 2026-01-01T00:00:00Z 부근. 상대 순서·간격 보존. 0 은 0 |
 
@@ -80,7 +83,10 @@ enum 꼴 한 토큰 값(`[A-Za-z0-9_.:+-]`, 80자 이하 — 버전·모델·상
 3. 원본 `host.name` 값
 4. 원본의 ID 값(8자 이상)과 그 안의 숫자 섞인 8자 이상 조각이 출력 어디에든 남음
 5. `sk-`·`ghp_`·`gho_`·`ptt_`·`pit_`·`Bearer `·JWT꼴
-6. 내용·경로·저장소·MCP 서버·커넥터·플러그인·스킬·에이전트 키의 값이 비었거나 자리표시자가 아님, 로그 `body` 가 비어 있지 않음,
-   MCP 네임스페이스·도구 이름의 원문. 그 원본 값(4자 이상)이 출력의 어느 문자열로든 남아 있음
+6. 내용·경로·저장소·MCP 서버·커넥터·플러그인·마켓플레이스·스킬·에이전트 키의 값이 비었거나 자리표시자(또는 제품 상수)가 아님,
+   `mcp__` 로 시작하는 원문, MCP 도구 이름의 원문. 그 원본 값(4자 이상)이 출력의 어느 문자열로든 남아 있음(서비스·scope·스팬·
+   메트릭 이름 필드는 producer 식별자라 이 교차에서 뺀다)
+7. 레코드 단위: 로그 `body` 가 비었거나 정확히 `<접두사>.<event.name>` 이 아님, `command_source` 가 builtin 이 아닌 레코드의
+   `command_name` 이 자리표시자가 아님
 
 익명화 전 산출물(`extract.py` 출력)을 넘기면 반드시 실패해야 한다 — 관문이 실제로 무엇을 잡는지 확인하는 방법이다.

@@ -39,11 +39,12 @@ HEX_ID_FIELDS = {"traceId", "spanId", "parentSpanId"}
 CONTENT_KEYS = {
     "prompt", "content", "arguments", "output", "tool_parameters", "tool_input", "tool_output", "input", "response",
     "body", "mcp_servers", "query", "query_text", "command", "stdout", "stderr", "diff", "patch",
+    "user_prompt", "full_command",
 }
 # 경로 키 — 값은 언제나 /redacted/pathN.
 PATH_KEYS = {"cwd", "code.file.path", "file_path", "file.path", "workspace", "workspace.path"}
 # 경로일 수도 enum 일 수도 있는 키 — 구분자가 있으면 경로로 본다.
-MAYBE_PATH_KEYS = {"path", "directory"}
+MAYBE_PATH_KEYS = {"path", "directory", "bash_argv0"}
 # 저장소·브랜치 이름 — 언제나 가린다.
 SCM_KEYS = {"repo", "repository", "branch", "git.branch", "git.repository", "vcs.repository.name", "vcs.ref.head.name"}
 # 이메일·호스트
@@ -52,13 +53,18 @@ HOST_KEYS = {"host.name", "host.hostname"}
 # 사람 이름 — 한 단어여도 가린다(모양 allowlist 가 한 토큰 이름을 남기지 않게).
 PERSON_KEYS = {"user.name", "user.full_name", "username", "enduser.id", "os.user", "author", "committer"}
 # 이름 범주 — 값마다 번호를 붙인 자리표시자.
-SERVER_KEYS = {"mcp_server", "mcp.server.name", "server_name", "hook.server", "server", "mcp.server"}
+SERVER_KEYS = {"mcp_server", "mcp.server.name", "mcp_server.name", "server_name", "hook.server", "server", "mcp.server"}
 CONNECTOR_KEYS = {"connector_name", "mcp.connector.name"}
 PLUGIN_KEYS = {"plugin_id", "plugin", "plugin.name"}
 SKILL_KEYS = {"skill", "skill.name", "skill_name"}
-TOOL_NAME_KEYS = {"tool_name", "tool.name", "hook.tool"}
+TOOL_NAME_KEYS = {"tool_name", "tool.name", "hook.tool", "mcp_tool.name"}
+MARKETPLACE_KEYS = {"marketplace.name"}
+# 에이전트 종류 — 제품에 내장된 이름만 남기고 사용자 정의 이름은 가린다.
+AGENT_NAME_KEYS = {"agent.name", "agent_type", "subagent_type"}
+BUILTIN_AGENTS = {"Explore", "general-purpose", "Plan", "statusline-setup", "output-style-setup", "claude-code-guide"}
+AGENT_QUERY = re.compile(r"agent([:.])(builtin|custom)\1(.+)")
 ORIGIN_KEYS = {"mcp_server_origin", "mcp.server.origin"}
-KEEP_SENTINELS = {"", "none", "unknown", "unattributed", "stdio", "local"}
+KEEP_SENTINELS = {"", "none", "unknown", "unattributed", "stdio", "local", "builtin"}
 # ID 키 — 이름이 이것이거나 접미사가 ID 꼴이다.
 ID_KEYS = {
     "conversation.id", "call_id", "communication_id", "sender_thread_id", "receiver_thread_id", "auth.cf_ray",
@@ -66,6 +72,7 @@ ID_KEYS = {
     "turn.id", "turn_id", "thread_id", "thread.id", "submission.id", "rpc.request_id", "app_server.connection_id",
     "approval_id", "cell.id", "environment_id", "runtime_tool_call_id", "tool.call_id", "tool_use_id", "prompt.id",
     "request_id", "request.id", "response_id", "response.id", "installation.id", "connector_id", "mcp.connector.id",
+    "plugin_id_hash",
 }
 ID_SUFFIXES = (".id", "_id", ".uuid", "_uuid")
 NOT_ID_KEYS = PLUGIN_KEYS | {"model_id", "service.instance.id"}
@@ -97,6 +104,7 @@ class Sanitizer:
         self.numbers = defaultdict(dict)  # 범주 → 원문 → 번호
         self.mcp_tools = set()
         self.mcp_namespaces = set()
+        self.record = {}  # 지금 처리하는 레코드의 문자열 속성(레코드 단위 규칙용)
 
     # ── 결정적 가짜 ─────────────────────────────────────────────────────
 
@@ -207,6 +215,17 @@ class Sanitizer:
             return value if value in KEEP_SENTINELS else f"connector{self.number('connector', value)}"
         if key in PLUGIN_KEYS:
             return value if value in KEEP_SENTINELS else f"plugin{self.number('plugin', value)}"
+        if key in MARKETPLACE_KEYS:
+            return value if value in KEEP_SENTINELS else f"marketplace{self.number('marketplace', value)}"
+        if key in AGENT_NAME_KEYS:
+            return value if value in BUILTIN_AGENTS else f"agent{self.number('agent', value)}"
+        if key in ("query_source", "query_source_safe") and AGENT_QUERY.fullmatch(value):
+            sep, kind, name = AGENT_QUERY.fullmatch(value).groups()
+            if kind == "builtin" and name in BUILTIN_AGENTS:
+                return value
+            return f"agent{sep}{kind}{sep}agent{self.number('agent', name)}"
+        if key == "command_name":
+            return value if self.record.get("command_source") == "builtin" else f"command{self.number('command', value)}"
         if key in SKILL_KEYS:
             return value if value in KEEP_SENTINELS else f"skill{self.number('skill', value)}"
         if key in ORIGIN_KEYS:
@@ -217,6 +236,13 @@ class Sanitizer:
             return f"/root/agent{self.number('agent', value)}"
         if key == "tool_namespace" and value.startswith("mcp__"):
             return "mcp__" + self.server(value[len("mcp__") :])
+        if value.startswith("mcp__") and key != "tool":
+            # `mcp__<서버>__<도구>`(Claude Code 등) — 서버·도구 이름을 자리표시자로.
+            server, _, tool = value[len("mcp__") :].partition("__")
+            fake = "mcp__" + self.server(server)
+            return fake + (f"__mcp_tool{self.number('mcp_tool', tool)}" if tool else "")
+        if key == "mcp_tool.name":
+            return value if value in KEEP_SENTINELS else f"mcp_tool{self.number('mcp_tool', value)}"
         if key in TOOL_NAME_KEYS and value in self.mcp_tools:
             return f"mcp_tool{self.number('mcp_tool', value)}"
         if key == "tool" and value.startswith("mcp__"):
@@ -290,6 +316,8 @@ class Sanitizer:
             return [self.node(v, parent) for v in value]
         if not isinstance(value, dict):
             return value
+        if isinstance(value.get("attributes"), list):
+            self.record = {kv.get("key"): (kv.get("value") or {}).get("stringValue") for kv in value["attributes"]}
         out = {}
         for key, inner in value.items():
             if key in ("attributes", "filteredAttributes"):
@@ -299,7 +327,7 @@ class Sanitizer:
             elif key in HEX_ID_FIELDS:
                 out[key] = self.fake_hex(inner) if inner else inner
             elif key == "body":
-                out[key] = self.empty_body(inner)
+                out[key] = self.body(inner)
             elif key == "eventName":
                 out[key] = inner if (EVENT_LOCATION.fullmatch(inner) or SAFE_TOKEN.fullmatch(inner) or inner == "") else self.redact(inner)
             elif key == "name" and parent in ("scope", "record", "event", "metric"):
@@ -321,6 +349,15 @@ class Sanitizer:
             else:
                 out[key] = self.node(inner, key)
         return out
+
+    def body(self, body):
+        """본문은 비운다. 단 본문이 정확히 `<접두사>.<같은 레코드의 event.name>` 이면(제품이 이벤트 이름을 두 곳에 싣는
+        경우) 그대로 둔다 — 사용자 내용이 아니다."""
+        name = self.record.get("event.name") or ""
+        text = body.get("stringValue") if isinstance(body, dict) else None
+        if text and re.fullmatch(r"[a-z_]+\.[a-z_.]+", text) and name and text.endswith("." + name) and re.fullmatch(r"[a-z_]+", text[: -len(name) - 1]):
+            return dict(body)
+        return self.empty_body(body)
 
     def empty_body(self, body):
         if not isinstance(body, dict):
@@ -364,7 +401,7 @@ def walk_mcp(value, tools, namespaces):
     if isinstance(attrs, list):
         flat = {kv.get("key"): (kv.get("value") or {}).get("stringValue") for kv in attrs}
         namespace = flat.get("tool_namespace") or ""
-        mcp = namespace.startswith("mcp__") or any(flat.get(k) for k in ("mcp_server", "mcp.server.name"))
+        mcp = namespace.startswith("mcp__") or any(flat.get(k) for k in ("mcp_server", "mcp.server.name", "mcp_server.name"))
         if namespace.startswith("mcp__"):
             namespaces.add(namespace[len("mcp__") :])
         if mcp:

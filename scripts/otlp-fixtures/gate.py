@@ -25,8 +25,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sanitize import (  # noqa: E402 — 같은 디렉터리의 규칙 표를 공유한다
-    CONNECTOR_KEYS, CONTENT_KEYS, HEX_ID_FIELDS, HOST_KEYS, ID_KEYS, ID_SUFFIXES, KEEP_SENTINELS, MAYBE_PATH_KEYS,
-    NOT_ID_KEYS, ORIGIN_KEYS, PATH_KEYS, PLUGIN_KEYS, SCM_KEYS, SERVER_KEYS, SKILL_KEYS, TOOL_NAME_KEYS, walk_mcp,
+    AGENT_NAME_KEYS, BUILTIN_AGENTS, CONNECTOR_KEYS, CONTENT_KEYS, HEX_ID_FIELDS, HOST_KEYS, ID_KEYS, ID_SUFFIXES,
+    KEEP_SENTINELS, MARKETPLACE_KEYS, MAYBE_PATH_KEYS, NOT_ID_KEYS, ORIGIN_KEYS, PATH_KEYS, PLUGIN_KEYS, SCM_KEYS,
+    SERVER_KEYS, SKILL_KEYS, TOOL_NAME_KEYS, walk_mcp,
 )
 
 EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
@@ -52,7 +53,12 @@ PLACEHOLDER = {
     "agent": re.compile(r"/root(/agent\d+)?"),
     "namespace": re.compile(r"mcp__server\d+"),
     "origin": re.compile(r"https://origin\d+\.example\.test"),
+    "marketplace": re.compile(r"marketplace\d+"),
+    "agentname": re.compile(r"agent\d+"),
+    "command": re.compile(r"command\d+"),
 }
+EVENT_NAME_BODY = re.compile(r"[a-z_]+\.[a-z_.]+")
+MCP_PLACEHOLDER = re.compile(r"mcp__server\d+((__)?mcp_tool\d+)?")
 # 키 → 허용하는 자리표시자(빈 값·KEEP_SENTINELS 는 늘 허용).
 GUARDED = {}
 for _k in CONTENT_KEYS:
@@ -72,6 +78,19 @@ for _k in SKILL_KEYS:
 for _k in ORIGIN_KEYS:
     GUARDED[_k] = ("origin",)
 GUARDED["agent_name"] = ("agent",)
+for _k in MARKETPLACE_KEYS:
+    GUARDED[_k] = ("marketplace",)
+for _k in AGENT_NAME_KEYS:
+    GUARDED[_k] = ("agentname",)
+
+
+def allowed_value(key, value):
+    """이 키에서 원문 그대로 남아도 되는 값인가 — 빈 값·sentinel·내장 에이전트 이름·자리표시자."""
+    if not value or value in KEEP_SENTINELS:
+        return True
+    if key in AGENT_NAME_KEYS and value in BUILTIN_AGENTS:
+        return True
+    return key in GUARDED and any(PLACEHOLDER[p].fullmatch(value) for p in GUARDED[key])
 
 
 def is_id_key(key):
@@ -126,9 +145,11 @@ class Source:
                 self.runs.update(r for r in RUN.findall(value) if any(c.isdigit() for c in r))
         if key in HOST_KEYS:
             self.hosts.add(value)
-        if (key in GUARDED or key == "tool_namespace") and len(value) >= 4 and value not in KEEP_SENTINELS:
-            if key in GUARDED and any(PLACEHOLDER[p].fullmatch(value) for p in GUARDED[key]):
-                return  # 제품 상수(예: 루트 에이전트 `/root`)가 자리표시자 모양과 같다
+        if key == "body" and EVENT_NAME_BODY.fullmatch(value):
+            return  # `<접두사>.<이벤트 이름>` 꼴 본문은 이름이지 내용이 아니다 — 같은 레코드의 규칙은 records_check 가 본다
+        if (key in GUARDED or key == "tool_namespace" or value.startswith("mcp__")) and len(value) >= 4:
+            if allowed_value(key, value):
+                return  # 제품 상수(예: 루트 에이전트 `/root`, 내장 에이전트 이름)가 원문 그대로 허용된다
             if key != "tool_namespace" or value.startswith("mcp__"):
                 self.guarded.add(value)
 
@@ -161,14 +182,13 @@ def check(source, output, forbidden, violations):
                 for run in RUN.findall(value):
                     if run in source.runs:
                         report(label, "원본 ID 조각", run)
-            if value in source.guarded:
+            # 서비스·scope·스팬·메트릭 이름은 producer 식별자다 — 같은 문자열이 MCP 서버 이름으로도 쓰였더라도(`node_repl` 등) 원본 값 교차에서 뺀다.
+            if value in source.guarded and key != "service.name" and field != "name":
                 report(label, "원본 내용·이름 값", value)
-            if key in GUARDED and value and value not in KEEP_SENTINELS:
-                allowed = GUARDED[key]
-                if not any(PLACEHOLDER[p].fullmatch(value) for p in allowed):
-                    report(label, "내용·이름 키의 원문 값", value)
-            if key == "body" and value:
-                report(label, "본문이 비어 있지 않다", value)
+            if key in GUARDED and key != "body" and not allowed_value(key, value):
+                report(label, "내용·이름 키의 원문 값", value)
+            if value.startswith("mcp__") and key != "tool_namespace" and not MCP_PLACEHOLDER.fullmatch(value):
+                report(label, "MCP 이름 원문", value)
             if key in MAYBE_PATH_KEYS and ("/" in value or "\\" in value) and not PLACEHOLDER["path"].fullmatch(value):
                 report(label, "경로꼴 원문", value)
             if key == "tool_namespace" and value.startswith("mcp__") and not PLACEHOLDER["namespace"].fullmatch(value):
@@ -188,6 +208,7 @@ def check(source, output, forbidden, violations):
                     violations.append(f"{output}:{number}: JSON 이 아니다 — {error}")
                     continue
                 walk(document, visit_for(f"{output}:{number}"))
+                records_check(document, f"{output}:{number}", report_to(violations))
                 counts = count(document)
                 records[0] += counts[0]
                 records[1] += counts[1]
@@ -195,6 +216,28 @@ def check(source, output, forbidden, violations):
         with open(output, encoding="utf-8", errors="replace") as handle:
             visit_for(output)(None, "text", handle.read())
     return records
+
+
+def report_to(violations):
+    def report(where, what, value):
+        preview = value if len(value) <= 40 else value[:37] + "..."
+        violations.append(f"{where}: {what} — {preview!r}")
+    return report
+
+
+def records_check(document, where, report):
+    """레코드 단위 규칙 — 본문은 비었거나 정확히 `<접두사>.<event.name>`, 사용자 정의 명령 이름은 자리표시자."""
+    for resource in document.get("resourceLogs", []):
+        for scope in resource.get("scopeLogs", []):
+            for record in scope.get("logRecords", []):
+                flat = {kv.get("key"): (kv.get("value") or {}).get("stringValue") for kv in record.get("attributes", [])}
+                body = (record.get("body") or {}).get("stringValue")
+                name = flat.get("event.name") or ""
+                if body and not (name and re.fullmatch(r"[a-z_]+\." + re.escape(name), body)):
+                    report(f"{where} [body]", "본문이 비어 있지 않다", body)
+                command = flat.get("command_name")
+                if command and flat.get("command_source") != "builtin" and not PLACEHOLDER["command"].fullmatch(command):
+                    report(f"{where} [command_name]", "사용자 정의 명령 이름 원문", command)
 
 
 def count(document):
