@@ -6,10 +6,14 @@ import com.team376.pulsemetry.dashboard.analytics.CurrentStateTokens
 import com.team376.pulsemetry.dashboard.analytics.IngestStatusReader
 import com.team376.pulsemetry.dashboard.analytics.MembersService
 import com.team376.pulsemetry.dashboard.analytics.OverviewService
+import com.team376.pulsemetry.dashboard.analytics.SettingsService
 import com.team376.pulsemetry.dashboard.analytics.SnapshotReferences
 import com.team376.pulsemetry.dashboard.analytics.TeamDirectoryService
 import com.team376.pulsemetry.dashboard.analytics.TeamsService
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator
+import com.team376.pulsemetry.dashboard.analytics.VendorUsageReader
+import com.team376.pulsemetry.dashboard.snapshot.ModelResolution
+import com.team376.pulsemetry.dashboard.snapshot.RetentionBoundaryReader
 import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheClient
 import com.team376.pulsemetry.dashboard.request.PageCursorCodec
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
@@ -85,6 +89,22 @@ class AnalyticsConfig {
 		tokens: CurrentStateTokens,
 		clock: Clock,
 	): MembersService = MembersService(frames, aggregator, references, snapshots, codec, tokens, properties.members.idleDays, clock)
+
+	@Bean
+	fun vendorUsageReader(reader: ClickHouseSourceReader, resolution: ModelResolution, boundaries: RetentionBoundaryReader): VendorUsageReader =
+		VendorUsageReader(reader, resolution, boundaries)
+
+	@Bean
+	fun settingsService(
+		properties: DashboardApiProperties,
+		source: JdbcClient,
+		vendorUsage: VendorUsageReader,
+		frames: AnalyticsFrames,
+		tokens: CurrentStateTokens,
+		codec: PageCursorCodec,
+		mapper: ObjectMapper,
+		clock: Clock,
+	): SettingsService = SettingsService(source, vendorUsage, frames, tokens, codec, mapper, properties.members.idleDays, clock)
 
 	@Bean
 	fun overviewService(frames: AnalyticsFrames, aggregator: UsageAggregator, references: SnapshotReferences): OverviewService =

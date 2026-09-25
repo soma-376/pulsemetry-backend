@@ -184,8 +184,35 @@ object SourceFixtures {
 		DashboardTestStores.clickHouseAdmin("INSERT INTO default.telemetry_ingest_ledger FORMAT JSONEachRow\n$line")
 	}
 
+	/** 활성(또는 비활성) manifest 한 판. [privacy] 는 manifest 의 `privacy` 객체 JSON 이다. */
+	fun insertManifest(tenantId: UUID, version: Int, createdBy: UUID, privacy: String = "{}", active: Boolean = true): UUID {
+		val id = UUID.randomUUID()
+		DashboardTestStores.writer.sql(
+			"INSERT INTO enrollment.manifests (id, tenant_id, version, manifest, is_active, created_by_member_id, activated_at) " +
+				"VALUES (:id, :tenant, :version, CAST(:manifest AS jsonb), :active, :created_by, CASE WHEN :active THEN now() END)",
+		).param("id", id).param("tenant", tenantId).param("version", version)
+			.param("manifest", """{"schema_version":1,"config_revision":$version,"privacy":$privacy}""")
+			.param("active", active).param("created_by", createdBy).update()
+		return id
+	}
+
+	fun insertAssignment(installationId: UUID, manifestId: UUID, appliedAt: Instant?) {
+		DashboardTestStores.writer.sql(
+			"INSERT INTO enrollment.installation_manifest_assignments (installation_id, manifest_id, applied_at) VALUES (:installation, :manifest, :applied)",
+		).param("installation", installationId).param("manifest", manifestId).param("applied", appliedAt?.let(java.sql.Timestamp::from)).update()
+	}
+
+	fun insertContract(tenantId: UUID, vendor: String, status: String = "active", startsAt: String = "2026-01-01", endsAt: String? = null) {
+		DashboardTestStores.writer.sql(
+			"INSERT INTO enrollment.contracts (tenant_id, vendor, contract_type, name, contracted_at, starts_at, ends_at, status) " +
+				"VALUES (:tenant, CAST(:vendor AS enrollment.ai_vendor), 'term_commitment', :name, CAST(:starts AS date), CAST(:starts AS date), " +
+				"CAST(:ends AS date), CAST(:status AS enrollment.contract_status))",
+		).param("tenant", tenantId).param("vendor", vendor).param("name", "$vendor 계약").param("starts", startsAt).param("ends", endsAt)
+			.param("status", status).update()
+	}
+
 	/** 구성원의 설치 하나 — 초대를 거쳐야 하는 외래 키를 채운다. */
-	fun insertInstallation(tenantId: UUID, memberId: UUID): UUID {
+	fun insertInstallation(tenantId: UUID, memberId: UUID, clientVersion: String? = null, status: String = "active"): UUID {
 		val invitation = UUID.randomUUID()
 		DashboardTestStores.writer.sql(
 			"INSERT INTO enrollment.invitations (id, tenant_id, target_member_id, created_by_member_id, code_hash, expires_at) " +
@@ -193,8 +220,10 @@ object SourceFixtures {
 		).param("id", invitation).param("tenant", tenantId).param("member", memberId).param("hash", observationId(invitation.toString())).update()
 		val installation = UUID.randomUUID()
 		DashboardTestStores.writer.sql(
-			"INSERT INTO enrollment.installations (id, tenant_id, member_id, invitation_id, platform) VALUES (:id, :tenant, :member, :invitation, 'linux')",
-		).param("id", installation).param("tenant", tenantId).param("member", memberId).param("invitation", invitation).update()
+			"INSERT INTO enrollment.installations (id, tenant_id, member_id, invitation_id, platform, client_version, status) " +
+				"VALUES (:id, :tenant, :member, :invitation, 'linux', :client_version, CAST(:status AS enrollment.installation_status))",
+		).param("id", installation).param("tenant", tenantId).param("member", memberId).param("invitation", invitation)
+			.param("client_version", clientVersion).param("status", status).update()
 		return installation
 	}
 

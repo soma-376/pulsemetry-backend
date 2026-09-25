@@ -116,19 +116,24 @@ class AnalyticsFrames(
 	}
 
 	/** 수집 운영 현황 — snapshot 밖의 현재 상태. */
-	fun ingest(frame: Frame): OverviewResponse.Ingest {
-		val emptyHistory = !frame.history.hasReceipts
+	fun ingest(frame: Frame): OverviewResponse.Ingest = ingest(frame.organization, frame.history, frame.now)
+
+	/** 선택 기간이 없는 화면(설정)도 같은 규칙으로 수집 현황을 낸다. */
+	fun ingest(organization: Organization, now: Instant): OverviewResponse.Ingest = ingest(organization, ingest.history(organization.id), now)
+
+	private fun ingest(organization: Organization, history: IngestStatusReader.History, now: Instant): OverviewResponse.Ingest {
+		val emptyHistory = !history.hasReceipts
 		return OverviewResponse.Ingest(
 			// 수신 이력이 없으면 empty. 있으면 heartbeat·수집기 상태의 근거가 없어 healthy·delayed·down 을 추정하지 않는다.
 			status = if (emptyHistory) INGEST_EMPTY else INGEST_UNKNOWN,
 			reason = if (emptyHistory) null else Availability.SOURCE_NOT_AVAILABLE,
-			asOf = frame.now.toString(),
-			firstObservedAt = frame.history.summary?.firstObservedAt?.toString(),
-			lastReceivedAt = frame.history.summary?.lastReceivedAt?.toString(),
+			asOf = now.toString(),
+			firstObservedAt = history.summary?.firstObservedAt?.toString(),
+			lastReceivedAt = history.summary?.lastReceivedAt?.toString(),
 			windowMinutes = WINDOW.toMinutes().toInt(),
 			activeInstallations = null,
-			observedMembers = ingest.observedMembers(frame.organization.id, frame.now - WINDOW),
-			eligibleMembers = ingest.eligibleMembers(frame.organization.id),
+			observedMembers = ingest.observedMembers(organization.id, now - WINDOW),
+			eligibleMembers = ingest.eligibleMembers(organization.id),
 			coverageRatio = null,
 		)
 	}

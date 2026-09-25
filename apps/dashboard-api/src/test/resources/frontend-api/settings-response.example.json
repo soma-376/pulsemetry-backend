@@ -1,0 +1,170 @@
+{
+  "meta": {
+    "organizationId": "org_example",
+    "generatedAt": "2026-09-20T00:00:00Z",
+    "asOf": "2026-09-20T00:00:00Z",
+    "snapshotId": "snapshot-current-example",
+    "currency": "USD",
+    "timeZone": "Asia/Seoul"
+  },
+  "ingest": {
+    "status": "healthy",
+    "reason": null,
+    "asOf": "2026-09-20T00:00:00Z",
+    "firstObservedAt": "2026-07-12T15:00:00Z",
+    "lastReceivedAt": "2026-09-19T23:57:00Z",
+    "windowMinutes": 15,
+    "activeInstallations": 3,
+    "observedMembers": 3,
+    "eligibleMembers": 3,
+    "coverageRatio": 1
+  },
+  "capabilities": {
+    "editContracts": true,
+    "editCollectionPolicy": true,
+    "editAlertRules": false,
+    "notifyInstallations": false
+  },
+  "summary": {
+    "configuredVendors": 1,
+    "unconfiguredVendors": 0,
+    "monthlySeatFeeUsd": "600.000000",
+    "contractedSeats": 20,
+    "activeSeats7d": null,
+    "meteredMonthToDate": {
+      "availability": "unavailable",
+      "reason": "not_applicable",
+      "data": null
+    }
+  },
+  "catalog": {
+    "kinds": [
+      {
+        "kind": "vendor-a",
+        "displayName": "Vendor A"
+      }
+    ],
+    "plans": [
+      {
+        "planId": "vendor-a/team",
+        "kind": "vendor-a",
+        "displayName": "Team",
+        "billing": "seat",
+        "separateUsageBilling": false
+      }
+    ]
+  },
+  "vendors": {
+    "items": [
+      {
+        "vendorId": "vendor-a",
+        "displayName": "Vendor A",
+        "kind": "vendor-a",
+        "source": "detected",
+        "version": 3,
+        "firstSeenAt": "2026-08-01T00:00:00Z",
+        "lastSeenAt": "2026-09-19T23:57:00Z",
+        "activeUsers7d": 2,
+        "activeUsers30d": 3,
+        "observation": "partial",
+        "state": "configured",
+        "contract": {
+          "version": 3,
+          "planId": "vendor-a/team",
+          "effectiveFrom": "2026-09-01",
+          "effectiveTo": null,
+          "termNote": "월 단위 계약",
+          "tiers": [
+            {
+              "tierId": "tier-standard",
+              "label": "표준",
+              "seats": 20,
+              "monthlyFeePerSeatUsd": "30.000000"
+            }
+          ],
+          "monthlySeatFeeUsd": "600.000000",
+          "confirmedAt": "2026-09-01T00:00:00Z",
+          "confirmedBy": "member-001"
+        },
+        "meteredMonthToDate": {
+          "availability": "unavailable",
+          "reason": "not_applicable",
+          "data": null
+        },
+        "checks": []
+      }
+    ],
+    "totalCount": 1,
+    "nextCursor": null
+  },
+  "collectionPolicy": {
+    "version": 4,
+    "collectRawContent": false,
+    "reclaimIdleDays": 14,
+    "aggregateRetentionMonths": 24,
+    "rawContentRetentionDays": 30,
+    "effectiveAt": "2026-09-19T00:00:00Z",
+    "updatedBy": "member-001"
+  },
+  "policyRollout": {
+    "desiredVersion": 4,
+    "eligibleInstallations": 3,
+    "appliedInstallations": 2,
+    "outdatedInstallations": 1,
+    "unknownInstallations": 0
+  },
+  "alertRules": [
+    {
+      "ruleId": "spend_spike",
+      "version": 1,
+      "enabled": false,
+      "availability": "unavailable",
+      "reason": "evaluation_not_configured",
+      "threshold": {
+        "value": 0.4,
+        "unit": "ratio"
+      },
+      "evaluationWindow": "last_complete_7_calendar_days",
+      "comparisonWindow": "preceding_7_calendar_days"
+    },
+    {
+      "ruleId": "quota_exceeded",
+      "version": 1,
+      "enabled": false,
+      "availability": "unavailable",
+      "reason": "evaluation_not_configured",
+      "threshold": {
+        "value": 5,
+        "unit": "users"
+      },
+      "evaluationWindow": "rolling_24_hours",
+      "comparisonWindow": null
+    },
+    {
+      "ruleId": "model_not_allowed",
+      "version": 1,
+      "enabled": false,
+      "availability": "unavailable",
+      "reason": "evaluation_not_configured",
+      "threshold": {
+        "value": 1,
+        "unit": "events"
+      },
+      "evaluationWindow": "rolling_24_hours",
+      "comparisonWindow": null
+    },
+    {
+      "ruleId": "tool_unapproved",
+      "version": 1,
+      "enabled": false,
+      "availability": "unavailable",
+      "reason": "evaluation_not_configured",
+      "threshold": {
+        "value": 1,
+        "unit": "events"
+      },
+      "evaluationWindow": "rolling_24_hours",
+      "comparisonWindow": null
+    }
+  ]
+}
