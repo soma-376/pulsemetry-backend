@@ -105,3 +105,27 @@ generic 목록(`internal_error`·`plugin_installed`·`plugin_loaded`·`at_mentio
 - 메트릭 여덟은 실캡처에서 전부 `sum`(cumulative, monotonic)이다. 프로파일은 이름 + sum 일 때만 family 를 붙인다. 단위는
   `USD`·`tokens`·`s` 등 원형 그대로(`raw_unit`), 단위 registry 는 두지 않았다. `token.usage` 의 `type` 라벨 `input`·`output`·
   `cacheRead`·`cacheCreation` → `token_component`. 카운터의 `query_source` 는 범주 셋(`main`·`subagent`·`auxiliary` — 문서)이다.
+
+## 9. 토큰 의미 프로파일 — `claude-code-exclusive-v1`
+
+확인 시각 2026-09-25. 두 원천과 실캡처가 같은 결론이다.
+
+1. **API 성분 정의**(`platform.claude.com/docs/en/build-with-claude/prompt-caching`, 캐시 성능 추적 절): `input_tokens` 는 "캐시에서
+   읽지도 않고 캐시를 만드는 데 쓰지도 않은 입력 토큰(마지막 캐시 브레이크포인트 뒤의 토큰)", `cache_read_input_tokens` 는 캐시에서
+   읽은 토큰, `cache_creation_input_tokens` 는 캐시에 쓴 토큰이고, 전체 입력 = 셋의 합이다 — **exclusive**.
+2. **reasoning 은 output 안**(`platform.claude.com/docs/en/build-with-claude/extended-thinking`): `usage.output_tokens_details.thinking_tokens`
+   가 "청구된 output 토큰 중 내부 추론이었던 수"라고 적는다. Claude Code 의 OTel 은 reasoning·tool 성분을 따로 싣지 않는다.
+3. **OTel 키 = API usage 블록**(`code.claude.com/docs/en/monitoring-usage`, api_request 이벤트 속성 표): `input_tokens` 는 "API usage
+   블록의 input 토큰 수", `cache_read_tokens`·`cache_creation_tokens` 는 프롬프트 캐시에서 읽은/쓴 토큰. 이 표는 실캡처의 속성 이름·
+   wire 와 일치한다(2 절).
+4. **실캡처**(`real/logs-claude-code-*-api.otlp.jsonl` 과 그 원본 사본):
+   - 일곱 버전의 `api_request` 2,006 건 전부 네 성분을 intValue 로 싣는다(버전마다 33–518 건).
+   - 1,957 건이 `input_tokens < cache_read_tokens` 다. input 이 캐시 읽기를 포함한다면(inclusive) 한 건도 있을 수 없다 — 이것은
+     inclusive 의 **반증**이다(부등식으로 포함관계를 증명하지는 않는다. 포함관계는 1·3 이 정한다).
+   - 같은 요청의 `claude_code.llm_request` 스팬 666 건의 네 성분이 로그와 전부 같다 — 두 신호가 같은 usage 블록을 옮긴다.
+5. cache write 는 `reported` — 모든 사용량 행이 `cache_creation_tokens` 를 싣고(0 포함), API 도 이 필드를 늘 돌려준다(1).
+
+적용 범위는 `api_request` 실캡처가 있는 일곱 버전이다. `2.1.280` 은 로그 매핑은 되지만(다른 이벤트의 실캡처가 있다) 사용량
+실캡처가 없어 프로파일을 적용하지 않는다. 파생값: `tokens_input_uncached = input`, `tokens_total_derived = input + cache_read +
+cache_create + output`(ADR 0020 §4 표의 exclusive·write 보고 행). 공급자 근거는 이 프로파일과 별개다 — 사용량 행에 공급자 속성이
+없어 `provider_unresolved` 가 남는다.

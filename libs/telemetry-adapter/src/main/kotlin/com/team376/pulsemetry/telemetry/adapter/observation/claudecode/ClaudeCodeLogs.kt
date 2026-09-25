@@ -6,8 +6,11 @@ import com.team376.pulsemetry.telemetry.adapter.observation.DecisionSource
 import com.team376.pulsemetry.telemetry.adapter.observation.ErrorType
 import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
 import com.team376.pulsemetry.telemetry.adapter.observation.EventType
+import com.team376.pulsemetry.telemetry.adapter.observation.InputSemantics
 import com.team376.pulsemetry.telemetry.adapter.observation.MappingStatus
 import com.team376.pulsemetry.telemetry.adapter.observation.MetadataAllowlist
+import com.team376.pulsemetry.telemetry.adapter.observation.OutputSemantics
+import com.team376.pulsemetry.telemetry.adapter.observation.Product
 import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
 import com.team376.pulsemetry.telemetry.adapter.observation.ReportedCostBasis
 import com.team376.pulsemetry.telemetry.adapter.observation.StopReason
@@ -22,6 +25,9 @@ import com.team376.pulsemetry.telemetry.adapter.observation.profile.LogProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.LogRecordView
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.MappedEvent
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.NumberWire
+import com.team376.pulsemetry.telemetry.adapter.observation.semantics.CacheWriteStatus
+import com.team376.pulsemetry.telemetry.adapter.observation.semantics.SemanticsProfile
+import com.team376.pulsemetry.telemetry.adapter.observation.semantics.SemanticsScope
 import com.team376.pulsemetry.telemetry.adapter.observation.withFlags
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -137,7 +143,8 @@ internal object ClaudeCodeLogs : LogProfile {
 			)
 			else -> return null
 		}
-		return MappedEvent(mapped.withFlags(*fields.flags.toTypedArray()))
+		val semantics = if (name == "api_request" && base.envelope.serviceVersion in SEMANTICS_VERSIONS) SEMANTICS else null
+		return MappedEvent(mapped.withFlags(*fields.flags.toTypedArray()), semantics = semantics)
 	}
 
 	/** 모든 매핑 행의 공통 몫 — 의미 확인, 세션·턴·모델·요청 ID. */
@@ -282,6 +289,28 @@ internal object ClaudeCodeLogs : LogProfile {
 		querySource == "subagent" || querySource.startsWith("agent:") -> WorkloadKind.SUBAGENT
 		else -> WorkloadKind.UNKNOWN
 	}
+
+	/**
+	 * 검증된 토큰 의미 프로파일(ADR 0020 부록 C). input 은 캐시 읽기·쓰기를 뺀 값(`exclusive_cache`), cache write 는 보고되고,
+	 * reasoning 은 output 에 들어 있다(reasoning·tool 성분은 따로 보고되지 않는다). 공식 문서의 성분 정의와 실캡처로 확인한
+	 * 버전에만 적용한다 — `api_request` 실캡처가 없는 버전(2.1.280)과 그 밖의 버전은 프로파일 없음이다.
+	 */
+	val SEMANTICS: SemanticsProfile = SemanticsProfile(
+		id = "claude-code-exclusive-v1",
+		inputSemantics = InputSemantics.EXCLUSIVE_CACHE,
+		outputSemantics = OutputSemantics.INCLUSIVE_REASONING_TOOL,
+		cacheWrite = CacheWriteStatus.REPORTED,
+		scope = SemanticsScope(
+			product = Product.CLAUDE_CODE,
+			producerVersions = "claude-code 2.1.269·2.1.270·2.1.272·2.1.273·2.1.278·2.1.281·2.1.282",
+			provider = "Anthropic Messages API 의 usage 블록(행의 공급자 근거와는 별개)",
+			configuration = "기본 설정",
+		),
+		evidencePath = "libs/telemetry-adapter/src/test/resources/otlp-v2/claude_code/PROFILE-EVIDENCE.md",
+	)
+
+	/** [SEMANTICS] 가 적용되는 producer 버전 — `api_request` 실캡처 fixture 가 있는 버전. */
+	val SEMANTICS_VERSIONS: Set<String> = setOf("2.1.269", "2.1.270", "2.1.272", "2.1.273", "2.1.278", "2.1.281", "2.1.282")
 
 	const val SESSION_NAMESPACE: String = "claude_code.session"
 
