@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.springframework.jdbc.datasource.DriverManagerDataSource
 import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.UUID
@@ -82,16 +83,19 @@ class SnapshotLifecycleTest {
 	@Test
 	@DisplayName("사례 19·AC4 — 10분이 지나면 물리 행이 남아 있어도 409, 그 전에는 다른 인스턴스도 같은 snapshot 을 읽는다")
 	fun expiryIsDecidedByManifest() {
-		val clock = MutableClock()
+		// PostgreSQL 저장 시 마이크로초로 반올림되는 시각을 명시해 운영체제 시계 정밀도에 의존하지 않는다.
+		val clock = MutableClock(Instant.ofEpochSecond(Instant.now().epochSecond, 800))
 		val tenant = UUID.randomUUID()
 		seed(tenant)
 		val ready = SnapshotAssembly(clock = clock).service.create(tenant, UUID.randomUUID(), week)
+		val expiresAt = requireNotNull(ready.expiresAt)
 
 		// 새로 조립한 부품 = 재시작했거나 다른 인스턴스다. 상태는 RDS manifest 에만 있다.
-		clock.advance(Duration.ofMinutes(9).plusSeconds(59))
+		// 생성 시계와 저장 시각의 정밀도가 달라도 manifest 의 만료 경계를 정확히 검사한다.
+		clock.now = expiresAt.minusNanos(1)
 		assertThat(SnapshotAssembly(clock = clock).service.requireReady(ready.snapshotId, tenant).usageRows).isEqualTo(2)
 
-		clock.advance(Duration.ofSeconds(1))
+		clock.now = expiresAt
 		expectExpired { SnapshotAssembly(clock = clock).service.requireReady(ready.snapshotId, tenant) }
 		assertThat(physicalUsageRows(ready.buildId)).isEqualTo(2)
 
@@ -99,7 +103,7 @@ class SnapshotLifecycleTest {
 		val purgeAfter = DashboardTestStores.clickHouseAdmin(
 			"SELECT toUnixTimestamp(min(purge_after)) FROM dashboard_cache.snapshot_usage WHERE build_id = '${ready.buildId}'",
 		).trim().toLong()
-		assertThat(purgeAfter).isGreaterThan(ready.expiresAt!!.epochSecond)
+		assertThat(purgeAfter).isGreaterThan(expiresAt.epochSecond)
 	}
 
 	@Test
