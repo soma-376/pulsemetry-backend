@@ -13,6 +13,11 @@ import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
  * 수신의 `ingest_seq` 가 그 receipt 의 시각이다. 같은 관측을 다시 적재하면 `ReplacingMergeTree(row_version)` 가 큰 버전을
  * 남긴다. 같은 배치를 재시도해도 `observation_id`·`row_version` 이 같아 한 행으로 수렴한다. 조회는 `FINAL` 이 필요하다.
  *
+ * ## 삭제 경계
+ *
+ * [AnalysisWriteBoundary] 없이 쓰지 않는다(ADR 0024 §3). 경계 이전 관측은 INSERT 에 싣지 않고, INSERT 는 서버에서 fence 를 다시
+ * 검사한다([AnalysisInsert]). 돌려주는 수는 실은 행 수다 — 경계가 움직이는 순간 서버가 더 버린 행은 세지 않는다.
+ *
  * ## 실패
  *
  * 행 하나라도 컬럼 타입에 들어가지 않으면 **요청을 보내기 전에** [TelemetrySinkRejectedException] 이다 — 배치의 어느 행도
@@ -23,17 +28,18 @@ import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
  */
 public class TelemetryEventsSink(private val client: ClickHouseHttpClient) {
 
-	/** 배치를 적재하고 적재한 행 수를 돌려준다. 빈 배치는 요청을 보내지 않는다. */
-	public fun insert(events: List<EnrichedEvent>, versioning: RowVersioning): Int {
-		if (events.isEmpty()) return 0
-		val body = events.joinToString(separator = "\n", postfix = "\n") { TelemetryEventRow.toJson(it, versioning) }
-		client.execute(QUERY, body.toByteArray(Charsets.UTF_8))
-		return events.size
+	/** 경계 안의 행을 적재하고 그 수를 돌려준다. 실을 행이 없으면 요청을 보내지 않는다. */
+	public fun insert(events: List<EnrichedEvent>, versioning: RowVersioning, boundary: AnalysisWriteBoundary): Int {
+		val admitted = boundary.admitted(events) { it.observation.envelope }
+		if (admitted.isEmpty()) return 0
+		val body = admitted.joinToString(separator = "\n", postfix = "\n") { TelemetryEventRow.toJson(it, versioning) }
+		AnalysisInsert.send(client, QUERY, body, boundary)
+		return admitted.size
 	}
 
 	public companion object {
 		public const val TABLE: String = "telemetry_events"
 
-		private val QUERY: String = AnalysisInsert.query(TABLE, AnalysisColumns.EVENTS)
+		private val QUERY: String = AnalysisInsert.fenced(TABLE, AnalysisColumns.EVENTS)
 	}
 }

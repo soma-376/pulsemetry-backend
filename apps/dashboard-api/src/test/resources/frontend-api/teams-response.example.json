@@ -1,0 +1,715 @@
+{
+  "meta": {
+    "organizationId": "org_example",
+    "generatedAt": "2026-09-14T00:00:00Z",
+    "dataThrough": "2026-09-13T23:57:00Z",
+    "currency": "USD",
+    "startDate": "2026-09-07",
+    "endDate": "2026-09-13",
+    "timeZone": "Asia/Seoul",
+    "dayCount": 7,
+    "dataState": "ready",
+    "currentCoverage": {
+      "status": "complete",
+      "observedDays": 7
+    },
+    "pricingVersion": "example-rate-v1",
+    "snapshotId": "snapshot-analytics-example"
+  },
+  "comparison": {
+    "mode": "prev_week",
+    "startDate": "2026-08-31",
+    "endDate": "2026-09-06",
+    "status": "available",
+    "reason": null,
+    "coverage": {
+      "status": "complete",
+      "observedDays": 7
+    }
+  },
+  "ingest": {
+    "status": "healthy",
+    "reason": null,
+    "asOf": "2026-09-14T00:00:00Z",
+    "firstObservedAt": "2026-07-12T15:00:00Z",
+    "lastReceivedAt": "2026-09-13T23:57:00Z",
+    "windowMinutes": 15,
+    "activeInstallations": 128,
+    "observedMembers": 117,
+    "eligibleMembers": 154,
+    "coverageRatio": 0.7597402597402597
+  },
+  "attributionBasis": "event_time",
+  "totals": {
+    "current": {
+      "activeUsers": 100,
+      "sessionCount": 1000,
+      "tokens": {
+        "inputUncached": 50000000,
+        "output": 20000000,
+        "cacheRead": 25000000,
+        "cacheWrite": 5000000,
+        "total": 100000000
+      },
+      "equivalentCostUsd": "5000.000000"
+    },
+    "previous": {
+      "activeUsers": 90,
+      "sessionCount": 800,
+      "tokens": {
+        "inputUncached": 40000000,
+        "output": 16000000,
+        "cacheRead": 20000000,
+        "cacheWrite": 4000000,
+        "total": 80000000
+      },
+      "equivalentCostUsd": "4000.000000"
+    }
+  },
+  "sort": "cost",
+  "teams": {
+    "items": [
+      {
+        "teamId": "team_platform",
+        "teamName": "플랫폼",
+        "current": {
+          "activeUsers": 40,
+          "sessionCount": 400,
+          "tokens": {
+            "inputUncached": 20000000,
+            "output": 8000000,
+            "cacheRead": 10000000,
+            "cacheWrite": 2000000,
+            "total": 40000000
+          },
+          "equivalentCostUsd": "2000.000000"
+        },
+        "previous": {
+          "activeUsers": 35,
+          "sessionCount": 280,
+          "tokens": {
+            "inputUncached": 14000000,
+            "output": 5600000,
+            "cacheRead": 7000000,
+            "cacheWrite": 1400000,
+            "total": 28000000
+          },
+          "equivalentCostUsd": "1400.000000"
+        },
+        "modelMix": {
+          "availability": "available",
+          "reason": null,
+          "data": {
+            "sessionMixAvailable": false,
+            "sessionMixReason": "multi_model_sessions",
+            "models": [
+              {
+                "modelId": "vendor-a/model-pro",
+                "displayName": "Model Pro",
+                "equivalentCostUsd": "1200.000000",
+                "totalTokens": 24000000
+              },
+              {
+                "modelId": "vendor-a/model-standard",
+                "displayName": "Model Standard",
+                "equivalentCostUsd": "600.000000",
+                "totalTokens": 12000000
+              },
+              {
+                "modelId": "vendor-b/model-code",
+                "displayName": "Model Code",
+                "equivalentCostUsd": "200.000000",
+                "totalTokens": 4000000
+              },
+              {
+                "modelId": "vendor-a/model-fast",
+                "displayName": "Model Fast",
+                "equivalentCostUsd": "0.000000",
+                "totalTokens": 0
+              },
+              {
+                "modelId": "vendor-b/model-mini",
+                "displayName": "Model Mini",
+                "equivalentCostUsd": "0.000000",
+                "totalTokens": 0
+              }
+            ]
+          }
+        },
+        "trend": [
+          {
+            "date": "2026-09-07",
+            "observation": "complete",
+            "equivalentCostUsd": "280.000000",
+            "totalTokens": 5600000,
+            "cumulativeSessionCount": 56
+          },
+          {
+            "date": "2026-09-08",
+            "observation": "complete",
+            "equivalentCostUsd": "320.000000",
+            "totalTokens": 6400000,
+            "cumulativeSessionCount": 120
+          },
+          {
+            "date": "2026-09-09",
+            "observation": "complete",
+            "equivalentCostUsd": "360.000000",
+            "totalTokens": 7200000,
+            "cumulativeSessionCount": 192
+          },
+          {
+            "date": "2026-09-10",
+            "observation": "complete",
+            "equivalentCostUsd": "240.000000",
+            "totalTokens": 4800000,
+            "cumulativeSessionCount": 240
+          },
+          {
+            "date": "2026-09-11",
+            "observation": "complete",
+            "equivalentCostUsd": "400.000000",
+            "totalTokens": 8000000,
+            "cumulativeSessionCount": 320
+          },
+          {
+            "date": "2026-09-12",
+            "observation": "complete",
+            "equivalentCostUsd": "200.000000",
+            "totalTokens": 4000000,
+            "cumulativeSessionCount": 360
+          },
+          {
+            "date": "2026-09-13",
+            "observation": "complete",
+            "equivalentCostUsd": "200.000000",
+            "totalTokens": 4000000,
+            "cumulativeSessionCount": 400
+          }
+        ]
+      },
+      {
+        "teamId": "team_payments",
+        "teamName": "결제",
+        "current": {
+          "activeUsers": 25,
+          "sessionCount": 280,
+          "tokens": {
+            "inputUncached": 14000000,
+            "output": 5600000,
+            "cacheRead": 7000000,
+            "cacheWrite": 1400000,
+            "total": 28000000
+          },
+          "equivalentCostUsd": "1400.000000"
+        },
+        "previous": {
+          "activeUsers": 25,
+          "sessionCount": 240,
+          "tokens": {
+            "inputUncached": 12000000,
+            "output": 4800000,
+            "cacheRead": 6000000,
+            "cacheWrite": 1200000,
+            "total": 24000000
+          },
+          "equivalentCostUsd": "1200.000000"
+        },
+        "modelMix": {
+          "availability": "available",
+          "reason": null,
+          "data": {
+            "sessionMixAvailable": false,
+            "sessionMixReason": "multi_model_sessions",
+            "models": [
+              {
+                "modelId": "vendor-a/model-pro",
+                "displayName": "Model Pro",
+                "equivalentCostUsd": "840.000000",
+                "totalTokens": 16800000
+              },
+              {
+                "modelId": "vendor-a/model-standard",
+                "displayName": "Model Standard",
+                "equivalentCostUsd": "400.000000",
+                "totalTokens": 8000000
+              },
+              {
+                "modelId": "vendor-b/model-code",
+                "displayName": "Model Code",
+                "equivalentCostUsd": "100.000000",
+                "totalTokens": 2000000
+              },
+              {
+                "modelId": "vendor-a/model-fast",
+                "displayName": "Model Fast",
+                "equivalentCostUsd": "60.000000",
+                "totalTokens": 1200000
+              },
+              {
+                "modelId": "vendor-b/model-mini",
+                "displayName": "Model Mini",
+                "equivalentCostUsd": "0.000000",
+                "totalTokens": 0
+              }
+            ]
+          }
+        },
+        "trend": [
+          {
+            "date": "2026-09-07",
+            "observation": "complete",
+            "equivalentCostUsd": "196.000000",
+            "totalTokens": 3920000,
+            "cumulativeSessionCount": 39
+          },
+          {
+            "date": "2026-09-08",
+            "observation": "complete",
+            "equivalentCostUsd": "224.000000",
+            "totalTokens": 4480000,
+            "cumulativeSessionCount": 84
+          },
+          {
+            "date": "2026-09-09",
+            "observation": "complete",
+            "equivalentCostUsd": "252.000000",
+            "totalTokens": 5040000,
+            "cumulativeSessionCount": 134
+          },
+          {
+            "date": "2026-09-10",
+            "observation": "complete",
+            "equivalentCostUsd": "168.000000",
+            "totalTokens": 3360000,
+            "cumulativeSessionCount": 168
+          },
+          {
+            "date": "2026-09-11",
+            "observation": "complete",
+            "equivalentCostUsd": "280.000000",
+            "totalTokens": 5600000,
+            "cumulativeSessionCount": 224
+          },
+          {
+            "date": "2026-09-12",
+            "observation": "complete",
+            "equivalentCostUsd": "140.000000",
+            "totalTokens": 2800000,
+            "cumulativeSessionCount": 252
+          },
+          {
+            "date": "2026-09-13",
+            "observation": "complete",
+            "equivalentCostUsd": "140.000000",
+            "totalTokens": 2800000,
+            "cumulativeSessionCount": 280
+          }
+        ]
+      },
+      {
+        "teamId": "team_data",
+        "teamName": "데이터",
+        "current": {
+          "activeUsers": 20,
+          "sessionCount": 160,
+          "tokens": {
+            "inputUncached": 8000000,
+            "output": 3200000,
+            "cacheRead": 4000000,
+            "cacheWrite": 800000,
+            "total": 16000000
+          },
+          "equivalentCostUsd": "800.000000"
+        },
+        "previous": {
+          "activeUsers": 15,
+          "sessionCount": 140,
+          "tokens": {
+            "inputUncached": 7000000,
+            "output": 2800000,
+            "cacheRead": 3500000,
+            "cacheWrite": 700000,
+            "total": 14000000
+          },
+          "equivalentCostUsd": "700.000000"
+        },
+        "modelMix": {
+          "availability": "available",
+          "reason": null,
+          "data": {
+            "sessionMixAvailable": false,
+            "sessionMixReason": "multi_model_sessions",
+            "models": [
+              {
+                "modelId": "vendor-a/model-pro",
+                "displayName": "Model Pro",
+                "equivalentCostUsd": "100.000000",
+                "totalTokens": 2000000
+              },
+              {
+                "modelId": "vendor-a/model-standard",
+                "displayName": "Model Standard",
+                "equivalentCostUsd": "400.000000",
+                "totalTokens": 8000000
+              },
+              {
+                "modelId": "vendor-b/model-code",
+                "displayName": "Model Code",
+                "equivalentCostUsd": "200.000000",
+                "totalTokens": 4000000
+              },
+              {
+                "modelId": "vendor-a/model-fast",
+                "displayName": "Model Fast",
+                "equivalentCostUsd": "100.000000",
+                "totalTokens": 2000000
+              },
+              {
+                "modelId": "vendor-b/model-mini",
+                "displayName": "Model Mini",
+                "equivalentCostUsd": "0.000000",
+                "totalTokens": 0
+              }
+            ]
+          }
+        },
+        "trend": [
+          {
+            "date": "2026-09-07",
+            "observation": "complete",
+            "equivalentCostUsd": "112.000000",
+            "totalTokens": 2240000,
+            "cumulativeSessionCount": 22
+          },
+          {
+            "date": "2026-09-08",
+            "observation": "complete",
+            "equivalentCostUsd": "128.000000",
+            "totalTokens": 2560000,
+            "cumulativeSessionCount": 48
+          },
+          {
+            "date": "2026-09-09",
+            "observation": "complete",
+            "equivalentCostUsd": "144.000000",
+            "totalTokens": 2880000,
+            "cumulativeSessionCount": 76
+          },
+          {
+            "date": "2026-09-10",
+            "observation": "complete",
+            "equivalentCostUsd": "96.000000",
+            "totalTokens": 1920000,
+            "cumulativeSessionCount": 96
+          },
+          {
+            "date": "2026-09-11",
+            "observation": "complete",
+            "equivalentCostUsd": "160.000000",
+            "totalTokens": 3200000,
+            "cumulativeSessionCount": 128
+          },
+          {
+            "date": "2026-09-12",
+            "observation": "complete",
+            "equivalentCostUsd": "80.000000",
+            "totalTokens": 1600000,
+            "cumulativeSessionCount": 144
+          },
+          {
+            "date": "2026-09-13",
+            "observation": "complete",
+            "equivalentCostUsd": "80.000000",
+            "totalTokens": 1600000,
+            "cumulativeSessionCount": 160
+          }
+        ]
+      },
+      {
+        "teamId": "team_mobile",
+        "teamName": "모바일",
+        "current": {
+          "activeUsers": 10,
+          "sessionCount": 100,
+          "tokens": {
+            "inputUncached": 5000000,
+            "output": 2000000,
+            "cacheRead": 2500000,
+            "cacheWrite": 500000,
+            "total": 10000000
+          },
+          "equivalentCostUsd": "500.000000"
+        },
+        "previous": {
+          "activeUsers": 10,
+          "sessionCount": 80,
+          "tokens": {
+            "inputUncached": 4000000,
+            "output": 1600000,
+            "cacheRead": 2000000,
+            "cacheWrite": 400000,
+            "total": 8000000
+          },
+          "equivalentCostUsd": "400.000000"
+        },
+        "modelMix": {
+          "availability": "available",
+          "reason": null,
+          "data": {
+            "sessionMixAvailable": false,
+            "sessionMixReason": "multi_model_sessions",
+            "models": [
+              {
+                "modelId": "vendor-a/model-pro",
+                "displayName": "Model Pro",
+                "equivalentCostUsd": "100.000000",
+                "totalTokens": 2000000
+              },
+              {
+                "modelId": "vendor-a/model-standard",
+                "displayName": "Model Standard",
+                "equivalentCostUsd": "200.000000",
+                "totalTokens": 4000000
+              },
+              {
+                "modelId": "vendor-b/model-code",
+                "displayName": "Model Code",
+                "equivalentCostUsd": "100.000000",
+                "totalTokens": 2000000
+              },
+              {
+                "modelId": "vendor-a/model-fast",
+                "displayName": "Model Fast",
+                "equivalentCostUsd": "90.000000",
+                "totalTokens": 1800000
+              },
+              {
+                "modelId": "vendor-b/model-mini",
+                "displayName": "Model Mini",
+                "equivalentCostUsd": "10.000000",
+                "totalTokens": 200000
+              }
+            ]
+          }
+        },
+        "trend": [
+          {
+            "date": "2026-09-07",
+            "observation": "complete",
+            "equivalentCostUsd": "70.000000",
+            "totalTokens": 1400000,
+            "cumulativeSessionCount": 14
+          },
+          {
+            "date": "2026-09-08",
+            "observation": "complete",
+            "equivalentCostUsd": "80.000000",
+            "totalTokens": 1600000,
+            "cumulativeSessionCount": 30
+          },
+          {
+            "date": "2026-09-09",
+            "observation": "complete",
+            "equivalentCostUsd": "90.000000",
+            "totalTokens": 1800000,
+            "cumulativeSessionCount": 48
+          },
+          {
+            "date": "2026-09-10",
+            "observation": "complete",
+            "equivalentCostUsd": "60.000000",
+            "totalTokens": 1200000,
+            "cumulativeSessionCount": 60
+          },
+          {
+            "date": "2026-09-11",
+            "observation": "complete",
+            "equivalentCostUsd": "100.000000",
+            "totalTokens": 2000000,
+            "cumulativeSessionCount": 80
+          },
+          {
+            "date": "2026-09-12",
+            "observation": "complete",
+            "equivalentCostUsd": "50.000000",
+            "totalTokens": 1000000,
+            "cumulativeSessionCount": 90
+          },
+          {
+            "date": "2026-09-13",
+            "observation": "complete",
+            "equivalentCostUsd": "50.000000",
+            "totalTokens": 1000000,
+            "cumulativeSessionCount": 100
+          }
+        ]
+      }
+    ],
+    "totalCount": 4,
+    "nextCursor": null
+  },
+  "unassigned": {
+    "teamId": null,
+    "teamName": "미배정",
+    "current": {
+      "activeUsers": 5,
+      "sessionCount": 60,
+      "tokens": {
+        "inputUncached": 3000000,
+        "output": 1200000,
+        "cacheRead": 1500000,
+        "cacheWrite": 300000,
+        "total": 6000000
+      },
+      "equivalentCostUsd": "300.000000"
+    },
+    "previous": {
+      "activeUsers": 5,
+      "sessionCount": 60,
+      "tokens": {
+        "inputUncached": 3000000,
+        "output": 1200000,
+        "cacheRead": 1500000,
+        "cacheWrite": 300000,
+        "total": 6000000
+      },
+      "equivalentCostUsd": "300.000000"
+    },
+    "modelMix": {
+      "availability": "available",
+      "reason": null,
+      "data": {
+        "sessionMixAvailable": false,
+        "sessionMixReason": "multi_model_sessions",
+        "models": [
+          {
+            "modelId": "vendor-a/model-pro",
+            "displayName": "Model Pro",
+            "equivalentCostUsd": "60.000000",
+            "totalTokens": 1200000
+          },
+          {
+            "modelId": "vendor-a/model-standard",
+            "displayName": "Model Standard",
+            "equivalentCostUsd": "100.000000",
+            "totalTokens": 2000000
+          },
+          {
+            "modelId": "vendor-b/model-code",
+            "displayName": "Model Code",
+            "equivalentCostUsd": "0.000000",
+            "totalTokens": 0
+          },
+          {
+            "modelId": "vendor-a/model-fast",
+            "displayName": "Model Fast",
+            "equivalentCostUsd": "0.000000",
+            "totalTokens": 0
+          },
+          {
+            "modelId": "vendor-b/model-mini",
+            "displayName": "Model Mini",
+            "equivalentCostUsd": "140.000000",
+            "totalTokens": 2800000
+          }
+        ]
+      }
+    },
+    "trend": [
+      {
+        "date": "2026-09-07",
+        "observation": "complete",
+        "equivalentCostUsd": "42.000000",
+        "totalTokens": 840000,
+        "cumulativeSessionCount": 8
+      },
+      {
+        "date": "2026-09-08",
+        "observation": "complete",
+        "equivalentCostUsd": "48.000000",
+        "totalTokens": 960000,
+        "cumulativeSessionCount": 18
+      },
+      {
+        "date": "2026-09-09",
+        "observation": "complete",
+        "equivalentCostUsd": "54.000000",
+        "totalTokens": 1080000,
+        "cumulativeSessionCount": 28
+      },
+      {
+        "date": "2026-09-10",
+        "observation": "complete",
+        "equivalentCostUsd": "36.000000",
+        "totalTokens": 720000,
+        "cumulativeSessionCount": 36
+      },
+      {
+        "date": "2026-09-11",
+        "observation": "complete",
+        "equivalentCostUsd": "60.000000",
+        "totalTokens": 1200000,
+        "cumulativeSessionCount": 48
+      },
+      {
+        "date": "2026-09-12",
+        "observation": "complete",
+        "equivalentCostUsd": "30.000000",
+        "totalTokens": 600000,
+        "cumulativeSessionCount": 54
+      },
+      {
+        "date": "2026-09-13",
+        "observation": "complete",
+        "equivalentCostUsd": "30.000000",
+        "totalTokens": 600000,
+        "cumulativeSessionCount": 60
+      }
+    ]
+  },
+  "modelScatter": {
+    "availability": "available",
+    "reason": null,
+    "data": {
+      "teamUsageCostShareThreshold": 0.05,
+      "models": [
+        {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro",
+          "equivalentCostUsd": "2300.000000",
+          "totalTokens": 46000000,
+          "usingTeamCount": 4
+        },
+        {
+          "modelId": "vendor-a/model-standard",
+          "displayName": "Model Standard",
+          "equivalentCostUsd": "1700.000000",
+          "totalTokens": 34000000,
+          "usingTeamCount": 4
+        },
+        {
+          "modelId": "vendor-b/model-code",
+          "displayName": "Model Code",
+          "equivalentCostUsd": "600.000000",
+          "totalTokens": 12000000,
+          "usingTeamCount": 4
+        },
+        {
+          "modelId": "vendor-a/model-fast",
+          "displayName": "Model Fast",
+          "equivalentCostUsd": "250.000000",
+          "totalTokens": 5000000,
+          "usingTeamCount": 2
+        },
+        {
+          "modelId": "vendor-b/model-mini",
+          "displayName": "Model Mini",
+          "equivalentCostUsd": "150.000000",
+          "totalTokens": 3000000,
+          "usingTeamCount": 0
+        }
+      ]
+    }
+  }
+}

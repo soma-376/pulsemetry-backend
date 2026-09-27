@@ -32,19 +32,20 @@ class TelemetryOpsSchemaMigratorTest {
 
 	@Test
 	@Order(1)
-	@DisplayName("빈 DB 에 V1 하나를 적용하고, 이력은 telemetry_ops 안의 자기 테이블에 남는다")
+	@DisplayName("빈 DB 에 V1·V2 를 적용하고, 이력은 telemetry_ops 안의 자기 테이블에 남는다")
 	fun firstMigrationCreatesTheSchemaAndItsOwnHistory() {
-		assertThat(TelemetryOpsSchemaMigrator(dataSource).migrate()).isEqualTo(1)
+		assertThat(TelemetryOpsSchemaMigrator(dataSource).migrate()).isEqualTo(2)
 
 		assertThat(strings("SELECT table_name FROM information_schema.tables WHERE table_schema = 'telemetry_ops' ORDER BY 1"))
 			.containsExactly(
 				"flyway_schema_history",
+				"retention_operations",
 				"tenant_ingest_summary",
 				"tenant_retention_boundary",
 				"tenant_summary_backfill",
 			)
-		assertThat(strings("SELECT version FROM telemetry_ops.flyway_schema_history WHERE success AND version IS NOT NULL"))
-			.containsExactly("1")
+		assertThat(strings("SELECT version FROM telemetry_ops.flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank"))
+			.containsExactly("1", "2")
 		// 다른 스키마에 이력을 만들지 않는다 — enrollment 이력과 섞이지 않는 전제다.
 		assertThat(strings("SELECT table_schema FROM information_schema.tables WHERE table_name = 'flyway_schema_history'"))
 			.containsExactly("telemetry_ops")

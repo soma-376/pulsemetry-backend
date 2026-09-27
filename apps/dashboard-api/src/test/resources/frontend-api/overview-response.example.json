@@ -1,0 +1,316 @@
+{
+  "meta": {
+    "organizationId": "org_example",
+    "generatedAt": "2026-09-14T00:00:00Z",
+    "dataThrough": "2026-09-13T23:57:00Z",
+    "currency": "USD",
+    "startDate": "2026-09-07",
+    "endDate": "2026-09-13",
+    "timeZone": "Asia/Seoul",
+    "dayCount": 7,
+    "dataState": "ready",
+    "currentCoverage": {
+      "status": "complete",
+      "observedDays": 7
+    },
+    "pricingVersion": "example-rate-v1"
+  },
+  "comparison": {
+    "mode": "prev_week",
+    "startDate": "2026-08-31",
+    "endDate": "2026-09-06",
+    "status": "available",
+    "reason": null,
+    "coverage": {
+      "status": "complete",
+      "observedDays": 7
+    }
+  },
+  "ingest": {
+    "status": "healthy",
+    "reason": null,
+    "asOf": "2026-09-14T00:00:00Z",
+    "firstObservedAt": "2026-07-12T15:00:00Z",
+    "lastReceivedAt": "2026-09-13T23:57:00Z",
+    "windowMinutes": 15,
+    "activeInstallations": 128,
+    "observedMembers": 117,
+    "eligibleMembers": 154,
+    "coverageRatio": 0.7597402597402597
+  },
+  "usage": {
+    "current": {
+      "activeUsers": 100,
+      "sessionCount": 1000,
+      "tokens": {
+        "inputUncached": 50000000,
+        "output": 20000000,
+        "cacheRead": 25000000,
+        "cacheWrite": 5000000,
+        "total": 100000000
+      },
+      "equivalentCostUsd": "5000.000000"
+    },
+    "previous": {
+      "activeUsers": 90,
+      "sessionCount": 800,
+      "tokens": {
+        "inputUncached": 40000000,
+        "output": 16000000,
+        "cacheRead": 20000000,
+        "cacheWrite": 4000000,
+        "total": 80000000
+      },
+      "equivalentCostUsd": "4000.000000"
+    }
+  },
+  "seats": {
+    "availability": "available",
+    "reason": null,
+    "scopeVendorIds": [
+      "vendor-a",
+      "vendor-b"
+    ],
+    "allocationMethod": "estimated_30_day",
+    "current": {
+      "contractedSeats": 148,
+      "activeSeats": 100,
+      "monthlyFeeUsd": "4800.000000",
+      "allocatedFeeUsd": "1120.000000",
+      "equivalentCostUsd": "5000.000000",
+      "efficiency": 4.464285714285714
+    },
+    "previous": {
+      "contractedSeats": 148,
+      "activeSeats": 90,
+      "monthlyFeeUsd": "4800.000000",
+      "allocatedFeeUsd": "1120.000000",
+      "equivalentCostUsd": "4000.000000",
+      "efficiency": 3.5714285714285716
+    },
+    "reclaimEstimate": {
+      "idleSeats": 48,
+      "monthlySavingsUsd": "960.000000",
+      "efficiencyAfterReclaim": 5.580357142857143
+    }
+  },
+  "alerts": {
+    "availability": "available",
+    "reason": null,
+    "asOf": "2026-09-14T00:00:00Z",
+    "unacknowledgedTotal": 5,
+    "security": 2,
+    "cost": 3
+  },
+  "trend": {
+    "bucket": "day",
+    "points": [
+      {
+        "date": "2026-09-07",
+        "observation": "complete",
+        "equivalentCostUsd": "700.000000",
+        "allocatedSeatCostUsd": "160.000000",
+        "totalTokens": 14000000
+      },
+      {
+        "date": "2026-09-08",
+        "observation": "complete",
+        "equivalentCostUsd": "800.000000",
+        "allocatedSeatCostUsd": "160.000000",
+        "totalTokens": 16000000
+      },
+      {
+        "date": "2026-09-09",
+        "observation": "complete",
+        "equivalentCostUsd": "900.000000",
+        "allocatedSeatCostUsd": "160.000000",
+        "totalTokens": 18000000
+      },
+      {
+        "date": "2026-09-10",
+        "observation": "complete",
+        "equivalentCostUsd": "600.000000",
+        "allocatedSeatCostUsd": "160.000000",
+        "totalTokens": 12000000
+      },
+      {
+        "date": "2026-09-11",
+        "observation": "complete",
+        "equivalentCostUsd": "1000.000000",
+        "allocatedSeatCostUsd": "160.000000",
+        "totalTokens": 20000000
+      },
+      {
+        "date": "2026-09-12",
+        "observation": "complete",
+        "equivalentCostUsd": "500.000000",
+        "allocatedSeatCostUsd": "160.000000",
+        "totalTokens": 10000000
+      },
+      {
+        "date": "2026-09-13",
+        "observation": "complete",
+        "equivalentCostUsd": "500.000000",
+        "allocatedSeatCostUsd": "160.000000",
+        "totalTokens": 10000000
+      }
+    ]
+  },
+  "modelMix": {
+    "availability": "available",
+    "reason": null,
+    "models": [
+      {
+        "modelId": "vendor-a/model-pro",
+        "displayName": "Model Pro",
+        "equivalentCostUsd": "2300.000000",
+        "totalTokens": 46000000,
+        "effectiveCostPerMillionTokensUsd": "50.000000"
+      },
+      {
+        "modelId": "vendor-a/model-standard",
+        "displayName": "Model Standard",
+        "equivalentCostUsd": "1700.000000",
+        "totalTokens": 34000000,
+        "effectiveCostPerMillionTokensUsd": "50.000000"
+      },
+      {
+        "modelId": "vendor-b/model-code",
+        "displayName": "Model Code",
+        "equivalentCostUsd": "600.000000",
+        "totalTokens": 12000000,
+        "effectiveCostPerMillionTokensUsd": "50.000000"
+      },
+      {
+        "modelId": "vendor-a/model-fast",
+        "displayName": "Model Fast",
+        "equivalentCostUsd": "250.000000",
+        "totalTokens": 5000000,
+        "effectiveCostPerMillionTokensUsd": "50.000000"
+      },
+      {
+        "modelId": "vendor-b/model-mini",
+        "displayName": "Model Mini",
+        "equivalentCostUsd": "150.000000",
+        "totalTokens": 3000000,
+        "effectiveCostPerMillionTokensUsd": "50.000000"
+      }
+    ]
+  },
+  "waste": {
+    "availability": "unavailable",
+    "reason": "methodology_not_available",
+    "methodologyVersion": null,
+    "totalMonthlyEquivalentCostUsd": null,
+    "items": [
+      {
+        "kind": "cache_miss",
+        "availability": "unavailable",
+        "reason": "methodology_not_available",
+        "currentEquivalentCostUsd": null,
+        "previousEquivalentCostUsd": null,
+        "monthlyEquivalentCostUsd": null,
+        "previousMonthlyEquivalentCostUsd": null,
+        "rate": null,
+        "rateDefinition": null
+      },
+      {
+        "kind": "retry_or_abort",
+        "availability": "unavailable",
+        "reason": "methodology_not_available",
+        "currentEquivalentCostUsd": null,
+        "previousEquivalentCostUsd": null,
+        "monthlyEquivalentCostUsd": null,
+        "previousMonthlyEquivalentCostUsd": null,
+        "rate": null,
+        "rateDefinition": null
+      },
+      {
+        "kind": "excessive_context",
+        "availability": "unavailable",
+        "reason": "methodology_not_available",
+        "currentEquivalentCostUsd": null,
+        "previousEquivalentCostUsd": null,
+        "monthlyEquivalentCostUsd": null,
+        "previousMonthlyEquivalentCostUsd": null,
+        "rate": null,
+        "rateDefinition": null
+      }
+    ]
+  },
+  "teamUsage": {
+    "availability": "available",
+    "reason": null,
+    "ranking": "equivalentCostUsd_desc",
+    "attributionBasis": "event_time",
+    "totalTeamCount": 4,
+    "topTeams": [
+      {
+        "teamId": "team_platform",
+        "teamName": "플랫폼",
+        "current": {
+          "activeUsers": 40,
+          "equivalentCostUsd": "2000.000000"
+        },
+        "previous": {
+          "activeUsers": 35,
+          "equivalentCostUsd": "1400.000000"
+        },
+        "topModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro",
+          "share": 0.6
+        }
+      },
+      {
+        "teamId": "team_payments",
+        "teamName": "결제",
+        "current": {
+          "activeUsers": 25,
+          "equivalentCostUsd": "1400.000000"
+        },
+        "previous": {
+          "activeUsers": 25,
+          "equivalentCostUsd": "1200.000000"
+        },
+        "topModel": {
+          "modelId": "vendor-a/model-pro",
+          "displayName": "Model Pro",
+          "share": 0.6
+        }
+      },
+      {
+        "teamId": "team_data",
+        "teamName": "데이터",
+        "current": {
+          "activeUsers": 20,
+          "equivalentCostUsd": "800.000000"
+        },
+        "previous": {
+          "activeUsers": 15,
+          "equivalentCostUsd": "700.000000"
+        },
+        "topModel": {
+          "modelId": "vendor-a/model-standard",
+          "displayName": "Model Standard",
+          "share": 0.5
+        }
+      }
+    ],
+    "otherTeams": {
+      "count": 1,
+      "currentEquivalentCostUsd": "500.000000",
+      "previousEquivalentCostUsd": "400.000000"
+    },
+    "unassigned": {
+      "current": {
+        "activeUsers": 5,
+        "equivalentCostUsd": "300.000000"
+      },
+      "previous": {
+        "activeUsers": 5,
+        "equivalentCostUsd": "300.000000"
+      }
+    }
+  }
+}

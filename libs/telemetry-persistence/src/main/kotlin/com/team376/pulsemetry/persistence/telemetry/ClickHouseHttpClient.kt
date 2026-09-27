@@ -40,7 +40,8 @@ public class ClickHouseHttpClient(
 	/**
 	 * 쿼리 하나를 실행하고 응답 본문을 돌려준다.
 	 *
-	 * DDL·SELECT 는 [body] 가 `null` 이고, INSERT 는 행 바이트를 싣는다.
+	 * DDL·SELECT 는 [body] 가 `null` 이고, INSERT 는 행 바이트를 싣는다. [params] 는 쿼리의 `{name:Type}` 자리에 들어가는
+	 * 서버 쪽 파라미터(`param_name`)이고, [queryId] 는 서버의 `query_id` 다 — 없으면 서버가 정한다.
 	 *
 	 * **실패는 둘로 갈린다** — 연결 계열과 `5xx · 429 · 408` 은
 	 * [TelemetrySinkUnavailableException](일시 장애 → 503), 그 밖의 4xx 는
@@ -50,11 +51,18 @@ public class ClickHouseHttpClient(
 	 * 않으므로 헤더만 보내고 본문을 끄는 서버에는 더 오래 매달릴 수 있다 — DDL·INSERT 응답 본문이
 	 * 짧아 실무 위험은 낮다.
 	 */
-	public fun execute(query: String, body: ByteArray? = null): String {
+	public fun execute(
+		query: String,
+		body: ByteArray? = null,
+		params: Map<String, String> = emptyMap(),
+		queryId: String? = null,
+	): String {
 		val uri = URI.create(
 			baseUrl.trimEnd('/') +
 				"/?query=" + encode(query) +
-				"&database=" + encode(database),
+				"&database=" + encode(database) +
+				params.entries.joinToString("") { (name, value) -> "&param_" + encode(name) + "=" + encode(value) } +
+				(queryId?.let { "&query_id=" + encode(it) } ?: ""),
 		)
 		val request = HttpRequest.newBuilder(uri)
 			.timeout(timeout)

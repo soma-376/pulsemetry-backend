@@ -47,6 +47,7 @@ public class ClickHouseSchemaMigrator(
 			"V1__enriched_events.sql",
 			"V2__telemetry_analysis_tables.sql",
 			"V3__telemetry_ingest_ledger.sql",
+			"V4__telemetry_retention_fence.sql",
 		)
 
 		public const val LOCATION: String = "/clickhouse/"

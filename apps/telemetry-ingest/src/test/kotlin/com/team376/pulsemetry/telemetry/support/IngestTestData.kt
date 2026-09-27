@@ -127,5 +127,6 @@ class IngestTestData(
 		)
 		// 백필 완료 기록은 비우지 않는다 — 기동 시 한 번 쓰이고 컨텍스트가 공유된다.
 		jdbc.execute("TRUNCATE TABLE telemetry_ops.tenant_ingest_summary")
+		jdbc.execute("TRUNCATE TABLE telemetry_ops.tenant_retention_boundary")
 	}
 }

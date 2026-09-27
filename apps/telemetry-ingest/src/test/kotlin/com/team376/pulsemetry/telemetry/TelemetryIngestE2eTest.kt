@@ -245,7 +245,7 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 	@DisplayName("ClickHouse 적재 장애는 503 + Retry-After 다 — 수신 기록도 남기지 않는다(재전송이 남긴다)")
 	fun aClickHouseOutageIsRetryable() {
 		val seeded = data.seed()
-		doThrow(TelemetrySinkUnavailableException("simulated clickhouse outage")).`when`(telemetryEvents).insert(anything(), anything())
+		doThrow(TelemetrySinkUnavailableException("simulated clickhouse outage")).`when`(telemetryEvents).insert(anything(), anything(), anything())
 
 		val response = post("/v1/logs", seeded.rawToken, oneUserPrompt())
 

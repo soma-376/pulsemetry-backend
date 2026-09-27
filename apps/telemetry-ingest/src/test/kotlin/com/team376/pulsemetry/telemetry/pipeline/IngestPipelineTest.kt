@@ -6,10 +6,11 @@ import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepo
 import com.team376.pulsemetry.persistence.enrollment.repository.TeamMembershipRepository
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseSchemaMigrator
+import com.team376.pulsemetry.persistence.telemetry.AnalysisWriteBoundary
 import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
 import com.team376.pulsemetry.persistence.telemetry.TelemetryMetricPointsSink
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
-import com.team376.pulsemetry.telemetry.adapter.observation.NormalizationStats
+import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsUnavailableException
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationBatch
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationContext
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationNormalizer
@@ -60,6 +61,9 @@ class IngestPipelineTest {
 	private var status: Int = 200
 	private val requests = mutableListOf<String>()
 
+	/** 요청의 쿼리 문자열 전체 — 파라미터와 query_id 를 본다. */
+	private val rawQueries = mutableListOf<String>()
+
 	private val tenant = UUID.randomUUID().toString()
 	private val installation = UUID.randomUUID()
 	private val member = UUID.randomUUID()
@@ -74,6 +78,7 @@ class IngestPipelineTest {
 			// 쿼리 문자열의 query 값만 — 요청한 SQL 이다.
 			val query = exchange.requestURI.rawQuery.orEmpty().substringAfter("query=").substringBefore("&")
 			requests += URLDecoder.decode(query, StandardCharsets.UTF_8)
+			rawQueries += exchange.requestURI.rawQuery.orEmpty()
 			val bytes = "".toByteArray(StandardCharsets.UTF_8)
 			exchange.sendResponseHeaders(status, bytes.size.toLong())
 			exchange.responseBody.use { it.write(bytes) }
@@ -101,7 +106,8 @@ class IngestPipelineTest {
 		assertThat(requests).noneMatch { it.contains("enriched_events") }
 		val parts = operations.loaded.single()
 		assertThat(parts.single().first.product).isEqualTo("claude_code")
-		assertThat(parts.single().second.received).isEqualTo(1)
+		assertThat(parts.single().second.stats.received).isEqualTo(1)
+		assertThat(parts.single().second.beforeBoundary).isZero()
 		assertThat(operations.unloaded).isEmpty()
 	}
 
@@ -243,25 +249,73 @@ class IngestPipelineTest {
 
 	// ------------------------------------------------------------------ 도구
 
+	@Test
+	@DisplayName("삭제 경계 이전 관측은 적재하지 않고 거부로 센다 — 모두 이전이면 INSERT 없이 수신만 기록한다(ADR 0024 §6)")
+	fun observationsBeforeTheBoundaryAreCountedAsRejected() {
+		val boundary = Instant.now().plusSeconds(3_600)
+		val pipeline = pipeline(boundaries = { AnalysisWriteBoundary(it, boundary, policyEpoch = 2) })
+		requests.clear()
+
+		pipeline.consume(Signal.LOGS, oneApiRequest(), receipt())
+
+		assertThat(requests).noneMatch { it.startsWith("INSERT") }
+		val loaded = operations.loaded.single().single().second
+		assertThat(loaded.stats.received).isEqualTo(1)
+		assertThat(loaded.beforeBoundary).isEqualTo(1)
+		assertThat(loaded.sourceTimeMin).isNull()
+		assertThat(loaded.sourceTimeMax).isNull()
+		assertThat(operations.unloaded).isEmpty()
+	}
+
+	@Test
+	@DisplayName("경계 안의 관측은 그대로 적재한다 — INSERT 는 tenant 파라미터와 읽은 epoch 를 실은 query_id 로 간다")
+	fun admittedObservationsCarryTheTenantAndEpoch() {
+		val pipeline = pipeline(boundaries = { AnalysisWriteBoundary(it, Instant.now().minusSeconds(3_600), policyEpoch = 5) })
+		requests.clear()
+		rawQueries.clear()
+
+		pipeline.consume(Signal.LOGS, oneApiRequest(), receipt())
+
+		val insert = rawQueries.single { URLDecoder.decode(it, StandardCharsets.UTF_8).contains("INSERT INTO telemetry_events") }
+		val decoded = URLDecoder.decode(insert, StandardCharsets.UTF_8)
+		assertThat(decoded).contains("param_tenant=$tenant").contains("query_id=analysis-insert:$tenant:5:")
+		assertThat(decoded).contains("FROM telemetry_retention_fence").contains("async_insert = 0")
+		assertThat(operations.loaded.single().single().second.beforeBoundary).isZero()
+	}
+
+	@Test
+	@DisplayName("경계를 읽지 못하면 예외가 그대로 나간다(503) — 경계를 모른 채 적재하지 않고 수신 기록도 남기지 않는다")
+	fun anUnreadableBoundaryWritesNothing() {
+		val pipeline = pipeline(boundaries = { throw TelemetryOpsUnavailableException("simulated telemetry_ops outage") })
+		requests.clear()
+
+		assertThatThrownBy { pipeline.consume(Signal.LOGS, oneApiRequest(), receipt()) }
+			.isInstanceOf(TelemetryOpsUnavailableException::class.java)
+		assertThat(requests).noneMatch { it.startsWith("INSERT") }
+		assertThat(operations.loaded).isEmpty()
+		assertThat(operations.unloaded).isEmpty()
+	}
+
 	private fun observationPipeline() = ObservationPipeline(ObservationNormalizer(ProfileRegistry(listOf(ClaudeCodeProfile))))
 
 	private fun pipeline(
 		startupAttempts: Int = 1,
 		normalize: (Message, ObservationContext) -> ObservationBatch = observationPipeline()::run,
+		boundaries: RetentionBoundaries = RetentionBoundaries { AnalysisWriteBoundary(it, deletedBefore = null, policyEpoch = 0) },
 	): IngestPipeline {
 		val client = ClickHouseHttpClient("http://127.0.0.1:${server.address.port}")
 		val schema = ClickHouseSchema(ClickHouseSchemaMigrator(client), startupAttempts = startupAttempts, startupBackoff = Duration.ZERO)
 		if (startupAttempts > 0) schema.afterPropertiesSet()
 		val enricher = ObservationEnricher(installations, memberships, listOf(GithubProvider(), JiraProvider(), AiAnalysisProvider()))
-		return IngestPipeline(normalize, enricher, TelemetryEventsSink(client), TelemetryMetricPointsSink(client), schema, operations)
+		return IngestPipeline(normalize, enricher, TelemetryEventsSink(client), TelemetryMetricPointsSink(client), schema, boundaries, operations)
 	}
 
 	private class RecordingOperations : IngestOperations {
-		val loaded = mutableListOf<List<Pair<ReceiptPart, NormalizationStats>>>()
+		val loaded = mutableListOf<List<Pair<ReceiptPart, LoadedPart>>>()
 		val unloaded = mutableListOf<List<ReceiptPart>>()
 		var failure: RuntimeException? = null
 
-		override fun loaded(receipt: ArchiveReceipt, parts: List<Pair<ReceiptPart, NormalizationStats>>) {
+		override fun loaded(receipt: ArchiveReceipt, parts: List<Pair<ReceiptPart, LoadedPart>>) {
 			failure?.let { throw it }
 			loaded += parts
 		}

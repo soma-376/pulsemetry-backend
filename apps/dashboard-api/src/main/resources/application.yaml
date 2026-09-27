@@ -1,0 +1,91 @@
+server:
+  # 8080(enrollment-api) · 4316(telemetry-ingest) 과 겹치지 않는 로컬 편의값이다 (ADR 0022 §1).
+  port: ${PULSEMETRY_DASHBOARD_PORT:8081}
+
+spring:
+  application:
+    name: pulsemetry-dashboard-api
+
+  web:
+    resources:
+      # 정적 자원을 서빙하지 않는다. 매핑이 없는 경로는 컨트롤러 계층의 404 not_found 가 된다.
+      add-mappings: false
+
+  jpa:
+    hibernate:
+      # 스키마의 진실원은 Flyway 다. 이 앱은 읽기 전용 소비자이고, Hibernate 는 엔티티가
+      # 스키마와 어긋나면 기동을 막는 역할만 한다.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: enrollment
+    open-in-view: false
+
+  flyway:
+    # enrollment 스키마를 마이그레이션하는 주체는 :apps:enrollment-api 하나다 (ADR 0004 · 0022 §2).
+    # spring-boot-starter-flyway 가 :libs:enrollment-persistence 를 타고 런타임 클래스패스에 오르므로 끈다 —
+    # 켜 두면 읽기 전용 계정으로 마이그레이션을 시도한다.
+    enabled: false
+
+logging:
+  pattern:
+    # 요청 ID(X-Request-Id)를 로그 상관 키로 싣는다 — RequestIds.MDC_KEY 와 맞춘다.
+    correlation: "[%X{requestId:-}] "
+
+# 기본값이 없는 값은 비어 있으면 기동이 실패한다 (ADR 0022 §4·§5). 계정·상한은 infra 가 정한다.
+pulsemetry:
+  dashboard:
+    # 503 응답의 Retry-After.
+    retry-after: ${PULSEMETRY_DASHBOARD_RETRY_AFTER:}
+
+    clickhouse:
+      # 분석 테이블·ledger 읽기 — SELECT 만 가진 계정. 계정 프로필은 readonly=2 이하여야 한다
+      # (요청마다 readonly=2 와 상한 설정을 싣는다 — readonly=1 프로필은 설정 변경을 거부한다).
+      source:
+        url: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_URL:}
+        database: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_DATABASE:}
+        username: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_USERNAME:}
+        password: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_PASSWORD:}
+        query-timeout: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_QUERY_TIMEOUT:}
+        max-result-rows: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_MAX_RESULT_ROWS:}
+        max-result-bytes: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_SOURCE_MAX_RESULT_BYTES:}
+
+      # dashboard_cache 쓰기·읽기 + snapshot 복사의 원본(분석 테이블) SELECT. 기동 때 이 계정으로 dashboard_cache 의
+      # 테이블·뷰를 만든다 — DB 자체는 infra 가 만든다 (ADR 0023 §3).
+      cache:
+        url: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_CACHE_URL:}
+        database: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_CACHE_DATABASE:}
+        username: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_CACHE_USERNAME:}
+        password: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_CACHE_PASSWORD:}
+        query-timeout: ${PULSEMETRY_DASHBOARD_CLICKHOUSE_CACHE_QUERY_TIMEOUT:}
+
+    rds:
+      # enrollment · telemetry_ops 읽기 — SELECT 만 가진 계정.
+      source:
+        url: ${PULSEMETRY_DASHBOARD_RDS_SOURCE_URL:}
+        username: ${PULSEMETRY_DASHBOARD_RDS_SOURCE_USERNAME:}
+        password: ${PULSEMETRY_DASHBOARD_RDS_SOURCE_PASSWORD:}
+        # enrollment-api · telemetry-ingest 의 connection-timeout(3000ms) 과 같은 값이다.
+        connection-timeout: 3s
+
+      # dashboard_cache 스키마 — 기동 때 이 계정으로 Flyway 를 돌린다. 공개 CAS 를 위해 telemetry_ops.tenant_retention_boundary 를
+      # SELECT 한다 (ADR 0023 §3).
+      cache:
+        url: ${PULSEMETRY_DASHBOARD_RDS_CACHE_URL:}
+        username: ${PULSEMETRY_DASHBOARD_RDS_CACHE_USERNAME:}
+        password: ${PULSEMETRY_DASHBOARD_RDS_CACHE_PASSWORD:}
+        connection-timeout: 3s
+
+    # snapshot 수명의 운영 수치 (ADR 0023 §1). 물리 정리 시각 = build 시작 + build-timeout + 10분 + purge-grace.
+    # 한도(동시 build·복사 행·바이트·시간)를 넘으면 부분 결과를 공개하지 않고 503 이다. 값은 대표 규모의 측정으로 정한다.
+    snapshot:
+      build-timeout: ${PULSEMETRY_DASHBOARD_SNAPSHOT_BUILD_TIMEOUT:}
+      purge-grace: ${PULSEMETRY_DASHBOARD_SNAPSHOT_PURGE_GRACE:}
+      max-concurrent-builds: ${PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_CONCURRENT_BUILDS:}
+      max-copy-rows: ${PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_COPY_ROWS:}
+      max-copy-bytes: ${PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_COPY_BYTES:}
+      cleanup-interval: ${PULSEMETRY_DASHBOARD_SNAPSHOT_CLEANUP_INTERVAL:}
+
+    # 구성원 화면의 정책 값 — 저장된 조직 정책이 없어 설정으로 받는다. 7·14·30·60 중 하나, 기본값 없음.
+    members:
+      idle-days: ${PULSEMETRY_DASHBOARD_MEMBERS_IDLE_DAYS:}

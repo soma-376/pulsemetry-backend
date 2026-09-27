@@ -1,0 +1,209 @@
+{
+  "meta": {
+    "organizationId": "org_example",
+    "generatedAt": "2026-09-20T00:00:00Z",
+    "dataThrough": "2026-09-13T23:57:00Z",
+    "currency": "USD",
+    "startDate": "2026-09-07",
+    "endDate": "2026-09-13",
+    "timeZone": "Asia/Seoul",
+    "dayCount": 7,
+    "dataState": "ready",
+    "currentCoverage": {
+      "status": "complete",
+      "observedDays": 7
+    },
+    "pricingVersion": "example-rate-v1",
+    "snapshotId": "snapshot-members-example"
+  },
+  "asOf": "2026-09-20T00:00:00Z",
+  "ingest": {
+    "status": "healthy",
+    "reason": null,
+    "asOf": "2026-09-20T00:00:00Z",
+    "firstObservedAt": "2026-07-12T15:00:00Z",
+    "lastReceivedAt": "2026-09-19T23:57:00Z",
+    "windowMinutes": 15,
+    "activeInstallations": 3,
+    "observedMembers": 3,
+    "eligibleMembers": 3,
+    "coverageRatio": 1
+  },
+  "summary": {
+    "rosterMembers": 3,
+    "activeUsers": 2,
+    "unassignedMembers": 1,
+    "periodUnassignedEquivalentCostUsd": "50.000000",
+    "periodTotalEquivalentCostUsd": "150.000000",
+    "seats": {
+      "availability": "available",
+      "reason": null,
+      "data": {
+        "contracted": 20,
+        "assigned": 3,
+        "unallocated": 17,
+        "activeInPeriod": 2,
+        "inactiveAssigned": 1,
+        "reclaimCandidates": 1,
+        "estimatedMonthlySavingsUsd": null
+      }
+    }
+  },
+  "policy": {
+    "idleDays": 14,
+    "version": 4
+  },
+  "capabilities": {
+    "invite": true,
+    "assignTeam": true,
+    "reclaimSeats": false,
+    "restoreSeats": false
+  },
+  "members": {
+    "items": [
+      {
+        "memberId": "member-001",
+        "account": "member1@example.org",
+        "displayName": "예시 구성원 1",
+        "team": {
+          "teamId": "team-platform",
+          "teamName": "플랫폼"
+        },
+        "role": "admin",
+        "status": "active",
+        "version": 2,
+        "periodUsage": {
+          "activeUsers": 1,
+          "sessionCount": 20,
+          "tokens": {
+            "inputUncached": 1000000,
+            "output": 400000,
+            "cacheRead": 500000,
+            "cacheWrite": 100000,
+            "total": 2000000
+          },
+          "equivalentCostUsd": "100.000000"
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z",
+        "observation": "complete",
+        "seatState": "assigned"
+      },
+      {
+        "memberId": "member-002",
+        "account": "member2@example.org",
+        "displayName": "예시 구성원 2",
+        "team": {
+          "teamId": "team-platform",
+          "teamName": "플랫폼"
+        },
+        "role": "member",
+        "status": "active",
+        "version": 2,
+        "periodUsage": {
+          "activeUsers": 0,
+          "sessionCount": 0,
+          "tokens": {
+            "inputUncached": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "equivalentCostUsd": "0.000000"
+        },
+        "lastUsedAt": "2026-09-01T00:00:00Z",
+        "observation": "complete",
+        "seatState": "assigned"
+      },
+      {
+        "memberId": "member-003",
+        "account": "member3@example.org",
+        "displayName": "예시 구성원 3",
+        "team": {
+          "teamId": null,
+          "teamName": "미배정"
+        },
+        "role": "member",
+        "status": "active",
+        "version": 2,
+        "periodUsage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z",
+        "observation": "complete",
+        "seatState": "assigned"
+      }
+    ],
+    "totalCount": 3,
+    "nextCursor": null
+  },
+  "unassigned": {
+    "items": [
+      {
+        "memberId": "member-003",
+        "account": "member3@example.org",
+        "displayName": "예시 구성원 3",
+        "team": {
+          "teamId": null,
+          "teamName": "미배정"
+        },
+        "role": "member",
+        "status": "active",
+        "version": 2,
+        "periodUsage": {
+          "activeUsers": 1,
+          "sessionCount": 10,
+          "tokens": {
+            "inputUncached": 500000,
+            "output": 200000,
+            "cacheRead": 250000,
+            "cacheWrite": 50000,
+            "total": 1000000
+          },
+          "equivalentCostUsd": "50.000000"
+        },
+        "lastUsedAt": "2026-09-13T05:00:00Z",
+        "observation": "complete",
+        "seatState": "assigned"
+      }
+    ],
+    "totalCount": 1,
+    "nextCursor": null
+  },
+  "reclaimCandidates": {
+    "availability": "available",
+    "reason": null,
+    "data": {
+      "items": [
+        {
+          "seatAssignmentId": "seat-002",
+          "memberId": "member-002",
+          "account": "member2@example.org",
+          "team": {
+            "teamId": "team-platform",
+            "teamName": "플랫폼"
+          },
+          "vendorId": "vendor-a",
+          "tierId": "tier-standard",
+          "version": 1,
+          "lastUsedAt": "2026-09-01T00:00:00Z",
+          "idleDays": 19,
+          "estimatedMonthlySavingsUsd": null,
+          "canReclaim": false,
+          "reason": "vendor_control_unavailable"
+        }
+      ],
+      "totalCount": 1,
+      "nextCursor": null
+    }
+  }
+}

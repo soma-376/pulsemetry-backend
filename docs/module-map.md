@@ -18,6 +18,9 @@
 [ADR 0017](adr/0017-정규화-불변-규칙과-enrichment-json-승격-금지는-이-저장소가-정한다.md) ·
 [ADR 0020](adr/0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md) ·
 [ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md) ·
+[ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) ·
+[ADR 0023](adr/0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md) ·
+[ADR 0024](adr/0024-조직별-보존-삭제-경계는-RDS-가-진실원이고-분석-INSERT-는-ClickHouse-fence-를-서버에서-다시-검사한다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md) ·
 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)
@@ -30,8 +33,25 @@
 pulsemetry-backend
 ├── apps/
 │   ├── enrollment-api/              com.team376.pulsemetry.enrollment
-│   └── telemetry-ingest/            com.team376.pulsemetry.telemetry
-│                                    OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
+│   ├── telemetry-ingest/            com.team376.pulsemetry.telemetry
+│   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
+│   ├── dashboard-api/               com.team376.pulsemetry.dashboard
+│   │                                분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐 (ADR 0022)
+│   │                                ├ api/            HTTP 표현 계층 — 화면별 컨트롤러
+│   │                                ├ analytics/      공통 계산기(축별 합계·null 규칙) · 화면별 응답 조립
+│   │                                ├ authentication/ 인증 포트 · 기본 거부 구현 · 필터 · 역할 대응
+│   │                                ├ authorization/  인가 포트 · 기본 정책(관리자만) · 조직 경로 공통 관문
+│   │                                ├ organization/   조직(tenant) 읽기
+│   │                                ├ request/        요청 ID · 조회 파라미터 해석(기간·비교·목록 cursor)
+│   │                                ├ source/         원천 읽기 — ClickHouse 읽기 전용 클라이언트
+│   │                                ├ cache/          dashboard_cache — 캐시 클라이언트 · 두 캐시 스키마 적용 (ADR 0023)
+│   │                                ├ snapshot/       snapshot — build(원본 한 번 선택·참조 복제·공급자·모델 해석) · 공개 CAS · 만료 · 정리
+│   │                                ├ store/          ClickHouse 연결 · 파라미터 · 저장소 실패 분류(원천·캐시 공용)
+│   │                                ├ error/          오류 본문 · 코드 · 예외 매핑
+│   │                                └ config/
+│   └── retention-worker/            com.team376.pulsemetry.retention
+│                                    조직별 보존 삭제 — 일회성 실행, 분석 원본 DELETE 는 여기뿐 (ADR 0024)
+│                                    └ config/
 └── libs/
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
     │                                └ enrollment 스키마 14 테이블 · Flyway 마이그레이션
@@ -53,12 +73,12 @@ pulsemetry-backend
     │                                ├ provider/   EnrichmentProvider 와 그 구현
     │                                └ observation/ 관측 보강 (ADR 0020 §5)
     ├── telemetry-persistence/       com.team376.pulsemetry.persistence.telemetry
-    │                                ClickHouse 스키마 · 분석 테이블 sink · 수신 ledger sink — 쓰기 소유 모듈
+    │                                ClickHouse 스키마 · 분석 테이블 sink · 수신 ledger sink · 보존 fence·삭제 — 쓰기 소유 모듈
     └── telemetry-ops-persistence/   com.team376.pulsemetry.persistence.telemetryops
-                                     RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필
+                                     RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필 · 삭제 경계 · 보존 작업 기록
 ```
 
-`settings.gradle.kts`의 `include`는 이 아홉뿐이다. **5절이 예고한 모듈이 전부 섰다.**
+`settings.gradle.kts`의 `include`는 이 열뿐이다. **5절이 예고한 모듈이 전부 섰다.**
 `:libs:telemetry-ops-persistence`는 5절 밖에서 더해졌다 — 수집 운영 기록의 RDS 쪽이 ClickHouse와 아웃바운드
 기술이 달라 나뉜다([ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md)).
 
@@ -66,6 +86,26 @@ pulsemetry-backend
 배선·설정 바인딩과 단계 호출이 전부이고, 그것이 ADR 0011이 라이브러리에서 걷어낸 몫이다.
 기동·배선 정책은 [ADR 0016](adr/0016-조립-앱은-인증-체인과-단계-호출을-배선하고-스키마-적용-실패를-견딘다.md),
 상태 코드 계약은 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)이 담는다.
+
+`:apps:dashboard-api`는 분석 조회 API다([ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md), Proposed).
+원천 스키마를 소유한 라이브러리(`enrollment`·`telemetry-ops`·`telemetry`의 `-persistence`)를 **읽기 소비자**로만 쓰므로 2절의
+쓰기 소유 표는 바뀌지 않고, `:libs:enrollment-persistence`의 분할 트리거(6절)도 당겨지지 않는다. 화면별 조회는 모듈이 아니라 이 앱 안의
+패키지다. 인증은 앱 안의 포트(`DashboardAuthenticator`)이고 기본 런타임 구현은 전부 거부한다 — 사용자 인증이 `:libs:security`에 서면
+그 검증을 잇는 어댑터가 포트를 구현한다. 필터 체인은 `telemetry-ingest`처럼 둘이고 기본 닫힘이다(`/api/v1/organizations` 아래만
+인증, 나머지는 `/v1/healthz`만 열고 404).
+`dashboard_cache`의 쓰는 주체는 이 앱 하나라 쓰기 소유가 앱에 있고, DDL도 이 앱이 기동 때 캐시 계정으로 적용한다 — ClickHouse는
+`clickhouse/dashboard-cache/`의 멱등 파일 전량(ADR 0015 규약), RDS는 `db/dashboard-cache/`의 별도 Flyway 인스턴스(이력
+`dashboard_cache.flyway_schema_history`)다([ADR 0023](adr/0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md)).
+
+`:apps:retention-worker`는 조직별 보존 삭제 작업이다([ADR 0024](adr/0024-조직별-보존-삭제-경계는-RDS-가-진실원이고-분석-INSERT-는-ClickHouse-fence-를-서버에서-다시-검사한다.md), Proposed).
+서버가 아니라 명령 하나(`--tenant --retention-months --as-of`)를 실행하고 종료 코드로 끝난다. 쓰는 대상 — 경계·작업 기록(RDS `telemetry_ops`),
+fence·두 분석 테이블의 DELETE(ClickHouse) — 의 코드는 각 쓰기 소유 모듈(`:libs:telemetry-ops-persistence`·`:libs:telemetry-persistence`)에
+있고 이 앱은 조립만 한다. DDL 은 적용하지 않는다. 분석 테이블 모듈이 보강 단계를 타고 `:libs:enrollment-persistence`를 끌어오므로
+JPA·Flyway 자동설정을 끈다 — 켜 두면 대상 DB 의 `public`에 Flyway 이력 테이블이 생긴다.
+두 번째 쓰는 주체가 생기면 `:libs:dashboard-persistence`로 내린다.
+원천 연결은 앱이 직접 세운다 — RDS는 `pulsemetry.dashboard.rds.source`로 만든 읽기 전용 주 DataSource(JPA·`JdbcClient`가 쓴다, Flyway는 끈다),
+ClickHouse는 `source/`의 읽기 전용 클라이언트다. 적재 모듈의 `ClickHouseHttpClient`와 따로 두는 것은 요구가 반대라서다(계정 인증·요청마다의
+`readonly`·결과 상한·행 해석이 필요하고 쓰기가 없다).
 
 `:libs:security`에는 아직 **OTLP 경로의 `ptt_` 검증만** 있다(PROJ-102). 관리자 API 경로의 AT 검증은
 PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 — 지금은 내용물 묶음이 하나뿐이라
@@ -103,7 +143,7 @@ installation 단독 조회(`InstallationRepository.findMemberIdById`), 대표 �
 
 `:libs:telemetry-persistence`는 단계가 아니라 **역할** 모듈이라 어순이 뒤집힌다(ADR 0010).
 ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_points`, 수신 ledger
-`telemetry_ingest_ledger`, 새 행을 받지 않고 보존만 하는 `enriched_events`)의 DDL과 쓰기를 소유하고, ClickHouse HTTP 인터페이스를 JDK `HttpClient`로 직접
+`telemetry_ingest_ledger`, 보존 삭제의 쓰기 fence `telemetry_retention_fence`, 새 행을 받지 않고 보존만 하는 `enriched_events`)의 DDL과 쓰기를 소유하고, ClickHouse HTTP 인터페이스를 JDK `HttpClient`로 직접
 부른다 — 드라이버를 넣으면 자체 오류 매핑이 상태 코드별 처분을 덮는데, 그 분류가 곧 HTTP
 계약이다(허브 ADR 0006 — 연결 계열과 `5xx`·`429`·`408`은 일시 장애, 그 밖의 4xx는 영구 오류).
 
@@ -119,8 +159,9 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 | enrollment | `invitations` · `installations` · `installation_credentials` · `telemetry_tokens` · `installation_manifest_assignments` | `enrollment-api` |
 | policy | `manifests` | 관리자 API (미구현) |
 | contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 관리자 API (미구현) |
-| telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` · `telemetry_ingest_ledger` | `:libs:telemetry-persistence` |
-| telemetry ops | RDS `telemetry_ops.tenant_ingest_summary` · `tenant_summary_backfill` · `tenant_retention_boundary` | `:libs:telemetry-ops-persistence` |
+| telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` · `telemetry_ingest_ledger` · `telemetry_retention_fence` | `:libs:telemetry-persistence` |
+| telemetry ops | RDS `telemetry_ops.tenant_ingest_summary` · `tenant_summary_backfill` · `tenant_retention_boundary` · `retention_operations` | `:libs:telemetry-ops-persistence` |
+| dashboard cache | RDS `dashboard_cache.snapshots` · `snapshot_teams` · `snapshot_members`, ClickHouse `dashboard_cache.snapshot_usage` · `snapshot_observed_days` · `snapshot_member_activity`(+ 입구 `snapshot_intake`·뷰 둘) | `:apps:dashboard-api` |
 
 **쓰기 소유는 모듈이다**(ADR 0008 규칙 1). 표가 앱 이름을 적은 행은 그 도메인의 쓰기가 아직 앱에
 직접 있다는 뜻이고, 규칙 5의 승격 트리거가 당겨지면 모듈로 내려간다. telemetry는 새 도메인이라
