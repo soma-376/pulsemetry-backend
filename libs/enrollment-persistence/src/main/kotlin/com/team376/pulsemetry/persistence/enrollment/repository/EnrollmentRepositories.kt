@@ -62,32 +62,15 @@ interface TeamRepository : JpaRepository<Team, UUID> {
 
 interface TeamMembershipRepository : JpaRepository<TeamMembership, UUID> {
 
-	fun findAllByMemberId(memberId: UUID): List<TeamMembership>
-
 	/**
-	 * installation 이 귀속된 구성원의 소속 이력을 **활성 팀에 한해** 전부 가져온다.
+	 * 구성원의 소속 이력 전부. **팀 상태로 거르지 않는다** — archived 팀의 과거 소속도 온다.
 	 *
-	 * 시점 필터(`joined_at <= at < left_at`)를 SQL 에 넣지 않는 이유: enrichment 는 push 하나에
-	 * 담긴 여러 이벤트를 서로 다른 `ts` 로 판정하므로, installation 당 한 번만 읽어 두고 각 이벤트를
-	 * [TeamMembership.coversAt] 으로 거른다. 시점을 SQL 에 넣으면 이벤트 수만큼 조회가 늘어난다.
-	 * 현행 파이프라인(`ai-telemetry-pipeline` org provider)이 같은 모양이며, 이관 시 이 쿼리가 그 자리를 받는다.
+	 * 관측 보강(ADR 0020 §5)의 as-of 조회가 이것을 쓴다. 이벤트 시점의 소속만 보고 팀의 현재 상태는 보지 않는다.
 	 *
-	 * native query 인 이유: `teams.status` 는 native enum 이라(ADR 0009) JPQL 의 enum 리터럴이
-	 * `cast(? as teamstatus)` 로 렌더링돼 실제 타입명 `team_status` 와 어긋난다
-	 * ([MemberRepository.activateInvited] 와 같은 이유다).
+	 * 시점 필터(`joined_at <= at < left_at`)를 SQL 에 넣지 않는다 — 보강은 push 하나에 담긴 여러 관측을 서로 다른
+	 * `source_time` 으로 판정하므로, 구성원당 한 번만 읽어 두고 각 관측을 [TeamMembership.coversAt] 으로 거른다.
 	 */
-	@Query(
-		nativeQuery = true,
-		value = """
-		SELECT tm.* FROM enrollment.team_memberships tm
-		JOIN enrollment.installations i ON i.member_id = tm.member_id
-		JOIN enrollment.teams t ON t.id = tm.team_id AND t.status = 'active'
-		WHERE i.id = :installationId
-		""",
-	)
-	fun findActiveTeamMembershipsByInstallationId(
-		@Param("installationId") installationId: UUID,
-	): List<TeamMembership>
+	fun findAllByMemberId(memberId: UUID): List<TeamMembership>
 }
 
 interface InstallationRepository : JpaRepository<Installation, UUID> {
@@ -103,6 +86,15 @@ interface InstallationRepository : JpaRepository<Installation, UUID> {
 	 */
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	fun findWithLockById(id: UUID): Installation?
+
+	/**
+	 * installation 이 귀속된 구성원 ID 만 읽는다. 없으면 null 이다.
+	 *
+	 * **상태를 보지 않는다** — revoked installation 도 구성원을 돌려준다. 과거 사용량은 그 사람의 것이다
+	 * (ADR 0020 §5). 소속 조회와 독립이라 무소속 구성원도 식별된다. 잠그지 않는 읽기 전용 조회다.
+	 */
+	@Query("SELECT i.memberId FROM Installation i WHERE i.id = :id")
+	fun findMemberIdById(@Param("id") id: UUID): UUID?
 }
 
 interface InstallationCredentialRepository : JpaRepository<InstallationCredential, UUID> {

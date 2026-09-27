@@ -2,6 +2,7 @@ package com.team376.pulsemetry.telemetry.collector.archive
 
 import com.team376.pulsemetry.telemetry.collector.Signal
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -26,8 +27,10 @@ class FileArchiveWriterTest {
 		"CODEX,       LOGS,    codex/logs.jsonl",
 		"CODEX,       TRACES,  codex/traces.jsonl",
 		"CODEX,       METRICS, codex/metrics.jsonl",
+		"UNKNOWN,     LOGS,    unknown/logs.jsonl",
+		"UNKNOWN,     METRICS, unknown/metrics.jsonl",
 	)
-	@DisplayName("현행 file exporter 여섯과 같은 경로에 쓴다")
+	@DisplayName("현행 file exporter 여섯과 같은 경로에 쓰고, 모르는 서비스는 unknown 구간이다")
 	fun writesToTheSamePathsAsUpstream(product: Product, signal: Signal, expected: String) {
 		FileArchiveWriter(root).write(product, signal, """{"resourceLogs":[]}""".toByteArray())
 
@@ -44,6 +47,39 @@ class FileArchiveWriterTest {
 
 		assertThat(Files.readAllLines(root.resolve("codex/logs.jsonl")))
 			.containsExactly("""{"a":1}""", """{"b":2}""")
+	}
+
+	@Test
+	@DisplayName("쓴 줄의 실제 위치를 돌려준다 — 파일 URI 와 그 줄의 시작 바이트·길이")
+	fun returnsTheActualLineLocation() {
+		val writer = FileArchiveWriter(root)
+
+		val first = writer.write(Product.CODEX, Signal.LOGS, """{"a":1}""".toByteArray())
+		val second = writer.write(Product.CODEX, Signal.LOGS, """{"bb":22}""".toByteArray())
+
+		val file = root.resolve("codex/logs.jsonl")
+		assertThat(first.uri).isEqualTo(file.toAbsolutePath().normalize().toUri().toString())
+		assertThat(first.byteOffset).isZero()
+		assertThat(first.byteLength).isEqualTo(7)
+		assertThat(second.byteOffset).isEqualTo(8) // 첫 줄 7바이트 + 개행
+		val bytes = Files.readAllBytes(file)
+		assertThat(String(bytes, second.byteOffset!!.toInt(), second.byteLength!!.toInt())).isEqualTo("""{"bb":22}""")
+	}
+
+	@Test
+	@DisplayName("동시에 써도 각 위치가 자기 줄을 가리킨다")
+	fun concurrentWritesReportTheirOwnLines() {
+		val writer = FileArchiveWriter(root)
+		val bodies = (0 until 64).map { """{"n":$it,"pad":"${"x".repeat(it)}"}""" }
+
+		val locations = bodies.parallelStream()
+			.map { body -> body to writer.write(Product.CLAUDE_CODE, Signal.TRACES, body.toByteArray()) }
+			.toList()
+
+		val bytes = Files.readAllBytes(root.resolve("claude_code/traces.jsonl"))
+		locations.forEach { (body, location) ->
+			assertThat(String(bytes, location.byteOffset!!.toInt(), location.byteLength!!.toInt())).isEqualTo(body)
+		}
 	}
 
 	@Test
@@ -90,6 +126,30 @@ class S3ArchiveWriterTest {
 	}
 
 	@Test
+	@DisplayName("put 에 성공한 그 key 를 s3 URI 로 돌려준다 — 객체 전체가 문서라 바이트 범위가 없다")
+	fun returnsTheKeyThatWasPut() {
+		val s3 = CapturingS3()
+		val writer = S3ArchiveWriter(s3, "raw-bucket", basePrefix = "dev", clock = clock)
+
+		val location = writer.write(Product.UNKNOWN, Signal.LOGS, "{}".toByteArray())
+
+		val put = s3.puts.single()
+		assertThat(location.uri).isEqualTo("s3://raw-bucket/${put.first}")
+		assertThat(put.first).startsWith("dev/unknown/logs/year=2026/")
+		assertThat(location.byteOffset).isNull()
+		assertThat(location.byteLength).isNull()
+	}
+
+	@Test
+	@DisplayName("put 이 실패하면 예외다 — 위치를 돌려주지 않는다")
+	fun aFailedPutReturnsNoLocation() {
+		val writer = S3ArchiveWriter(NoopS3(), "b", clock = clock)
+
+		assertThatThrownBy { writer.write(Product.CODEX, Signal.LOGS, "{}".toByteArray()) }
+			.isInstanceOf(UnsupportedOperationException::class.java)
+	}
+
+	@Test
 	@DisplayName("객체 이름이 매번 다르다 — 같은 분에 여러 건이 와도 덮어쓰지 않는다")
 	fun keysAreUniqueWithinAMinute() {
 		val writer = S3ArchiveWriter(NoopS3(), "b", clock = clock)
@@ -107,4 +167,21 @@ class S3ArchiveWriterTest {
 private class NoopS3 : software.amazon.awssdk.services.s3.S3Client {
 	override fun serviceName(): String = "s3"
 	override fun close() = Unit
+}
+
+/** `putObject` 만 받아 key 와 바이트를 남긴다. 그 밖의 연산은 기본 구현대로 실패한다. */
+internal class CapturingS3 : software.amazon.awssdk.services.s3.S3Client {
+	val puts = mutableListOf<Pair<String, ByteArray>>()
+
+	override fun serviceName(): String = "s3"
+	override fun close() = Unit
+
+	override fun putObject(
+		request: software.amazon.awssdk.services.s3.model.PutObjectRequest,
+		body: software.amazon.awssdk.core.sync.RequestBody,
+	): software.amazon.awssdk.services.s3.model.PutObjectResponse {
+		val bytes = body.contentStreamProvider().newStream().use { it.readAllBytes() }
+		synchronized(puts) { puts += request.key() to bytes }
+		return software.amazon.awssdk.services.s3.model.PutObjectResponse.builder().build()
+	}
 }

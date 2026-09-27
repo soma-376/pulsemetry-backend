@@ -21,6 +21,8 @@
 | 0015 | [ClickHouse DDL 은 번호 붙은 멱등 파일이고 기동 시 전량 적용한다](0015-clickhouse-ddl-은-번호-붙은-멱등-파일이고-기동-시-적용한다.md) | Accepted |
 | 0016 | [조립 앱은 인증 체인과 단계 호출을 배선하고 스키마 적용 실패를 견디며 뜬다](0016-조립-앱은-인증-체인과-단계-호출을-배선하고-스키마-적용-실패를-견딘다.md) | Accepted |
 | 0017 | [정규화 불변 규칙과 enrichment_json 승격 금지는 이 저장소가 정한다](0017-정규화-불변-규칙과-enrichment-json-승격-금지는-이-저장소가-정한다.md) | Accepted |
+| 0020 | [정규화 계약 2판은 관측을 식별하고 의미 컬럼으로 교체 저장한다](0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md) | Accepted |
+| 0021 | [수집 운영 기록은 ClickHouse ledger 와 RDS telemetry_ops 스키마에 두고 그 RDS DDL 은 enrollment-api 가 적용한다](0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md) | Proposed |
 
 Status 열은 각 ADR Status 줄의 **첫 토큰**만 싣는다. 부분 대체·부연은 해당 파일에서 확인한다.
 Status 첫 토큰이 바뀌는 커밋에서는 이 표도 같은 커밋에서 갱신한다.

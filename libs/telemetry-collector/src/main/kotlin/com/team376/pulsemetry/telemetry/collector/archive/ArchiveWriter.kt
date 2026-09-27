@@ -13,10 +13,8 @@ import com.team376.pulsemetry.telemetry.collector.Signal
  * ## 여기 오는 것은 이미 마스킹을 마친 데이터다
  *
  * 허브 `glossary.md` 가 못박은 대로 "raw" 는 **가공 전**이지 마스킹 전이 아니다.
- * 단 **metrics 는 예외다** — 현행 설정의 metrics 파이프라인에 `redaction/secrets` 가 없어서
- * 마스킹을 거치지 않은 채 여기로 온다(허브 계약 §5 의 M6, `Signal.METRICS.masked = false`).
- * 이식은 동작 동일성이 기준이라 고치지 않았다. 보존 기간이 있는 저장소에 쓰는 구현이라면
- * 그 사실이 곧 위험이므로 ADR 0012 의 Negative 가 이것을 적어 두고 있다.
+ * 세 시그널 모두 마스킹을 거친 뒤 여기 온다 — metrics 가 마스킹 없이 오던 결함(허브 계약 §5 의 M6)은
+ * 해소했다(ADR 0012 Follow-up).
  *
  * ## 구현이 둘인 이유
  *
@@ -26,11 +24,14 @@ import com.team376.pulsemetry.telemetry.collector.Signal
 public interface ArchiveWriter {
 
 	/**
-	 * 한 번의 수신을 아카이브 한 건으로 쓴다.
+	 * 한 번의 수신을 아카이브 한 건으로 쓰고, **실제로 쓴 위치**를 돌려준다.
+	 *
+	 * 쓰기에 실패하면 예외를 던진다 — 위치를 추정해 돌려주지 않는다. 호출자는 그 예외로 503 을 낸다
+	 * (ADR 0020 §6).
 	 *
 	 * @param product 제품 구간. [ProductRouter] 가 resource 의 `service.name` 으로 골랐다.
 	 * @param signal 시그널 구간.
 	 * @param body OTLP/JSON 로 직렬화한 문서 하나. 현행 file exporter 의 `format: json` 과 같다.
 	 */
-	public fun write(product: Product, signal: Signal, body: ByteArray)
+	public fun write(product: Product, signal: Signal, body: ByteArray): ArchivedObject
 }

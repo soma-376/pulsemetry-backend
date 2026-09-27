@@ -39,13 +39,16 @@ public class S3ArchiveWriter(
 	private val clock: Clock = Clock.systemUTC(),
 ) : ArchiveWriter {
 
-	override fun write(product: Product, signal: Signal, body: ByteArray) {
+	/** `putObject` 가 성공한 key 를 돌려준다. 실패하면 SDK 예외가 그대로 올라간다 — 503 이다. */
+	override fun write(product: Product, signal: Signal, body: ByteArray): ArchivedObject {
+		val key = key(product, signal)
 		val request = PutObjectRequest.builder()
 			.bucket(bucket)
-			.key(key(product, signal))
+			.key(key)
 			.contentType("application/json")
 			.build()
 		s3.putObject(request, RequestBody.fromBytes(body))
+		return ArchivedObject(uri = "s3://$bucket/$key")
 	}
 
 	internal fun key(product: Product, signal: Signal): String {

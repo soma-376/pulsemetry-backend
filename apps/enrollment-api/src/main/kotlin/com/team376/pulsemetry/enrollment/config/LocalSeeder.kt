@@ -37,7 +37,7 @@ import java.time.temporal.ChronoUnit
  * ## 파이프라인이 붙으면서 늘어난 것
  *
  * `:apps:telemetry-ingest` 의 보강 단계가 `installations → members → team_memberships` 로
- * 팀을 찾는다. 팀과 소속이 없으면 `enriched_events.team_ids_as_of` 가 언제나 비어서, 배선이
+ * 구성원과 팀을 찾는다. 팀과 소속이 없으면 `telemetry_events.team_id_as_of` 가 언제나 비어서, 배선이
  * 틀린 것인지 데이터가 없는 것인지 로컬에서 구분할 수 없다.
  *
  * **시드의 진실원은 이 파일 하나다**(허브 `contracts/enrollment-api.md` §4). SQL 시드를 따로 두면

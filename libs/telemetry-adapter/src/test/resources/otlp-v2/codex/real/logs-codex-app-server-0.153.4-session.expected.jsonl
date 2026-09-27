@@ -1,0 +1,1 @@
+{"spec":"ADR 0020 부록 A.2 user_prompt·conversation_starts·turn_ttft·startup_phase·auth_recovery·agent_communication·의미 이름 없는 로그","events":[{"product":"codex","surface":"app_server","original_name":null,"event_type":"diagnostic","mapping_status":"generic","usage_role":"none"}],"stats":{"received":1,"rejected_count":0}}

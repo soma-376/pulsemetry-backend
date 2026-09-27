@@ -2,7 +2,8 @@ package com.team376.pulsemetry.telemetry.config
 
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseSchemaMigrator
-import com.team376.pulsemetry.persistence.telemetry.EnrichedEventsSink
+import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
+import com.team376.pulsemetry.persistence.telemetry.TelemetryMetricPointsSink
 import com.team376.pulsemetry.telemetry.pipeline.ClickHouseSchema
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -34,7 +35,10 @@ class ClickHouseConfig {
 		return ClickHouseSchema(migrator, schema.startupAttempts, schema.startupBackoff)
 	}
 
+	/** 분석 테이블 둘(ADR 0020). 구 `enriched_events` 에는 쓰지 않는다 — 이중 적재하지 않는다. */
 	@Bean
-	fun enrichedEventsSink(client: ClickHouseHttpClient): EnrichedEventsSink =
-		EnrichedEventsSink(client)
+	fun telemetryEventsSink(client: ClickHouseHttpClient): TelemetryEventsSink = TelemetryEventsSink(client)
+
+	@Bean
+	fun telemetryMetricPointsSink(client: ClickHouseHttpClient): TelemetryMetricPointsSink = TelemetryMetricPointsSink(client)
 }

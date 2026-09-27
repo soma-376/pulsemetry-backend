@@ -1,0 +1,1 @@
+{"spec":"ADR 0020 부록 A.5 · 근거 PROFILE-EVIDENCE 8","metric_points":[{"metric_name":"codex.sqlite.init.count","metric_type":"sum","metric_family":"vendor.metric","mapping_status":"generic","usage_role":"none","token_component":"none","metric_profile":null}],"stats":{"received":1,"rejected_count":0}}

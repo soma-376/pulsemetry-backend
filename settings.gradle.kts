@@ -19,3 +19,6 @@ include(":libs:telemetry-enricher")
 
 // telemetry 도메인의 테이블 쓰기 소유 모듈. 역할 모듈이라 어순이 다르다 (ADR 0008 규칙 1 · 0010)
 include(":libs:telemetry-persistence")
+
+// RDS telemetry_ops 스키마(수집 운영 기록)의 쓰기 소유 모듈. ClickHouse 와 아웃바운드 기술이 달라 나눈다 (ADR 0021)
+include(":libs:telemetry-ops-persistence")

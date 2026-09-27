@@ -52,3 +52,8 @@ pulsemetry:
     ingest:
       # 503 에 실어 보낼 값. 데몬은 이것을 하한으로 쓰고 15초에서 자른다 (허브 ADR 0006).
       retry-after: 1s
+
+    ops:
+      # 수집 운영 기록(수신 ledger·tenant 생애 요약·백필) — ADR 0021. 허브 ADR 0007 채택 전에는 운영 경로에
+      # 연결하지 않으므로 기본은 끈다. 켜기 전에 enrollment-api 가 telemetry_ops 스키마를 적용해야 한다.
+      enabled: ${PULSEMETRY_TELEMETRY_OPS_ENABLED:false}

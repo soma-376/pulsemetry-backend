@@ -1,0 +1,98 @@
+{
+  "services": ["codex-app-server", "Codex Desktop", "codex_cli_rs"],
+  "groups": [
+    {
+      "kind": "sse",
+      "signal": "logs",
+      "select": [
+        {"name": "codex.sse_event", "match": {"event.kind": "response.completed"}, "has": ["input_token_count", "cache_write_token_count"], "cap": 2},
+        {"name": "codex.sse_event", "match": {"event.kind": "response.completed"}, "has": ["input_token_count"], "missing": ["cache_write_token_count"], "cap": 2},
+        {"name": "codex.sse_event", "match": {"event.kind": "response.completed"}, "missing": ["input_token_count"], "cap": 2},
+        {"name": "codex.sse_event", "has": ["error.message"], "cap": 2},
+        {"name": "codex.sse_event", "has": ["kind"], "cap": 2},
+        {"name": "codex.sse_event", "distinct_by": "event.kind", "per_value": 1, "cap": 14}
+      ]
+    },
+    {
+      "kind": "requests",
+      "signal": "logs",
+      "select": [
+        {"name": "codex.api_request", "eventName": "models_endpoint", "has": ["error.message"], "cap": 1},
+        {"name": "codex.api_request", "eventName": "models_endpoint", "missing": ["error.message"], "cap": 1},
+        {"name": "codex.api_request", "eventName": "session_telemetry", "cap": 2},
+        {"name": "codex.websocket_connect", "cap": 2},
+        {"name": "codex.websocket_request", "cap": 2}
+      ]
+    },
+    {
+      "kind": "tools",
+      "signal": "logs",
+      "select": [
+        {"name": "codex.tool_result", "group_by": "call_id", "group_min": 2, "groups": 2, "per_group": 3},
+        {"name": "codex.tool_result", "has": ["mcp_server"], "distinct_by": "mcp_server_origin", "per_value": 1, "cap": 3},
+        {"name": "codex.tool_result", "distinct_by": "tool_namespace", "per_value": 1, "cap": 3},
+        {"name": "codex.tool_decision", "distinct_by": "decision", "per_value": 1, "cap": 3},
+        {"name": "codex.sandbox_outcome", "cap": 2}
+      ]
+    },
+    {
+      "kind": "session",
+      "signal": "logs",
+      "select": [
+        {"name": "codex.conversation_starts", "cap": 2},
+        {"name": "codex.user_prompt", "cap": 2},
+        {"name": "codex.turn_ttft", "cap": 2},
+        {"name": "codex.startup_phase", "distinct_by": "startup.phase", "per_value": 1, "cap": 3},
+        {"name": "codex.auth_recovery", "cap": 2},
+        {"name": "codex.agent_communication", "distinct_by": "kind", "per_value": 1, "cap": 4},
+        {"missing": ["event.name"], "cap": 1}
+      ]
+    },
+    {
+      "kind": "spans",
+      "signal": "traces",
+      "select": [
+        {"name": "session_task.turn", "cap": 2},
+        {"name": "session_task.compact", "cap": 2},
+        {"name": "try_run_sampling_request", "cap": 2},
+        {"name": "mcp.tools.call", "cap": 2},
+        {"name": "handle_tool_call", "cap": 1},
+        {"name": "dispatch_tool_call_with_terminal_outcome", "cap": 1},
+        {"name": "handle_tool_call_with_source", "cap": 1},
+        {"name": "code_mode.broker.invoke_tool", "cap": 1},
+        {"name": "codex.hooks.mcp_tool", "cap": 1},
+        {"name": "session_task.run", "cap": 1},
+        {"name": "handle_responses", "cap": 1},
+        {"name": "run_turn", "cap": 1},
+        {"name": "codex.exec", "cap": 1}
+      ]
+    },
+    {
+      "kind": "metrics",
+      "signal": "metrics",
+      "select": [
+        {"name": "codex.turn.token_usage", "cap": 1, "max_points": 8},
+        {"name": "codex.turn.tool.call", "cap": 1, "max_points": 2},
+        {"name": "codex.tool.call", "cap": 1, "max_points": 2},
+        {"name": "codex.tool.call.duration_ms", "cap": 1, "max_points": 2},
+        {"name": "codex.turn.e2e_duration_ms", "cap": 1, "max_points": 2},
+        {"name": "codex.turn.ttft.duration_ms", "cap": 1, "max_points": 2},
+        {"name": "codex.turn.ttfm.duration_ms", "cap": 1, "max_points": 2},
+        {"name": "codex.thread.started", "cap": 1, "max_points": 2},
+        {"name": "codex.conversation.turn.count", "cap": 1, "max_points": 2},
+        {"name": "codex.mcp.call", "cap": 1, "max_points": 2},
+        {"name": "codex.mcp.call.duration_ms", "cap": 1, "max_points": 2},
+        {"name": "codex.mcp.call.error", "cap": 1, "max_points": 2},
+        {"name": "codex.hooks.run", "cap": 1, "max_points": 2},
+        {"name": "codex.hooks.run.duration_ms", "cap": 1, "max_points": 2},
+        {"name": "codex.skill.injected", "cap": 1, "max_points": 2},
+        {"name": "codex.multi_agent.spawn", "cap": 1, "max_points": 2},
+        {"name": "codex.task.compact", "cap": 1, "max_points": 2},
+        {"name": "codex.guardian.review.token_usage", "cap": 1, "max_points": 8},
+        {"name": "codex.guardian_v2.classification.token_usage", "cap": 1, "max_points": 8},
+        {"name": "codex.sqlite.init.count", "cap": 1, "max_points": 1},
+        {"name": "codex.startup.phase.duration_ms", "cap": 1, "max_points": 2}
+      ]
+    }
+  ]
+}

@@ -2,6 +2,7 @@ package com.team376.pulsemetry.telemetry.collector.masking
 
 import com.google.protobuf.ByteString
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
+import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
 import io.opentelemetry.proto.common.v1.AnyValue
 import io.opentelemetry.proto.common.v1.KeyValue
@@ -67,6 +68,91 @@ class AttributeWalkerTest {
 		assertThat(out.getValues(0).value.stringValue).isEqualTo("****")
 		assertThat(out.getValues(1).value.kvlistValue.getValues(0).value.stringValue).isEqualTo("****")
 		assertThat(out.getValues(2).value.arrayValue.getValues(0).stringValue).isEqualTo("****")
+	}
+
+	@Test
+	@DisplayName("metrics — resource · scope 속성과 다섯 종류 전부의 data point 속성을 훑는다 (상위 processResourceMetric)")
+	fun masksEveryMetricPointKind() {
+		val secret = "sk-abcdefghij1234567890"
+		val request = ExportMetricsServiceRequest.newBuilder()
+		val resourceMetrics = request.addResourceMetricsBuilder()
+		resourceMetrics.resourceBuilder.addAttributes(stringAttr("res", secret))
+		val scopeMetrics = resourceMetrics.addScopeMetricsBuilder()
+		scopeMetrics.scopeBuilder.addAttributes(stringAttr("scope", secret))
+		scopeMetrics.addMetricsBuilder().setName("g").gaugeBuilder.addDataPointsBuilder().addAttributes(stringAttr("p", secret))
+		scopeMetrics.addMetricsBuilder().setName("s").sumBuilder.addDataPointsBuilder().addAttributes(stringAttr("p", secret))
+		scopeMetrics.addMetricsBuilder().setName("h").histogramBuilder.addDataPointsBuilder().addAttributes(stringAttr("p", secret))
+		scopeMetrics.addMetricsBuilder().setName("e").exponentialHistogramBuilder.addDataPointsBuilder()
+			.addAttributes(stringAttr("p", secret))
+		scopeMetrics.addMetricsBuilder().setName("q").summaryBuilder.addDataPointsBuilder().addAttributes(stringAttr("p", secret))
+
+		walker.maskMetrics(request)
+
+		val out = request.build().getResourceMetrics(0)
+		assertThat(out.resource.getAttributes(0).value.stringValue).isEqualTo("****")
+		assertThat(out.getScopeMetrics(0).scope.getAttributes(0).value.stringValue).isEqualTo("****")
+		val metrics = out.getScopeMetrics(0).metricsList
+		assertThat(metrics[0].gauge.getDataPoints(0).getAttributes(0).value.stringValue).isEqualTo("****")
+		assertThat(metrics[1].sum.getDataPoints(0).getAttributes(0).value.stringValue).isEqualTo("****")
+		assertThat(metrics[2].histogram.getDataPoints(0).getAttributes(0).value.stringValue).isEqualTo("****")
+		assertThat(metrics[3].exponentialHistogram.getDataPoints(0).getAttributes(0).value.stringValue).isEqualTo("****")
+		assertThat(metrics[4].summary.getDataPoints(0).getAttributes(0).value.stringValue).isEqualTo("****")
+	}
+
+	@Test
+	@DisplayName("metrics — exemplar 의 filteredAttributes 도 훑는다. 상위보다 넓힌 자리다")
+	fun masksExemplarFilteredAttributes() {
+		val secret = "AKIAEEEEEEEEEEEEEEEE"
+		val request = ExportMetricsServiceRequest.newBuilder()
+		val scopeMetrics = request.addResourceMetricsBuilder().addScopeMetricsBuilder()
+		scopeMetrics.addMetricsBuilder().setName("g").gaugeBuilder.addDataPointsBuilder()
+			.addExemplarsBuilder().addFilteredAttributes(stringAttr("ex", secret))
+		scopeMetrics.addMetricsBuilder().setName("s").sumBuilder.addDataPointsBuilder()
+			.addExemplarsBuilder().addFilteredAttributes(stringAttr("ex", secret))
+		scopeMetrics.addMetricsBuilder().setName("h").histogramBuilder.addDataPointsBuilder()
+			.addExemplarsBuilder().addFilteredAttributes(stringAttr("ex", secret))
+		scopeMetrics.addMetricsBuilder().setName("e").exponentialHistogramBuilder.addDataPointsBuilder()
+			.addExemplarsBuilder().addFilteredAttributes(stringAttr("ex", secret))
+
+		walker.maskMetrics(request)
+
+		val metrics = request.build().getResourceMetrics(0).getScopeMetrics(0).metricsList
+		val exemplarValues = listOf(
+			metrics[0].gauge.getDataPoints(0).getExemplars(0),
+			metrics[1].sum.getDataPoints(0).getExemplars(0),
+			metrics[2].histogram.getDataPoints(0).getExemplars(0),
+			metrics[3].exponentialHistogram.getDataPoints(0).getExemplars(0),
+		).map { it.getFilteredAttributes(0).value.stringValue }
+		assertThat(exemplarValues).containsOnly("****")
+	}
+
+	@Test
+	@DisplayName("metrics — 비밀이 아닌 값과 비문자열 속성은 그대로다. 측정값·이름·단위도 건드리지 않는다")
+	fun leavesNonSecretMetricValuesAlone() {
+		val request = ExportMetricsServiceRequest.newBuilder()
+		val metric = request.addResourceMetricsBuilder().addScopeMetricsBuilder().addMetricsBuilder()
+			.setName("claude_code.token.usage").setUnit("tokens")
+		metric.sumBuilder.addDataPointsBuilder()
+			.setAsInt(42)
+			.addAttributes(stringAttr("type", "cacheRead"))
+			.addAttributes(intAttr("count", 7))
+		val before = request.build()
+
+		walker.maskMetrics(request)
+
+		assertThat(request.build()).isEqualTo(before)
+	}
+
+	@Test
+	@DisplayName("metrics — 데이터가 없는 metric 은 건너뛴다")
+	fun skipsMetricsWithoutData() {
+		val request = ExportMetricsServiceRequest.newBuilder()
+		request.addResourceMetricsBuilder().addScopeMetricsBuilder().addMetricsBuilder().setName("empty")
+		val before = request.build()
+
+		walker.maskMetrics(request)
+
+		assertThat(request.build()).isEqualTo(before)
 	}
 
 	@Test

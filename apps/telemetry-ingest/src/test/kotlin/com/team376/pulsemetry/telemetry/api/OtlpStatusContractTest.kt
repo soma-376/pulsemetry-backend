@@ -1,11 +1,13 @@
 package com.team376.pulsemetry.telemetry.api
 
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
+import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsUnavailableException
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
 import com.team376.pulsemetry.telemetry.collector.PermanentIngestException
 import com.team376.pulsemetry.telemetry.collector.Signal
 import com.team376.pulsemetry.telemetry.collector.SignalConsumer
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveWriter
+import com.team376.pulsemetry.telemetry.collector.archive.ArchivedObject
 import com.team376.pulsemetry.telemetry.collector.archive.Product
 import com.team376.pulsemetry.telemetry.config.TelemetryIngestProperties
 import org.assertj.core.api.Assertions.assertThat
@@ -38,6 +40,15 @@ class OtlpStatusContractTest {
 	}
 
 	@Test
+	@DisplayName("수집 운영 기록(요약)의 장애도 503 + Retry-After 다 — 수신 기록 없이 성공을 돌려주지 않는다")
+	fun anOperationsStoreFailureCarriesRetryAfter() {
+		val response = post(consumer { throw TelemetryOpsUnavailableException("telemetry_ops down") })
+
+		assertThat(response.status).isEqualTo(503)
+		assertThat(response.getHeader("Retry-After")).isEqualTo("1")
+	}
+
+	@Test
 	@DisplayName("영구 실패는 400 이고 Retry-After 가 없다 — 데몬이 즉시 폐기한다")
 	fun aPermanentFailureHasNoRetryAfter() {
 		val response = post(consumer { throw PermanentIngestException("schema drift") })
@@ -59,7 +70,7 @@ class OtlpStatusContractTest {
 
 	// ------------------------------------------------------------------ 도구
 
-	private fun consumer(block: () -> Unit): SignalConsumer = SignalConsumer { _, _ -> block() }
+	private fun consumer(block: () -> Unit): SignalConsumer = SignalConsumer { _, _, _ -> block() }
 
 	private fun post(next: SignalConsumer): MockHttpServletResponse =
 		mockMvc(next)
@@ -73,7 +84,7 @@ class OtlpStatusContractTest {
 
 	private fun mockMvc(next: SignalConsumer): MockMvc {
 		val archive = object : ArchiveWriter {
-			override fun write(product: Product, signal: Signal, body: ByteArray) = Unit
+			override fun write(product: Product, signal: Signal, body: ByteArray) = ArchivedObject("memory://0")
 		}
 		val handler = OtlpIngestHandler(archive = archive, next = next)
 		val properties = TelemetryIngestProperties(tokenHashSecret = "test-token-hash-secret")

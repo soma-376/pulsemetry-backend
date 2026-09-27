@@ -12,8 +12,8 @@ import org.springframework.security.core.context.SecurityContextHolder
  * 하위 단계는 헤더가 아니라 보안 컨텍스트에서 신원을 얻는다(허브 ADR 0005). 구 auth-proxy 가
  * 붙이던 `x-pulsemetry-*` 네 헤더가 이 클래스로 대체됐다.
  *
- * `memberId` 는 **일부러 심지 않는다.** 구 processor 도 `x-pulsemetry-member-id` 를 받고 버렸고
- * (허브 계약 §5 M2), `enriched_events` 에 그 컬럼이 없다. 심으면 저장되는 값이 현행과 달라진다.
+ * `memberId` 는 **일부러 심지 않는다.** 구 processor 도 `x-pulsemetry-member-id` 를 받고 버렸고(허브 계약 §5 M2),
+ * 분석 행의 `member_id` 는 보강 단계가 installation 으로 조회해 채운다(ADR 0020 §5) — 원본에 심을 값이 아니다.
  *
  * 인증을 세우지 않은 호출자(재처리 배치·테스트)에서는 `null` 이라 아무것도 심지 않는다.
  */
