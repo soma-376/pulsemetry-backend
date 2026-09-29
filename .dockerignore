@@ -3,7 +3,9 @@
 .gradle
 **/.gradle
 **/build
-**/archive
+# 실행 데이터만 제외한다. libs/**/collector/archive는 Kotlin 소스 패키지다.
+archive/
+apps/*/archive/
 .idea
 .kotlin
 .claude
