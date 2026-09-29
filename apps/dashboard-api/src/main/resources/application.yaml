@@ -34,6 +34,15 @@ logging:
 
 # 기본값이 없는 값은 비어 있으면 기동이 실패한다 (ADR 0022 §4·§5). 계정·상한은 infra 가 정한다.
 pulsemetry:
+  user-auth:
+    enabled: ${PULSEMETRY_USER_AUTH_ENABLED:false}
+    issuer: ${PULSEMETRY_USER_AUTH_ISSUER:}
+    audience: ${PULSEMETRY_USER_AUTH_AUDIENCE:}
+    public-key-files:
+      local: ${PULSEMETRY_USER_AUTH_PUBLIC_KEY_FILE:}
+    allowed-origins: ${PULSEMETRY_USER_AUTH_ALLOWED_ORIGINS:}
+  management:
+    enabled: ${PULSEMETRY_MANAGEMENT_ENABLED:false}
   dashboard:
     # 503 응답의 Retry-After.
     retry-after: ${PULSEMETRY_DASHBOARD_RETRY_AFTER:}

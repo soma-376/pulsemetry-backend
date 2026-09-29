@@ -5,6 +5,7 @@ plugins {
 }
 
 dependencies {
+	implementation(project(":libs:security"))
 	// enrollment 스키마(조직·팀·구성원)를 읽는다. 쓰기 소유는 그대로다 — 이 앱의 RDS 계정은 SELECT 만 갖는다 (ADR 0022 §2·§4).
 	// JPA·JDBC 를 api() 로 노출하므로 엔티티·리포지토리·JdbcClient 를 여기서 바로 쓴다.
 	implementation(project(":libs:enrollment-persistence"))

@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.dashboard.analytics
 
+import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
 import com.team376.pulsemetry.dashboard.error.DashboardException
 import com.team376.pulsemetry.dashboard.error.ErrorCode
 import com.team376.pulsemetry.dashboard.error.FieldErrorCode
@@ -8,6 +9,7 @@ import com.team376.pulsemetry.dashboard.request.PageCursor
 import com.team376.pulsemetry.dashboard.request.PageCursorCodec
 import com.team376.pulsemetry.dashboard.request.PageRequest
 import com.team376.pulsemetry.dashboard.request.QueryReader
+import com.team376.pulsemetry.persistence.enrollment.management.VendorCatalog
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.simple.JdbcClient
 import tools.jackson.databind.ObjectMapper
@@ -20,15 +22,12 @@ import java.util.UUID
 
 /**
  * 설정 화면의 **현재 상태 조회** (설정 명세). 계약·정책·설치는 enrollment 를 원천 계정으로 읽고, 벤더 사용 지표는 검증된 공급자로 해석된
- * 사용량만 쓴다([VendorUsageReader]). 쓰기 기능은 모두 비활성이다.
+ * 사용량만 쓴다([VendorUsageReader]). 관리 명령은 enrollment-api가 처리한다.
  *
- * - **벤더** = 계약이 있는 공급자 ∪ 검증된 공급자로 사용이 감지된 공급자. 공급자 미확인 사용량으로 벤더를 만들지 않는다. 벤더 ID 는 공급자 종류
- *   (`enrollment.ai_vendor`) 값이다.
- * - **계약**: 저장소의 계약 모델(약정 금액·토큰 할인 배율)이 화면의 "등급별 좌석 × 월 요금"과 맞지 않아 `contract` 는 null 이고,
- *   그 사실을 `checks` 의 `contract_model_unsupported` 로 알린다. 좌석 합계·월 좌석료도 없다. 플랜 catalog 원천이 없어 `plans` 는 비어 있다.
- * - **사용 지표**: 미확인 사용이 같은 창에 있으면 미확인을 뺀 값은 완전하다고 말할 수 없어 null 이다. 검증된 사용이 없으면 null 이다(0 을 확정하지 않는다).
- *   월 사용 환산액은 공급자 귀속·가격이 확인되지 않아 section 이 `unavailable` 이고, 실제 청구액의 원천은 없다.
- * - **수집 정책** = 활성 manifest(설치에 내려가는 설정)다. 원문 수집 여부는 manifest 의 원문류 수집 설정(프롬프트·응답·도구 인자·도구 내용·API 원문)
+ * - **벤더** = 조직에 등록한 제품. 공급자 관측이나 기존 기간 약정은 등록 제품으로 자동 변환하지 않는다.
+ * - **계약** = 등록 UUID의 버전 이력. 조회 기준 시각까지의 최신 버전으로 읽는다.
+ * - **사용 지표** = 계약 UUID와 관측의 연결 근거가 없어 null. 실제 청구액도 추측하지 않는다.
+ * - **수집 정책** = 활성 manifest(설치에 내려가는 설정)다. 원문 수집 선택은 manifest의 프롬프트·응답 설정
  *   중 하나라도 켜져 있는지다. 회수 유휴 일수는 구성원 화면과 같은 설정 값이다. 보존 기간 설정 원천이 없어 집계·원문 보존은 null(무기한 — 지우는
  *   작업이 없다)이다. 활성 manifest 가 없으면 설정이 없는 조직이라 404 다.
  * - **정책 적용**: 적용이 확인된 설치(`installation_manifest_assignments.applied_at`)만 applied 이고, 알려진 적용 판이 목표보다 낮으면 outdated,
@@ -45,6 +44,8 @@ class SettingsService(
 	private val mapper: ObjectMapper,
 	private val idleDays: Int,
 	private val clock: Clock,
+	private val managementEnabled: Boolean = false,
+	private val catalog: VendorCatalog,
 ) {
 
 	private val log = LoggerFactory.getLogger(SettingsService::class.java)
@@ -54,20 +55,29 @@ class SettingsService(
 		val token = tokens.issue(SETTINGS_KIND, organization.id, now)
 		val manifest = activeManifest(organization.id) ?: throw DashboardException(ErrorCode.NOT_FOUND)
 		val vendors = vendors(organization.id, token.asOf)
+		val activeVendors = vendors.filter { it.contractStatus == ContractStatus.active }
 		val rollout = rollout(organization.id, manifest.version)
+		val products = if (managementEnabled) catalog.snapshot().products else emptyList()
 		return SettingsResponse(
 			meta = meta(organization, now, token),
 			ingest = frames.ingest(organization, now),
-			capabilities = SettingsCapabilities(editContracts = false, editCollectionPolicy = false, editAlertRules = false, notifyInstallations = false),
+			capabilities = SettingsCapabilities(editContracts = managementEnabled, editCollectionPolicy = managementEnabled, editAlertRules = false, notifyInstallations = false),
 			summary = SettingsSummary(
 				configuredVendors = vendors.count { it.state == CONFIGURED }.toLong(),
 				unconfiguredVendors = vendors.count { it.state != CONFIGURED }.toLong(),
-				monthlySeatFeeUsd = null,
-				contractedSeats = null,
+				monthlySeatFeeUsd = activeVendors.takeIf { it.all { vendor -> vendor.contract?.monthlySeatFeeUsd != null } }
+					?.sumOf { it.contract!!.monthlySeatFeeUsd!!.toBigDecimal() }?.let(Money::format),
+				contractedSeats = activeVendors.takeIf { it.all { vendor -> vendor.contract != null } }
+					?.sumOf { it.contract!!.tiers.sumOf { tier -> tier.seats } },
 				activeSeats7d = null,
 				meteredMonthToDate = Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null),
 			),
-			catalog = Catalog(VENDOR_NAMES.map { (kind, name) -> CatalogKind(kind, name) }, emptyList()),
+			catalog = if (managementEnabled) Catalog(
+				products.map { CatalogKind(it.id, it.displayName) },
+				products.flatMap { product -> product.plans.map { CatalogPlan(it.id, product.id, it.displayName, it.billing, it.separateUsageBilling) } },
+			) else Catalog(source.sql("SELECT id,display_name FROM enrollment.vendor_catalog_vendors " +
+				"WHERE id IN (SELECT unnest(enum_range(NULL::enrollment.ai_vendor))::text) ORDER BY id")
+				.query { r, _ -> CatalogKind(r.getString("id"), r.getString("display_name")) }.list(), emptyList()),
 			vendors = page(vendors, PageRequest(FIRST_PAGE, null), token, VENDORS_SCOPE),
 			collectionPolicy = CollectionPolicy(
 				version = manifest.version,
@@ -145,53 +155,22 @@ class SettingsService(
 		return Page(items, vendors.size, next)
 	}
 
-	/** 계약이 있는 공급자 ∪ 검증된 공급자로 감지된 공급자. 벤더 ID 오름차순. */
-	private fun vendors(tenantId: UUID, asOf: Instant): List<Vendor> {
-		val today = asOf.atZone(QueryReader.SEOUL).toLocalDate()
-		val contracts = source.sql(
-			"SELECT vendor::text AS vendor, status::text AS status, starts_at, ends_at, updated_at FROM enrollment.contracts WHERE tenant_id = :tenant",
-		)
-			.param("tenant", tenantId)
-			.query { rs, _ ->
-				Contract(
-					vendor = rs.getString("vendor"),
-					active = rs.getString("status") == ACTIVE_CONTRACT,
-					startsAt = rs.getObject("starts_at", LocalDate::class.java),
-					endsAt = rs.getObject("ends_at", LocalDate::class.java),
-					updatedAt = rs.getObject("updated_at", OffsetDateTime::class.java).toInstant(),
-				)
-			}
-			.list()
-			.groupBy { it.vendor }
-		val usage = vendorUsage.usage(tenantId, asOf, QueryReader.SEOUL)
-		val detected = usage.byProvider.keys.filter { it in VENDOR_NAMES }
-		return (contracts.keys + detected).toSortedSet().map { kind ->
-			val owned = contracts[kind].orEmpty()
-			val used = usage.byProvider[kind]
-			val current = owned.any { it.active && !it.startsAt.isAfter(today) && (it.endsAt == null || !it.endsAt.isBefore(today)) }
-			Vendor(
-				vendorId = kind,
-				displayName = VENDOR_NAMES.getValue(kind),
-				kind = kind,
-				source = if (used != null) DETECTED else MANUAL,
-				version = owned.maxOfOrNull { it.updatedAt.toEpochMilli() } ?: 0,
-				// 미확인 사용이 있으면 미확인을 뺀 최초·최근은 완전하지 않다.
-				firstSeenAt = used?.takeIf { usage.unresolvedRows == 0L }?.firstSeenAt?.toString(),
-				lastSeenAt = used?.takeIf { usage.unresolvedRows == 0L }?.lastSeenAt?.toString(),
-				activeUsers7d = used?.takeIf { usage.unresolvedRows7d == 0L && it.rows7d > 0 }?.users7d,
-				activeUsers30d = used?.takeIf { usage.unresolvedRows30d == 0L && it.rows30d > 0 }?.users30d,
-				observation = if (used != null) PARTIAL else UNOBSERVED,
-				state = when {
-					current -> CONFIGURED
-					owned.isNotEmpty() -> NEEDS_REVIEW
-					else -> DETECTED_UNCONFIGURED
-				},
-				contract = null,
-				meteredMonthToDate = Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null),
-				checks = if (owned.isNotEmpty()) listOf(VendorCheck(CONTRACT_MODEL_UNSUPPORTED, WARNING)) else emptyList(),
-			)
-		}.also { if (usage.unresolvedRows > 0) log.info("tenant {} 공급자 미확인 사용량 {}행 — 벤더 지표에 넣지 않는다", tenantId, usage.unresolvedRows) }
-	}
+	/** 등록 제품만 반환한다. 계약 UUID 오름차순. */
+	private fun vendors(tenantId: UUID, asOf: Instant): List<Vendor> = managedVendors(tenantId, asOf).sortedBy { it.vendorId }
+
+	/** 저장된 버전 이력을 기준 시각으로 읽는다. 공급자 귀속을 추측해 사용량을 붙이지 않는다. */
+	private fun managedVendors(tenantId: UUID, asOf: Instant): List<Vendor> = source.sql("""
+		SELECT v.vendor_id,v.kind,v.source,c.* FROM enrollment.managed_vendors v
+		JOIN LATERAL (SELECT version,display_name,contract::text,archived FROM enrollment.vendor_contract_versions
+		 WHERE tenant_id=v.tenant_id AND vendor_id=v.vendor_id AND recorded_at<=:as_of ORDER BY version DESC LIMIT 1) c ON true
+		WHERE v.tenant_id=:tenant AND v.created_at<=:as_of AND NOT c.archived
+	""").param("tenant", tenantId).param("as_of", Timestamp.from(asOf)).query { rs, _ ->
+		val contract = rs.getString("contract")?.let { mapper.readValue(it, VendorContract::class.java) }
+		val status = ContractStatus.at(contract?.effectiveFrom?.let(LocalDate::parse), contract?.effectiveTo?.let(LocalDate::parse), asOf)
+		Vendor(rs.getString("vendor_id"), rs.getString("display_name"), rs.getString("kind"), rs.getString("source"), rs.getLong("version"),
+			null, null, null, null, UNOBSERVED, if (status == ContractStatus.active) CONFIGURED else NEEDS_REVIEW, contract, status,
+			Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null), emptyList())
+	}.list()
 
 	private data class Contract(val vendor: String, val active: Boolean, val startsAt: LocalDate, val endsAt: LocalDate?, val updatedAt: Instant)
 
@@ -286,12 +265,9 @@ class SettingsService(
 		private const val WARNING = "warning"
 		const val CONTRACT_MODEL_UNSUPPORTED = "contract_model_unsupported"
 
-		/** 공급자 종류(`enrollment.ai_vendor`)와 표시 이름. */
-		val VENDOR_NAMES: Map<String, String> = linkedMapOf("anthropic" to "Anthropic", "google" to "Google", "openai" to "OpenAI")
-
-		/** 원문류 수집 설정 — manifest `privacy` 의 키. 이 중 하나라도 켜져 있으면 원문을 수집하는 정책이다. */
+		/** 온보딩의 원문 선택은 프롬프트·응답만 제어한다(ADR 0029). 다른 privacy 설정은 그대로 둔다. */
 		private val RAW_CONTENT_FLAGS = listOf(
-			"collect_user_prompts", "collect_assistant_responses", "collect_tool_details", "collect_tool_content", "collect_raw_api_bodies",
+			"collect_user_prompts", "collect_assistant_responses",
 		)
 
 		/** 요청서의 초기 제안 기준. 규칙 저장소·평가 엔진이 없어 모두 비활성이다. */

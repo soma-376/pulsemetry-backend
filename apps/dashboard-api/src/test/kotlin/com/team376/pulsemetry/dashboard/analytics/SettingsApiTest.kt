@@ -45,7 +45,7 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 
 	private fun JsonNode.list(): List<JsonNode> = (0 until size()).map { get(it) }
 
-	private data class Org(val tenant: UUID, val applied: UUID, val outdated: UUID, val unknown: UUID)
+	private data class Org(val tenant: UUID, val applied: UUID, val outdated: UUID, val unknown: UUID, val registered: List<String>)
 
 	/** 활성 manifest v3(원문 수집 꺼짐), 옛 v2. 설치 셋 — v3 적용 확인·v2 적용 확인·적용 보고 없음. anthropic 현재 계약, openai 만료 계약. */
 	private fun seed(privacy: String = """{"collect_user_prompts":false,"collect_user_email":true}"""): Org {
@@ -66,7 +66,16 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		SourceFixtures.insertAssignment(unknown, v3, null)
 		SourceFixtures.insertContract(tenant, "anthropic")
 		SourceFixtures.insertContract(tenant, "openai", status = "expired", startsAt = "2025-01-01", endsAt = "2025-12-31")
-		return Org(tenant, applied, outdated, unknown)
+		val registered = listOf("claude_team", "openai_biz").map { kind ->
+            val id = UUID.randomUUID().toString()
+            DashboardTestStores.writer.sql("INSERT INTO enrollment.managed_vendors (tenant_id,vendor_id,kind,source,created_at) VALUES (:tenant,:id,:kind,'manual',now())")
+                .param("tenant", tenant).param("id", id).param("kind", kind).update()
+            val contract = if (kind == "claude_team") """{"version":1,"planId":"team","effectiveFrom":"2026-01-01","effectiveTo":null,"termNote":null,"tiers":[{"tierId":"standard","label":"표준","seats":2,"monthlyFeePerSeatUsd":"30"}],"monthlySeatFeeUsd":"60","confirmedAt":"2026-01-01T00:00:00Z","confirmedBy":"$admin"}""" else null
+            DashboardTestStores.writer.sql("INSERT INTO enrollment.vendor_contract_versions (tenant_id,vendor_id,version,display_name,contract,recorded_at,recorded_by) VALUES (:tenant,:id,1,:kind,CAST(:contract AS jsonb),'2026-01-01',:admin)")
+                .param("tenant", tenant).param("id", id).param("kind", kind).param("contract", contract, java.sql.Types.VARCHAR).param("admin", admin).update()
+            id
+        }
+        return Org(tenant, applied, outdated, unknown, registered)
 	}
 
 	@Test
@@ -100,44 +109,40 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/catalog/plans").size()).isZero()
 		assertThat(body.at("/summary/configuredVendors").asLong()).isEqualTo(1)
 		assertThat(body.at("/summary/unconfiguredVendors").asLong()).isEqualTo(1)
-		assertThat(listOf("/summary/monthlySeatFeeUsd", "/summary/contractedSeats", "/summary/activeSeats7d", "/summary/meteredMonthToDate/data").map { body.at(it).isNull })
+		assertThat(listOf("/summary/activeSeats7d", "/summary/meteredMonthToDate/data").map { body.at(it).isNull })
 			.containsOnly(true)
+		assertThat(body.at("/summary/monthlySeatFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("60")
+		assertThat(body.at("/summary/contractedSeats").asLong()).isEqualTo(2)
 		assertThat(body.at("/ingest/status").asString()).isEqualTo("unknown")
 	}
 
 	@Test
-	@DisplayName("원문류 수집 설정이 하나라도 켜져 있으면 collectRawContent 다 — 이메일 수집은 원문이 아니다")
+	@DisplayName("온보딩의 원문 선택은 프롬프트와 응답이며 도구 내용과 이메일 설정은 별개다")
 	fun rawContentFlag() {
-		assertThat(ok(seed(privacy = """{"collect_tool_content":true}""").tenant, "/settings").at("/collectionPolicy/collectRawContent").asBoolean()).isTrue()
+		assertThat(ok(seed(privacy = """{"collect_tool_content":true}""").tenant, "/settings").at("/collectionPolicy/collectRawContent").asBoolean()).isFalse()
+		assertThat(ok(seed(privacy = """{"collect_user_prompts":true}""").tenant, "/settings").at("/collectionPolicy/collectRawContent").asBoolean()).isTrue()
 		assertThat(ok(seed(privacy = """{"collect_user_email":true}""").tenant, "/settings").at("/collectionPolicy/collectRawContent").asBoolean()).isFalse()
 	}
 
-	@Test
-	@DisplayName("벤더 — 계약에서 오고 계약 모델이 맞지 않아 contract 는 null + 확인 코드, 사례 21: 근거 없는 Codex 사용은 OpenAI 지표에 들어가지 않는다")
-	fun vendorsFromContracts() {
-		val org = seed()
-		SourceFixtures.insertEvents(
-			org.tenant,
-			Event("${org.tenant}-codex", Instant.now().minusSeconds(3600), product = "codex", serviceName = "codex-app-server", memberId = UUID.randomUUID()),
-		)
-
-		val vendors = ok(org.tenant, "/vendors").at("/vendors/items").list().associateBy { it.path("vendorId").asString() }
-
-		assertThat(vendors.keys).containsExactly("anthropic", "openai")
-		val anthropic = vendors.getValue("anthropic")
-		assertThat(anthropic.path("state").asString()).isEqualTo("configured")
-		assertThat(anthropic.path("source").asString()).isEqualTo("manual")
-		assertThat(anthropic.path("contract").isNull).isTrue()
-		assertThat(anthropic.at("/checks/0/code").asString()).isEqualTo("contract_model_unsupported")
-		assertThat(anthropic.at("/meteredMonthToDate/availability").asString()).isEqualTo("unavailable")
-		val openai = vendors.getValue("openai")
-		assertThat(openai.path("state").asString()).isEqualTo("needs_review")
-		assertThat(listOf("firstSeenAt", "lastSeenAt", "activeUsers7d", "activeUsers30d").map { openai.path(it).isNull }).containsOnly(true)
-		assertThat(openai.path("observation").asString()).isEqualTo("unobserved")
-
-		assertThat(ok(org.tenant, "/vendors/anthropic").at("/vendor/vendorId").asString()).isEqualTo("anthropic")
-		assertThat(get(org.tenant, "/vendors/google").statusCode()).isEqualTo(404)
-	}
+    @Test
+    @DisplayName("등록된 제품만 표시하며 레거시 공급자 계약과 관측만 있는 제품은 포함하지 않는다")
+    fun registeredProductsOnly() {
+        val org = seed()
+        SourceFixtures.insertEvents(org.tenant, Event("${org.tenant}-codex", Instant.now().minusSeconds(3600), product = "codex", serviceName = "codex-app-server", memberId = UUID.randomUUID()))
+        val vendors = ok(org.tenant, "/vendors").at("/vendors/items").list().associateBy { it.path("vendorId").asString() }
+        assertThat(vendors.keys).containsExactlyElementsOf(org.registered.sorted())
+        val claude = vendors.getValue(org.registered[0])
+        assertThat(claude.path("state").asString()).isEqualTo("configured")
+        assertThat(claude.at("/contract/monthlySeatFeeUsd").asString()).isEqualTo("60")
+        assertThat(claude.path("contractStatus").asString()).isEqualTo("active")
+        val openai = vendors.getValue(org.registered[1])
+        assertThat(openai.path("state").asString()).isEqualTo("needs_review")
+        assertThat(openai.path("contract").isNull).isTrue()
+        assertThat(openai.path("contractStatus").asString()).isEqualTo("missing")
+        assertThat(vendors.values.flatMap { row -> listOf("firstSeenAt", "lastSeenAt", "activeUsers7d", "activeUsers30d").map { row.path(it).isNull } }).containsOnly(true)
+        assertThat(ok(org.tenant, "/vendors/${org.registered[0]}").at("/vendor/vendorId").asString()).isEqualTo(org.registered[0])
+        assertThat(get(org.tenant, "/vendors/anthropic").statusCode()).isEqualTo(404)
+    }
 
 	@Test
 	@DisplayName("벤더 페이지는 같은 snapshot ID 에서 이어지고 다른 목록의 cursor 는 400")
@@ -148,7 +153,7 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		val snapshotId = first.at("/meta/snapshotId").asString()
 		val second = ok(org.tenant, "/vendors?limit=1&snapshotId=$snapshotId&cursor=${first.at("/vendors/nextCursor").asString()}")
 		assertThat((first.at("/vendors/items").list() + second.at("/vendors/items").list()).map { it.path("vendorId").asString() })
-			.containsExactly("anthropic", "openai")
+			.containsExactlyElementsOf(org.registered.sorted())
 
 		val installations = ok(org.tenant, "/installations?limit=1")
 		assertThat(get(org.tenant, "/vendors?limit=1&snapshotId=$snapshotId&cursor=${installations.at("/installations/nextCursor").asString()}").statusCode())
@@ -205,4 +210,43 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 
 		JsonStructure.assertSameKeys("", JsonStructure.example("settings-response.example.json"), ok(org.tenant, "/settings"))
 	}
+    @Test fun expiredContractPreservesDetailsAndHasZeroActiveSummary() {
+        val org = seed()
+        DashboardTestStores.writer.sql("UPDATE enrollment.vendor_contract_versions SET contract=jsonb_set(contract, '{effectiveTo}', '\"2026-01-02\"'::jsonb) WHERE tenant_id=:tenant AND vendor_id=:id")
+            .param("tenant", org.tenant).param("id", org.registered[0]).update()
+        val vendor = ok(org.tenant, "/vendors/${org.registered[0]}").path("vendor")
+        assertThat(vendor.path("contractStatus").asString()).isEqualTo("expired")
+        assertThat(vendor.path("state").asString()).isEqualTo("needs_review")
+        assertThat(vendor.path("contract").path("monthlySeatFeeUsd").asString()).isEqualTo("60")
+        val settings = ok(org.tenant, "/settings")
+        assertThat(settings.at("/summary/monthlySeatFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("0")
+        assertThat(settings.at("/summary/contractedSeats").asLong()).isZero()
+        assertThat(settings.at("/vendors/items").list().single { it.path("vendorId").asString() == org.registered[0] }.path("contractStatus").asString()).isEqualTo("expired")
+    }
+
+    @Test fun activeSummaryExcludesExpiredAndScheduledContracts() {
+        val org = seed()
+        // Claude is active; copy its contract to the other product with a different validity period.
+        for (dates in listOf(
+            "{\"effectiveFrom\":\"2025-01-01\",\"effectiveTo\":\"2025-12-31\"}",
+            "{\"effectiveFrom\":\"2099-01-01\",\"effectiveTo\":null}"
+        )) {
+            DashboardTestStores.writer.sql("UPDATE enrollment.vendor_contract_versions target SET contract=(SELECT contract FROM enrollment.vendor_contract_versions WHERE tenant_id=:tenant AND vendor_id=:source) || CAST(:dates AS jsonb) WHERE target.tenant_id=:tenant AND target.vendor_id=:target")
+                .param("tenant", org.tenant).param("source", org.registered[0]).param("target", org.registered[1]).param("dates", dates).update()
+            val settings = ok(org.tenant, "/settings")
+            assertThat(settings.at("/summary/monthlySeatFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("60")
+            assertThat(settings.at("/summary/contractedSeats").asLong()).isEqualTo(2)
+            assertThat(settings.at("/summary/unconfiguredVendors").asLong()).isEqualTo(1)
+        }
+    }
+
+    @Test fun emptyRegistrationsHaveZeroActiveSummary() {
+        val org = seed()
+        DashboardTestStores.writer.sql("UPDATE enrollment.vendor_contract_versions SET archived=true WHERE tenant_id=:tenant")
+            .param("tenant", org.tenant).update()
+        val settings = ok(org.tenant, "/settings")
+        assertThat(settings.at("/summary/monthlySeatFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("0")
+        assertThat(settings.at("/summary/contractedSeats").asLong()).isZero()
+    }
+
 }
