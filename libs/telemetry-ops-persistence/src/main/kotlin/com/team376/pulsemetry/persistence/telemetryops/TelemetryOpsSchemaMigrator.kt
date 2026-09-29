@@ -7,7 +7,8 @@ import javax.sql.DataSource
  * RDS `telemetry_ops` 스키마를 마이그레이션한다 (ADR 0021).
  *
  * `enrollment` 와 **다른 Flyway 인스턴스**다 — 스키마·이력 테이블·SQL 위치가 모두 따로다. 그래서
- * `enrollment` 의 V1–V4 와 버전 번호도 이력도 섞이지 않는다.
+ * `enrollment` 와 버전 번호도 이력도 섞이지 않는다.
+ * V3의 조직 생성 트리거 때문에 enrollment 마이그레이션 완료 후 호출한다(ADR 0034).
  *
  * ## 조립
  *

@@ -1,6 +1,8 @@
 package com.team376.pulsemetry
 
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
+import com.team376.pulsemetry.persistence.enrollment.entity.Tenant
+import com.team376.pulsemetry.persistence.enrollment.repository.TenantRepository
 import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsSchemaMigrator
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.DisplayName
@@ -9,6 +11,9 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
+import java.util.UUID
 
 /**
  * 이 앱의 기동이 `telemetry_ops` 를 `enrollment` 와 섞지 않고 마이그레이션하는지 본다 (ADR 0021 §3).
@@ -25,6 +30,26 @@ class TelemetryOpsMigrationTest {
 	@Autowired
 	private lateinit var migrator: TelemetryOpsSchemaMigrator
 
+	@Autowired
+	private lateinit var tenants: TenantRepository
+
+	@Autowired
+	private lateinit var transactionManager: PlatformTransactionManager
+
+	@Test
+	fun jpaCreationInitializesSummaryInTheSameTransaction() {
+		val id = UUID.randomUUID()
+		TransactionTemplate(transactionManager).executeWithoutResult { transaction ->
+			tenants.saveAndFlush(Tenant(name = "신규 조직", id = id))
+			assertThat(strings("SELECT tenant_id::text FROM telemetry_ops.tenant_ingest_summary WHERE tenant_id='$id' " +
+				"AND first_received_at IS NULL AND first_observed_at IS NULL AND last_received_at IS NULL AND NOT has_pre_ledger_history"))
+				.containsExactly(id.toString())
+			transaction.setRollbackOnly()
+		}
+		assertThat(tenants.existsById(id)).isFalse()
+		assertThat(strings("SELECT tenant_id::text FROM telemetry_ops.tenant_ingest_summary WHERE tenant_id='$id'")).isEmpty()
+	}
+
 	@Test
 	@DisplayName("기동하면 telemetry_ops 의 네 테이블과 그 스키마 안의 이력 테이블이 생긴다")
 	fun startupCreatesTheOperationsSchema() {
@@ -40,7 +65,7 @@ class TelemetryOpsMigrationTest {
 			"retention_operations",
 		)
 		assertThat(strings("SELECT script FROM telemetry_ops.flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank"))
-			.containsExactly("V1__telemetry_ops_schema.sql", "V2__retention_operations.sql")
+			.containsExactly("V1__telemetry_ops_schema.sql", "V2__retention_operations.sql", "V3__initialize_tenant_ingest_summary.sql")
 	}
 
 	@Test

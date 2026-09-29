@@ -61,15 +61,19 @@ class RetentionWorkerApplicationTest {
 	}
 
 	@Test
-	@DisplayName("DDL 을 실행하지 않고 enrollment 를 읽지 않는다 — Flyway 이력도 JPA 도 없다")
+	@DisplayName("DDL 을 실행하지 않는다 — 준비된 Flyway 이력을 유지하고 Flyway·JPA 빈이 없다")
 	fun appliesNoSchemaAndSkipsJpa() {
 		stores.dataSource.connection.use { c -> c.createStatement().use { it.execute("DROP TABLE IF EXISTS public.flyway_schema_history") } }
+		val before = migrationHistory()
 
 		val context = start(*settings(), "--tenant=$tenant", "--retention-months=12", "--as-of=2026-09-24T10:00:00+09:00")
 		val hasEntityManager = context.containsBean("entityManagerFactory")
+		val hasFlyway = context.containsBean("flyway")
 		assertThat(SpringApplication.exit(context)).isEqualTo(RetentionCommandRunner.EXIT_DELETED)
 
 		assertThat(hasEntityManager).isFalse()
+		assertThat(hasFlyway).isFalse()
+		assertThat(migrationHistory()).isEqualTo(before)
 		val histories = stores.dataSource.connection.use { c ->
 			c.createStatement().use { st ->
 				st.executeQuery("SELECT table_schema FROM information_schema.tables WHERE table_name = 'flyway_schema_history'").use { rs ->
@@ -77,7 +81,16 @@ class RetentionWorkerApplicationTest {
 				}
 			}
 		}
-		assertThat(histories).containsExactly("telemetry_ops")
+		assertThat(histories).containsExactlyInAnyOrder("enrollment", "telemetry_ops")
+	}
+
+	private fun migrationHistory(): List<String> = stores.dataSource.connection.use { connection ->
+		connection.createStatement().use { statement ->
+			statement.executeQuery(
+				"SELECT 'enrollment:' || row_to_json(h)::text FROM enrollment.flyway_schema_history h " +
+					"UNION ALL SELECT 'telemetry_ops:' || row_to_json(h)::text FROM telemetry_ops.flyway_schema_history h ORDER BY 1",
+			).use { rows -> buildList { while (rows.next()) add(rows.getString(1)) } }
+		}
 	}
 
 	@Test

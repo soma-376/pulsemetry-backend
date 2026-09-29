@@ -32,9 +32,10 @@ class TelemetryOpsSchemaMigratorTest {
 
 	@Test
 	@Order(1)
-	@DisplayName("빈 DB 에 V1·V2 를 적용하고, 이력은 telemetry_ops 안의 자기 테이블에 남는다")
+	@DisplayName("조직 스키마 준비 후 V1·V2·V3를 적용하고 이력은 telemetry_ops에 남는다")
 	fun firstMigrationCreatesTheSchemaAndItsOwnHistory() {
-		assertThat(TelemetryOpsSchemaMigrator(dataSource).migrate()).isEqualTo(2)
+		prepareEnrollmentSchema(dataSource)
+		assertThat(TelemetryOpsSchemaMigrator(dataSource).migrate()).isEqualTo(3)
 
 		assertThat(strings("SELECT table_name FROM information_schema.tables WHERE table_schema = 'telemetry_ops' ORDER BY 1"))
 			.containsExactly(
@@ -45,10 +46,10 @@ class TelemetryOpsSchemaMigratorTest {
 				"tenant_summary_backfill",
 			)
 		assertThat(strings("SELECT version FROM telemetry_ops.flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank"))
-			.containsExactly("1", "2")
-		// 다른 스키마에 이력을 만들지 않는다 — enrollment 이력과 섞이지 않는 전제다.
+			.containsExactly("1", "2", "3")
+		// 선행 enrollment 스키마와 각자 이력을 유지한다.
 		assertThat(strings("SELECT table_schema FROM information_schema.tables WHERE table_name = 'flyway_schema_history'"))
-			.containsExactly("telemetry_ops")
+			.containsExactlyInAnyOrder("enrollment", "telemetry_ops")
 	}
 
 	@Test

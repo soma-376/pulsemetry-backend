@@ -32,6 +32,7 @@ class TenantSummaryBackfillTest {
 
 	@BeforeEach
 	fun setUp() {
+		prepareEnrollmentSchema(dataSource)
 		TelemetryOpsSchemaMigrator(dataSource).migrate()
 	}
 

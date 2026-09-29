@@ -290,9 +290,29 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
+	@DisplayName("신규 조직은 백필 완료 기록 없이도 자동 생성된 빈 요약으로 200을 반환한다")
+	fun newTenantWithoutBackfillReturnsEmptyOverview() {
+		SourceFixtures.removeBackfill()
+		try {
+			val tenant = DashboardTestStores.insertTenant()
+			val body = overview(tenant, "startDate=2026-09-23&endDate=2026-09-29&compare=prev_week&timeZone=Asia%2FSeoul")
+			assertThat(body.at("/meta/dataState").asString()).isEqualTo("never_observed")
+			assertThat(body.at("/ingest/status").asString()).isEqualTo("empty")
+			assertThat(body.at("/ingest/lastReceivedAt").isNull).isTrue()
+			assertThat(body.at("/usage/current").isNull).isTrue()
+			assertThat(body.at("/modelMix/models").size()).isZero()
+			assertThat(body.at("/teamUsage/totalTeamCount").asInt()).isZero()
+		} finally {
+			SourceFixtures.completeBackfill()
+		}
+	}
+
+	@Test
 	@DisplayName("D-9 — 요약도 백필 완료 기록도 없으면 수집한 적 없음으로 판정하지 않고 503")
 	fun unknownHistoryIs503() {
 		val tenant = DashboardTestStores.insertTenant()
+		// 트리거 도입 전 조직의 누락된 요약을 재현한다.
+		DashboardTestStores.writer.sql("DELETE FROM telemetry_ops.tenant_ingest_summary WHERE tenant_id=:tenant").param("tenant", tenant).update()
 		SourceFixtures.removeBackfill()
 		try {
 			val response = http.send(

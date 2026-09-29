@@ -145,7 +145,10 @@ object SourceFixtures {
 	) {
 		DashboardTestStores.writer.sql(
 			"INSERT INTO telemetry_ops.tenant_ingest_summary (tenant_id, first_received_at, first_observed_at, last_received_at, has_pre_ledger_history) " +
-				"VALUES (:tenant, :first_received, :first_observed, :last_received, :pre)",
+				"VALUES (:tenant, :first_received, :first_observed, :last_received, :pre) " +
+				"ON CONFLICT (tenant_id) DO UPDATE SET first_received_at=EXCLUDED.first_received_at, " +
+				"first_observed_at=EXCLUDED.first_observed_at, last_received_at=EXCLUDED.last_received_at, " +
+				"has_pre_ledger_history=EXCLUDED.has_pre_ledger_history",
 		).param("tenant", tenantId)
 			.param("first_received", firstReceivedAt?.let(java.sql.Timestamp::from))
 			.param("first_observed", firstObservedAt?.let(java.sql.Timestamp::from))

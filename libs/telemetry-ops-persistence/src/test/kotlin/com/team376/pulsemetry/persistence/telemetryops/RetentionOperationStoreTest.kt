@@ -36,6 +36,7 @@ class RetentionOperationStoreTest {
 
 	@BeforeEach
 	fun setUp() {
+		prepareEnrollmentSchema(dataSource)
 		TelemetryOpsSchemaMigrator(dataSource).migrate()
 	}
 

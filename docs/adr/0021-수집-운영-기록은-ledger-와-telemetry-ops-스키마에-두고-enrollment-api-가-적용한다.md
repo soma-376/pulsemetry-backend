@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-telemetry-lifetime-summary.md)(분석 snapshot 과 수집 생애주기 요약의 저장소 분리) 채택 시 Accepted. 채택 전에는 이 ADR 이 만드는 테이블에 쓰는 코드를 운영 경로에 연결하지 않는다.
+Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-telemetry-lifetime-summary.md)(분석 snapshot 과 수집 생애주기 요약의 저장소 분리) 채택 시 Accepted. 채택 전에는 이 ADR 이 만드는 테이블에 쓰는 수신 기록 코드를 운영 경로에 연결하지 않는다.
+
+조직 생성 시 빈 요약을 같은 트랜잭션에서 초기화하는 규칙은 [ADR 0034](0034-조직-생성과-빈-수집-요약을-원자적으로-초기화한다.md)가 보완한다. 실제 수신 기록의 활성화 조건은 유지한다.
 
 ## Context
 
