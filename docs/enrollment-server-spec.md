@@ -1,6 +1,8 @@
 # Enrollment 서버 명세
 
-데스크탑 CLI(`telemetryctl`) 전용 인증 서버의 동작 명세다.
+데스크탑 CLI 설치·사용자 인증·조직 관리·온보딩을 담당하는 `:apps:enrollment-api`의 동작 명세다.
+기본 포트는 8080이다. 대시보드 조회와 공통 벤더 카탈로그는 [Dashboard 서버 명세](dashboard-server-spec.md)를 따른다.
+기존 설치 계약은 §2~§10, 사람 로그인은 §11, 관리 명령은 §12, 온보딩은 §13에 정의한다.
 `telemetryctl` 의 `contracts` 와 `internal/contract` 주석이 이 문서를 이름으로 참조한다
 (특히 §4.3 봉투 분리, §5 manifest).
 
@@ -29,7 +31,7 @@
 
 위 흐름의 마지막 단계(설정 병합·백업·daemon 자동 실행 등록)는 클라이언트의 몫이며 서버는 관여하지 않는다.
 
-**범위 밖**: 웹 대시보드 API, 사용자 로그인, 설정 재조회(`GET /v1/manifest`), heartbeat,
+**범위 밖**: 웹 대시보드 조회 API, 설정 재조회(`GET /v1/manifest`), heartbeat,
 `uninstall`/`repair`, 초대 이메일 발송, 데이터 파이프라인.
 
 ---
@@ -350,14 +352,16 @@ DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_P
 
 ## 9. 운영
 
-### 9.1 manifest 준비 — 현재는 수동 INSERT 다
+### 9.1 초기 manifest 준비
 
-manifest 를 만드는 관리자 API 는 이 서버의 범위 밖이다(대시보드 서버의 몫).
-따라서 **운영 manifest 는 대시보드 서버가 생길 때까지 수동 INSERT 로 넣는다.**
+조직의 첫 manifest는 `PUT /api/v1/organizations/{organizationId}/collection-policy`에
+`expectedVersion=0`으로 정책을 저장할 때 생성한다(§13, ADR 0033). 수집 주소는 서버의
+`PULSEMETRY_ONBOARDING_OTLP_ENDPOINT`에서 받는다. 운영 기본값은 없고 local은 `http://localhost:4316`이다.
+이후 정책 변경은 기존 manifest를 복사해 새 판으로 저장한다. 필요한 경우 운영자가 직접 준비할 수도 있다.
 
 `enrollment.manifests` 에 해당 tenant 의 `is_active = true` 행이 없으면
 그 tenant 의 모든 enroll 이 409 `manifest_not_configured` 로 실패한다.
-새 tenant 를 온보딩할 때 **초대 코드를 발급하기 전에** manifest 를 먼저 넣어야 한다.
+로그인·초대 발급은 manifest 없이 가능하지만 **설치를 등록하기 전에** 수집 정책을 저장해야 한다.
 
 ```sql
 INSERT INTO enrollment.manifests
@@ -372,7 +376,12 @@ VALUES (
 설정을 바꿀 때는 기존 행을 고치지 말고 **기존 행을 비활성화한 뒤 새 `version` 행을 활성으로** 넣는다.
 
 Flyway 마이그레이션에는 시드 데이터를 넣지 않는다.
-로컬 개발용 tenant·admin member·manifest v1 은 `local` 프로파일 시더(`LocalSeeder`)가 넣는다 — §10 참고.
+A/B/C 시드는 개발 Compose의 일회성 `dev-seed`가 준비한다(ADR 0031).
+서버는 local 프로필에서도 시드를 실행하지 않는다. 기존 enrollment·telemetry_ops Flyway와
+ClickHouse 마이그레이터를 재사용하며 스키마 소유권은 바꾸지 않는다.
+`docker compose up -d --build` 후 `docker compose logs -f dev-seed`와 종료 코드 0을 확인한다.
+Compose 날짜 생략은 서울 기준 실행일이며, 완료된 시드는 재실행·날짜 변경에도 보존한다.
+수동 적재·검증도 Docker로 실행한다. 상세는 [시드 가이드](../tools/dev-seed/README.md)를 따른다.
 
 ### 9.2 바이너리 배치
 
@@ -420,9 +429,7 @@ export PULSEMETRY_ADMIN_API_TOKEN=...
   수동 부트스트랩된 스키마가 이미 있으면 `baseline-on-migrate` 가 DROP 없이 baseline
   (V1 스킵) 후 V2 부터 적용한다. V1 이 그 DDL 과 같은 물리 형태(native enum)라서
   성립하는 동작이다 (ADR 0009).
-- **공유 DB 를 향해 `SPRING_PROFILES_ACTIVE=local` 을 켜지 마라.** LocalSeeder 가
-  로컬 개발용 가짜 tenant 와 `http://localhost:4316`(기본값, `pulsemetry.local-seed.otlp-endpoint`)
-  manifest 를 시드한다 — 로컬 전용이다.
+- 개발 시드는 Docker의 고정 개발 DB에만 적재한다. 서버 프로필은 시드를 실행하지 않는다(ADR 0031).
 - 수용 기준(B3): enroll 로 발급받은 `ptt_` 토큰으로
   `curl -X POST http://<alb-dns>/v1/traces -H "Authorization: Bearer <ptt>"
   -H "Content-Type: application/json" -d '{"resourceSpans":[]}'` → **2xx**,
@@ -433,23 +440,25 @@ export PULSEMETRY_ADMIN_API_TOKEN=...
 ## 10. 로컬 실행
 
 ```sh
-docker compose up -d                       # PostgreSQL 16 · ClickHouse
-export PULSEMETRY_ADMIN_API_TOKEN=...      # 없으면 기동 실패한다
-# 두 앱이 공유하는 HMAC 키. 값이 갈리면 발급된 모든 토큰이 401 이 된다.
-export PULSEMETRY_TOKEN_HASH_SECRET=local-development-secret-change-me
-export SPRING_PROFILES_ACTIVE=local        # local 프로파일 시더를 켠다
-./gradlew :apps:enrollment-api:bootRun     # 8080 — enrollment · manifest
+docker compose up -d --build              # PostgreSQL · ClickHouse · 일회성 시드
+docker compose logs -f dev-seed
+docker compose ps -a dev-seed             # Exited (0) 확인
+# ingest와 공유하는 HMAC 키. enrollment의 local 기본값과 맞춘다.
+export PULSEMETRY_TOKEN_HASH_SECRET=local-development-token-hash-secret
+./gradlew :apps:enrollment-api:bootRun --args='--spring.profiles.active=local'
 ```
 
-`local` 프로파일은 `LocalSeeder` 를 켠다 — tenant 하나, 활성 owner member 하나, 팀 하나와 그
-소속(as-of), `is_active = true` 인 manifest v1, 그리고 고정 초대 코드 하나를 넣는다. 이게 없으면
-§9.1 대로 manifest 를 직접 넣기 전까지 첫 enroll 이 409 `manifest_not_configured` 로 실패한다.
-시더는 **멱등**하고 **항목마다 따로 확인한다** — 이미 tenant 가 있는 DB 에도 빠진 항목은 채운다.
-`POST /v1/invitations` 에 넣을 `tenant_id` 와 `created_by_member_id`, 그리고 초대 코드는
-기동 로그에 찍힌다.
+시드 컨테이너가 A/C의 시나리오 데이터와 B의 조직·오너 한 명을 준비한다. B에는 manifest와 수집 이력도 없다.
+A는 정책 확인과 벤더 선택을 갖춘 온보딩 완료 상태이고 B/C는 미완료다.
+별도의 기본 로컬 개발 조직·계정·고정 초대는 생성하지 않는다(ADR 0032).
+신규 조직 INSERT에는 빈 `telemetry_ops.tenant_ingest_summary` 생성이 같은 트랜잭션으로 포함된다(ADR 0034).
+시드·JPA·직접 SQL 모두 적용하며 수신·관측 시각은 NULL이다. `enrollment` 마이그레이션 이후
+`telemetry_ops` V3가 트리거를 설치한다. 기존 조직의 누락된 요약은 자동 백필하지 않는다.
+A/B/C 완료 기록이 있으면 기존 변경을 유지하고 건너뛰며 미완료 기록은 자동 삭제 없이 실패로 알린다.
+서버에는 자동 시드와 `PULSEMETRY_LOCAL_SEED_ENABLED` 설정이 없다.
+시나리오·기준일 선택과 Docker 초기화/검증은 [개발 시드 가이드](../tools/dev-seed/README.md)를 따른다.
 
-**팀 소속은 시드된 owner 에게 걸려 있다.** 다른 이메일로 초대하면 새 member 가 만들어져 소속이
-없고, 그러면 `telemetry_events.team_id_as_of` 가 null·`team_ids_as_of` 가 빈 배열이 된다(`member_id` 는
+**팀이 배정되지 않은 초대 대상은 설치 후에도 소속이 없다.** 그러면 `telemetry_events.team_id_as_of` 가 null·`team_ids_as_of` 가 빈 배열이 된다(`member_id` 는
 채워진다) — 보강 배선이 틀린 것이 아니다.
 
 ### 10.1 파이프라인까지 로컬에서 돌리기
@@ -459,7 +468,7 @@ export SPRING_PROFILES_ACTIVE=local        # local 프로파일 시더를 켠다
 ```
 
 `:apps:telemetry-ingest` 는 같은 DB 를 읽지만 **Flyway 를 돌리지 않는다.** enrollment 스키마의
-적용 주체는 `:apps:enrollment-api` 하나이므로 그쪽을 먼저 띄운다. ClickHouse 스키마는 이 앱이
+운영 적용 주체는 `:apps:enrollment-api`이며, 로컬에서는 Compose 시드가 같은 마이그레이션을 먼저 실행한다. ClickHouse 스키마는 이 앱이
 기동 시 적용하고, ClickHouse 가 죽어 있어도 앱은 뜬다(ADR 0016).
 
 포트 4316 은 **시드 manifest 의 `otlp.endpoint` 와 이미 맞는다** — 데몬 설정을 바꿀 필요가 없다
@@ -470,8 +479,8 @@ export SPRING_PROFILES_ACTIVE=local        # local 프로파일 시더를 켠다
 행이 생기지 않는다 — `docker compose down -v` 로 볼륨을 새로 만든다.
 
 ```sh
-# 시드된 초대 코드로 등록하면 installation 과 telemetry token 이 만들어진다.
-pulsemetry enroll --invite E2E0-0000-0001 --server http://localhost:8080
+# A 시드의 대기 초대 또는 관리자 API로 새로 발급한 코드로 등록한다.
+pulsemetry enroll --invite <초대코드> --server http://localhost:8080
 
 # 적재 확인 — 분석 테이블(ADR 0020). 구 enriched_events 는 새 행을 받지 않는다.
 curl -s http://localhost:8123 --data-urlencode \
@@ -499,6 +508,7 @@ H2 등 임베디드 DB 로 대체하지 않는다 — jsonb·부분 유니크 �
 
 V1 마이그레이션이 native enum 채택(ADR 0009)으로 재작성되어 Flyway 체크섬이 바뀌었다.
 이전 버전으로 만들어진 로컬 DB 는 `docker compose down -v` 로 볼륨째 지우고 다시 띄운다.
+
 
 ## 11. 사용자 인증
 
@@ -541,6 +551,7 @@ type CurrentUser = {
 계약·벤더·manifest·온보딩 완료 여부는 로그인 조건이 아니다(ADR 0033).
 활성 manifest가 없는 세션도 생성하며 `manifest_revision=0`을 쓴다. 일반 RT 갱신은 기존 revision을 유지한다.
 이 값으로 온보딩 상태를 판단하지 않고 §13의 온보딩 조회를 사용한다.
+
 
 ## 12. 조직 관리 API
 

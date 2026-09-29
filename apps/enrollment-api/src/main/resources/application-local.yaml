@@ -1,0 +1,24 @@
+# Docker Compose가 DB·시드·인증 키를 준비한다. 서버는 시드를 실행하지 않는다(ADR 0031).
+spring:
+  config:
+    import: "file:${PULSEMETRY_DEV_AUTH_DIR:../../build/dev-auth}/local-auth.properties"
+
+server:
+  address: 127.0.0.1
+
+pulsemetry:
+  user-auth:
+    enabled: true
+    issuer: ${PULSEMETRY_USER_AUTH_ISSUER:http://localhost:8080}
+    audience: ${PULSEMETRY_USER_AUTH_AUDIENCE:pulsemetry-web}
+    active-kid: local
+    private-key-file: ${PULSEMETRY_DEV_AUTH_DIR:../../build/dev-auth}/private.pem
+    public-key-files:
+      local: ${PULSEMETRY_DEV_AUTH_DIR:../../build/dev-auth}/public.pem
+    allowed-origins: http://localhost:3000,http://localhost:3107
+  management:
+    enabled: true
+    onboarding-otlp-endpoint: ${PULSEMETRY_ONBOARDING_OTLP_ENDPOINT:http://localhost:4316}
+  admin:
+    api-token: ${PULSEMETRY_ADMIN_API_TOKEN:local-development-admin-token}
+  token-hash-secret: ${PULSEMETRY_TOKEN_HASH_SECRET:local-development-token-hash-secret}

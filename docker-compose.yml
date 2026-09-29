@@ -1,5 +1,5 @@
-# 로컬 개발용 저장소 둘. enrollment 스키마는 :apps:enrollment-api 기동 시 Flyway 가,
-# enriched_events 는 :apps:telemetry-ingest 기동 시 ClickHouseSchemaMigrator 가 적용한다(ADR 0015).
+# 로컬 개발용 DB와 일회성 Kotlin 시드. Spring 서버는 호스트에서 Gradle로 실행한다.
+# dev-seed가 기존 마이그레이션과 A/B/C 시드를 준비한다(ADR 0032).
 # 테스트는 이 컨테이너들을 쓰지 않는다 — Testcontainers 가 매번 격리된 인스턴스를 띄운다.
 services:
   postgres:
@@ -49,6 +49,26 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  dev-seed:
+    build:
+      context: .
+      target: dev-seed
+    restart: "no"
+    # 개발용 바인드 디렉터리에 인증 키를 쓴다. 이 일회성 서비스에만 적용한다.
+    user: "0:0"
+    volumes:
+      - ./build/dev-auth:/app/dev-auth
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      PULSEMETRY_DEV_SEED_MODE: compose
+      # 빈 날짜는 서울 기준 오늘. 완료된 시드는 날짜가 달라져도 보존한다.
+      PULSEMETRY_LOCAL_SEED_DATE: ${PULSEMETRY_LOCAL_SEED_DATE:-}
+      PULSEMETRY_LOCAL_SEED_SCENARIOS: ${PULSEMETRY_LOCAL_SEED_SCENARIOS:-A,B,C}
 
 volumes:
   pulsemetry-postgres-data:

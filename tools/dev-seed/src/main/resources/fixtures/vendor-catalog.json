@@ -1,0 +1,128 @@
+[
+  {
+    "id": "claude_team",
+    "provider": "anthropic",
+    "displayName": "Claude (Anthropic)",
+    "product": "Claude Code · claude.ai",
+    "allowsSeatTiers": true,
+    "plans": [
+      {
+        "id": "team",
+        "displayName": "Team",
+        "billing": "seat",
+        "separateUsageBilling": true
+      },
+      {
+        "id": "enterprise",
+        "displayName": "Enterprise",
+        "billing": "seat",
+        "separateUsageBilling": true
+      }
+    ]
+  },
+  {
+    "id": "openai_biz",
+    "provider": "openai",
+    "displayName": "ChatGPT / Codex (OpenAI)",
+    "product": "ChatGPT · Codex",
+    "allowsSeatTiers": true,
+    "plans": [
+      {
+        "id": "business",
+        "displayName": "Business",
+        "billing": "seat",
+        "separateUsageBilling": true
+      },
+      {
+        "id": "enterprise",
+        "displayName": "Enterprise",
+        "billing": "seat",
+        "separateUsageBilling": true
+      }
+    ]
+  },
+  {
+    "id": "cursor",
+    "provider": "cursor",
+    "displayName": "Cursor",
+    "product": "Cursor",
+    "allowsSeatTiers": true,
+    "plans": [
+      {
+        "id": "cursor_teams",
+        "displayName": "Teams",
+        "billing": "seat",
+        "separateUsageBilling": true
+      },
+      {
+        "id": "cursor_enterprise",
+        "displayName": "Enterprise",
+        "billing": "seat",
+        "separateUsageBilling": true
+      }
+    ]
+  },
+  {
+    "id": "copilot",
+    "provider": "github",
+    "displayName": "GitHub Copilot",
+    "product": "GitHub Copilot",
+    "allowsSeatTiers": false,
+    "plans": [
+      {
+        "id": "copilot_business",
+        "displayName": "Business",
+        "billing": "seat",
+        "separateUsageBilling": true
+      },
+      {
+        "id": "copilot_enterprise",
+        "displayName": "Enterprise",
+        "billing": "seat",
+        "separateUsageBilling": true
+      }
+    ]
+  },
+  {
+    "id": "gemini",
+    "provider": "google",
+    "displayName": "Google Gemini Code Assist",
+    "product": "Gemini Code Assist",
+    "allowsSeatTiers": false,
+    "plans": [
+      {
+        "id": "gemini_standard",
+        "displayName": "Standard",
+        "billing": "seat",
+        "separateUsageBilling": false
+      },
+      {
+        "id": "gemini_enterprise",
+        "displayName": "Enterprise",
+        "billing": "seat",
+        "separateUsageBilling": false
+      }
+    ]
+  },
+  {
+    "id": "other",
+    "provider": "other",
+    "displayName": "기타 조직 계약 · 직접 입력",
+    "product": "기타 조직 계약",
+    "allowsSeatTiers": true,
+    "plans": [
+      {
+        "id": "seat_flat",
+        "displayName": "좌석 정액",
+        "billing": "seat",
+        "separateUsageBilling": false
+      },
+      {
+        "id": "seat_usage",
+        "displayName": "좌석 + 사용량",
+        "billing": "seat",
+        "separateUsageBilling": true
+      }
+    ]
+  }
+]
