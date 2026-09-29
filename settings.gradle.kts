@@ -1,5 +1,8 @@
 rootProject.name = "pulsemetry"
 
+// Docker 전용 개발 시드 도구 (ADR 0031).
+include(":tools:dev-seed")
+
 // 배포 단위가 되는 서버 (ADR 0002)
 include(":apps:enrollment-api")
 

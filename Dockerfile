@@ -30,6 +30,28 @@ COPY libs/telemetry-adapter/build.gradle.kts libs/telemetry-adapter/
 COPY libs/telemetry-enricher/build.gradle.kts libs/telemetry-enricher/
 COPY libs/telemetry-persistence/build.gradle.kts libs/telemetry-persistence/
 COPY libs/telemetry-ops-persistence/build.gradle.kts libs/telemetry-ops-persistence/
+COPY tools/dev-seed/build.gradle.kts tools/dev-seed/
+
+
+FROM build-base AS dev-seed-build
+
+COPY libs libs
+COPY apps apps
+COPY tools tools
+
+RUN --mount=type=cache,target=/root/.gradle,sharing=locked \
+    ./gradlew --no-daemon :tools:dev-seed:installDist -x test
+
+
+# 서버가 아닌 개발 DB 초기화 프로그램이다. 운영 이미지와 별도 target으로만 빌드한다.
+FROM eclipse-temurin:25-jre AS dev-seed
+
+WORKDIR /app
+RUN groupadd --system --gid 10001 pulsemetry \
+    && useradd --system --uid 10001 --gid pulsemetry --home-dir /app --shell /usr/sbin/nologin pulsemetry
+COPY --from=dev-seed-build --chown=pulsemetry:pulsemetry /workspace/tools/dev-seed/build/install/dev-seed/lib/ ./lib/
+USER pulsemetry
+ENTRYPOINT ["java", "-cp", "/app/lib/*", "com.team376.pulsemetry.devseed.DevSeedKt"]
 
 
 FROM build-base AS enrollment-api-build

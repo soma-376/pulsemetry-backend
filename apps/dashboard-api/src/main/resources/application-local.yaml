@@ -1,0 +1,49 @@
+# 계정과 인증 키는 Docker Compose가 준비한다. 이 프로필은 호스트 Gradle 실행용이다.
+server:
+  address: 127.0.0.1
+
+pulsemetry:
+  user-auth:
+    enabled: true
+    issuer: ${PULSEMETRY_USER_AUTH_ISSUER:http://localhost:8080}
+    audience: ${PULSEMETRY_USER_AUTH_AUDIENCE:pulsemetry-web}
+    public-key-files:
+      local: ${PULSEMETRY_DEV_AUTH_DIR:../../build/dev-auth}/public.pem
+    allowed-origins: http://localhost:3000,http://localhost:3107
+  management:
+    enabled: true
+  dashboard:
+    retry-after: 2s
+    rds:
+      source:
+        url: jdbc:postgresql://127.0.0.1:5432/pulsemetry
+        username: pulsemetry_dashboard_source
+        password: local-dashboard-source
+      cache:
+        url: jdbc:postgresql://127.0.0.1:5432/pulsemetry
+        username: pulsemetry_dashboard_cache
+        password: local-dashboard-cache
+    clickhouse:
+      source:
+        url: http://127.0.0.1:8123
+        database: default
+        username: pulsemetry_dashboard_source
+        password: local-dashboard-source
+        query-timeout: 10s
+        max-result-rows: 100000
+        max-result-bytes: 67108864
+      cache:
+        url: http://127.0.0.1:8123
+        database: dashboard_cache
+        username: pulsemetry_dashboard_cache
+        password: local-dashboard-cache
+        query-timeout: 10s
+    snapshot:
+      build-timeout: 30s
+      purge-grace: 1m
+      max-concurrent-builds: 4
+      max-copy-rows: 100000
+      max-copy-bytes: 67108864
+      cleanup-interval: 1m
+    members:
+      idle-days: 14

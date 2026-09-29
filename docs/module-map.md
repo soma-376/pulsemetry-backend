@@ -4,6 +4,13 @@
 `settings.gradle.kts`에 모듈을 추가하거나 패키지를 새로 만들기 전에 이 문서를 본다.
 
 결정의 **배경과 대안**은 ADR에 있다. 이 문서는 "무엇이 어떻게 나뉘어 있는가"만 다룬다.
+HTTP 계약은 [Enrollment 서버 명세](enrollment-server-spec.md)와 [Dashboard 서버 명세](dashboard-server-spec.md)에 나눈다.
+온보딩·정책·초대 명령은 enrollment-api/management, 카탈로그 조회는 dashboard-api/api,
+공통 카탈로그와 온보딩 영속성은 enrollment-persistence/management가 소유한다(ADR 0029).
+카탈로그 기준 데이터는 `enrollment.vendor_catalog_vendors`·`vendor_catalog_products`·`vendor_catalog_plans`에 있다(ADR 0035).
+V10이 초기 목록을 넣고 V11이 OpenAI 복수 좌석 입력을 허용한다. 조회 API와 계약 검증은 같은 DB를 읽는다.
+조직별 등록은 `managed_vendors`, 계약·표시 이름·보관 이력은 `vendor_contract_versions`로 유지한다.
+V9의 활성 제품 유일 제약과 계약 정정 규칙은 Enrollment 명세 §12·§14를 따른다.
 규칙의 근거가 필요하면 [ADR 0008](adr/0008-모듈-경계와-네임스페이스-규칙-확정.md)을 읽는다.
 
 관련 결정 기록: [ADR 0002](adr/0002-멀티모듈-프로젝트-구축.md) ·
@@ -29,10 +36,17 @@
 
 ## 1. 현재 모듈
 
+개발 전용 `:tools:dev-seed` (`com.team376.pulsemetry.devseed`) 하나가 시드 생성·적재·검증과 Compose 진입점을 소유한다.
+서버는 시드 모듈을 의존하거나 실행하지 않는다. 초기화와 수동 관리는 모두 Docker에서 실행한다([ADR 0031](adr/0031-개발-시드는-Docker에서만-실행한다.md)).
+기존 enrollment·telemetry_ops·telemetry-persistence의 마이그레이션을 호출하며 스키마 소유권은 바꾸지 않는다.
+Compose가 인증 키도 준비하며, 각 앱의 local 프로필이 읽는다. 로컬 실행용 스크립트는 두지 않는다.
+
 ```text
 pulsemetry-backend
 ├── apps/
 │   ├── enrollment-api/              com.team376.pulsemetry.enrollment
+│   │                                ├ auth/           사용자 인증 HTTP·필터·키 설정
+│   │                                └ management/     온보딩·정책·팀·초대·제품·계약 관리 HTTP
 │   ├── telemetry-ingest/            com.team376.pulsemetry.telemetry
 │   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
 │   ├── dashboard-api/               com.team376.pulsemetry.dashboard
@@ -52,11 +66,14 @@ pulsemetry-backend
 │   └── retention-worker/            com.team376.pulsemetry.retention
 │                                    조직별 보존 삭제 — 일회성 실행, 분석 원본 DELETE 는 여기뿐 (ADR 0024)
 │                                    └ config/
+├── tools/
+│   └── dev-seed/                    com.team376.pulsemetry.devseed
+│                                    Docker 전용 개발 데이터·인증 키 초기화와 시드 관리
 └── libs/
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
-    │                                └ enrollment 스키마 14 테이블 · Flyway 마이그레이션
+    │                                └ enrollment 엔티티·사용자 인증 저장소·관리 명령·DB 카탈로그 · Flyway 마이그레이션
     ├── security/                    com.team376.pulsemetry.security
-    │                                └ OTLP 경로의 ptt_ 검증 · telemetry token 해시
+    │                                └ 사용자 JWT·세션·암호 검증과 OTLP 경로의 ptt_ 검증 · telemetry token 해시
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
     │                                OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
     │                                ├ masking/    blocked_values 14종 값 마스킹
@@ -78,7 +95,7 @@ pulsemetry-backend
                                      RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필 · 삭제 경계 · 보존 작업 기록
 ```
 
-`settings.gradle.kts`의 `include`는 이 열뿐이다. **5절이 예고한 모듈이 전부 섰다.**
+`settings.gradle.kts`의 `include`는 위 모듈들이다. **5절이 예고한 모듈이 전부 섰다.**
 `:libs:telemetry-ops-persistence`는 5절 밖에서 더해졌다 — 수집 운영 기록의 RDS 쪽이 ClickHouse와 아웃바운드
 기술이 달라 나뉜다([ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md)).
 
@@ -90,9 +107,10 @@ pulsemetry-backend
 `:apps:dashboard-api`는 분석 조회 API다([ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md), Proposed).
 원천 스키마를 소유한 라이브러리(`enrollment`·`telemetry-ops`·`telemetry`의 `-persistence`)를 **읽기 소비자**로만 쓰므로 2절의
 쓰기 소유 표는 바뀌지 않고, `:libs:enrollment-persistence`의 분할 트리거(6절)도 당겨지지 않는다. 화면별 조회는 모듈이 아니라 이 앱 안의
-패키지다. 인증은 앱 안의 포트(`DashboardAuthenticator`)이고 기본 런타임 구현은 전부 거부한다 — 사용자 인증이 `:libs:security`에 서면
-그 검증을 잇는 어댑터가 포트를 구현한다. 필터 체인은 `telemetry-ingest`처럼 둘이고 기본 닫힘이다(`/api/v1/organizations` 아래만
-인증, 나머지는 `/v1/healthz`만 열고 404).
+패키지다. 인증 포트(`DashboardAuthenticator`)에는 `:libs:security`의 사용자 검증을 잇는 어댑터가 구현돼 있다(ADR 0026).
+`pulsemetry.user-auth.enabled=false`이면 보호 요청을 거부하며, 활성화하면 공개키와 현재 계정·세션으로 AT를 검증한다.
+필터 체인은 `/api/v1/organizations/**`와 `/api/v1/vendor-catalog/**`를 보호하고 `/v1/healthz`만 공개한다.
+계약 밖 경로는 404로 거부한다.
 `dashboard_cache`의 쓰는 주체는 이 앱 하나라 쓰기 소유가 앱에 있고, DDL도 이 앱이 기동 때 캐시 계정으로 적용한다 — ClickHouse는
 `clickhouse/dashboard-cache/`의 멱등 파일 전량(ADR 0015 규약), RDS는 `db/dashboard-cache/`의 별도 Flyway 인스턴스(이력
 `dashboard_cache.flyway_schema_history`)다([ADR 0023](adr/0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md)).
@@ -155,10 +173,13 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 
 | 도메인 | 테이블 | 쓰기 소유 |
 |---|---|---|
-| directory | `tenants` · `members` · `teams` · `team_memberships` | 관리자 API (미구현) |
+| directory | `tenants` · `members` · `teams` · `team_memberships` | `enrollment-api`가 진입, `:libs:enrollment-persistence`에 사용자·팀 관리 저장 구현 |
 | enrollment | `invitations` · `installations` · `installation_credentials` · `telemetry_tokens` · `installation_manifest_assignments` | `enrollment-api` |
-| policy | `manifests` | 관리자 API (미구현) |
-| contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 관리자 API (미구현) |
+| policy / onboarding | `manifests` · `organization_onboarding` · tenants의 완료 시각 | `:libs:enrollment-persistence` — enrollment-api의 최초 정책·정책 수정·완료 명령 |
+| legacy contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 기존 기간 약정. 좌석 계약 관리 API에서 수정·환산하지 않음 |
+| registered product / seat contract | `managed_vendors` · `vendor_contract_versions` · `management_commands` | `:libs:enrollment-persistence` — 등록·정정·이름 변경·보관·멱등 명령 저장 |
+| user authentication | `user_sessions` · `user_refresh_tokens` · `user_authorization_codes` · `auth_attempts` | `:libs:enrollment-persistence`의 인증 저장소. 정책·검증은 `:libs:security`, HTTP 조립은 enrollment-api |
+| vendor catalog | `vendor_catalog_vendors` · `vendor_catalog_products` · `vendor_catalog_plans` | `:libs:enrollment-persistence`의 Flyway가 초기화. 관리자 편집 API는 없음 |
 | telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` · `telemetry_ingest_ledger` · `telemetry_retention_fence` | `:libs:telemetry-persistence` |
 | telemetry ops | RDS `telemetry_ops.tenant_ingest_summary` · `tenant_summary_backfill` · `tenant_retention_boundary` · `retention_operations` | `:libs:telemetry-ops-persistence` |
 | dashboard cache | RDS `dashboard_cache.snapshots` · `snapshot_teams` · `snapshot_members`, ClickHouse `dashboard_cache.snapshot_usage` · `snapshot_observed_days` · `snapshot_member_activity`(+ 입구 `snapshot_intake`·뷰 둘) | `:apps:dashboard-api` |
@@ -178,6 +199,10 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 **`telemetry_ops`는 `enrollment`와 다른 Flyway 인스턴스다** — 스키마·이력(`telemetry_ops.flyway_schema_history`)·
 SQL 위치(`db/telemetry-ops`)가 따로이고, 실행은 `:apps:enrollment-api` 기동이 한다. `:apps:telemetry-ingest`는
 Flyway를 끈 채로 두며 이 DDL도 실행하지 않는다([ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md)).
+
+`telemetry_ops` V3의 조직 생성 트리거도 `:libs:telemetry-ops-persistence`가 소유한다.
+`enrollment.tenants`에 연결하므로 enrollment 마이그레이션을 먼저 실행한다. 신규 조직의 빈 요약을
+같은 트랜잭션에서 초기화하며 기존 이력은 덮어쓰지 않는다([ADR 0034](adr/0034-조직-생성과-빈-수집-요약을-원자적으로-초기화한다.md)).
 
 **이 표는 테이블만 다룬다.** Raw Signal Object Storage에는 `CREATE TABLE`이 없어 규칙 1의 판정법이
 닿지 않으므로 표에 넣지 않는다. 그 쓰기 주체는 `:libs:telemetry-collector`의 `archive` 패키지다(5절).
