@@ -20,6 +20,7 @@ import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
 import com.team376.pulsemetry.dashboard.source.ClickHouseSourceReader
 import com.team376.pulsemetry.persistence.telemetryops.TenantIngestSummaryStore
 import com.team376.pulsemetry.persistence.telemetryops.TenantSummaryBackfill
+import com.team376.pulsemetry.persistence.enrollment.management.VendorCatalog
 import com.zaxxer.hikari.HikariDataSource
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.annotation.Bean
@@ -33,6 +34,9 @@ import java.time.Clock
  */
 @Configuration(proxyBeanMethods = false)
 class AnalyticsConfig {
+
+	@Bean
+	fun vendorCatalog(source: JdbcClient): VendorCatalog = VendorCatalog(source)
 
 	@Bean
 	fun usageAggregator(clickHouse: ClickHouseCacheClient): UsageAggregator = UsageAggregator(clickHouse)
@@ -80,6 +84,7 @@ class AnalyticsConfig {
 
 	@Bean
 	fun membersService(
+		@org.springframework.beans.factory.annotation.Value("\${pulsemetry.management.enabled:false}") managementEnabled: Boolean,
 		properties: DashboardApiProperties,
 		frames: AnalyticsFrames,
 		aggregator: UsageAggregator,
@@ -88,7 +93,7 @@ class AnalyticsConfig {
 		codec: PageCursorCodec,
 		tokens: CurrentStateTokens,
 		clock: Clock,
-	): MembersService = MembersService(frames, aggregator, references, snapshots, codec, tokens, properties.members.idleDays, clock)
+	): MembersService = MembersService(frames, aggregator, references, snapshots, codec, tokens, properties.members.idleDays, clock, managementEnabled)
 
 	@Bean
 	fun vendorUsageReader(reader: ClickHouseSourceReader, resolution: ModelResolution, boundaries: RetentionBoundaryReader): VendorUsageReader =
@@ -96,6 +101,7 @@ class AnalyticsConfig {
 
 	@Bean
 	fun settingsService(
+		@org.springframework.beans.factory.annotation.Value("\${pulsemetry.management.enabled:false}") managementEnabled: Boolean,
 		properties: DashboardApiProperties,
 		source: JdbcClient,
 		vendorUsage: VendorUsageReader,
@@ -104,7 +110,8 @@ class AnalyticsConfig {
 		codec: PageCursorCodec,
 		mapper: ObjectMapper,
 		clock: Clock,
-	): SettingsService = SettingsService(source, vendorUsage, frames, tokens, codec, mapper, properties.members.idleDays, clock)
+		catalog: VendorCatalog,
+	): SettingsService = SettingsService(source, vendorUsage, frames, tokens, codec, mapper, properties.members.idleDays, clock, managementEnabled, catalog)
 
 	@Bean
 	fun overviewService(frames: AnalyticsFrames, aggregator: UsageAggregator, references: SnapshotReferences): OverviewService =

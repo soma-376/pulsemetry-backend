@@ -6,6 +6,18 @@ import com.team376.pulsemetry.dashboard.authentication.RejectingDashboardAuthent
 import com.team376.pulsemetry.dashboard.error.ErrorCode
 import com.team376.pulsemetry.dashboard.error.ErrorResponseWriter
 import jakarta.servlet.DispatcherType
+import com.team376.pulsemetry.dashboard.authentication.DashboardPrincipal
+import com.team376.pulsemetry.dashboard.authentication.Role
+import com.team376.pulsemetry.persistence.enrollment.repository.UserAuthRepository
+import com.team376.pulsemetry.security.user.UserAccessVerifier
+import com.team376.pulsemetry.security.user.UserAuthException
+import com.team376.pulsemetry.security.user.UserJwt
+import org.springframework.boot.context.properties.EnableConfigurationProperties
+import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.web.cors.CorsConfiguration
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource
+import java.nio.file.Path
+import java.time.Clock
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
@@ -37,11 +49,23 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter
  * - 보안 응답 헤더는 기본값을 유지한다(ADR 0022 §6).
  */
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(UserAuthenticationProperties::class)
 class SecurityConfig {
 
 	/** 기본 런타임 구현 — 전부 거부. 사용자 인증이 서면 그 어댑터로 바꾼다(ADR 0022 §3). */
 	@Bean
-	fun dashboardAuthenticator(): DashboardAuthenticator = RejectingDashboardAuthenticator()
+	fun dashboardAuthenticator(properties: UserAuthenticationProperties, jdbc: JdbcClient, clock: Clock): DashboardAuthenticator {
+		if (!properties.enabled) return RejectingDashboardAuthenticator()
+		val jwt = UserJwt.verifier(properties.issuer, properties.audience, properties.publicKeyFiles.filterValues { it.isNotBlank() }.mapValues { UserJwt.publicKey(Path.of(it.value)) }, clock)
+		val verifier = UserAccessVerifier(jwt, UserAuthRepository(jdbc), clock)
+		return DashboardAuthenticator { request ->
+			val header = request.getHeader("Authorization")
+			if (header == null || !header.startsWith("Bearer ")) null else try {
+				val identity = verifier.verify(header.removePrefix("Bearer "))
+				DashboardPrincipal(identity.tenantId, identity.memberId, if (identity.role in setOf("owner", "admin")) Role.ADMIN else Role.MEMBER)
+			} catch (_: UserAuthException) { null }
+		}
+	}
 
 	/**
 	 * **필터를 이 메서드 안에서 만든다. 빈으로 노출하지 마라.** Boot 은 등록되지 않은 `Filter` 빈을 모든 경로에
@@ -53,8 +77,20 @@ class SecurityConfig {
 		http: HttpSecurity,
 		authenticator: DashboardAuthenticator,
 		errors: ErrorResponseWriter,
+		properties: UserAuthenticationProperties,
 	): SecurityFilterChain = http
-		.securityMatcher(ORGANIZATION_PATHS)
+		.securityMatcher(ORGANIZATION_PATHS, CATALOG_PATHS)
+		.cors { cors -> cors.configurationSource(UrlBasedCorsConfigurationSource().apply {
+			val policy = CorsConfiguration().apply {
+				allowedOrigins = properties.allowedOrigins
+				allowedMethods = listOf("GET", "OPTIONS")
+				allowedHeaders = listOf("Authorization", "Content-Type", "X-Request-Id")
+				exposedHeaders = listOf("X-Request-Id", "Retry-After", "ETag")
+				allowCredentials = false
+			}
+			registerCorsConfiguration(ORGANIZATION_PATHS, policy)
+			registerCorsConfiguration(CATALOG_PATHS, policy)
+		}) }
 		.csrf { it.disable() }
 		.requestCache { it.disable() }
 		.logout { it.disable() }
@@ -94,6 +130,7 @@ class SecurityConfig {
 
 	private companion object {
 		const val ORGANIZATION_PATHS = "/api/v1/organizations/**"
+		const val CATALOG_PATHS = "/api/v1/vendor-catalog/**"
 		const val HEALTH_PATH = "/v1/healthz"
 	}
 }

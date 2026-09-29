@@ -40,6 +40,7 @@ class MembersService(
 	private val tokens: CurrentStateTokens,
 	private val idleDays: Int,
 	private val clock: Clock,
+	private val managementEnabled: Boolean = false,
 ) {
 
 	private val log = LoggerFactory.getLogger(MembersService::class.java)
@@ -61,7 +62,7 @@ class MembersService(
 				seats = Section(Availability.UNAVAILABLE, Availability.NOT_APPLICABLE, null),
 			),
 			policy = IdlePolicy(idleDays, POLICY_VERSION),
-			capabilities = CAPABILITIES,
+			capabilities = MemberCapabilities(invite = managementEnabled, assignTeam = managementEnabled, reclaimSeats = false, restoreSeats = false),
 			members = page(view, view.roster, first, scope(null)),
 			unassigned = page(view, view.roster.filter { it.currentTeamIds.isEmpty() }, first, UNASSIGNED_SCOPE),
 			reclaimCandidates = Section(Availability.UNAVAILABLE, Availability.NOT_APPLICABLE, null),
@@ -190,6 +191,5 @@ class MembersService(
 		private val ROSTER_STATUSES = setOf("active", "suspended")
 
 		/** 쓰기 API 가 없다 — 초대·배정·회수·복원 모두 비활성. */
-		private val CAPABILITIES = MemberCapabilities(invite = false, assignTeam = false, reclaimSeats = false, restoreSeats = false)
 	}
 }

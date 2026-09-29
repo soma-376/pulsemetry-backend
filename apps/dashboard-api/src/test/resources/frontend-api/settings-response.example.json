@@ -91,7 +91,8 @@
           "reason": "not_applicable",
           "data": null
         },
-        "checks": []
+        "checks": [],
+        "contractStatus": "active"
       }
     ],
     "totalCount": 1,
