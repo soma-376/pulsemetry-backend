@@ -19,4 +19,6 @@ dependencies {
 	testImplementation(libs.testcontainers.junit.jupiter)
 	// 테스트가 DataSource 를 직접 만든다(PGSimpleDataSource). main 은 드라이버를 런타임에만 쓴다.
 	testImplementation(libs.postgresql)
+	// V3 트리거가 연결될 조직 테이블도 원래 소유 모듈의 실제 마이그레이션으로 준비한다.
+	testRuntimeOnly(project(":libs:enrollment-persistence"))
 }

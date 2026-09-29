@@ -21,6 +21,7 @@ dependencies {
 	testImplementation(libs.testcontainers)
 	// 테스트가 DataSource 를 직접 만든다(PGSimpleDataSource).
 	testImplementation(libs.postgresql)
+	testImplementation(libs.flyway.core)
 }
 
 // 실행 산출물은 bootJar 하나다. plain jar 를 만들면 Dockerfile 이 둘 중 하나를 골라내야 한다.

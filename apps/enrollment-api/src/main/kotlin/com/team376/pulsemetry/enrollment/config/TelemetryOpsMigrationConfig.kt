@@ -2,6 +2,7 @@ package com.team376.pulsemetry.enrollment.config
 
 import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsSchemaMigrator
 import org.springframework.beans.factory.InitializingBean
+import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import javax.sql.DataSource
@@ -25,6 +26,7 @@ class TelemetryOpsMigrationConfig {
 		TelemetryOpsSchemaMigrator(dataSource)
 
 	@Bean
+	@DependsOnDatabaseInitialization
 	fun telemetryOpsSchemaMigration(migrator: TelemetryOpsSchemaMigrator): InitializingBean =
 		InitializingBean { migrator.migrate() }
 }

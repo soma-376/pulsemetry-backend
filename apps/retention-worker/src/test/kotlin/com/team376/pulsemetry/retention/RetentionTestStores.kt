@@ -3,6 +3,7 @@ package com.team376.pulsemetry.retention
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseSchemaMigrator
 import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsSchemaMigrator
+import org.flywaydb.core.Flyway
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
@@ -40,7 +41,11 @@ object RetentionTestStores {
 			setURL(postgres.jdbcUrl)
 			user = postgres.username
 			password = postgres.password
-		}.also { TelemetryOpsSchemaMigrator(it).migrate() }
+		}.also {
+			Flyway.configure().dataSource(it).schemas("enrollment").defaultSchema("enrollment")
+				.locations("classpath:db/migration").load().migrate()
+			TelemetryOpsSchemaMigrator(it).migrate()
+		}
 	}
 
 	val clickHouseUrl: String get() = "http://${clickhouse.host}:${clickhouse.getMappedPort(HTTP_PORT)}"

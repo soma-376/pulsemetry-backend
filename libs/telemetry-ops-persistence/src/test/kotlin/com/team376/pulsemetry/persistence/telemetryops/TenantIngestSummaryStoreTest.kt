@@ -36,6 +36,7 @@ class TenantIngestSummaryStoreTest {
 
 	@BeforeEach
 	fun setUp() {
+		prepareEnrollmentSchema(dataSource)
 		TelemetryOpsSchemaMigrator(dataSource).migrate()
 	}
 
