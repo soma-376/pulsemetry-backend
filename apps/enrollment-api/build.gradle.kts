@@ -12,6 +12,7 @@ dependencies {
 	// 함께 진다 (ADR 0021). 요약 writer 는 ingest 가 쓰고, 이 앱은 DDL 만 적용한다.
 	implementation(project(":libs:telemetry-ops-persistence"))
 	implementation(libs.spring.boot.starter.webmvc)
+	implementation(libs.spring.boot.starter.security)
 	implementation(libs.jackson.module.kotlin)
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)

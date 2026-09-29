@@ -44,6 +44,9 @@ class Invitation(
 
 	@Column(name = "revoked_at")
 	var revokedAt: Instant? = null,
+
+	@Column(name = "signup_used_at")
+	var signupUsedAt: Instant? = null,
 ) {
 	fun isUsed(): Boolean = usedAt != null
 

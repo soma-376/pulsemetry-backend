@@ -499,3 +499,45 @@ H2 등 임베디드 DB 로 대체하지 않는다 — jsonb·부분 유니크 �
 
 V1 마이그레이션이 native enum 채택(ADR 0009)으로 재작성되어 Flyway 체크섬이 바뀌었다.
 이전 버전으로 만들어진 로컬 DB 는 `docker compose down -v` 로 볼륨째 지우고 다시 띄운다.
+
+## 11. 사용자 인증
+
+`pulsemetry.user-auth.enabled=true`와 인증 키 설정이 필요하다.
+로컬에서는 Compose가 키를 준비하고, `:apps:enrollment-api:bootRun --args="--spring.profiles.active=local"`이
+인증·관리 기능을 활성화한다. 서버는 키를 생성하지 않는다(ADR 0031).
+키 설정 상세는 [사용자 인증 운영](user-auth-operations.md)을 따른다.
+
+| 메서드·경로 | 요청 JSON | 성공 |
+| --- | --- | --- |
+| `POST /v1/auth/signup` | `code`, `email`, `password` | 201, 본문 없음 |
+| `POST /v1/auth/login` | `tenant_id` UUID, `email`, `password` | 200 TokenResponse |
+| `POST /v1/auth/refresh` | `refresh_token` | 200 TokenResponse |
+| `POST /v1/auth/logout` | `refresh_token` | 204 |
+| `GET /v1/auth/me` | Bearer 인증 | 200 CurrentUser |
+| `POST /v1/auth/cli/authorize` | `tenant_id`, `email`, `password`, `redirect_uri`, `state`, `code_challenge`, `code_challenge_method: "S256"` | 200 `{callback_url}` |
+| `POST /v1/auth/cli/token` | `code`, `redirect_uri`, `code_verifier` | 200 TokenResponse |
+
+로그인 요청은 조직 ID를 필요로 한다. 이메일만으로 조직을 자동 탐색하는 API는 없다.
+가입 비밀번호는 12글자 이상·UTF-8 72바이트 이하다. 초대 코드는 설치 소비와 가입 소비가 독립적이다.
+AT 유효기간은 5분, 세션은 30일이다. refresh는 RT를 회전시키므로 응답의 새 RT를 사용한다.
+이미 소비한 RT를 재사용하면 해당 세션이 폐기된다. 동시 refresh를 클라이언트에서 하나로 합친다.
+
+```ts
+type TokenResponse = {
+  access_token: string; refresh_token: string;
+  token_type: "Bearer"; expires_in: number;
+};
+type CurrentUser = {
+  memberId: string; organizationId: string; organizationName: string;
+  email: string; displayName: string; role: "admin" | "member";
+};
+```
+
+인증 오류는 `{error: string, message: string}`이다.
+400 `invalid_request`, 401 `invalid_credentials`, 409 `signup_unavailable`,
+429 `rate_limited`, 503 `auth_unavailable`. 429·503의 `Retry-After`를 따른다.
+응답은 `Cache-Control: no-store`다. 상세 DTO는 [UserAuthController](../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/UserAuthController.kt)를 참조한다.
+
+계약·벤더·manifest·온보딩 완료 여부는 로그인 조건이 아니다(ADR 0033).
+활성 manifest가 없는 세션도 생성하며 `manifest_revision=0`을 쓴다. 일반 RT 갱신은 기존 revision을 유지한다.
+이 값으로 온보딩 상태를 판단하지 않고 §13의 온보딩 조회를 사용한다.

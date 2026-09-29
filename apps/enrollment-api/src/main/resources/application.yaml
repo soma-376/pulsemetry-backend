@@ -49,6 +49,15 @@ spring:
 
 # PLAN.md §6.8 의 설정 키
 pulsemetry:
+  user-auth:
+    enabled: ${PULSEMETRY_USER_AUTH_ENABLED:false}
+    issuer: ${PULSEMETRY_USER_AUTH_ISSUER:}
+    audience: ${PULSEMETRY_USER_AUTH_AUDIENCE:}
+    active-kid: ${PULSEMETRY_USER_AUTH_ACTIVE_KID:}
+    private-key-file: ${PULSEMETRY_USER_AUTH_PRIVATE_KEY_FILE:}
+    public-key-files:
+      local: ${PULSEMETRY_USER_AUTH_PUBLIC_KEY_FILE:}
+    allowed-origins: ${PULSEMETRY_USER_AUTH_ALLOWED_ORIGINS:}
   # 초대 응답의 설치 명령과 부트스트랩 스크립트가 쓰는 주소. Host 헤더에서 유도하지 않는다.
   public-base-url: ${PULSEMETRY_PUBLIC_BASE_URL:http://localhost:8080}
   admin:
