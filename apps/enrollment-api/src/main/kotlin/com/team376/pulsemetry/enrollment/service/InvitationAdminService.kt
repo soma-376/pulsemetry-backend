@@ -38,6 +38,7 @@ class InvitationAdminService(
 	private val properties: PulsemetryProperties,
 	private val clock: Clock,
 	transactionManager: PlatformTransactionManager,
+	@org.springframework.beans.factory.annotation.Value("\${pulsemetry.user-auth.enabled:false}") private val userAuthEnabled: Boolean = false,
 ) {
 
 	/**
@@ -137,7 +138,8 @@ class InvitationAdminService(
 	 */
 	@Transactional
 	fun revoke(invitationId: UUID) {
-		if (invitations.revoke(invitationId, clock.instant()) == 1) return
+		val revoked = if (userAuthEnabled) invitations.revokeIncludingSignup(invitationId, clock.instant()) else invitations.revoke(invitationId, clock.instant())
+		if (revoked == 1) return
 
 		val invitation = invitations.findById(invitationId).orElseThrow {
 			EnrollmentException.invitationNotFound()
