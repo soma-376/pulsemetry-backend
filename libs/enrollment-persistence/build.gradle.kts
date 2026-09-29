@@ -9,6 +9,7 @@ plugins {
 }
 
 dependencies {
+	api(libs.jackson.module.kotlin)
 	// api: 소비자(앱 모듈)의 컴파일 클래스패스에도 노출한다.
 	// 엔티티·리포지토리·DataSource·JdbcClient 는 앱 코드가 직접 다루는 타입이다.
 	api(libs.spring.boot.starter.data.jpa)

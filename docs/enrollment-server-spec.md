@@ -541,3 +541,247 @@ type CurrentUser = {
 계약·벤더·manifest·온보딩 완료 여부는 로그인 조건이 아니다(ADR 0033).
 활성 manifest가 없는 세션도 생성하며 `manifest_revision=0`을 쓴다. 일반 RT 갱신은 기존 revision을 유지한다.
 이 값으로 온보딩 상태를 판단하지 않고 §13의 온보딩 조회를 사용한다.
+
+## 12. 조직 관리 API
+
+경로 앞에 `/api/v1/organizations/{organizationId}`를 붙인다.
+관리 API는 `pulsemetry.management.enabled=true`, 사용자 인증, Base64 32바이트의
+`pulsemetry.management.response-encryption-key`를 요구한다. 공개 브라우저 설정에 이 키를 넣지 않는다.
+Bearer AT로 검증한 owner/admin만 사용할 수 있다. 타 조직은 404, member는 403이다.
+POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`, 8~128자)를 보낸다.
+같은 조직·사용자·경로·키·본문은 24시간 같은 응답을 반환한다. 같은 키와 다른 본문은 409 `idempotency_conflict`다.
+초대 코드가 포함된 재시도 응답은 DB에서 암호화된다.
+
+| 메서드·경로 | 요청 | 성공 |
+| --- | --- | --- |
+| `POST /teams` | `{teamName}` | 201 `{teamId,teamName,version}`, Location |
+| `PATCH /teams/{teamId}` | `{teamName,expectedVersion}` | 200 같은 팀 응답 |
+| `DELETE /teams/{teamId}` | `If-Match: "team-{version}"` | 204, 팀 보관·현재 배정 해제 |
+| `POST /member-team-assignments` | `{assignments:[{memberId,teamId,expectedVersion}]}` | 200 `{effectiveAt,members:[{memberId,teamId,version}]}` |
+| `POST /invitations/batch` | `{invitations:[{email,teamId,role}]}` | 200 InvitationsResponse |
+| `POST /invitations/{invitationId}/revoke` | `{}` | 204 |
+| `POST /vendors` | `{kind,displayName,contract?}` | 201 VendorResponse, Location, ETag |
+| `PATCH /vendors/{vendorId}` | `{expectedVersion,displayName}` | 200 VendorResponse, ETag, 계약 유무와 무관한 이름 정정 |
+| `PUT /vendors/{vendorId}/contract` | `{expectedVersion,displayName,contract}` | 200 VendorResponse, ETag |
+| `DELETE /vendors/{vendorId}/contract` | `If-Match: "vendor-{version}"` | 204 |
+| `DELETE /vendors/{vendorId}` | `If-Match: "vendor-{version}"` | 204, 수동 벤더 보관 |
+
+팀 배정은 최대 100명, 전체 검증 후 한 트랜잭션으로 적용한다. `teamId:null`은 배정 해제다.
+효력 시각은 서버 시각이며 과거 ClickHouse 팩트는 바꾸지 않는다.
+수정 version은 직전 조회 응답 값을 그대로 보낸다. 불일치는 409 `version_conflict`다.
+version을 1부터 시작하는 순번이나 날짜로 해석하지 않는다. PUT/PATCH는 expectedVersion, DELETE는 If-Match로 전달한다.
+
+```ts
+type InvitationsResponse = {
+  results: {
+    email: string; invitationId: string | null;
+    status: "issued" | "already_member" | "already_invited" | "rejected";
+    reason: string | null; expiresAt: string | null; code: string | null;
+  }[];
+};
+type ContractWrite = {
+  planId: string; effectiveFrom: string; effectiveTo: string | null;
+  termNote: string | null;
+  tiers: { label: string; seats: number; monthlyFeePerSeatUsd: Money }[];
+};
+```
+
+초대는 최대 100명, role은 `admin`·`member`, `teamId`는 UUID 또는 null이다.
+**메일 발송을 접수하지 않으므로 `queued`를 반환하지 않는다.** `issued`의 코드를 사용자에게 전달한다.
+신규 초대의 기본 만료는 72시간이다. 기존 초대가 있으면 `already_invited`이며 기존 원본 코드를 재조회하지 않는다.
+
+벤더 kind/plan은 dashboard-api의 [벤더 카탈로그](dashboard-server-spec.md#3-벤더와-플랜-카탈로그)에서 얻는다.
+카탈로그 `id`를 kind로 보내며 조직에 등록된 `vendorId` UUID와 혼동하지 않는다.
+공통 공급사·제품·플랜은 `enrollment.vendor_catalog_vendors`·`vendor_catalog_products`·`vendor_catalog_plans`에 저장한다(ADR 0035).
+신규 등록과 계약 저장은 DB의 활성 제품·플랜만 허용한다. `active=false`는 새 선택을 막으며 기존 계약 이력을 지우지 않는다.
+조직별 단가와 좌석 수는 계속 `vendor_contract_versions.contract`에 저장한다.
+contract를 생략하거나 null로 보내면 벤더만 등록하고 `state=needs_review`, `contract=null`을 반환한다.
+계약은 이후 `PUT /vendors/{vendorId}/contract`로 추가한다. PUT에는 완전한 contract가 필요하다.
+tiers는 allowsSeatTiers=true이면 1~3개, false이면 1개다. seats는 양의 정수,
+월 단가는 0 이상 USD decimal(최대 소수 12자리)이다.
+서버가 tierId·월 합계·confirmedAt·confirmedBy를 결정한다.
+조직별 활성 등록은 제품 kind당 하나이며 중복 등록은 409 `vendor_already_registered`다.
+전체 삭제 후 같은 제품을 새 UUID로 등록할 수 있으며 이전 등록 이력은 보존한다.
+새 계약의 시작일은 조직의 오늘부터이며 종료일은 시작일 이상 또는 null이다.
+기존 계약 PUT은 입력 정보 정정이다. 서버가 저장된 effectiveFrom을 유지하고 요청의 시작일로 바꾸지 않는다.
+종료일은 오늘과 기존 시작일 이상이어야 한다. 이미 저장된 과거 종료일은 변경 없이 유지할 수 있다.
+과거 시작일 때문에 정정을 거절하지 않는다. 새 버전의 월액을 계산하고 이전 버전·사용량 원본은 보존한다.
+PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계약/실제 조건 갱신/누적 지출 재계산을 의미하지 않는다.
+계약 변경·해제는 버전 이력으로 남는다. API 삭제는 실제 벤더 구독 해지·요금 환불을 의미하지 않는다.
+
+- 계약 비우기(`DELETE .../contract`): 등록 UUID를 유지하고 새 버전에 contract=null을 저장한다. 목록에서는 needs_review다.
+- 제품 삭제(`DELETE .../{vendorId}`): 등록을 archived로 보관하고 현재 목록에서 제외한다. 이력 행을 삭제하지 않는다.
+- 표시 이름 PATCH: 등록 version과 변경 이력은 증가하지만 기존 계약 JSON과 계약의 confirmedAt/confirmedBy는 유지한다.
+- 계약 PUT: 새 계약 version·confirmedAt/confirmedBy와 월 금액을 저장한다. 이전 행의 내용과 변경자·시각은 그대로 남는다.
+- 비운 계약을 다시 입력하는 것은 기존 계약 정정이 아닌 새 계약 입력이다. 새 시작일 검증을 적용한다.
+
+변경 이력 저장은 구현돼 있지만 이력 목록 조회 API·화면은 현재 범위에 없다.
+`enrollment.contracts`의 기존 기간 약정과 새 좌석 계약을 합산하지 않으며, 좌석 계약값으로 기간별 지출을 누적하는 테이블도 추가하지 않는다.
+
+### 조회·관리 오류
+
+```json
+{"error":{"code":"version_conflict","message":"관리 요청을 처리할 수 없습니다.","fieldErrors":[]},"requestId":"..."}
+```
+
+| 상태 | 주요 코드·처리 |
+| --- | --- |
+| 400 | invalid_request, 필드 오류 표시 |
+| 401 | unauthenticated, 로그인/토큰 갱신 |
+| 403 | forbidden, 해당 동작 비활성화 |
+| 404 | not_found, 타 조직/없는 자원 |
+| 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, snapshot_expired |
+| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor |
+| 503 | unavailable, Retry-After 후 재시도 |
+
+쓰기 성공 후 관련 조직의 팀·구성원·설정·개요 Query 캐시를 무효화한다.
+버전 충돌 시 자동으로 새 버전을 덮어쓰지 않고 최신 값을 다시 보여 준다.
+
+## 13. 온보딩
+
+§12와 같은 조직 경로·Bearer 인증·관리 기능 설정을 사용한다.
+필수 조건은 **수집 여부를 명시적으로 저장 + 활성 벤더 하나 이상 등록**이다.
+플랜·좌석·단가는 선택이며 팀·초대도 건너뛸 수 있다.
+기본 manifest의 수집=false만으로 관리자가 선택을 완료했다고 간주하지 않는다.
+초안·현재 단계는 저장하지 않는다. 저장한 정책·벤더·팀·초대는 남고, 조회 결과로 재개 단계를 결정한다.
+
+| 메서드·경로 | 요청 | 성공 |
+| --- | --- | --- |
+| `GET /onboarding` | 없음 | 200 OnboardingState |
+| `PUT /collection-policy` | `{expectedVersion,collectRawContent}` | 200 PolicySaved |
+| `POST /onboarding/complete` | `{}`, Idempotency-Key | 200 OnboardingState |
+| `GET /invitations` | limit=20(1~100), cursor | 200 InvitationPage |
+| `POST /invitations/{invitationId}/reissue` | `{}`, Idempotency-Key | 200 ReissuedInvitation |
+
+### 13.1 상태와 완료
+
+```ts
+type OnboardingState = {
+  organizationId: string;
+  completed: boolean;
+  completedAt: string | null;
+  policy: {
+    confirmed: boolean; confirmedAt: string | null;
+    version: number; collectRawContent: boolean | null;
+  };
+  selectedVendorCount: number;
+  canComplete: boolean;
+  nextStep: "collection" | "vendors" | "team" | "complete";
+};
+```
+
+초기 manifest가 없으면 policy.version=0, collectRawContent=null이다.
+프롬프트와 응답 플래그가 서로 달라도 collectRawContent=null로 반환해 다시 선택하게 한다.
+confirmed는 저장 완료 여부이며 수집 허용 여부가 아니다. false를 저장해도 confirmed=true다.
+벤더 수는 직접 등록한 활성 벤더만 센다. 관측으로 발견된 공급자만으로 선택 완료 처리하지 않는다.
+완료 전 필수 조건이 부족하면 409 `onboarding_incomplete`다. 완료 후 재호출은 기존 완료 시각을 유지한다.
+완료 시각은 `tenants.onboarding_completed_at`에 저장하고 `tenants.onboarding_completed`는 시각의 유무를 계산하는 생성 컬럼이다.
+완료는 과거 완료 사실이다. 이후 모든 벤더를 제거해도 완료 시각을 지우지 않으며 canComplete는 현재 조건을 나타낸다.
+
+호출 흐름:
+
+1. 로그인 → `/v1/auth/me`로 조직 확인 → `GET /onboarding`.
+2. `PUT /collection-policy`로 선택 저장.
+3. dashboard 카탈로그에서 제품 선택 → `POST /vendors`에 kind·displayName만 보내도 등록 가능.
+4. 팀·초대는 원하는 경우 저장.
+5. `POST /onboarding/complete` 성공 후 개요 이동.
+
+### 13.2 수집 정책 저장
+
+```json
+{"expectedVersion":1,"collectRawContent":false}
+```
+
+```ts
+type PolicySaved = {
+  version: number; collectRawContent: boolean; confirmedAt: string;
+  application: "future_enrollments";
+  existingInstallationsUpdated: false;
+};
+```
+
+서버는 현재 활성 manifest의 version을 비교한다. 충돌은 409 `version_conflict`다.
+활성 manifest가 없으면 `expectedVersion=0`으로 최초 생성한다. 새 판번호는 기존 판번호의 최댓값 다음이다.
+최초 생성에는 §9.1의 서버 수집 주소가 필요하다. 누락·잘못된 주소는 409 `manifest_not_configured`이고
+manifest와 정책 확인 기록을 저장하지 않는다. 로그인은 이 설정과 무관하게 가능하다.
+초기 프로토콜은 `http/protobuf`, 세 signal은 true, privacy는 전부 false에서 사용자의 원문 선택을 반영한다.
+새 manifest 판에서 `privacy.collect_user_prompts`와 `privacy.collect_assistant_responses`만 함께 변경한다.
+config_revision도 새 판에 맞춘다. endpoint·signals·나머지 privacy 설정 및 이전 판의 JSON은 보존한다.
+동일 조직의 변경·완료 명령은 조직 행 잠금과 한 트랜잭션으로 처리한다.
+정책 저장은 **이후 enroll의 기본값**이며 이미 설치된 클라이언트에 갱신 알림을 보내거나
+installation_manifest_assignments를 적용 완료로 변경하지 않는다. 적용 여부는 대시보드 설치 조회로 확인한다.
+
+### 13.3 초대 목록·재발급
+
+```ts
+type InvitationPage = {
+  items: {
+    invitationId: string; email: string; role: string;
+    createdAt: string; expiresAt: string;
+    installationUsedAt: string | null; signupUsedAt: string | null;
+    revokedAt: string | null;
+    status: "pending" | "expired" | "used" | "revoked";
+  }[];
+  nextCursor: string | null;
+};
+type ReissuedInvitation = {
+  invitationId: string; replacesInvitationId: string;
+  code: string; expiresAt: string;
+};
+```
+
+목록은 invitationId 오름차순이며 다음 요청에는 nextCursor를 그대로 보낸다.
+cursor는 UUID다. 실시간 목록으로 snapshot 일관성을 보장하지 않는다. 코드 원문·해시는 목록에 포함하지 않는다.
+상태 우선순위는 revoked → 두 소비 완료인 used → expired → pending이다.
+pending은 가입 또는 설치 중 하나만 남은 경우도 포함하므로 소비 시각 둘을 함께 확인한다.
+
+재발급은 만료 여부와 관계없이 아직 폐기되지 않고 소비 권한이 남은 초대에만 허용한다.
+기존 코드를 즉시 폐기하고 새 ID·코드·72시간 만료를 만든다. 두 작업은 원자적이다.
+소비된 가입/설치 권한은 새 초대에도 소비 시각을 유지한다. 기존 계정·설치·세션은 삭제하지 않는다.
+폐기됐거나 두 용도 모두 소비한 초대는 409 `invitation_unavailable`이다.
+같은 멱등 키의 재시도는 최초 새 코드를 재전달한다. 재시도 응답 저장에는 §12의 암호화를 사용한다.
+이 API도 메일을 발송하지 않는다.
+
+## 14. 소유 스키마와 검증
+
+Flyway가 enrollment 스키마의 진실원이다. 관련 추가 마이그레이션은 다음과 같다.
+
+| 버전 | 저장 대상·변경 |
+| --- | --- |
+| V5 | 사용자 세션·인증 코드·로그인 제한, 초대의 가입 소비 상태 |
+| V6 | managed_vendors·vendor_contract_versions·멱등 명령 응답 |
+| V7 | 정책 확인·온보딩 기록 |
+| V8 | 완료 시각을 tenants로 이전, 완료 여부 생성 컬럼 |
+| V9 | managed_vendors.archived 동기화, 조직·제품당 활성 등록 하나의 부분 유일 인덱스 |
+| V10 | 공통 공급사·제품·플랜 카탈로그와 초기 목록 |
+| V11 | openai_biz의 복수 좌석 유형 입력 허용 |
+
+V9는 기존 버전 이력의 보관 여부를 반영한 뒤 중복 활성 제품을 검사한다.
+중복이 있으면 적용을 중단하며 자동 병합·삭제하지 않는다. 해당 조직의 중복 등록을 검토한 뒤 다시 적용한다.
+telemetry_ops의 V3는 별도 이력으로 관리하며 신규 조직 생성 시 빈 수집 요약을 원자적으로 초기화한다(ADR 0034).
+적용된 migration 파일을 수정하지 않고 다음 번호를 추가한다.
+organization_onboarding에는 정책 확인자·시각과 완료자만 남는다. 기존 완료 시각은 V8에서 보존한다.
+개발 시드 초기화는 이 기록도 해당 시드 조직에 한해 삭제한다.
+
+주요 검증은 `:apps:enrollment-api:test`의 UserAuthApiTest(인증)와 ManagementApiTest(관리·온보딩)다.
+팀/초대/계약 쓰기, 조직 격리, 온보딩 완료 조건, 정책 판 보존, 재발급 소비 상태 계승을 실제 PostgreSQL에서 확인한다.
+서버 API 구현, 프론트 배선, 실제 시드 E2E 통과는 별도로 확인한다.
+프론트 온보딩에서 계약 입력은 선택이며 설정의 계약 관리도 API에 연결돼 있다. 초대 메일 발송은 구현하지 않는다.
+전체 화면의 연동 완료 여부는 [E2E 목표 시나리오](frontend-e2e-scenarios.md)와 실제 실행 결과를 대조한다.
+
+### 계약 기간 상태 (`contractStatus`)
+
+설정·벤더 목록·상세와 등록/정정 응답의 vendor에 `contractStatus: missing | scheduled | active | expired`를 반환한다.
+기존 `state`는 유지한다(active만 configured, 나머지는 needs_review). 상태는 DB에 저장하지 않고
+서울 시간의 조회 기준일과 계약 기간으로 계산한다. 페이지네이션은 동일 snapshot의 기준 시각을 사용한다.
+
+| 값 | 의미 |
+| --- | --- |
+| missing | contract=null, 계약 미입력 |
+| scheduled | 오늘이 effectiveFrom 이전 |
+| active | 시작일 이후이며 종료일 당일까지. 종료일 null은 상한 없음 |
+| expired | 오늘이 effectiveTo 이후 |
+
+만료되어도 등록·계약 원문·이력은 보존하며 자동 삭제·해지·갱신하지 않는다. 기존 금액·좌석은
+마지막 계약 정보로 표시한다. 합계는 contractStatus=active인 계약만 포함한다. 만료·시작 예정·미입력은 제외하며 UI에 제외 건수를 표시한다. 유효 계약이 없으면 월 계약액과 좌석 수는 0이다. 유효 계약 자체의 필요한 값이 누락되면 해당 합계는 null이다. 이는 유효 계약 기준 합계이며 실제 전체 지출이나 자동 해지·갱신을 의미하지 않는다.
+갱신 등록은 지원 범위 밖이며 기존 PUT은 시작일을 보존하는 입력 정정이다.
