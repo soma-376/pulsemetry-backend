@@ -58,6 +58,10 @@ pulsemetry:
     public-key-files:
       local: ${PULSEMETRY_USER_AUTH_PUBLIC_KEY_FILE:}
     allowed-origins: ${PULSEMETRY_USER_AUTH_ALLOWED_ORIGINS:}
+  management:
+    enabled: ${PULSEMETRY_MANAGEMENT_ENABLED:false}
+    response-encryption-key: ${PULSEMETRY_MANAGEMENT_RESPONSE_ENCRYPTION_KEY:}
+    onboarding-otlp-endpoint: ${PULSEMETRY_ONBOARDING_OTLP_ENDPOINT:}
   # 초대 응답의 설치 명령과 부트스트랩 스크립트가 쓰는 주소. Host 헤더에서 유도하지 않는다.
   public-base-url: ${PULSEMETRY_PUBLIC_BASE_URL:http://localhost:8080}
   admin:

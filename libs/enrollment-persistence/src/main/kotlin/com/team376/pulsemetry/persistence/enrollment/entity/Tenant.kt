@@ -6,6 +6,7 @@ import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import jakarta.persistence.Transient
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
 import java.time.Instant
@@ -50,4 +51,11 @@ class Tenant(
 
 	@Column(name = "deleted_at")
 	var deletedAt: Instant? = null,
-)
+
+	@Column(name = "onboarding_completed_at")
+	var onboardingCompletedAt: Instant? = null,
+) {
+	/** DB의 생성 컬럼과 동일하게 완료 시각으로 판정한다(ADR 0032). */
+	@get:Transient
+	val onboardingCompleted: Boolean get() = onboardingCompletedAt != null
+}

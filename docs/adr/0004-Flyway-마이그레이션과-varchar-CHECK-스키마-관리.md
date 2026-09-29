@@ -6,6 +6,10 @@ native enum 으로 대체한다 (CHECK 제약이 사라져 이름 규칙의 `ck_
 접두사는 native enum 밖의 값 제약(범위·형식 CHECK)을 새로 둘 때를 위해 남긴다).
 진실원 = Flyway, `ddl-auto: validate`, 나머지 이름 규칙, 시드 금지,
 Testcontainers 결정은 그대로 유효하다.
+개발 데이터 실행 방식은 [ADR 0025](0025-개발용-시드를-독립-Kotlin-도구-모듈로-관리한다.md)가
+local 프로파일 시더에서 독립 도구로 대체했고, [ADR 0027](0027-local-프로필에서-개발-시드를-초기화한다.md)이
+공용 코어를 local 기동과 수동 명령에서 함께 쓰도록 개정한다. 마이그레이션 시드 금지는 유지한다.
+현재는 [ADR 0031](0031-개발-시드는-Docker에서만-실행한다.md)이 서버 자동 시드를 제거하고 Docker 실행으로 통일한다.
 
 ## Context
 스키마 설계는 `rdb-schema/dbdiagram.dbml` 한 파일에 그려져 있고, 이 파일은 팀이 함께 보는 설계도다.
