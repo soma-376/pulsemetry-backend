@@ -214,6 +214,24 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
         // 가상 요율이다. 실제 벤더 요금·청구 금액이 아니다.
         val cost = (input + output * 3).toBigDecimal().movePointLeft(6)
         val observation = hash("$name/$index/$day/$product")
+        // 어댑터가 알아보지 못한 도구의 관측(product = unknown)은 사용량 행이 아니다 — 구조만 받은 관측이다.
+        if (product == "unknown") {
+            events.add(linkedMapOf("tenant_id" to tenant, "installation_id" to installation(index), "observation_id" to observation,
+                "analysis_hash" to observation, "row_version" to 1, "normalizer_rev" to 1, "identity_version" to "seed-v1",
+                "source_identity_kind" to "native", "source_time" to whenAt, "source_time_origin" to "event_time", "event_time" to whenAt,
+                "received_time" to whenAt, "record_status" to "active", "mapping_status" to "generic", "quality_flags" to emptyList<String>(),
+                "signal" to "log", "event_type" to "vendor.unknown", "operation" to "unknown", "usage_role" to "none", "usage_scope" to "unknown",
+                "workload_kind" to "main", "product" to product, "surface" to "unknown", "service_name" to "unrecognized-seed-tool",
+                "product_version" to "seed-v1", "model" to null, "member_id" to member(index), "team_id_as_of" to teamIndex?.let(::team),
+                "team_ids_as_of" to listOfNotNull(teamIndex?.let(::team)), "session_id" to null, "session_id_namespace" to null,
+                "tokens_input" to null, "tokens_output" to null, "tokens_cache_read" to null, "tokens_cache_create" to null,
+                "tokens_input_uncached" to null, "tokens_total_derived" to null, "input_semantics" to "unknown", "output_semantics" to "unknown",
+                "semantics_profile" to null, "cost_estimated_usd" to null, "pricing_version" to null,
+                "reported_cost_basis" to "unknown", "mapping_version" to "seed-v1", "enrichment_version" to "seed-v1", "masking_version" to "seed-v1",
+                "metadata_json" to encode(mapOf("synthetic" to true)), "attrs" to emptyMap<String, String>(), "enrichment_json" to "{}"))
+            receipt(index, whenAt, product)
+            return
+        }
         events.add(linkedMapOf("tenant_id" to tenant, "installation_id" to installation(index), "observation_id" to observation,
             "analysis_hash" to observation, "row_version" to 1, "normalizer_rev" to 1, "identity_version" to "seed-v1",
             "source_identity_kind" to "native", "source_time" to whenAt, "source_time_origin" to "event_time", "event_time" to whenAt,
@@ -255,6 +273,8 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
     } else if (name == "C") {
         listOf(-25, -15, -5, -1).forEach { day -> event(2, day); event(3, day, "codex", unknown = true); event(4, day, incomplete = true) }
         event(5, -40); event(6, -20); receipt(7, at(-1, 23), "codex", 0)
+        // 어느 카탈로그 제품에도 매핑되지 않는 관측(ADR 0044) — 어떤 등록 제품에도 귀속하지 않고 따로 보여야 한다.
+        event(6, -10, "unknown")
     }
     rows["enrollment.installations"]?.replaceAll { row -> row + ("last_seen_at" to ledger.filter { it["installation_id"] == row["id"] }.maxOfOrNull { it["received_time"].toString() }) }
     if (name == "A") {

@@ -42,7 +42,7 @@
 | `/ingest-status` | 없음 | IngestStatusResponse |
 | `/settings` | 없음 | SettingsResponse |
 | `/vendors` | limit=20(최대 100), cursor, snapshotId | VendorsResponse |
-| `/vendors/{vendorId}` | 없음 | VendorResponse |
+| `/vendors/{vendorId}` | snapshotId(선택 — 목록의 기준 시각을 쓴다) | VendorResponse |
 | `/installations` | policyStatus=applied·outdated·unknown, limit=20(최대 100), cursor, snapshotId | InstallationsResponse |
 | `/operations/{operationId}` | 없음 | OperationResponse |
 
@@ -343,13 +343,48 @@ ID는 관리 API와 같은 vendorId UUID다. 공급자 관측·기존 기간 약
 - 오늘(서울)이 계약 시작일~종료일 안이면 configured다. 종료일 null은 상한 없음이며 기간 밖은 needs_review다.
 - `summary.monthlySeatFeeUsd`와 `contractedSeats`: 합계는 contractStatus=active인 계약만 포함한다. 만료·시작 예정·미입력은 제외하며 UI에 제외 건수를 표시한다. 유효 계약이 없으면 월 계약액과 좌석 수는 0이다. 유효 계약 자체의 필요한 값이 누락되면 해당 합계는 null이다. 이는 유효 계약 기준 합계이며 실제 전체 지출이나 자동 해지·갱신을 의미하지 않는다.
 - 단가 0의 유효 계약은 무료로 입력된 값이며 미입력과 다르다. 표시할 때 null은 `-`, 숫자 0은 0으로 구분한다.
-- 등록 UUID와 실제 좌석 배정·관측을 연결할 원천이 없어 activeUsers7d/30d·firstSeenAt/lastSeenAt 및 활성 좌석 합계는 null이다.
-  계약 좌석에서 관측 사용자 수를 빼서 미사용 좌석이나 절감액을 만들지 않는다.
+- 등록 제품의 firstSeenAt/lastSeenAt·activeUsers7d/30d·observation은 아래 §7.3의 관측 지표다. 좌석 배정·청구의 근거가 아니므로
+  활성 좌석 합계(`summary.activeSeats7d`)는 null이다. 계약 좌석에서 관측 사용자 수를 빼서 미사용 좌석이나 절감액을 만들지 않는다.
 - 계약 없는 제품도 표시 이름을 바꿀 수 있다. 계약 비우기·제품 삭제·정정의 저장 규칙은 Enrollment 명세 §12를 따른다.
 
 목록 페이지는 같은 snapshotId로 이어 읽고, 저장 후에는 첫 페이지부터 새 snapshot으로 읽는다.
 관리 요청의 `version_conflict`와 조회의 `snapshot_expired`는 별개다. 전자는 사용자 입력과 최신 값을 확인하고,
 후자는 기존 페이지를 섞지 않고 첫 페이지부터 조회한다.
+
+### 7.3 관측 지표 (ADR 0044)
+
+관측 제품(분석 행의 `product`)은 카탈로그의 명시 매핑 `enrollment.vendor_catalog_observed_products`로만 카탈로그 제품(`kind`)에 잇는다.
+지금 매핑: `claude_code` → `claude_team`, `codex` → `openai_biz`. `unknown`과 매핑 없는 관측은 어떤 등록 제품에도 넣지 않는다. 공급사·모델 이름으로 추정하지 않는다.
+매핑은 "그 제품이 다루는 도구가 관측됐다"만 말한다 — 그 사용이 그 좌석 계약으로 청구된다는 뜻이 아니다.
+
+| 필드 | 규칙 |
+| --- | --- |
+| 관측 행 | 활성 로그 관측(`record_status = 'active'`, `signal = 'log'`) 중 source_time < 기준 시각, 삭제 경계 뒤 |
+| `firstSeenAt`·`lastSeenAt` | 그 제품으로 매핑되는 관측 행의 source_time 최솟값·최댓값. 없으면 null |
+| `activeUsers7d`·`activeUsers30d` | 기준일(서울) **전날까지**의 7·30일 창에 관측이 있는 서로 다른 구성원. 창의 모든 날이 완전(ADR 0042)하면 정확한 수(0 포함), 아니면 센 수가 있을 때만 그 수이고 0은 null |
+| `observation` | 30일 창이 완전하면 `complete`, 아니면 관측이 있을 때 `partial`, 없으면 `unobserved`. 매핑 없는 카탈로그 제품(Cursor·Copilot·Gemini 등)은 늘 모두 null·`unobserved` |
+
+`/settings`의 `summary`에 두 필드를 더했다(가산).
+
+```ts
+type ObservedFields = {
+  firstSeenAt: string | null; lastSeenAt: string | null;
+  activeUsers7d: number | null; activeUsers30d: number | null;
+  observation: "complete" | "partial" | "unobserved";
+};
+// 매핑으로 관측됐지만 조직이 등록하지 않은 카탈로그 제품. 카탈로그 순서. 벤더 목록에는 넣지 않는다.
+type DetectedProduct = ObservedFields & { kind: string; displayName: string; state: "detected_unconfigured" };
+// 어느 카탈로그 제품에도 매핑되지 않은 관측. 없으면 summary.unmappedObservations = null.
+type UnmappedObservations = ObservedFields & { observedProducts: string[]; firstSeenAt: string; lastSeenAt: string };
+// SettingsResponse.summary 에 더한 키
+//   detectedProducts: DetectedProduct[];
+//   unmappedObservations: UnmappedObservations | null;
+```
+
+- **기준 시각에 고정한다.** `/settings`(와 `snapshotId` 없는 상세)가 새 기준 시각을 낼 때 관측 지표를 한 번 계산해 `dashboard_cache.vendor_observation_sets`·`vendor_observations`(RDS 캐시 V3)에 고정한다.
+  같은 `snapshotId`의 `/vendors` 다음 페이지와 `/vendors/{vendorId}?snapshotId=`는 그 값을 읽는다 — 목록·상세·첫 화면이 같다.
+  고정이 없는 기준 시각(만료·정리·고정 도입 전에 발급된 토큰)은 409 `snapshot_expired`다. 고정은 snapshot 정리 작업이 같은 기한으로 지운다.
+- 관측은 원천 계정으로 읽는다: 분석 행, 매핑, 완전성 근거(설치·수집 구간·정책 판).
 
 ### 계약 기간 상태 (`contractStatus`)
 

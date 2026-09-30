@@ -151,11 +151,12 @@ class SeedStore private constructor(private val pg: Connection, private val clic
 
     private fun verifyTotals(data: SeedData) {
         for ((dimension, expression) in mapOf("organization" to "'all'", "day" to "toString(toDate(source_time,'Asia/Seoul'))",
-            "model" to "model", "team" to "ifNull(team_id_as_of,'unassigned')",
+            "model" to "ifNull(model,'')", "team" to "ifNull(team_id_as_of,'unassigned')",
             "member" to "member_id", "product" to "product")) {
             fun key(row: Row): String = when(dimension) {
                 "day" -> Instant.parse(row["source_time"].toString()).atZone(seoul).toLocalDate().toString()
-                "model" -> row["model"].toString()
+                // 모델이 없는 관측(예: 알아보지 못한 도구)은 빈 키로 센다 — ClickHouse 쪽의 ifNull 과 같다.
+                "model" -> row["model"]?.toString() ?: ""
                 "team" -> row["team_id_as_of"]?.toString() ?: "unassigned"
                 "member" -> row["member_id"].toString()
                 "product" -> row["product"].toString()

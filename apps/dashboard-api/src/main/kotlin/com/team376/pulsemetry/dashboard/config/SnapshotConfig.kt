@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.dashboard.config
 
+import com.team376.pulsemetry.dashboard.analytics.VendorObservations
 import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheClient
 import com.team376.pulsemetry.dashboard.snapshot.ModelResolution
 import com.team376.pulsemetry.dashboard.snapshot.RetentionBoundaryReader
@@ -48,6 +49,14 @@ class SnapshotConfig {
 	@Bean
 	fun retentionBoundaryReader(source: JdbcClient): RetentionBoundaryReader = RetentionBoundaryReader(source)
 
+	/** 완전한 날짜의 판정(ADR 0042). snapshot build 와 설정의 벤더 관측(ADR 0044)이 같은 판정을 쓴다. */
+	@Bean
+	fun snapshotCompleteness(
+		properties: DashboardApiProperties,
+		source: JdbcClient,
+		@Qualifier(CacheStoreConfig.CACHE_DATA_SOURCE) cacheDataSource: HikariDataSource,
+	): SnapshotCompleteness = SnapshotCompleteness(source, JdbcClient.create(cacheDataSource), properties.completeness.settleAfter)
+
 	@Bean
 	fun snapshotBuilder(
 		properties: DashboardApiProperties,
@@ -58,12 +67,13 @@ class SnapshotConfig {
 		clickHouse: ClickHouseCacheClient,
 		resolution: ModelResolution,
 		limits: SnapshotBuilder.Limits,
+		completeness: SnapshotCompleteness,
 		clock: Clock,
 	): SnapshotBuilder = SnapshotBuilder(
 		boundaries = boundaries,
 		manifests = manifests,
 		references = SnapshotReferenceCopier(source, JdbcClient.create(cacheDataSource)),
-		completeness = SnapshotCompleteness(source, JdbcClient.create(cacheDataSource), properties.completeness.settleAfter),
+		completeness = completeness,
 		clickHouse = clickHouse,
 		sql = SnapshotCopySql(properties.clickhouse.source.database, resolution),
 		resolution = resolution,
@@ -84,8 +94,9 @@ class SnapshotConfig {
 		manifests: SnapshotManifestStore,
 		clickHouse: ClickHouseCacheClient,
 		limits: SnapshotBuilder.Limits,
+		observations: VendorObservations,
 		clock: Clock,
-	): SnapshotCleaner = SnapshotCleaner(manifests, clickHouse, limits, clock)
+	): SnapshotCleaner = SnapshotCleaner(manifests, clickHouse, limits, clock, observations::purge)
 
 	@Bean
 	fun snapshotCleanupJob(cleaner: SnapshotCleaner): SnapshotCleanupJob = SnapshotCleanupJob(cleaner)

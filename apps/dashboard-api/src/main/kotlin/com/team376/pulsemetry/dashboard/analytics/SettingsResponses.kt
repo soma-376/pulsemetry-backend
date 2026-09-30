@@ -78,6 +78,31 @@ data class SettingsSummary(
 	val contractedSeats: Long?,
 	val activeSeats7d: Long?,
 	val meteredMonthToDate: Section<MeteredSummary>,
+	/** 매핑으로 관측됐지만 조직이 등록하지 않은 카탈로그 제품(가산 — ADR 0044). 벤더 목록에는 넣지 않는다. */
+	val detectedProducts: List<DetectedProduct>,
+	/** 어느 카탈로그 제품에도 매핑되지 않은 관측(가산 — ADR 0044). 없으면 null. */
+	val unmappedObservations: UnmappedObservations?,
+)
+
+data class DetectedProduct(
+	val kind: String,
+	val displayName: String,
+	val state: String,
+	val firstSeenAt: String?,
+	val lastSeenAt: String?,
+	val activeUsers7d: Long?,
+	val activeUsers30d: Long?,
+	val observation: String,
+)
+
+data class UnmappedObservations(
+	/** 관측 행의 `product` 값(수집 어댑터의 어휘). */
+	val observedProducts: List<String>,
+	val firstSeenAt: String,
+	val lastSeenAt: String,
+	val activeUsers7d: Long?,
+	val activeUsers30d: Long?,
+	val observation: String,
 )
 
 data class CatalogKind(val kind: String, val displayName: String)

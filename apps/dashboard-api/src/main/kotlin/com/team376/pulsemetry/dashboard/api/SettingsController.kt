@@ -17,8 +17,8 @@ import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * 설정 명세의 조회 넷. 선택 기간이 없다. 받는 파라미터: 벤더 목록 `limit`(기본 20, 최대 100)·`cursor`·`snapshotId`, 설치 `policyStatus`(`applied`·`outdated`·`unknown`)·
- * `limit`·`cursor`·`snapshotId`.
+ * 설정 명세의 조회 넷. 선택 기간이 없다. 받는 파라미터: 벤더 목록 `limit`(기본 20, 최대 100)·`cursor`·`snapshotId`, 벤더 상세 `snapshotId`(선택 — 주면 그 기준 시각의
+ * 관측 고정을 쓴다, ADR 0044), 설치 `policyStatus`(`applied`·`outdated`·`unknown`)·`limit`·`cursor`·`snapshotId`.
  */
 @RestController
 class SettingsController(
@@ -43,7 +43,8 @@ class SettingsController(
 		@AuthenticationPrincipal principal: DashboardPrincipal,
 		@PathVariable organizationId: String,
 		@PathVariable vendorId: String,
-	): VendorResponse = settings.vendor(access.require(principal, organizationId, DashboardAction.ORGANIZATION_SETTINGS), vendorId)
+		request: HttpServletRequest,
+	): VendorResponse = settings.vendor(access.require(principal, organizationId, DashboardAction.ORGANIZATION_SETTINGS), vendorId, request.getParameter(SNAPSHOT_ID))
 
 	@GetMapping("/api/v1/organizations/{organizationId}/installations")
 	fun installations(

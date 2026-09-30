@@ -55,7 +55,17 @@ class SeedScenarioTest {
         assertEquals("needs_review", copilot.path("state").asString())
         assertEquals("2026-09-27", copilot.path("contract").path("effectiveTo").asString())
         assertEquals("95", copilot.path("contract").path("monthlySeatFeeUsd").asString())
-        assertTrue(vendors.all { it.path("activeUsers7d").isNull && it.path("observation").asString() == "unobserved" })
+        // 관측은 명시 매핑으로만 붙는다(ADR 0044): claude_code → claude_team, codex → openai_biz. Cursor·Copilot 은 매핑이 없어 관측할 수 없다.
+        for (observed in listOf(claude, openai)) {
+            assertEquals("partial", observed.path("observation").asString())
+            assertTrue(observed.path("firstSeenAt").asString() < observed.path("lastSeenAt").asString())
+            assertTrue(observed.path("lastSeenAt").asString() < "2026-09-27T15:00:00Z")
+            assertTrue(observed.path("activeUsers7d").asInt() in 1..8 && observed.path("activeUsers30d").asInt() in observed.path("activeUsers7d").asInt()..8)
+        }
+        for (unmapped in listOf(cursor, copilot)) {
+            assertEquals("unobserved", unmapped.path("observation").asString())
+            assertTrue(listOf("activeUsers7d", "activeUsers30d", "firstSeenAt", "lastSeenAt").all { unmapped.path(it).isNull })
+        }
         assertEquals(8, fixture.path("usage").path("activeUsers").asInt())
         // 판 2를 주 설치 2~8이 적용했고 9~11은 판 1에 머물며 두 번째 설치는 확인된 판이 없다.
         assertEquals(2, fixture.path("policyRollout").path("desiredVersion").asInt())
@@ -262,6 +272,22 @@ class SeedScenarioTest {
         assertTrue(onV2.filter { it["applied_at"] != null }.all { it["applied_at"].toString() >= "2026-09-20T15:00:00Z" })
         // C는 판 하나만 있다.
         assertEquals(listOf(1 to true), c.rows.getValue("enrollment.manifests").map { it["version"] to it["is_active"] })
+    }
+
+    @Test fun `fixture 의 관측 매핑은 enrollment 마이그레이션의 매핑과 같다`() {
+        val sql = requireNotNull(javaClass.getResourceAsStream("/db/migration/V18__vendor_catalog_observed_products.sql")).use { it.readBytes().decodeToString() }
+        val pairs = Regex("""\('([a-z_]+)', '([a-z_]+)'\)""").findAll(sql).associate { it.groupValues[1] to it.groupValues[2] }
+        assertEquals(pairs, OBSERVED_PRODUCTS)
+    }
+
+    @Test fun `C는 어느 카탈로그 제품에도 매핑되지 않는 관측을 하나 갖고 그것은 사용량 행이 아니다`() {
+        val unmapped = c.events.filter { it["product"] !in OBSERVED_PRODUCTS.keys }
+        assertEquals(listOf("unknown"), unmapped.map { it["product"] })
+        val row = unmapped.single()
+        assertEquals(listOf("generic", "vendor.unknown", "none"), listOf(row["mapping_status"], row["event_type"], row["usage_role"]))
+        assertTrue(listOf("tokens_input", "cost_estimated_usd", "session_id", "model").all { row[it] == null })
+        // A의 관측은 모두 매핑된 제품이다.
+        assertTrue(a.events.all { it["product"] in OBSERVED_PRODUCTS.keys })
     }
 
     @Test fun `A 계약 이력의 합계와 확인자가 일치하고 초기 미입력 버전을 보존한다`() {

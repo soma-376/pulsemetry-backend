@@ -183,14 +183,14 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 | legacy contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 기존 기간 약정. 좌석 계약 관리 API에서 수정·환산하지 않음 |
 | registered product / seat contract | `managed_vendors` · `vendor_contract_versions` · `management_commands` | `:libs:enrollment-persistence` — 등록·정정·이름 변경·보관·멱등 명령 저장 |
 | user authentication | `user_sessions` · `user_refresh_tokens` · `user_authorization_codes` · `auth_attempts` | `:libs:enrollment-persistence`의 인증 저장소. 정책·검증은 `:libs:security`, HTTP 조립은 enrollment-api |
-| vendor catalog | `vendor_catalog_vendors` · `vendor_catalog_products` · `vendor_catalog_plans` | `:libs:enrollment-persistence`의 Flyway가 초기화. 관리자 편집 API는 없음 |
+| vendor catalog | `vendor_catalog_vendors` · `vendor_catalog_products` · `vendor_catalog_plans` · `vendor_catalog_observed_products` | `:libs:enrollment-persistence`의 Flyway가 초기화. 관리자 편집 API는 없음. 관측 제품 매핑(`vendor_catalog_observed_products`)은 dashboard-api가 읽기 전용 계정으로 읽는다 (ADR 0044) |
 | mail | `mail_outbox` | `:libs:enrollment-persistence`의 메일 outbox(`mail`) — 업무 쓰기가 같은 트랜잭션에서 적재하고, enrollment-api의 발송 작업이 선점해 결과를 기록 (ADR 0037) |
 | inquiry | `inquiries` · `inquiry_attempts` | `:libs:enrollment-persistence`의 문의 저장소(`inquiry`) — enrollment-api의 공개 접수 명령. 조직에 속하지 않으며 조직·계정·초대를 만들지 않음 |
 | installation report | `installation_heartbeats` · `installation_collection_segments` | `:libs:enrollment-persistence`의 설치 보고 저장소(`installation`) — enrollment-api가 데몬 heartbeat를 받아 기록. `installations.last_seen_at`·`installation_manifest_assignments.applied_at`은 enrollment 도메인 그대로 enrollment-api가 씀 (ADR 0040). dashboard-api는 읽기 전용 계정으로 읽어 수집 상태를 판정함 (ADR 0041) |
 | operation | `operations` · `operation_targets` | `:libs:enrollment-persistence`의 공통 작업 기록(`operation`) — 작업을 만드는 명령과 그 실행 주체가 생성·전이를 기록하고, dashboard-api는 읽기 전용 계정으로 조회만 함 (ADR 0039). 지금 생산자는 enrollment-api의 설치 업데이트 안내(`installation`의 `InstallationNotifier` — 메일 발송 결과를 대상 결과로 옮김, ADR 0043) 하나 |
 | telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` · `telemetry_ingest_ledger` · `telemetry_retention_fence` | `:libs:telemetry-persistence` |
 | telemetry ops | RDS `telemetry_ops.tenant_ingest_summary` · `tenant_summary_backfill` · `tenant_retention_boundary` · `retention_operations` | `:libs:telemetry-ops-persistence` |
-| dashboard cache | RDS `dashboard_cache.snapshots` · `snapshot_teams` · `snapshot_members` · `snapshot_complete_days`(ADR 0042), ClickHouse `dashboard_cache.snapshot_usage` · `snapshot_observed_days` · `snapshot_member_activity`(+ 입구 `snapshot_intake`·뷰 둘) | `:apps:dashboard-api` |
+| dashboard cache | RDS `dashboard_cache.snapshots` · `snapshot_teams` · `snapshot_members` · `snapshot_complete_days`(ADR 0042) · `vendor_observation_sets` · `vendor_observations`(설정의 벤더 관측 고정, ADR 0044), ClickHouse `dashboard_cache.snapshot_usage` · `snapshot_observed_days` · `snapshot_member_activity`(+ 입구 `snapshot_intake`·뷰 둘) | `:apps:dashboard-api` |
 
 **쓰기 소유는 모듈이다**(ADR 0008 규칙 1). 표가 앱 이름을 적은 행은 그 도메인의 쓰기가 아직 앱에
 직접 있다는 뜻이고, 규칙 5의 승격 트리거가 당겨지면 모듈로 내려간다. telemetry는 새 도메인이라

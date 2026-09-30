@@ -26,6 +26,7 @@ import tools.jackson.databind.ObjectMapper
 import java.net.http.HttpResponse
 import java.time.Clock
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.UUID
 
@@ -37,7 +38,7 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 	// 안내 채널이 켜진 설정 서비스를 같은 컨텍스트의 부품으로 조립한다(컨텍스트를 새로 띄우지 않는다).
 	@Autowired private lateinit var properties: DashboardApiProperties
 	@Autowired private lateinit var source: JdbcClient
-	@Autowired private lateinit var vendorUsage: VendorUsageReader
+	@Autowired private lateinit var observations: VendorObservations
 	@Autowired private lateinit var frames: AnalyticsFrames
 	@Autowired private lateinit var tokens: CurrentStateTokens
 	@Autowired private lateinit var codec: PageCursorCodec
@@ -144,25 +145,89 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		assertThat(ok(seed(privacy = """{"collect_user_email":true}""").tenant, "/settings").at("/collectionPolicy/collectRawContent").asBoolean()).isFalse()
 	}
 
-    @Test
-    @DisplayName("등록된 제품만 표시하며 레거시 공급자 계약과 관측만 있는 제품은 포함하지 않는다")
-    fun registeredProductsOnly() {
-        val org = seed()
-        SourceFixtures.insertEvents(org.tenant, Event("${org.tenant}-codex", Instant.now().minusSeconds(3600), product = "codex", serviceName = "codex-app-server", memberId = UUID.randomUUID()))
-        val vendors = ok(org.tenant, "/vendors").at("/vendors/items").list().associateBy { it.path("vendorId").asString() }
-        assertThat(vendors.keys).containsExactlyElementsOf(org.registered.sorted())
-        val claude = vendors.getValue(org.registered[0])
-        assertThat(claude.path("state").asString()).isEqualTo("configured")
-        assertThat(claude.at("/contract/monthlySeatFeeUsd").asString()).isEqualTo("60")
-        assertThat(claude.path("contractStatus").asString()).isEqualTo("active")
-        val openai = vendors.getValue(org.registered[1])
-        assertThat(openai.path("state").asString()).isEqualTo("needs_review")
-        assertThat(openai.path("contract").isNull).isTrue()
-        assertThat(openai.path("contractStatus").asString()).isEqualTo("missing")
-        assertThat(vendors.values.flatMap { row -> listOf("firstSeenAt", "lastSeenAt", "activeUsers7d", "activeUsers30d").map { row.path(it).isNull } }).containsOnly(true)
-        assertThat(ok(org.tenant, "/vendors/${org.registered[0]}").at("/vendor/vendorId").asString()).isEqualTo(org.registered[0])
-        assertThat(get(org.tenant, "/vendors/anthropic").statusCode()).isEqualTo(404)
-    }
+	/** 이틀 전 정오(서울) — 최근 7·30일 창(기준일 전날까지) 안이다. */
+	private fun recent(): Instant = LocalDate.now(QueryReader.SEOUL).minusDays(2).atTime(12, 0).atZone(QueryReader.SEOUL).toInstant()
+
+	private fun observation(row: JsonNode) = listOf("firstSeenAt", "lastSeenAt", "activeUsers7d", "activeUsers30d", "observation").map { row.path(it).toString() }
+
+	@Test
+	@DisplayName("등록된 제품만 표시하고 관측은 카탈로그의 명시 매핑으로만 붙인다 — 레거시 공급자 계약은 포함하지 않는다")
+	fun registeredProductsOnly() {
+		val org = seed()
+		val seen = recent()
+		SourceFixtures.insertEvents(org.tenant, Event("${org.tenant}-codex", seen, product = "codex", serviceName = "codex-app-server", memberId = UUID.randomUUID()))
+		val vendors = ok(org.tenant, "/vendors").at("/vendors/items").list().associateBy { it.path("vendorId").asString() }
+		assertThat(vendors.keys).containsExactlyElementsOf(org.registered.sorted())
+		val claude = vendors.getValue(org.registered[0])
+		assertThat(claude.path("state").asString()).isEqualTo("configured")
+		assertThat(claude.at("/contract/monthlySeatFeeUsd").asString()).isEqualTo("60")
+		assertThat(claude.path("contractStatus").asString()).isEqualTo("active")
+		val openai = vendors.getValue(org.registered[1])
+		assertThat(openai.path("state").asString()).isEqualTo("needs_review")
+		assertThat(openai.path("contract").isNull).isTrue()
+		assertThat(openai.path("contractStatus").asString()).isEqualTo("missing")
+		// codex 는 매핑으로 openai_biz 의 도구다(ADR 0044). 수집 구간 근거가 없어 창이 완전하지 않다 — 센 수만 부분 값으로 낸다.
+		assertThat(observation(openai)).containsExactly("\"$seen\"", "\"$seen\"", "1", "1", "\"partial\"")
+		// claude_team 은 매핑은 있으나 관측이 없다 — 0 이 아니라 모름이다.
+		assertThat(observation(claude)).containsExactly("null", "null", "null", "null", "\"unobserved\"")
+		assertThat(ok(org.tenant, "/vendors/${org.registered[0]}").at("/vendor/vendorId").asString()).isEqualTo(org.registered[0])
+		assertThat(get(org.tenant, "/vendors/anthropic").statusCode()).isEqualTo(404)
+	}
+
+	@Test
+	@DisplayName("같은 기준 시각의 설정 첫 화면·다음 페이지·상세는 같은 관측 값이다 — 관측 고정이 없는 기준 시각은 409")
+	fun vendorObservationsAreFixedPerAsOf() {
+		val org = seed()
+		SourceFixtures.insertEvents(org.tenant, Event("${org.tenant}-a", recent(), memberId = UUID.randomUUID()))
+		val settings = ok(org.tenant, "/settings")
+		val snapshotId = settings.at("/meta/snapshotId").asString()
+		val first = settings.at("/vendors/items").list().associate { it.path("vendorId").asString() to observation(it) }
+		assertThat(first.getValue(org.registered[0])[2]).isEqualTo("1")
+		// 고정 뒤에 들어온 관측은 같은 기준 시각의 값을 바꾸지 않는다.
+		SourceFixtures.insertEvents(org.tenant, Event("${org.tenant}-b", recent(), memberId = UUID.randomUUID()))
+		val listed = ok(org.tenant, "/vendors?snapshotId=$snapshotId").at("/vendors/items").list().associate { it.path("vendorId").asString() to observation(it) }
+		assertThat(listed).isEqualTo(first)
+		assertThat(observation(ok(org.tenant, "/vendors/${org.registered[0]}?snapshotId=$snapshotId").at("/vendor"))).isEqualTo(first.getValue(org.registered[0]))
+		// 새 기준 시각은 다시 계산한다.
+		assertThat(ok(org.tenant, "/vendors/${org.registered[0]}").at("/vendor/activeUsers7d").asLong()).isEqualTo(2)
+		// 관측 고정이 없는 기준 시각(이전 판이 발급한 것)은 만료다 — 다시 계산해 섞지 않는다.
+		val stale = tokens.issue(SettingsService.SETTINGS_KIND, org.tenant, clock.instant().minusSeconds(1)).value
+		assertThat(get(org.tenant, "/vendors?snapshotId=$stale").statusCode()).isEqualTo(409)
+		assertThat(get(org.tenant, "/vendors/${org.registered[0]}?snapshotId=$stale").statusCode()).isEqualTo(409)
+		// 좌석 수를 관측 사용자 수로 채우지 않는다.
+		assertThat(settings.at("/summary/activeSeats7d").isNull).isTrue()
+	}
+
+	@Test
+	@DisplayName("관측됐지만 등록하지 않은 카탈로그 제품은 감지된 제품으로, 매핑 없는 관측은 어떤 제품에도 넣지 않고 따로 보인다")
+	fun detectedAndUnmapped() {
+		val tenant = DashboardTestStores.insertTenant()
+		SourceFixtures.setSummary(tenant, firstReceivedAt = kst("2026-09-01T00:00:00"))
+		val admin = SourceFixtures.insertMember(tenant, "admin@example.test", role = "admin")
+		SourceFixtures.insertManifest(tenant, 1, admin)
+		val seen = recent()
+		SourceFixtures.insertEvents(tenant,
+			Event("$tenant-codex", seen, product = "codex", serviceName = "codex-app-server", memberId = UUID.randomUUID(), semanticsProfile = null),
+			Event("$tenant-unknown", seen, product = "unknown", serviceName = "some-tool", memberId = UUID.randomUUID(), semanticsProfile = null))
+
+		val body = ok(tenant, "/settings")
+
+		assertThat(body.at("/vendors/items").size()).isZero()
+		val detected = body.at("/summary/detectedProducts").list()
+		assertThat(detected.map { listOf(it.path("kind").asString(), it.path("displayName").asString(), it.path("state").asString()) })
+			.containsExactly(listOf("openai_biz", "ChatGPT / Codex (OpenAI)", "detected_unconfigured"))
+		assertThat(observation(detected.single())).containsExactly("\"$seen\"", "\"$seen\"", "1", "1", "\"partial\"")
+		val unmapped = body.at("/summary/unmappedObservations")
+		assertThat(unmapped.path("observedProducts").list().map { it.asString() }).containsExactly("unknown")
+		assertThat(observation(unmapped)).containsExactly("\"$seen\"", "\"$seen\"", "1", "1", "\"partial\"")
+		// 등록·계약 합계는 등록 제품만 센다.
+		assertThat(listOf(body.at("/summary/configuredVendors").asLong(), body.at("/summary/unconfiguredVendors").asLong())).containsExactly(0L, 0L)
+		// 관측이 없는 조직에는 감지된 제품도 매핑 없는 관측도 없다.
+		val quiet = seed()
+		val empty = ok(quiet.tenant, "/settings")
+		assertThat(empty.at("/summary/detectedProducts").size()).isZero()
+		assertThat(empty.at("/summary/unmappedObservations").isNull).isTrue()
+	}
 
 	@Test
 	@DisplayName("벤더 페이지는 같은 snapshot ID 에서 이어지고 다른 목록의 cursor 는 400")
@@ -251,7 +316,7 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		val parked = SourceFixtures.insertInstallation(org.tenant, suspended)
 		val organization = requireNotNull(organizations.find(org.tenant))
 		// 앱 조립과 같은 경로로 만든다 — 관리 기능과 메일이 모두 켜져야 채널이 있다.
-		fun service(management: Boolean, mail: Boolean) = AnalyticsConfig().settingsService(management, mail, properties, source, vendorUsage, frames, tokens, codec,
+		fun service(management: Boolean, mail: Boolean) = AnalyticsConfig().settingsService(management, mail, properties, source, observations, frames, tokens, codec,
 			mapper, clock, catalog)
 		fun notifiable(service: SettingsService) = service.installations(organization, null, PageRequest(100, null), null).installations.items
 			.associate { it.installationId to it.canNotify }
@@ -291,7 +356,9 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 	fun structureMatchesExample() {
 		val org = seed()
 
-		JsonStructure.assertSameKeys("", JsonStructure.example("settings-response.example.json"), ok(org.tenant, "/settings"))
+		// 가산 키(ADR 0044): 관측됐지만 등록하지 않은 제품, 매핑 없는 관측.
+		JsonStructure.assertSameKeys("", JsonStructure.example("settings-response.example.json"), ok(org.tenant, "/settings"),
+			mapOf("/summary" to setOf("detectedProducts", "unmappedObservations")))
 	}
     @Test fun expiredContractPreservesDetailsAndHasZeroActiveSummary() {
         val org = seed()

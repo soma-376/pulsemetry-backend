@@ -12,7 +12,8 @@ import com.team376.pulsemetry.dashboard.analytics.SnapshotReferences
 import com.team376.pulsemetry.dashboard.analytics.TeamDirectoryService
 import com.team376.pulsemetry.dashboard.analytics.TeamsService
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator
-import com.team376.pulsemetry.dashboard.analytics.VendorUsageReader
+import com.team376.pulsemetry.dashboard.analytics.VendorObservations
+import com.team376.pulsemetry.dashboard.snapshot.SnapshotCompleteness
 import com.team376.pulsemetry.dashboard.snapshot.ModelResolution
 import com.team376.pulsemetry.dashboard.snapshot.RetentionBoundaryReader
 import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheClient
@@ -29,6 +30,8 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.jdbc.datasource.DataSourceTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.ObjectMapper
 import java.time.Clock
 
@@ -110,9 +113,16 @@ class AnalyticsConfig {
 		clock: Clock,
 	): MembersService = MembersService(frames, aggregator, references, snapshots, codec, tokens, properties.members.idleDays, clock, managementEnabled)
 
+	/** 설정·벤더의 관측 지표(ADR 0044). 원천(분석 행·매핑·완전성 근거)은 읽기만 하고 고정은 자기 캐시에 쓴다. */
 	@Bean
-	fun vendorUsageReader(reader: ClickHouseSourceReader, resolution: ModelResolution, boundaries: RetentionBoundaryReader): VendorUsageReader =
-		VendorUsageReader(reader, resolution, boundaries)
+	fun vendorObservations(
+		reader: ClickHouseSourceReader,
+		source: JdbcClient,
+		@Qualifier(CacheStoreConfig.CACHE_DATA_SOURCE) cacheDataSource: HikariDataSource,
+		completeness: SnapshotCompleteness,
+		boundaries: RetentionBoundaryReader,
+	): VendorObservations = VendorObservations(reader, source, JdbcClient.create(cacheDataSource),
+		TransactionTemplate(DataSourceTransactionManager(cacheDataSource)), completeness, boundaries)
 
 	@Bean
 	fun settingsService(
@@ -120,7 +130,7 @@ class AnalyticsConfig {
 		@org.springframework.beans.factory.annotation.Value("\${pulsemetry.mail.enabled:false}") mailEnabled: Boolean,
 		properties: DashboardApiProperties,
 		source: JdbcClient,
-		vendorUsage: VendorUsageReader,
+		observations: VendorObservations,
 		frames: AnalyticsFrames,
 		tokens: CurrentStateTokens,
 		codec: PageCursorCodec,
@@ -128,7 +138,7 @@ class AnalyticsConfig {
 		clock: Clock,
 		catalog: VendorCatalog,
 	): SettingsService = SettingsService(
-		source, vendorUsage, frames, tokens, codec, mapper, properties.members.idleDays, clock, managementEnabled, catalog,
+		source, observations, frames, tokens, codec, mapper, properties.members.idleDays, clock, managementEnabled, catalog,
 		// 안내는 enrollment-api 가 메일로 보낸다(ADR 0043). 두 앱이 같은 설정 값을 받는다.
 		notificationsEnabled = managementEnabled && mailEnabled,
 	)
