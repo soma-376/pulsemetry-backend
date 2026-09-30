@@ -19,6 +19,13 @@ pulsemetry:
   management:
     enabled: true
     onboarding-otlp-endpoint: ${PULSEMETRY_ONBOARDING_OTLP_ENDPOINT:http://localhost:4316}
+  inquiries:
+    enabled: true
+    duplicate-window: ${PULSEMETRY_INQUIRIES_DUPLICATE_WINDOW:PT10M}
+    rate-limit:
+      requests: ${PULSEMETRY_INQUIRIES_RATE_LIMIT_REQUESTS:10}
+      window: ${PULSEMETRY_INQUIRIES_RATE_LIMIT_WINDOW:PT1M}
+    allowed-origins: http://localhost:3000,http://localhost:3107
   admin:
     api-token: ${PULSEMETRY_ADMIN_API_TOKEN:local-development-admin-token}
   token-hash-secret: ${PULSEMETRY_TOKEN_HASH_SECRET:local-development-token-hash-secret}

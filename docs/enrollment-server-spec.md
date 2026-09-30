@@ -46,6 +46,7 @@
 | GET | `/v1/healthz` | 없음 | 200 |
 | POST | `/v1/invitations` | `X-Admin-Token` | 201 |
 | POST | `/v1/invitations/{id}/revoke` | `X-Admin-Token` | 204 |
+| POST | `/v1/inquiries` | 없음 (출처별 요청 수 제한) | 201 |
 | GET | `/windows?code=...` | 없음 | 200 `text/plain` |
 | GET | `/unix?code=...` | 없음 | 200 `text/plain` |
 | GET | `/bin/{filename}` | 없음 | 200 `application/octet-stream` |
@@ -91,6 +92,44 @@
 그래서 재조회 API 를 두지 않는다. 관리자가 이 응답을 잃으면 새로 발급해야 한다.
 
 ---
+
+### 2.2 `POST /v1/inquiries` 도입 문의 접수
+
+로그인 전의 문의 폼이 부르는 공개 경로다. 인증이 없고 **조직·계정·초대를 만들지 않는다** — 접수만 저장한다.
+담당자가 확인한 뒤 첫 관리자를 초대하는 절차는 이 API 밖이다.
+`pulsemetry.inquiries.enabled=true`일 때만 있다. 꺼져 있으면 404 `not_found`다.
+
+```json
+{"company": "코드웍스", "email": "lead@example.test"}
+```
+
+| 필드 | 규칙 |
+|---|---|
+| `company` | 필수. 앞뒤 공백을 뗀 1~100자. 제어 문자(줄바꿈 포함)를 받지 않는다 |
+| `email` | 필수. 앞뒤 공백을 떼고 소문자로 바꾼 320자 이하의 주소. 형식은 `local@domain.tld` |
+
+계약에 없는 필드는 400이다. 응답은 201이고 `Cache-Control: no-store`다.
+
+```json
+{"inquiryId": "3f6c…", "status": "received", "receivedAt": "2026-09-09T12:00:00Z"}
+```
+
+- `status`는 `received` 하나다. 접수했다는 뜻이며 담당자 확인이나 초대 발급을 뜻하지 않는다.
+- **재전송**: 같은 회사명·이메일이 `duplicate-window` 안에 다시 오면 저장하지 않고 앞선 접수의 본문을 그대로 돌려준다(201, 같은 `inquiryId`·`receivedAt`).
+  같은지는 정규화한 값으로 본다 — 회사명은 NFKC·소문자·연속 공백 하나, 이메일은 소문자. 판정은 가장 최근 접수가 기준이고,
+  그 시간이 지난 뒤의 같은 입력은 새 문의다. 같은 입력의 동시 요청도 한 번만 저장한다.
+- **남용 제한**: 출처 주소(서블릿 `remoteAddr`)별로 `rate-limit.window` 안에 `rate-limit.requests`회까지 받는다. 검증에 실패한 요청과 재전송도 센다.
+  넘으면 429 `rate_limited`와 `Retry-After`(창이 끝날 때까지의 초)다. preflight(`OPTIONS`)는 세지 않는다.
+  제한 상태와 문의 행에는 주소의 SHA-256만 남긴다. forwarded 헤더를 믿지 않으므로 프록시 뒤에서는 프록시 주소 단위의 제한이 된다(사용자 인증의 IP 제한과 같다 — ADR 0018).
+- **CORS**: `/v1/inquiries`는 `pulsemetry.inquiries.allowed-origins`의 출처에만 `POST`·`Content-Type`을 허용하고 `Retry-After`를 노출한다. 사용자 인증의 출처 목록과 따로 둔다.
+
+오류 본문은 §7의 두 필드 형태다. 문장은 CLI 가 아니라 문의 폼의 사용자에게 보인다.
+
+| 상황 | HTTP | error |
+|---|---|---|
+| 필드 누락·형식 오류·계약에 없는 필드·JSON 아님 | 400 | `invalid_request` |
+| 출처의 요청 수 초과 | 429 | `rate_limited` + `Retry-After` |
+| 저장소 장애 | 503 | `inquiry_unavailable` + `Retry-After: 1` |
 
 ## 3. 초대 코드
 
@@ -327,6 +366,8 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | installation 폐기됨 | 403 | `installation_revoked` |
 | 알 수 없는 경로 | 404 | `not_found` |
 | 지원하지 않는 메서드 | 405 | `method_not_allowed` |
+| 문의 접수의 요청 수 초과 (§2.2) | 429 | `rate_limited` |
+| 문의 접수의 저장소 장애 (§2.2) | 503 | `inquiry_unavailable` |
 
 사용·폐기가 409 이고 만료만 410 인 이유: 사용과 폐기는 **사람의 행위**로 무효화된 상태라
 409 Conflict 가 맞고, 만료는 **시간 경과**로 영구 소멸한 자원이라 410 Gone 이 맞다.
@@ -346,8 +387,15 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.token-hash-secret` | 없음 | telemetry token 의 HMAC-SHA256 키. **비어 있으면 기동 실패.** auth-proxy(ai-telemetry-pipeline)와 같은 값을 써야 OTLP 인증이 성립한다. dev 인프라에서는 `DevEdgeStack` 의 `TokenHashSecretArn` 이 가리키는 Secrets Manager 값. 키 변경 = 발급된 전 토큰 무효 |
 | `pulsemetry.invitation.default-ttl-hours` | `72` | `expires_in_hours` 생략 시 만료 시간 |
 | `pulsemetry.binaries.dir` | `./binaries` | CLI 바이너리가 놓인 서버 로컬 디렉터리 |
+| `pulsemetry.inquiries.enabled` | `false` | 도입 문의 접수(§2.2)를 켠다. 켜면 아래 네 값이 **모두 필요하다 — 하나라도 비면 기동 실패** |
+| `pulsemetry.inquiries.duplicate-window` | 없음 | 같은 회사·이메일의 재전송을 같은 접수로 보는 시간(ISO-8601 기간, 예: `PT10M`) |
+| `pulsemetry.inquiries.rate-limit.requests` | 없음 | 출처 하나가 창 안에 보낼 수 있는 요청 수(1 이상) |
+| `pulsemetry.inquiries.rate-limit.window` | 없음 | 요청 수를 세는 창(ISO-8601 기간) |
+| `pulsemetry.inquiries.allowed-origins` | 없음 | 문의 폼을 띄우는 프론트 출처(쉼표로 구분) |
 
 DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_PASSWORD` 로 덮어쓴다.
+문의 접수의 다섯 키는 `PULSEMETRY_INQUIRIES_ENABLED` · `_DUPLICATE_WINDOW` · `_RATE_LIMIT_REQUESTS` · `_RATE_LIMIT_WINDOW` · `_ALLOWED_ORIGINS` 로 준다.
+local 프로필은 개발용 값(10분, 1분에 10회, 출처 3000·3107)으로 켠다. 운영 수치의 배포 기본값은 두지 않는다.
 
 ---
 
@@ -814,7 +862,10 @@ Flyway가 enrollment 스키마의 진실원이다. 관련 추가 마이그레이
 | V9 | managed_vendors.archived 동기화, 조직·제품당 활성 등록 하나의 부분 유일 인덱스 |
 | V10 | 공통 공급사·제품·플랜 카탈로그와 초기 목록 |
 | V11 | openai_biz의 복수 좌석 유형 입력 허용 |
+| V13 | 도입 문의 접수(`inquiries`)와 출처별 문의 요청 수 제한(`inquiry_attempts`) |
 
+V12는 이 표에 없다 — 사용자 로그인 방식 작업이 예약한 번호다. Flyway는 이미 적용한 판보다 낮은 번호를 뒤늦게 받지 않으므로,
+V13이 먼저 적용된 DB에는 V12를 넣을 수 없다. 머지 순서가 뒤집히면 그 작업이 번호를 다시 매긴다.
 V9는 기존 버전 이력의 보관 여부를 반영한 뒤 중복 활성 제품을 검사한다.
 중복이 있으면 적용을 중단하며 자동 병합·삭제하지 않는다. 해당 조직의 중복 등록을 검토한 뒤 다시 적용한다.
 telemetry_ops의 V3는 별도 이력으로 관리하며 신규 조직 생성 시 빈 수집 요약을 원자적으로 초기화한다(ADR 0034).

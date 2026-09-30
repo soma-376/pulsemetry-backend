@@ -1,5 +1,8 @@
 package com.team376.pulsemetry.enrollment.auth
 
+import com.team376.pulsemetry.enrollment.inquiry.InquiryProperties
+import com.team376.pulsemetry.enrollment.inquiry.InquiryRequestFilter
+import com.team376.pulsemetry.persistence.enrollment.inquiry.InquiryStore
 import com.team376.pulsemetry.security.user.UserAuthException
 import com.team376.pulsemetry.security.user.UserAuthService
 import jakarta.servlet.FilterChain
@@ -29,10 +32,12 @@ class EnrollmentSecurityConfig {
     }
 
     @Bean
-    fun enrollmentSecurity(http: HttpSecurity, service: ObjectProvider<UserAuthService>, properties: ObjectProvider<UserAuthProperties>): SecurityFilterChain {
+    fun enrollmentSecurity(http: HttpSecurity, service: ObjectProvider<UserAuthService>, properties: ObjectProvider<UserAuthProperties>,
+        inquiries: ObjectProvider<InquiryStore>, inquiryProperties: ObjectProvider<InquiryProperties>): SecurityFilterChain {
         http.csrf { it.disable() }.sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .requestCache { it.disable() }.formLogin { it.disable() }.httpBasic { it.disable() }.logout { it.disable() }
             .authorizeHttpRequests { it.anyRequest().permitAll() }
+        val source = UrlBasedCorsConfigurationSource()
         val auth = service.ifAvailable
         if (auth != null) {
             val cors = CorsConfiguration().apply {
@@ -42,15 +47,25 @@ class EnrollmentSecurityConfig {
                 exposedHeaders = listOf("Location", "ETag", "Retry-After", "X-Request-Id")
                 allowCredentials = false
             }
-            val source = UrlBasedCorsConfigurationSource().apply {
-                registerCorsConfiguration("/v1/auth/**", cors)
-                registerCorsConfiguration("/v1/manifest", cors)
-                registerCorsConfiguration("/api/v1/organizations/**", cors)
-            }
-            http.cors { it.configurationSource(source) }
+            source.registerCorsConfiguration("/v1/auth/**", cors)
+            source.registerCorsConfiguration("/v1/manifest", cors)
+            source.registerCorsConfiguration("/api/v1/organizations/**", cors)
             // Filter 빈으로 노출하지 않는다. Boot의 전역 자동 등록을 피한다.
             http.addFilterBefore(UserAuthRequestFilter(auth), AuthorizationFilter::class.java)
         }
+        // 문의 접수는 사용자 인증과 따로 켠다. 출처 목록도 따로 받는다.
+        val inquiryStore = inquiries.ifAvailable
+        if (inquiryStore != null) {
+            source.registerCorsConfiguration("/v1/inquiries", CorsConfiguration().apply {
+                allowedOrigins = inquiryProperties.getObject().allowedOrigins
+                allowedMethods = listOf("POST", "OPTIONS")
+                allowedHeaders = listOf("Content-Type")
+                exposedHeaders = listOf("Retry-After")
+                allowCredentials = false
+            })
+            http.addFilterBefore(InquiryRequestFilter(inquiryStore), AuthorizationFilter::class.java)
+        }
+        if (auth != null || inquiryStore != null) http.cors { it.configurationSource(source) }
         return http.build()
     }
 }
