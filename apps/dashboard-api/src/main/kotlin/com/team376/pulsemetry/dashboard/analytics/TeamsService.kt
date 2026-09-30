@@ -87,8 +87,8 @@ class TeamsService(
 			ingest = frames.ingest(frame),
 			attributionBasis = ATTRIBUTION_BASIS,
 			totals = OverviewResponse.UsagePair(
-				current = if (frame.empty) null else Usage.of(data.organization, frame.pricingMixed),
-				previous = data.previousOrganization?.let { Usage.of(it, frame.pricingMixed) },
+				current = if (frame.empty) null else Usage.of(data.organization, frame.pricingMixed, frame.currentComplete),
+				previous = data.previousOrganization?.let { Usage.of(it, frame.pricingMixed, frame.previousComplete) },
 			),
 			sort = sort.wire,
 			teams = Page(items.map { data.analytics(TeamKey.Team(UUID.fromString(it))) }, ranked.size, next),
@@ -153,7 +153,8 @@ class TeamsService(
 			meta = frames.analyticsMeta(frame),
 			team = teamRef(key, directory),
 			summary = TeamUsersSummary(
-				usage = if (frame.empty || !team.hasUsage) null else Usage.of(team, pricingMixed),
+				// 완전한 기간이면 사용이 없는 팀도 0 이다 — 팀 상세와 같은 기준이다.
+				usage = if (frame.empty || (!team.hasUsage && !frame.currentComplete)) null else Usage.of(team, pricingMixed, frame.currentComplete),
 				averageEquivalentCostUsd = average(identified.map { it.second }, pricingMixed)?.let(Money::format),
 				cacheReadTokens = team.tokens(team.cacheRead),
 				cacheEligibleInputTokens = team.cacheEligibleInput(),
@@ -226,17 +227,21 @@ class TeamsService(
 			return TeamAnalytics(
 				teamId = ref.teamId,
 				teamName = ref.teamName,
-				current = if (frame.empty || !totals.hasUsage) null else Usage.of(totals, pricingMixed),
-				previous = if (frame.comparable) previous[listOf(id)]?.takeIf { it.hasUsage }?.let { Usage.of(it, pricingMixed) } else null,
+				current = if (frame.empty || (!totals.hasUsage && !frame.currentComplete)) null else Usage.of(totals, pricingMixed, frame.currentComplete),
+				previous = if (!frame.comparable) null else (previous[listOf(id)] ?: UsageTotals.EMPTY).let { prior ->
+					if (!prior.hasUsage && !frame.previousComplete) null else Usage.of(prior, pricingMixed, frame.previousComplete)
+				},
 				modelMix = section(models) { TeamModelMix.of(models) },
 				trend = frame.period.current.dates().map { date ->
 					val day = teamDays[listOf(id, date.toString())] ?: UsageTotals.EMPTY
-					val seen = frame.observed(date)
+					val observation = frame.observation(date)
+					// 완전한 날에 사용이 없으면 0, 미관측이면 값이 없다.
+					val usage = if (observation == AnalyticsFrames.UNOBSERVED) null else Usage.of(day, pricingMixed, observation == Coverage.COMPLETE)
 					TeamTrendPoint(
 						date = date.toString(),
-						observation = if (seen) PARTIAL else UNOBSERVED,
-						equivalentCostUsd = if (seen) day.equivalentCost(pricingMixed)?.let(Money::format) else null,
-						totalTokens = if (seen) day.apiTotal() else null,
+						observation = observation,
+						equivalentCostUsd = usage?.equivalentCostUsd,
+						totalTokens = usage?.tokens?.total,
 						cumulativeSessionCount = null,
 					)
 				},
@@ -300,8 +305,6 @@ class TeamsService(
 		const val ATTRIBUTION_BASIS = "event_time"
 		const val COST_SHARE_THRESHOLD = 0.05
 		const val UNASSIGNED_NAME = "미배정"
-		private const val PARTIAL = "partial"
-		private const val UNOBSERVED = "unobserved"
 		private const val CURSOR = "cursor"
 
 		private val COST_THEN_ID = compareBy<TeamModelUsage, BigDecimal?>(nullsLast(reverseOrder())) { it.equivalentCostUsd?.let(::BigDecimal) }

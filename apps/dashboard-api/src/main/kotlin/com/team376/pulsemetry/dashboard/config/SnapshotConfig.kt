@@ -6,6 +6,7 @@ import com.team376.pulsemetry.dashboard.snapshot.RetentionBoundaryReader
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotBuilder
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotCleaner
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotCleanupJob
+import com.team376.pulsemetry.dashboard.snapshot.SnapshotCompleteness
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotCopySql
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotReferenceCopier
@@ -62,6 +63,7 @@ class SnapshotConfig {
 		boundaries = boundaries,
 		manifests = manifests,
 		references = SnapshotReferenceCopier(source, JdbcClient.create(cacheDataSource)),
+		completeness = SnapshotCompleteness(source, JdbcClient.create(cacheDataSource), properties.completeness.settleAfter),
 		clickHouse = clickHouse,
 		sql = SnapshotCopySql(properties.clickhouse.source.database, resolution),
 		resolution = resolution,

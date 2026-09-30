@@ -62,7 +62,7 @@ class AnalyticsConfig {
 	@Bean
 	fun retentionOperations(sourceDataSource: HikariDataSource): RetentionOperationStore = RetentionOperationStore(sourceDataSource)
 
-	/** 두 기간 모두 완전 관측일 때만 비교를 공개한다 — v1 에는 그 근거가 없다. */
+	/** 두 기간 모두 완전 관측일 때만 비교를 공개한다(ADR 0042). */
 	@Bean
 	fun comparisonPolicy(): ComparisonPolicy = ComparisonPolicy.COMPLETE_ONLY
 

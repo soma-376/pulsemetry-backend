@@ -187,16 +187,29 @@ object SourceFixtures {
 		DashboardTestStores.clickHouseAdmin("INSERT INTO default.telemetry_ingest_ledger FORMAT JSONEachRow\n$line")
 	}
 
-	/** 활성(또는 비활성) manifest 한 판. [privacy] 는 manifest 의 `privacy` 객체 JSON 이다. */
-	fun insertManifest(tenantId: UUID, version: Int, createdBy: UUID, privacy: String = "{}", active: Boolean = true): UUID {
+	/**
+	 * 활성(또는 비활성) manifest 한 판. [privacy] 는 manifest 의 `privacy` 객체 JSON 이다. [signals] 를 주면 `signals` 객체를 싣는다.
+	 * [activatedAt] 을 주면 그 시각에 활성화된 판이다(주지 않으면 활성 판만 지금 활성화된 것으로 둔다).
+	 */
+	fun insertManifest(tenantId: UUID, version: Int, createdBy: UUID, privacy: String = "{}", active: Boolean = true,
+		signals: String? = null, activatedAt: Instant? = null): UUID {
 		val id = UUID.randomUUID()
 		DashboardTestStores.writer.sql(
 			"INSERT INTO enrollment.manifests (id, tenant_id, version, manifest, is_active, created_by_member_id, activated_at) " +
-				"VALUES (:id, :tenant, :version, CAST(:manifest AS jsonb), :active, :created_by, CASE WHEN :active THEN now() END)",
+				"VALUES (:id, :tenant, :version, CAST(:manifest AS jsonb), :active, :created_by, COALESCE(CAST(:activated_at AS timestamptz), CASE WHEN :active THEN now() END))",
 		).param("id", id).param("tenant", tenantId).param("version", version)
-			.param("manifest", """{"schema_version":1,"config_revision":$version,"privacy":$privacy}""")
-			.param("active", active).param("created_by", createdBy).update()
+			.param("manifest", """{"schema_version":1,"config_revision":$version,"privacy":$privacy${signals?.let { ""","signals":$it""" } ?: ""}}""")
+			.param("active", active).param("created_by", createdBy).param("activated_at", activatedAt?.toString(), java.sql.Types.VARCHAR).update()
 		return id
+	}
+
+	/** 설치의 등록 시각과 폐기 시각을 바꾼다. 폐기 시각을 주면 상태도 폐기다. */
+	fun setInstallationTimes(installationId: UUID, createdAt: Instant, revokedAt: Instant? = null) {
+		DashboardTestStores.writer.sql(
+			"UPDATE enrollment.installations SET created_at = :created, revoked_at = CAST(:revoked AS timestamptz), " +
+				"status = CAST(CASE WHEN CAST(:revoked AS timestamptz) IS NULL THEN 'active' ELSE 'revoked' END AS enrollment.installation_status) WHERE id = :id",
+		).param("id", installationId).param("created", java.sql.Timestamp.from(createdAt))
+			.param("revoked", revokedAt?.toString(), java.sql.Types.VARCHAR).update()
 	}
 
 	fun insertAssignment(installationId: UUID, manifestId: UUID, appliedAt: Instant?) {

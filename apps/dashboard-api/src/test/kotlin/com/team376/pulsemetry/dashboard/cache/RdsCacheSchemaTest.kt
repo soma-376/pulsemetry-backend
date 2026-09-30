@@ -37,21 +37,22 @@ class RdsCacheSchemaTest {
 	@Test
 	@DisplayName("두 번째 적용은 아무것도 하지 않는다 — 이력은 dashboard_cache.flyway_schema_history")
 	fun migrationIsRecorded() {
-		assertThat(firstRun).isEqualTo(1)
+		// V1(manifest·참조 복제)과 V2(완전한 날짜 — ADR 0042).
+		assertThat(firstRun).isEqualTo(2)
 		assertThat(secondRun).isZero()
 		// 스키마 생성 행(type = SCHEMA)은 Flyway 가 스키마를 만들 때 따로 남긴다 — 마이그레이션만 센다.
 		assertThat(
 			jdbc.sql("SELECT version FROM dashboard_cache.flyway_schema_history WHERE success AND type = 'SQL'").query(String::class.java).list(),
-		).containsExactly("1")
+		).containsExactly("1", "2")
 	}
 
 	@Test
-	@DisplayName("manifest 와 참조 복제 테이블 셋, native enum 넷")
+	@DisplayName("manifest 와 참조 복제 테이블 셋·완전한 날짜 테이블, native enum 넷")
 	fun tablesAndEnums() {
 		val tables = jdbc.sql(
 			"SELECT table_name FROM information_schema.tables WHERE table_schema = 'dashboard_cache' AND table_name <> 'flyway_schema_history' ORDER BY 1",
 		).query(String::class.java).list()
-		assertThat(tables).containsExactly("snapshot_members", "snapshot_teams", "snapshots")
+		assertThat(tables).containsExactly("snapshot_complete_days", "snapshot_members", "snapshot_teams", "snapshots")
 
 		fun labels(type: String) = jdbc.sql(
 			"SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid JOIN pg_namespace n ON n.oid = t.typnamespace " +

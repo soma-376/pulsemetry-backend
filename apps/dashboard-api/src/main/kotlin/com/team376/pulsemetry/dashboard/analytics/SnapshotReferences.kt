@@ -32,6 +32,13 @@ class SnapshotReferences(
 			),
 		) { LocalDate.parse(it.path("d").asString()) }.toSet()
 
+	/** 완전 관측으로 판정해 build 때 고정한 날짜(ADR 0042). 없는 날짜는 완전하지 않다. */
+	fun completeDates(snapshot: SnapshotManifestStore.Manifest): Set<LocalDate> =
+		cache.sql("SELECT complete_date FROM dashboard_cache.snapshot_complete_days WHERE snapshot_id = :snapshot")
+			.param("snapshot", snapshot.snapshotId)
+			.query { rs, _ -> rs.getObject("complete_date", LocalDate::class.java) }
+			.set()
+
 	/** build 때의 로스터 한 사람. [role]·[status] 는 enrollment 의 값 그대로다. */
 	data class RosterMember(
 		val id: UUID,

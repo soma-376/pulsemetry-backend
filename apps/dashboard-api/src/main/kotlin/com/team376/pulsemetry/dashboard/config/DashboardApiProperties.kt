@@ -24,6 +24,8 @@ data class DashboardApiProperties(
 	val members: Members,
 
 	val ingest: Ingest,
+
+	val completeness: Completeness,
 ) {
 	init {
 		require(retryAfter.toSeconds() >= 1) {
@@ -159,6 +161,19 @@ data class DashboardApiProperties(
 			}
 			require(!delayedAfter.isNegative && !delayedAfter.isZero) { "pulsemetry.dashboard.ingest.delayed-after 는 0보다 커야 한다: $delayedAfter" }
 			require(downAfter > delayedAfter) { "pulsemetry.dashboard.ingest.down-after 는 delayed-after 보다 커야 한다: $downAfter" }
+		}
+	}
+
+	/** 기간 완전성 판정의 운영 수치 (ADR 0042). 기본값이 없다. */
+	data class Completeness(
+		/**
+		 * 하루가 끝난 뒤 그날을 확정하기까지 기다리는 시간. 데몬의 전송(재시도 포함)과 서버 적재가 끝나는 데 걸리는 시간보다 길어야 한다.
+		 * 그날의 끝부터 이 시각까지도 손실 없이 수집 중이었다는 보고가 있어야 그날이 완전하다.
+		 */
+		val settleAfter: Duration,
+	) {
+		init {
+			require(!settleAfter.isNegative && !settleAfter.isZero) { "pulsemetry.dashboard.completeness.settle-after 는 0보다 커야 한다: $settleAfter" }
 		}
 	}
 

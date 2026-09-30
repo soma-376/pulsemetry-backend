@@ -86,12 +86,42 @@ type Usage = {
 
 ### 현재 데이터의 해석
 
-- 관측 완전성의 근거가 없어 현재 사용량은 `partial`이며 비교는 `unavailable`이다. 비교 없음은 `disabled`다.
+- 완전성의 근거(설치 보고의 수집 구간)가 기간 전체를 덮지 않으면 사용량은 `partial`이고 비교는 `unavailable`이다. 비교 없음은 `disabled`다(아래 "기간 완전성과 비교").
 - 서로 다른 토큰 의미 프로파일을 섞거나 필수 토큰 값이 누락되면 합계가 null일 수 있다.
 - 환산 비용과 실제 청구액은 별개다. 인보이스 원천이 없으므로 실제 청구액은 null이다.
 - 최근 수신만으로 수집 정상·장애를 확정하지 않는다. unknown/empty를 정상으로 바꾸지 않는다.
 - 수동 계약의 좌석 수·월 단가는 저장·조회하지만 실제 벤더 좌석 사용/회수는 연결하지 않는다.
 - 알림·회수 실행·기존 설치로의 정책 배포·보존 설정 조작은 capability=false 또는 unavailable 상태다.
+
+### 기간 완전성과 비교 (ADR 0042)
+
+하루(조회 시간대의 자정~다음 자정)는 다음을 모두 만족할 때만 **완전**하다. 확정 시각 = 그날의 끝 + `pulsemetry.dashboard.completeness.settle-after`.
+
+1. 확정 시각이 snapshot 기준 시각 이전이다.
+2. 삭제 경계보다 앞선 부분이 없다.
+3. 그날 수집해야 했던 설치(그날 끝나기 전에 등록, 시작 전에 폐기되지 않음)가 하나 이상 있다.
+4. 그 설치 모두가 등록한 때(그날 안이면 그때)부터 확정 시각까지 **손실 없는 수집 구간**(enrollment 명세 §4.5)으로 빈틈없이 덮였다.
+   프로세스가 바뀐 틈·손실 구간·보고가 없는 설치(회사 직결·보고하지 않는 데몬)는 덮지 않는다.
+5. 그날부터 확정 시각 사이에 폐기된 설치가 없다.
+6. 그날 효력이 있던 수집 정책 판이 모두 `signals.logs`를 수집한다(정책이 없던 날은 완전하지 않다).
+
+판정은 snapshot build 때 한 번 하고 `dashboard_cache.snapshot_complete_days`에 고정한다. 같은 snapshot 의 목록·상세·사용자는 같은 판정을 쓴다.
+판정 규칙 판은 `dashboard-v2`다 — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
+
+| 필드 | 규칙 |
+| --- | --- |
+| `Coverage.status` | 기간의 모든 날짜가 완전하면 `complete`, 관측이 있거나 완전한 날짜가 하나라도 있으면 `partial`, 아니면 `none` |
+| `Coverage.observedDays` | 관측이 있거나 완전한 날짜 수. 이 숫자만으로 완전성을 판정하지 않는다 |
+| `meta.dataState` | 현재 기간이 `complete`면 `ready`. 그 밖은 기존 규칙(`partial`·`no_data`·`never_observed`) |
+| `comparison.status` | 두 기간이 **모두** `complete`일 때만 `available`. 아니면 `unavailable`(`source_not_available`)이고 이전 값은 모두 null |
+| `meta.dataThrough` | 현재 기간의 첫날부터 끊김 없이 이어진 완전한 날짜의 마지막 날의 끝(다음 날 자정, UTC). 첫날이 완전하지 않으면 null |
+| 일별 추이 `observation` | 완전한 날 `complete`, 관측이 있으나 완전하지 않은 날 `partial`, 그 밖 `unobserved`(값 null) |
+
+- **완전한 기간·날짜에 사용이 없으면 null이 아니라 0이다** — 조직 사용량(`activeUsers`·`sessionCount`·토큰·금액), 팀·미배정의 기간 값,
+  대상 팀이 있을 때의 나머지 팀 금액, 일별 추이. 사용이 있으면 기존 null 규칙(의미가 섞인 토큰·가격이 없는 행)을 따른다.
+  완전한 기간에 팀 사용이 전혀 없으면 `teamUsage`는 `unavailable`이 아니라 0을 낸다.
+- 비교 기간이 완전하고 그 기간에 팀·미배정의 사용이 없었으면 이전 값은 0이다(증감은 "신규").
+- 구성원 화면은 이 규칙을 쓰지 않는다(비교가 없다).
 
 ### 작업 상태 조회
 
@@ -244,6 +274,7 @@ Compose가 인증 키를 `build/dev-auth`에 준비하며 서버 설정은 앱�
 | `pulsemetry.dashboard.snapshot` | build-timeout·purge-grace·max-concurrent-builds·max-copy-rows/bytes·cleanup-interval |
 | `pulsemetry.dashboard.members.idle-days` | 회수 후보 기준 기간 |
 | `pulsemetry.dashboard.ingest` | 수집 상태 판정의 임계값 — window·delayed-after·down-after. 셋 다 기본값이 없다(아래 "공통 헤더 수집 현황") |
+| `pulsemetry.dashboard.completeness.settle-after` | 기간 완전성의 확정 대기(`PULSEMETRY_DASHBOARD_COMPLETENESS_SETTLE_AFTER`). 기본값 없음, 0보다 크다. 데몬의 재시도 전체와 적재가 끝나는 시간보다 길게. local 1시간 |
 | `pulsemetry.dashboard.retry-after` | 일시 장애 재시도 간격 |
 
 정확한 환경변수 이름은 [application.yaml](../apps/dashboard-api/src/main/resources/application.yaml)에 매핑돼 있다.

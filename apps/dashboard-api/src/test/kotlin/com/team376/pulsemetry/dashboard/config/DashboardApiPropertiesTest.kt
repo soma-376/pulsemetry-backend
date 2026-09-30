@@ -119,7 +119,17 @@ class DashboardApiPropertiesTest {
 		"pulsemetry.dashboard.ingest.window=15m",
 		"pulsemetry.dashboard.ingest.delayed-after=5m",
 		"pulsemetry.dashboard.ingest.down-after=3h",
+		"pulsemetry.dashboard.completeness.settle-after=1h",
 	)
+
+	@ParameterizedTest
+	@ValueSource(strings = ["", "0s", "-1m"])
+	@DisplayName("기간 완전성의 확정 대기 시간이 없거나 0 이하면 기동이 실패한다 — 기본값이 없다 (ADR 0042)")
+	fun settleAfterIsRequired(value: String) {
+		runner.withPropertyValues(*complete.filterNot { it.startsWith("pulsemetry.dashboard.completeness.settle-after=") }.toTypedArray())
+			.run { assertThat(it).hasFailed() }
+		runner.withPropertyValues(*complete, "pulsemetry.dashboard.completeness.settle-after=$value").run { assertThat(it).hasFailed() }
+	}
 
 	@ParameterizedTest
 	@ValueSource(strings = ["pulsemetry.dashboard.ingest.window", "pulsemetry.dashboard.ingest.delayed-after", "pulsemetry.dashboard.ingest.down-after"])

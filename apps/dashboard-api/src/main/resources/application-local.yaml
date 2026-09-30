@@ -53,3 +53,5 @@ pulsemetry:
       window: 15m
       delayed-after: 5m
       down-after: 24h
+    completeness:
+      settle-after: 1h

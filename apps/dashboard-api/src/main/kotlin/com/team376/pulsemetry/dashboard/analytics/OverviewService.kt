@@ -16,15 +16,16 @@ import java.util.UUID
  * ## 상태 우선
  *
  * `dataState` 를 집계보다 먼저 정한다. 수신 이력도 요청 기간의 관측도 없으면 `never_observed`, 이력은 있으나 관측이 없으면 `no_data`,
- * 관측이 있으면 `partial` 이다 — v1 은 완전 관측의 근거가 없어 `ready` 를 내지 않는다. 앞의 둘이면 `usage.current = null`, 모델·상위 팀은
+ * 관측이 있으면 `partial`, 기간의 모든 날짜가 완전 관측이면 `ready` 다(ADR 0042). 앞의 둘이면 `usage.current = null`, 모델·상위 팀은
  * 빈 배열이고 팀 금액·사용자 수는 null 이다. 관측은 snapshot 에 고정한 source_time 일자다(ledger 의 수신 날짜가 아니다).
+ * 완전한 기간·날짜에 사용이 없으면 null 이 아니라 0 이다 — 수집이 정상이고 사용만 없었다.
  *
  * ## 합계의 일관성
  *
  * 조직·일자·모델·팀 합계가 모두 같은 snapshot payload 의 [UsageAggregator] 에서 나온다. 금액이 모두 있으면 조직 금액 = 일자 합 = 모델 합
  * = 상위 3팀 + 나머지 팀 + 미배분이다. 어느 그룹의 금액이 없으면 그 그룹을 담는 합도 없다 — 부분합을 총액으로 올리지 않는다.
  *
- * `dataThrough` 는 null 이다 — 공통 데이터 완료 경계를 보증할 근거가 없고, ledger 의 최대 수신 시각은 그 값이 아니다.
+ * `dataThrough` 는 현재 기간의 첫날부터 끊김 없이 이어진 완전한 날짜의 끝이다. ledger 의 최대 수신 시각은 그 값이 아니다.
  */
 class OverviewService(
 	private val frames: AnalyticsFrames,
@@ -49,15 +50,15 @@ class OverviewService(
 			comparison = frames.comparison(frame),
 			ingest = frames.ingest(frame),
 			usage = OverviewResponse.UsagePair(
-				current = if (frame.empty) null else Usage.of(organizationTotals, pricingMixed),
-				previous = previousTotals?.let { Usage.of(it, pricingMixed) },
+				current = if (frame.empty) null else Usage.of(organizationTotals, pricingMixed, frame.currentComplete),
+				previous = previousTotals?.let { Usage.of(it, pricingMixed, frame.previousComplete) },
 			),
 			seats = SEATS,
 			alerts = OverviewResponse.Alerts(Availability.UNAVAILABLE, Availability.EVALUATION_NOT_CONFIGURED, frame.now.toString(), null, null, null),
 			trend = trendOf(frame),
 			modelMix = modelMixOf(snapshot, pricingMixed, frame.empty),
 			waste = WASTE,
-			teamUsage = teamUsageOf(snapshot, pricingMixed, frame.empty, frame.comparable),
+			teamUsage = teamUsageOf(snapshot, pricingMixed, frame),
 		)
 	}
 
@@ -65,13 +66,15 @@ class OverviewService(
 		val byDay = if (frame.empty) emptyMap() else aggregator.totals(frame.snapshot, Side.CURRENT, Axis.DAY)
 		val points = frame.period.current.dates().map { date ->
 			val totals = byDay[listOf(date.toString())] ?: UsageTotals.EMPTY
-			val seen = frame.observed(date)
+			val observation = frame.observation(date)
+			// 완전한 날에 사용이 없으면 0, 미관측이면 값이 없다.
+			val day = if (observation == AnalyticsFrames.UNOBSERVED) null else Usage.of(totals, frame.pricingMixed, observation == Coverage.COMPLETE)
 			OverviewResponse.TrendPoint(
 				date = date.toString(),
-				observation = if (seen) PARTIAL_OBSERVATION else UNOBSERVED,
-				equivalentCostUsd = if (seen) totals.equivalentCost(frame.pricingMixed)?.let(Money::format) else null,
+				observation = observation,
+				equivalentCostUsd = day?.equivalentCostUsd,
 				allocatedSeatCostUsd = null,
-				totalTokens = if (seen) totals.apiTotal() else null,
+				totalTokens = day?.tokens?.total,
 			)
 		}
 		return OverviewResponse.Trend(DAY_BUCKET, points)
@@ -105,9 +108,10 @@ class OverviewService(
 	private fun teamUsageOf(
 		snapshot: SnapshotManifestStore.Manifest,
 		pricingMixed: Boolean,
-		empty: Boolean,
-		comparable: Boolean,
+		frame: AnalyticsFrames.Frame,
 	): OverviewResponse.TeamUsage {
+		val empty = frame.empty
+		val comparable = frame.comparable
 		val directory = references.teams(snapshot).associateBy { it.id.toString() }
 		val current = if (empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.TEAM)
 		val previous = if (comparable && !empty) aggregator.totals(snapshot, Side.PREVIOUS, Axis.TEAM) else emptyMap()
@@ -126,7 +130,7 @@ class OverviewService(
 				teamId = teamId,
 				teamName = directory[teamId]?.name ?: teamId,
 				current = TeamPeriod.of(totals, pricingMixed),
-				previous = if (comparable) TeamPeriod.of(previous[listOf(teamId)] ?: UsageTotals.EMPTY, pricingMixed) else null,
+				previous = if (comparable) TeamPeriod.of(previous[listOf(teamId)] ?: UsageTotals.EMPTY, pricingMixed, frame.previousComplete) else null,
 				topModel = topModelOf(teamId, totals, teamModels, pricingMixed),
 			)
 		}
@@ -134,10 +138,13 @@ class OverviewService(
 		val previousOthers = previous.filterKeys { key -> key.single().let { it != null && it !in topIds } }.values
 		val unassigned = current[listOf(null)] ?: UsageTotals.EMPTY
 
-		val complete = !empty && topTeams.all { it.current.equivalentCostUsd != null } && unassigned.equivalentCost(pricingMixed) != null &&
+		val otherCount = teamCount - topTeams.size
+		val unassignedCurrent = TeamPeriod.of(unassigned, pricingMixed, frame.currentComplete)
+		val complete = !empty && topTeams.all { it.current.equivalentCostUsd != null } && unassignedCurrent.equivalentCostUsd != null &&
 			others.all { it.equivalentCost(pricingMixed) != null }
 		val (availability, reason) = when {
-			empty || (teams.isEmpty() && !unassigned.hasUsage) -> Availability.UNAVAILABLE to Availability.SOURCE_NOT_AVAILABLE
+			// 완전한 기간에 팀 사용이 없는 것은 "없음"이 아니라 0 이다.
+			empty || (teams.isEmpty() && !unassigned.hasUsage && !frame.currentComplete) -> Availability.UNAVAILABLE to Availability.SOURCE_NOT_AVAILABLE
 			complete -> Availability.AVAILABLE to null
 			else -> Availability.PARTIAL to Availability.SOURCE_NOT_AVAILABLE
 		}
@@ -149,13 +156,13 @@ class OverviewService(
 			totalTeamCount = teamCount,
 			topTeams = topTeams,
 			otherTeams = OverviewResponse.OtherTeams(
-				count = teamCount - topTeams.size,
-				currentEquivalentCostUsd = sumOrNull(others, pricingMixed)?.let(Money::format),
-				previousEquivalentCostUsd = if (comparable) sumOrNull(previousOthers, pricingMixed)?.let(Money::format) else null,
+				count = otherCount,
+				currentEquivalentCostUsd = sumOrNull(others, pricingMixed, frame.currentComplete && otherCount > 0)?.let(Money::format),
+				previousEquivalentCostUsd = if (comparable) sumOrNull(previousOthers, pricingMixed, frame.previousComplete && otherCount > 0)?.let(Money::format) else null,
 			),
 			unassigned = OverviewResponse.Unassigned(
-				current = TeamPeriod.of(unassigned, pricingMixed),
-				previous = if (comparable) TeamPeriod.of(previous[listOf(null)] ?: UsageTotals.EMPTY, pricingMixed) else null,
+				current = unassignedCurrent,
+				previous = if (comparable) TeamPeriod.of(previous[listOf(null)] ?: UsageTotals.EMPTY, pricingMixed, frame.previousComplete) else null,
 			),
 		)
 	}
@@ -177,9 +184,12 @@ class OverviewService(
 		return TopModel(modelId, ModelNames.displayName(modelId), share)
 	}
 
-	/** 그룹이 하나도 없거나 어느 그룹의 금액이 없으면 합도 없다 — 0 을 확정하지 않고 부분합을 올리지 않는다. */
-	private fun sumOrNull(groups: Collection<UsageTotals>, pricingMixed: Boolean): BigDecimal? {
-		if (groups.isEmpty()) return null
+	/**
+	 * 그룹이 하나도 없거나 어느 그룹의 금액이 없으면 합도 없다 — 0 을 확정하지 않고 부분합을 올리지 않는다.
+	 * 단 [completeZero] 면(완전한 기간이고 대상 팀이 있다) 사용이 있는 그룹이 없다는 것은 실제 0 이다.
+	 */
+	private fun sumOrNull(groups: Collection<UsageTotals>, pricingMixed: Boolean, completeZero: Boolean = false): BigDecimal? {
+		if (groups.isEmpty()) return if (completeZero) BigDecimal.ZERO else null
 		val costs = groups.map { it.equivalentCost(pricingMixed) ?: return null }
 		return costs.fold(BigDecimal.ZERO, BigDecimal::add)
 	}
@@ -194,8 +204,6 @@ class OverviewService(
 	}
 
 	companion object {
-		private const val PARTIAL_OBSERVATION = "partial"
-		private const val UNOBSERVED = "unobserved"
 		private const val DAY_BUCKET = "day"
 		private const val RANKING = "equivalentCostUsd_desc"
 		/** 사용 행의 source_time 당시 대표 팀(`team_id_as_of`)에 귀속한다 — 현재 팀 매핑이 아니다. */
