@@ -582,6 +582,7 @@ POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`, 8~128자)를 보낸다.
 | `PATCH /teams/{teamId}` | `{teamName,expectedVersion}` | 200 같은 팀 응답 |
 | `DELETE /teams/{teamId}` | `If-Match: "team-{version}"` | 204, 팀 보관·현재 배정 해제 |
 | `POST /member-team-assignments` | `{assignments:[{memberId,teamId,expectedVersion}]}` | 200 `{effectiveAt,members:[{memberId,teamId,version}]}` |
+| `PATCH /members/{memberId}` | `{expectedVersion,teamId?,role?}` | 200 MemberSaved |
 | `POST /invitations/batch` | `{invitations:[{email,teamId,role}]}` | 200 InvitationsResponse |
 | `POST /invitations/{invitationId}/revoke` | `{}` | 204 |
 | `POST /vendors` | `{kind,displayName,contract?}` | 201 VendorResponse, Location, ETag |
@@ -595,7 +596,27 @@ POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`, 8~128자)를 보낸다.
 수정 version은 직전 조회 응답 값을 그대로 보낸다. 불일치는 409 `version_conflict`다.
 version을 1부터 시작하는 순번이나 날짜로 해석하지 않는다. PUT/PATCH는 expectedVersion, DELETE는 If-Match로 전달한다.
 
+구성원 편집(`PATCH /members/{memberId}`)은 한 사람의 팀과 역할을 한 트랜잭션에서 저장한다(ADR 0036).
+`expectedVersion`은 필수다. `teamId`와 `role`은 보낸 것만 바꾸며 둘 다 없으면 400 `invalid_request`다.
+`teamId:null`은 미배정이고, 값이 있으면 같은 조직의 활성 팀이어야 한다(아니면 404 `not_found`).
+역할은 `admin`과 `member` 사이에서만 바꾼다. 그 밖의 값은 422 `role_not_assignable`,
+`owner`의 역할 변경은 422 `owner_role_immutable`, 자기 역할 변경은 422 `self_role_change`다.
+요청의 역할이 현재 역할과 같으면 역할 변경이 아니므로 이 규칙들을 적용하지 않는다. `owner`와 자기 자신도 팀은 바꿀 수 있다.
+초대 대기(`invited`) 구성원도 편집한다. 정지(`suspended`) 구성원은 409 `member_suspended`다.
+팀이 실제로 바뀔 때만 소속 구간을 닫고 새 구간을 더한다. 팀과 역할을 함께 바꿔도 version은 한 번만 오르고,
+아무것도 바뀌지 않으면 version도 그대로다. 응답의 `version`은 dashboard-api 구성원 목록의 `version`과 같은 값이다.
+역할이 바뀐 구성원의 기존 AT는 다음 요청에서 401이 된다. RT로 갱신하면 새 역할의 AT를 받는다.
+`role`은 저장된 값(`owner`·`admin`·`member`)이다. dashboard-api의 구성원 목록은 `owner`도 `admin`으로 표시하므로,
+화면은 바꾸지 않은 필드를 보내지 않는다.
+
 ```ts
+type MemberSaved = {
+  memberId: string;
+  team: { teamId: string; teamName: string } | null; // 열린 소속이 하나일 때만 값이 있다
+  role: "owner" | "admin" | "member";
+  status: "invited" | "active";
+  version: number;
+};
 type InvitationsResponse = {
   results: {
     email: string; invitationId: string | null;
@@ -654,8 +675,8 @@ PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계
 | 401 | unauthenticated, 로그인/토큰 갱신 |
 | 403 | forbidden, 해당 동작 비활성화 |
 | 404 | not_found, 타 조직/없는 자원 |
-| 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, snapshot_expired |
-| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor |
+| 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, member_suspended, snapshot_expired |
+| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change |
 | 503 | unavailable, Retry-After 후 재시도 |
 
 쓰기 성공 후 관련 조직의 팀·구성원·설정·개요 Query 캐시를 무효화한다.
@@ -674,7 +695,7 @@ PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계
 | `GET /onboarding` | 없음 | 200 OnboardingState |
 | `PUT /collection-policy` | `{expectedVersion,collectRawContent}` | 200 PolicySaved |
 | `POST /onboarding/complete` | `{}`, Idempotency-Key | 200 OnboardingState |
-| `GET /invitations` | limit=20(1~100), cursor | 200 InvitationPage |
+| `GET /invitations` | limit=20(1~100), cursor, status? | 200 InvitationPage |
 | `POST /invitations/{invitationId}/reissue` | `{}`, Idempotency-Key | 200 ReissuedInvitation |
 
 ### 13.1 상태와 완료
@@ -745,6 +766,9 @@ type InvitationPage = {
     installationUsedAt: string | null; signupUsedAt: string | null;
     revokedAt: string | null;
     status: "pending" | "expired" | "used" | "revoked";
+    memberId: string;
+    team: { teamId: string; teamName: string } | null;
+    memberVersion: number;
   }[];
   nextCursor: string | null;
 };
@@ -758,6 +782,11 @@ type ReissuedInvitation = {
 cursor는 UUID다. 실시간 목록으로 snapshot 일관성을 보장하지 않는다. 코드 원문·해시는 목록에 포함하지 않는다.
 상태 우선순위는 revoked → 두 소비 완료인 used → expired → pending이다.
 pending은 가입 또는 설치 중 하나만 남은 경우도 포함하므로 소비 시각 둘을 함께 확인한다.
+`status`를 주면 그 상태의 초대만 돌려준다. 값은 위 네 상태 중 하나이고 그 밖은 400 `invalid_request`다.
+다음 페이지에도 같은 `status`를 보낸다. 생략하면 전체다.
+`memberId`는 초대 대상 구성원의 불변 ID다. `team`과 `memberVersion`은 그 구성원의 현재 팀과 version이며,
+초대 대기자의 팀·역할 편집(§12 `PATCH /members/{memberId}`)에 그대로 쓴다. 이메일로 초대와 구성원을 짝짓지 않는다.
+`role`은 구성원에 저장된 현재 역할이다. 편집하면 목록의 값도 바뀐다.
 
 재발급은 만료 여부와 관계없이 아직 폐기되지 않고 소비 권한이 남은 초대에만 허용한다.
 기존 코드를 즉시 폐기하고 새 ID·코드·72시간 만료를 만든다. 두 작업은 원자적이다.

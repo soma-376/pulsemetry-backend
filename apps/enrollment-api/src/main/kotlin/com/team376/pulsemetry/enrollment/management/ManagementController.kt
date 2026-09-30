@@ -56,6 +56,9 @@ class ManagementController(private val auth: UserAuthService, private val store:
     @RequestMapping(path = ["/teams/{teamId}"], method = [RequestMethod.PATCH, RequestMethod.DELETE])
     fun team(@PathVariable organizationId: UUID, @RequestBody(required = false) body: JsonNode?, request: HttpServletRequest) = handle(organizationId, body, request)
 
+    @RequestMapping(path = ["/members/{memberId}"], method = [RequestMethod.PATCH])
+    fun member(@PathVariable organizationId: UUID, @RequestBody(required = false) body: JsonNode?, request: HttpServletRequest) = handle(organizationId, body, request)
+
     @RequestMapping(path = ["/vendors/{vendorId}/contract"], method = [RequestMethod.PUT, RequestMethod.DELETE])
     fun contract(@PathVariable organizationId: UUID, @RequestBody(required = false) body: JsonNode?, request: HttpServletRequest) = handle(organizationId, body, request)
 
@@ -73,9 +76,10 @@ class ManagementController(private val auth: UserAuthService, private val store:
 
     @GetMapping("/invitations")
     fun invitations(@PathVariable organizationId: UUID, @RequestParam(defaultValue = "20") limit: Int,
-        @RequestParam(required = false) cursor: String?, request: HttpServletRequest): ResponseEntity<JsonNode> {
+        @RequestParam(required = false) cursor: String?, @RequestParam(required = false) status: String?,
+        request: HttpServletRequest): ResponseEntity<JsonNode> {
         authorize(organizationId, request)
-        return ResponseEntity.ok().header("Cache-Control", "no-store").body(store.invitations(organizationId, limit, cursor))
+        return ResponseEntity.ok().header("Cache-Control", "no-store").body(store.invitations(organizationId, limit, cursor, status))
     }
 
     private fun authorize(tenant: UUID, request: HttpServletRequest): UUID {

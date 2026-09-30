@@ -75,20 +75,33 @@ class OnboardingStore(private val jdbc: JdbcClient, private val mapper: ObjectMa
         return state(tenant)
     }
 
-    fun invitations(tenant: UUID, limit: Int, after: UUID?, now: Instant): JsonNode {
+    /** 상태는 SQL에서 정해 필터와 페이지가 같은 기준을 쓴다. 우선순위: revoked → used → expired → pending. */
+    fun invitations(tenant: UUID, limit: Int, after: UUID?, status: String?, now: Instant): JsonNode {
         if (limit !in 1..100) throw ManagementException("invalid_request", 400, "limit")
-        val rows = jdbc.sql("""SELECT i.*,m.email,m.role::text FROM enrollment.invitations i
-            JOIN enrollment.members m ON m.id=i.target_member_id AND m.tenant_id=i.tenant_id
-            WHERE i.tenant_id=:tenant AND (CAST(:after AS uuid) IS NULL OR i.id>CAST(:after AS uuid)) ORDER BY i.id LIMIT :limit""")
-            .param("tenant", tenant).param("after", after).param("limit", limit + 1).query { r, _ ->
-                val used = r.getTimestamp("used_at")?.toInstant()
-                val signup = r.getTimestamp("signup_used_at")?.toInstant()
-                val revoked = r.getTimestamp("revoked_at")?.toInstant()
-                val expires = r.getTimestamp("expires_at").toInstant()
+        if (status != null && status !in setOf("pending", "expired", "used", "revoked")) throw ManagementException("invalid_request", 400, "status")
+        val rows = jdbc.sql("""SELECT * FROM (
+                SELECT i.id,i.created_at,i.expires_at,i.used_at,i.signup_used_at,i.revoked_at,
+                    m.id AS member_id,m.email,m.role::text AS role,m.updated_at AS member_updated_at,
+                    CASE WHEN i.revoked_at IS NOT NULL THEN 'revoked'
+                         WHEN i.used_at IS NOT NULL AND i.signup_used_at IS NOT NULL THEN 'used'
+                         WHEN i.expires_at <= :now THEN 'expired' ELSE 'pending' END AS status,
+                    team.open_count,team.team_id,team.team_name
+                FROM enrollment.invitations i
+                JOIN enrollment.members m ON m.id=i.target_member_id AND m.tenant_id=i.tenant_id
+                LEFT JOIN LATERAL (SELECT count(*) AS open_count,min(t.id::text) AS team_id,min(t.name) AS team_name
+                    FROM enrollment.team_memberships tm JOIN enrollment.teams t ON t.id=tm.team_id
+                    WHERE tm.member_id=m.id AND tm.left_at IS NULL) team ON true
+                WHERE i.tenant_id=:tenant AND (CAST(:after AS uuid) IS NULL OR i.id>CAST(:after AS uuid))
+            ) listed WHERE (CAST(:status AS text) IS NULL OR listed.status=CAST(:status AS text)) ORDER BY listed.id LIMIT :limit""")
+            .param("tenant", tenant).param("after", after).param("status", status).param("now", Timestamp.from(now))
+            .param("limit", limit + 1).query { r, _ ->
+                // 열린 소속이 하나일 때만 현재 팀으로 본다.
+                val team = if (r.getLong("open_count") == 1L) mapOf("teamId" to r.getString("team_id"), "teamName" to r.getString("team_name")) else null
                 mapOf("invitationId" to r.getString("id"), "email" to r.getString("email"), "role" to r.getString("role"),
-                    "createdAt" to r.getTimestamp("created_at").toInstant().toString(), "expiresAt" to expires.toString(),
-                    "installationUsedAt" to used?.toString(), "signupUsedAt" to signup?.toString(), "revokedAt" to revoked?.toString(),
-                    "status" to when { revoked != null -> "revoked"; used != null && signup != null -> "used"; expires <= now -> "expired"; else -> "pending" })
+                    "createdAt" to r.getTimestamp("created_at").toInstant().toString(), "expiresAt" to r.getTimestamp("expires_at").toInstant().toString(),
+                    "installationUsedAt" to r.getTimestamp("used_at")?.toInstant()?.toString(), "signupUsedAt" to r.getTimestamp("signup_used_at")?.toInstant()?.toString(),
+                    "revokedAt" to r.getTimestamp("revoked_at")?.toInstant()?.toString(), "status" to r.getString("status"),
+                    "memberId" to r.getString("member_id"), "team" to team, "memberVersion" to r.getTimestamp("member_updated_at").toInstant().toEpochMilli())
             }.list()
         return node(mapOf("items" to rows.take(limit), "nextCursor" to if (rows.size > limit) rows[limit-1]["invitationId"] else null))
     }

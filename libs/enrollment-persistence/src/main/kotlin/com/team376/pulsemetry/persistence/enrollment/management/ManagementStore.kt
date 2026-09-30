@@ -34,7 +34,8 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
     private val key = SecretKeySpec(Base64.getDecoder().decode(encryptionKey).also { require(it.size == 32) }, "AES")
 
     fun onboarding(tenant: UUID): JsonNode = onboarding.state(tenant)
-    fun invitations(tenant: UUID, limit: Int, cursor: String?): JsonNode = onboarding.invitations(tenant, limit, cursor?.let(::uuid), clock.instant())
+    fun invitations(tenant: UUID, limit: Int, cursor: String?, status: String? = null): JsonNode =
+        onboarding.invitations(tenant, limit, cursor?.let(::uuid), status, clock.instant())
 
     fun command(tenant: UUID, actor: UUID, operation: String, body: JsonNode, idempotencyKey: String?, version: Long? = null): JsonNode =
         requireNotNull(tx.execute {
@@ -66,6 +67,7 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                 operation.startsWith("PATCH /teams/") -> editTeam(tenant, operation.substringAfterLast('/'), body, now)
                 operation.startsWith("DELETE /teams/") -> archiveTeam(tenant, operation.substringAfterLast('/'), version, now)
                 operation == "POST /member-team-assignments" -> assignTeams(tenant, body, now)
+                operation.startsWith("PATCH /members/") -> editMember(tenant, actor, operation.substringAfterLast('/'), body, now)
                 operation == "POST /invitations/batch" -> invite(tenant, actor, body, now)
                 operation.startsWith("POST /invitations/") && operation.endsWith("/revoke") -> revoke(tenant, operation.split('/')[2], now)
                 operation.startsWith("POST /invitations/") && operation.endsWith("/reissue") -> reissue(tenant, actor, operation.split('/')[2], now)
@@ -139,12 +141,61 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
             Triple(member, team, advance(now, updated))
         }
         changes.forEach { (member, team, updated) ->
-            jdbc.sql("UPDATE enrollment.team_memberships SET left_at=:now WHERE member_id=:id AND left_at IS NULL")
-                .param("now", Timestamp.from(now)).param("id", member).update()
-            if (team != null) addMembership(member, team, now)
+            moveTeam(member, team, now)
             jdbc.sql("UPDATE enrollment.members SET updated_at=:now WHERE id=:id").param("now", Timestamp.from(updated)).param("id", member).update()
         }
         return node(mapOf("effectiveAt" to now.toString(), "members" to changes.map { (member, team, updated) -> mapOf("memberId" to member, "teamId" to team, "version" to updated.toEpochMilli()) }))
+    }
+    /** 열린 소속을 닫고 새 소속을 넣는다. 과거 구간은 바꾸지 않는다. */
+    private fun moveTeam(member: UUID, team: UUID?, now: Instant) {
+        jdbc.sql("UPDATE enrollment.team_memberships SET left_at=:now WHERE member_id=:id AND left_at IS NULL")
+            .param("now", Timestamp.from(now)).param("id", member).update()
+        if (team != null) addMembership(member, team, now)
+    }
+
+    /** 팀과 역할을 한 트랜잭션에서 저장하고 버전은 한 번만 올린다. 역할 변경 규칙은 ADR 0036. */
+    private fun editMember(tenant: UUID, actor: UUID, raw: String, body: JsonNode, now: Instant): JsonNode {
+        val id = uuid(raw)
+        val old = jdbc.sql("SELECT role::text,status::text,updated_at FROM enrollment.members WHERE tenant_id=:tenant AND id=:id FOR UPDATE")
+            .param("tenant", tenant).param("id", id).query { rs, _ -> Triple(rs.getString(1), rs.getString(2), rs.getTimestamp(3).toInstant()) }
+            .optional().orElse(null) ?: fail("not_found", 404, "memberId")
+        if (old.second == "suspended") fail("member_suspended", 409)
+        checkVersion(old.third, long(body, "expectedVersion"))
+        // 보내지 않은 필드는 바꾸지 않는다. teamId: null 은 미배정이다.
+        if (!body.has("teamId") && !body.has("role")) fail("invalid_request", 400)
+        val openTeams = jdbc.sql("SELECT team_id FROM enrollment.team_memberships WHERE member_id=:id AND left_at IS NULL")
+            .param("id", id).query(UUID::class.java).list().toSet()
+        var teamChanged = false
+        var team: UUID? = null
+        if (body.has("teamId")) {
+            val value = body.path("teamId")
+            if (!value.isNull && !value.isString) fail("invalid_request", 400, "teamId")
+            team = if (value.isNull) null else uuid(value.asString())
+            team?.let { team(tenant, it) }
+            teamChanged = openTeams != setOfNotNull(team)
+        }
+        var role = old.first
+        if (body.has("role")) {
+            val requested = text(body, "role", 20)
+            if (requested != old.first) {
+                if (requested !in setOf("admin", "member")) fail("role_not_assignable", 422, "role")
+                if (old.first == "owner") fail("owner_role_immutable", 422, "role")
+                if (id == actor) fail("self_role_change", 422, "role")
+                role = requested
+            }
+        }
+        var updated = old.third
+        if (teamChanged || role != old.first) {
+            if (teamChanged) moveTeam(id, team, now)
+            updated = advance(now, old.third)
+            jdbc.sql("UPDATE enrollment.members SET role=CAST(:role AS enrollment.member_role),updated_at=:now WHERE id=:id")
+                .param("role", role).param("now", Timestamp.from(updated)).param("id", id).update()
+        }
+        // 열린 소속이 하나일 때만 현재 팀으로 본다.
+        val current = jdbc.sql("""SELECT t.id,t.name FROM enrollment.team_memberships tm JOIN enrollment.teams t ON t.id=tm.team_id
+            WHERE tm.member_id=:id AND tm.left_at IS NULL""").param("id", id)
+            .query { rs, _ -> mapOf("teamId" to rs.getString(1), "teamName" to rs.getString(2)) }.list().singleOrNull()
+        return node(mapOf("memberId" to id, "team" to current, "role" to role, "status" to old.second, "version" to updated.toEpochMilli()))
     }
 
     private fun invite(tenant: UUID, actor: UUID, body: JsonNode, now: Instant): JsonNode {
