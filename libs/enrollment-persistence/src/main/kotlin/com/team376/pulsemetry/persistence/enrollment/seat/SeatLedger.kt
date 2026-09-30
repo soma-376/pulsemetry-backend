@@ -179,6 +179,132 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 		event(seat, actor = actor)
 	}
 
+	// ---- CSV 가져오기 (ADR 0048 §3의 1·2행) ----
+
+	/** 행 하나의 계획과 오류. [action] 은 오류가 없을 때만 있다. */
+	data class ImportRow(val line: Int, val account: String, val action: String?, val seatAssignmentId: String?, val errors: List<RowError>)
+	data class RowError(val field: String, val code: String)
+
+	/** 미리보기·적용의 결과. [applied] 가 false 면 아무것도 바꾸지 않았다. [digest] 는 받은 파일 내용의 SHA-256 이다. */
+	data class ImportResult(val mode: String, val applied: Boolean, val digest: String, val summary: Map<String, Int>, val rows: List<ImportRow>, val warnings: List<String>)
+
+	/**
+	 * CSV 로 좌석을 기록한다([SeatCsv] 형식). **파일의 행만 바꾼다** — 파일에 없는 좌석은 그대로다(목록 전체 맞춤은 커넥터 동기화의 몫).
+	 * 모든 행을 먼저 검증하고, [apply] 일 때 오류가 하나도 없으면 한 트랜잭션에서 적용한다. 하나라도 있으면 아무것도 바꾸지 않고
+	 * 422 `seat_import_invalid`(행별 오류를 `details` 에)다. 같은 파일을 다시 보내면 모든 행이 `unchanged` 다.
+	 *
+	 * | 행 | 지금 좌석 | 동작 |
+	 * | --- | --- | --- |
+	 * | `assigned` | 없음 | `create` |
+	 * | `assigned` | 해제 | `reassign`(같은 좌석 ID) |
+	 * | `assigned` | 배정 | 등급·구성원이 다르면 `update`, 아니면 `unchanged` |
+	 * | `released` | 배정 | `release` |
+	 * | `released` | 해제 | `unchanged` |
+	 * | `released` | 없음 | 오류 `not_found` |
+	 * | 무엇이든 | 해제 예정·배정 대기 | 오류 `seat_not_changeable`(벤더 제어의 몫) |
+	 */
+	fun importCsv(tenant: UUID, vendorId: String, actor: UUID, csv: String, apply: Boolean): ImportResult = write {
+		RegisteredProducts.requireManager(jdbc, tenant, actor)
+		val product = RegisteredProducts.lock(jdbc, tenant, vendorId)
+		requireNoConnection(tenant, vendorId)
+		val parsed = SeatCsv.parse(csv)
+		val kind = ConnectorDescriptors.accountKind(product.kind)
+		val existing = jdbc.sql("SELECT * FROM enrollment.seat_assignments WHERE tenant_id = :tenant AND vendor_id = :vendor FOR UPDATE")
+			.param("tenant", tenant).param("vendor", vendorId).query { rs, _ -> seat(rs) }.list().associateBy { it.account }
+		val members = memberEmails(tenant)
+		val seen = mutableSetOf<String>()
+		data class Planned(val row: ImportRow, val seat: Seat?, val key: String?, val tierId: String?, val member: UUID?)
+		val planned = parsed.map { row ->
+			val errors = mutableListOf<RowError>()
+			if (row.columnCountMismatch) errors += RowError("line", "column_count")
+			val key = kind.normalize(row.account)
+			if (key == null) errors += RowError("account", if (row.account.isEmpty()) "required" else "invalid_account")
+			else if (!seen.add(key)) errors += RowError("account", "duplicate_account")
+			val status = row.status?.lowercase() ?: "assigned"
+			if (status !in setOf("assigned", "released")) errors += RowError("status", "invalid_status")
+			val tierId = row.tier?.let { value ->
+				val matches = product.tiers.filter { it.id == value || it.label.equals(value, ignoreCase = true) }
+				when (matches.size) { 1 -> matches.single().id; 0 -> { errors += RowError("tier", "invalid_tier"); null } else -> { errors += RowError("tier", "ambiguous_tier"); null } }
+			}
+			val member = row.memberEmail?.let { value ->
+				val email = AccountKind.EMAIL.normalize(value)
+				if (email == null) { errors += RowError("member_email", "invalid_email"); null }
+				else members.ids(email).let { ids ->
+					when (ids.size) { 1 -> ids.single(); 0 -> { errors += RowError("member_email", "member_not_found"); null } else -> { errors += RowError("member_email", "member_ambiguous"); null } }
+				}
+			}
+			val seat = key?.let { existing[it] }
+			var action: String? = null
+			if (status == "released" && (row.tier != null || row.memberEmail != null)) errors += RowError(if (row.tier != null) "tier" else "member_email", "not_applicable")
+			if (seat != null && (seat.state == SeatState.PENDING_RELEASE || seat.state == SeatState.PENDING_ASSIGNMENT)) errors += RowError("status", "seat_not_changeable")
+			else if (status == "released" && key != null && seat == null) errors += RowError("account", "not_found")
+			if (errors.isEmpty()) action = when {
+				status == "released" -> if (seat!!.state == SeatState.ASSIGNED) "release" else "unchanged"
+				seat == null -> "create"
+				seat.state == SeatState.RELEASED -> "reassign"
+				(tierId != null && tierId != seat.tierId) || (member != null && (seat.memberId != member || seat.memberLink != MemberLink.ADMIN)) -> "update"
+				else -> "unchanged"
+			}
+			Planned(ImportRow(row.line, row.account, action, seat?.id?.toString(), errors), seat, key, tierId, member)
+		}
+		val valid = planned.all { it.row.errors.isEmpty() }
+		val now = now()
+		val rows = if (!apply || !valid) planned.map { it.row } else planned.map { plan ->
+			val seat = plan.seat
+			val kept = { s: Seat -> if (plan.member != null) plan.member to MemberLink.ADMIN else if (s.memberLink == MemberLink.ADMIN) s.memberId to s.memberLink else members.match(s.accountEmail) }
+			val written = when (plan.row.action) {
+				"create" -> {
+					val email = if (kind == AccountKind.EMAIL) plan.key else null
+					val (memberId, link) = if (plan.member != null) plan.member to MemberLink.ADMIN else members.match(email)
+					Seat(UUID.randomUUID(), tenant, vendorId, plan.key!!, kind, null, email, SeatState.ASSIGNED, SeatSource.CSV, memberId, link, plan.tierId, null,
+						now, null, null, null, null, 1, now).also(::insert)
+				}
+				"reassign" -> kept(seat!!).let { (memberId, link) ->
+					seat.copy(state = SeatState.ASSIGNED, source = SeatSource.CSV, memberId = memberId, memberLink = link, tierId = plan.tierId ?: seat.tierId,
+						assignedAt = now, releaseEffectiveOn = null, releasedAt = null, version = seat.version + 1, updatedAt = now).also(::update)
+				}
+				"update" -> kept(seat!!).let { (memberId, link) ->
+					seat.copy(memberId = memberId, memberLink = link, tierId = plan.tierId ?: seat.tierId, version = seat.version + 1, updatedAt = now).also(::update)
+				}
+				"release" -> seat!!.copy(state = SeatState.RELEASED, source = SeatSource.CSV, releasedAt = now, version = seat.version + 1, updatedAt = now).also(::update)
+				else -> null
+			}
+			written?.let { event(it, actor = actor) }
+			plan.row.copy(seatAssignmentId = written?.id?.toString() ?: plan.row.seatAssignmentId)
+		}
+		val held = existing.values.count { it.state.holds } + planned.count { it.row.action == "create" || it.row.action == "reassign" } - planned.count { it.row.action == "release" }
+		val result = ImportResult(
+			mode = if (apply) "apply" else "preview",
+			applied = apply && valid,
+			digest = java.security.MessageDigest.getInstance("SHA-256").digest(csv.toByteArray()).joinToString("") { "%02x".format(it) },
+			summary = (listOf("create", "reassign", "update", "release", "unchanged").associateWith { action -> planned.count { it.row.action == action } }) +
+				("errors" to planned.count { it.row.errors.isNotEmpty() }),
+			rows = rows,
+			warnings = warnings(product, held),
+		)
+		if (apply && !valid) throw ManagementException("seat_import_invalid", 422, "csv", result)
+		result
+	}
+
+	/** 기록 뒤의 경고. 보유 좌석이 계약의 구매 수량을 넘어도 거절하지 않는다 — 계약이 낡았을 수 있다(ADR 0048 §5). */
+	fun warnings(tenant: UUID, vendorId: String): List<String> {
+		val product = RegisteredProducts.find(jdbc, tenant, vendorId, lock = false)
+		val held = jdbc.sql("SELECT count(*) FROM enrollment.seat_assignments WHERE tenant_id = :tenant AND vendor_id = :vendor AND state <> 'released'")
+			.param("tenant", tenant).param("vendor", vendorId).query(Int::class.java).single()
+		return warnings(product, held)
+	}
+
+	private fun warnings(product: RegisteredProduct, held: Int): List<String> =
+		listOfNotNull("exceeds_contracted_seats".takeIf { product.contractedSeats?.let { held > it } == true })
+
+	/** 등록 제품의 좌석 권위(연결 전 임시 여부) — 명령 응답에 싣는다. */
+	fun authority(tenant: UUID, vendorId: String): SeatAuthority {
+		val product = RegisteredProducts.find(jdbc, tenant, vendorId, lock = false)
+		val connected = jdbc.sql("SELECT EXISTS (SELECT 1 FROM enrollment.vendor_connections WHERE tenant_id = :tenant AND vendor_id = :vendor AND deleted_at IS NULL)")
+			.param("tenant", tenant).param("vendor", vendorId).query(Boolean::class.java).single()
+		return SeatAuthority.of(ConnectorDescriptors.forPlan(product.kind, product.plan) != null, connected)
+	}
+
 	// ---- 커넥터 동기화 (ADR 0048 §3의 3·4행, §7) ----
 
 	/**
@@ -408,6 +534,7 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 	/** 조직 구성원의 이메일 색인. 같은 이메일이 둘 이상이면 잇지 않는다. */
 	private class MemberEmails(private val ids: Map<String, List<UUID>>) {
 		fun match(email: String?): Pair<UUID?, MemberLink?> = ids[email]?.singleOrNull()?.let { it to MemberLink.EMAIL_MATCH } ?: (null to null)
+		fun ids(email: String): List<UUID> = ids[email].orEmpty()
 	}
 
 	private fun memberEmails(tenant: UUID) = MemberEmails(

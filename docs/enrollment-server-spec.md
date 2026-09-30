@@ -809,6 +809,10 @@ POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`, 8~128자)를 보낸다.
 | `DELETE /vendors/{vendorId}/connection` | `If-Match: "connection-{version}"` | 204, 자격증명 삭제 |
 | `POST /vendors/{vendorId}/connection/verify` | 본문 없음 | 200 `{seatSource}`, 확인 결과를 연결에 남김 |
 | `POST /vendors/{vendorId}/connection/sync` | 본문 없음, `Idempotency-Key` | 202 OperationResponse(`seat_sync`), Location(작업 상태 조회) — 아래 "벤더 연결"의 동기화 |
+| `POST /vendors/{vendorId}/seats` | `{account,expectedVersion?,memberId?,tierId?,note?}` | 새 좌석 201 SeatSaved + Location·ETag `"seat-{version}"`, 해제된 좌석의 재배정 200 — 아래 "좌석 수동 기록" |
+| `PATCH /vendors/{vendorId}/seats/{seatAssignmentId}` | `{expectedVersion,memberId?,memberLink?,tierId?,note?}` | 200 SeatSaved(보정) |
+| `POST /vendors/{vendorId}/seats/{seatAssignmentId}/release` | `{expectedVersion}` | 200 SeatSaved(해제) |
+| `POST /vendors/{vendorId}/seats/import` | `{mode:"preview"|"apply",csv}` | 200 `{import,provisional}` — 적용에 행 오류가 있으면 422 `seat_import_invalid` |
 
 팀 배정은 최대 100명, 전체 검증 후 한 트랜잭션으로 적용한다. `teamId:null`은 배정 해제다.
 효력 시각은 서버 시각이며 과거 ClickHouse 팩트는 바꾸지 않는다.
@@ -1001,6 +1005,72 @@ type Capability = "seat_list" | "seat_release" | "seat_restore" | "billing";
   선점을 잃은 실행의 요청은 다음 실행이 이어받는다. 연결을 지우면 걸린 요청은 `connection_removed`로 실패한다. 연결이 없으면 404, 벤더 연결이 꺼진 배포도 404다.
 - 실행 기록은 `seat_sync_runs`(시작·끝·결과·오류 코드·목록의 좌석 수·바뀐 좌석 수, 계기 `schedule`·`request`)다.
 
+### 좌석 수동 기록 (ADR 0048 §3의 1·2행)
+
+커넥터가 없는 플랜(Claude Team, OpenAI, Cursor Teams, `other`)에서는 관리자의 기록이 좌석 원장의 권위다. 커넥터가 있는 플랜이라도 **활성 연결이 없으면** 기록할 수 있고
+그 기록은 **임시**다(`provisional: true`) — 연결을 만들면 첫 성공한 동기화가 목록 전체로 대체한다. 활성 연결이 있는 제품에서는 배정·해제·가져오기가
+409 `connector_managed`이고 보정(구성원 연결·계약 등급·메모)만 된다. 벤더 연결 기능이 꺼진 배포에서도 된다. 구매 수량(`tiers[].seats`)으로 좌석을 만들지 않는다.
+
+```ts
+type SeatSaved = { seat: Seat; warnings: "exceeds_contracted_seats"[]; provisional: boolean };
+type Seat = {
+  seatAssignmentId: string; vendorId: string;
+  account: string; accountKind: "email" | "github_login";   // 계정 키 — 소문자로 정규화한 이메일 또는 GitHub 로그인
+  state: "assigned" | "pending_assignment" | "pending_release" | "released";
+  source: "connector" | "manual" | "csv" | "vendor_control" | "admin_action"; // 마지막으로 상태를 정한 원천
+  memberId: string | null; memberLink: "email_match" | "admin" | null;  // admin + null 은 관리자가 "잇지 않음"으로 정한 것
+  tierId: string | null; vendorTier: string | null;
+  assignedAt: string; releaseEffectiveOn: string | null; releasedAt: string | null;
+  vendorLastActivityAt: string | null;  // 벤더가 준 마지막 활동. null 은 모름이지 미사용이 아니다
+  note: string | null; version: number; updatedAt: string;
+};
+```
+
+- **배정**(`POST …/seats`): 계정은 제품의 계정 종류(Copilot은 GitHub 로그인, 나머지는 이메일)로 정규화한다. 새 계정은 `expectedVersion`을 보내지 않는다(201).
+  해제된 좌석을 다시 배정할 때는 그 좌석의 `version`을 보낸다 — 같은 `seatAssignmentId`로 200이다. 보유 중인 좌석은 409 `seat_already_held`(바꾸려면 보정).
+- **구성원**: `memberId`를 보내지 않으면 이메일 일치 규칙(조직에 그 이메일의 구성원이 정확히 하나면 `email_match`, 로그인 계정은 잇지 않음), UUID면 관리자 연결(`admin`),
+  `null`이면 관리자가 "잇지 않음"으로 정한 것이다. 보정에서 `memberLink: "automatic"`(이때 `memberId`는 보내지 않는다)은 관리자 연결을 거두고 규칙으로 돌린다. 다른 조직의 구성원은 404.
+- **등급** `tierId`는 등록 제품의 **현재 계약**에 있는 등급이어야 한다(아니면 422 `invalid_tier`). 보정의 `tierId: null`은 등급을 비운다.
+- **보정**(`PATCH`)은 상태·원천을 바꾸지 않는다. 바뀐 것이 없으면 판도 그대로다. **해제**는 배정(`assigned`)된 좌석만 된다 — 해제 예정·배정 대기는 벤더 제어의 몫이라 409 `seat_not_releasable`.
+- 경로의 좌석이 그 등록 제품의 것이 아니면 404. 판이 다르면 409 `version_conflict`.
+- **경고**: 보유 좌석(해제가 아닌 좌석) 수가 현재 계약의 구매 수량 합을 넘으면 `warnings: ["exceeds_contracted_seats"]`다 — 계약이 낡았을 수 있어 **거절하지 않는다**.
+
+**CSV 가져오기**(`POST …/seats/import`). `mode: "preview"`는 아무것도 쓰지 않고 행마다 계획을 돌려준다. `mode: "apply"`는 모든 행을 검증한 뒤 **오류가 하나도 없을 때만**
+한 트랜잭션으로 적용한다. 하나라도 있으면 아무것도 바꾸지 않고 422 `seat_import_invalid`이며 `details`에 미리보기와 같은 결과(행별 오류)를 싣는다.
+파일의 행만 바꾼다 — **파일에 없는 좌석은 그대로다**(목록 전체 맞춤은 커넥터 동기화의 몫). 같은 파일을 다시 적용하면 모든 행이 `unchanged`다. 원천은 `csv`로 남는다.
+
+| 열 | 필수 | 값 |
+| --- | --- | --- |
+| `account` | 예 | 벤더 계정 — 이메일(Copilot은 GitHub 로그인) |
+| `status` | 아니오 | `assigned`(기본)·`released` |
+| `tier` | 아니오 | 현재 계약의 등급 ID 또는 표시 이름(대소문자 무시). 비우면 새 좌석은 등급 없음, 있는 좌석은 그대로 |
+| `member_email` | 아니오 | 이 좌석을 잇는 구성원의 이메일(관리자 연결). 비우면 새 좌석은 이메일 일치 규칙, 있는 좌석은 그대로 |
+
+- 형식: UTF-8(BOM 허용), 첫 줄 머리글, 쉼표 구분, 큰따옴표 감싸기와 `""` 이스케이프, CRLF·LF, 빈 줄은 건너뛴다. 최대 5,000행·1,048,576자.
+- **이메일 외의 개인 정보를 받지 않는다** — 위 네 열 밖의 열(이름·전화·메모 등)이 있으면 파일 전체를 거절한다.
+- 파일 자체의 문제는 400 `invalid_csv`이고 `details.reason`이 `unknown_column`·`duplicate_column`·`missing_account_column`·`missing_header`·`malformed_quotes`·`too_many_rows`·`too_large` 중 하나다.
+
+| 행 | 지금 좌석 | 동작 |
+| --- | --- | --- |
+| `assigned` | 없음 | `create` |
+| `assigned` | 해제 | `reassign`(같은 좌석 ID) |
+| `assigned` | 배정 | 등급·구성원이 다르면 `update`(원천은 그대로), 아니면 `unchanged` |
+| `released` | 배정 | `release` |
+| `released` | 해제 | `unchanged` |
+
+```ts
+type SeatImport = {
+  mode: "preview" | "apply"; applied: boolean; digest: string;  // digest = 받은 CSV 내용의 SHA-256
+  summary: { create: number; reassign: number; update: number; release: number; unchanged: number; errors: number };
+  rows: { line: number; account: string; action: "create" | "reassign" | "update" | "release" | "unchanged" | null;
+          seatAssignmentId: string | null; errors: { field: string; code: string }[] }[];
+  warnings: "exceeds_contracted_seats"[];
+};
+```
+
+행 오류 코드: `account` — `required`·`invalid_account`·`duplicate_account`·`not_found`(없는 좌석의 해제), `status` — `invalid_status`·`seat_not_changeable`(해제 예정·배정 대기),
+`tier` — `invalid_tier`·`ambiguous_tier`·`not_applicable`(해제 행), `member_email` — `invalid_email`·`member_not_found`·`member_ambiguous`·`not_applicable`, `line` — `column_count`.
+
 ### 조회·관리 오류
 
 ```json
@@ -1009,12 +1079,12 @@ type Capability = "seat_list" | "seat_release" | "seat_restore" | "billing";
 
 | 상태 | 주요 코드·처리 |
 | --- | --- |
-| 400 | invalid_request, 필드 오류 표시 |
+| 400 | invalid_request, 필드 오류 표시. invalid_csv(`details.reason`) |
 | 401 | unauthenticated, 로그인/토큰 갱신 |
 | 403 | forbidden, 해당 동작 비활성화 |
 | 404 | not_found, 타 조직/없는 자원 |
-| 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, member_suspended, installation_unavailable, snapshot_expired |
-| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change, notification_channel_unavailable, connector_unavailable |
+| 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, member_suspended, installation_unavailable, snapshot_expired, connector_managed, seat_already_held, seat_not_releasable |
+| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change, notification_channel_unavailable, connector_unavailable, invalid_tier, seat_import_invalid(`details`에 행별 오류) |
 | 503 | unavailable, Retry-After 후 재시도. credential_key_unavailable(벤더 연결 — 운영이 암호화 키 설정을 고칠 때까지 재시도해도 같다) |
 
 쓰기 성공 후 관련 조직의 팀·구성원·설정·개요 Query 캐시를 무효화한다.

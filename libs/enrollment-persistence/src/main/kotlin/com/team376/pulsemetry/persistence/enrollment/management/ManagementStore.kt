@@ -8,6 +8,8 @@ import com.team376.pulsemetry.persistence.enrollment.operation.OperationStore
 import com.team376.pulsemetry.persistence.enrollment.operation.RetentionCleanupRequests
 import com.team376.pulsemetry.persistence.enrollment.operation.Operation
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger
+import com.team376.pulsemetry.persistence.enrollment.seat.SeatSource
+import com.team376.pulsemetry.persistence.enrollment.seat.SeatView
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatSourceView
 import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnectionStore
 import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnections
@@ -32,7 +34,8 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-class ManagementException(val code: String, val status: Int, val field: String? = null) : RuntimeException(code)
+/** 관리 명령의 거절. [detail] 은 오류 본문에 `details` 로 싣는 구조화된 사유다(예: CSV 행별 오류). 비밀을 싣지 않는다. */
+class ManagementException(val code: String, val status: Int, val field: String? = null, val detail: Any? = null) : RuntimeException(code)
 
 /** 관리 명령의 원자성과 재시도 응답을 보장한다. 빈·HTTP·ClickHouse 의존성은 없다. */
 class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransactionManager,
@@ -41,13 +44,13 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
     /** 초대 메일. 메일 기능이 꺼진 배포에서는 null 이고 초대는 발송 없이 코드만 발급한다. */
     private val invitationMail: InvitationMailer? = null,
     /** 설치 업데이트 안내(ADR 0043). 메일 기능이 꺼진 배포에서는 null 이고 안내 요청은 422 다 — 접수한 척하지 않는다. */
-    private val installationNotifier: InstallationNotifier? = null,
-    /** 좌석 원장(ADR 0048). 벤더 연결이 꺼진 배포에서는 null 이고 동기화 요청은 404 다. */
-    private val seatLedger: SeatLedger? = null) {
+    private val installationNotifier: InstallationNotifier? = null) {
     private val tx = TransactionTemplate(manager)
     private val onboarding = OnboardingStore(jdbc, mapper, initialManifest,
         RetentionCleanupRequests(jdbc, manager, OperationStore(jdbc, manager, clock)), invitationMail != null)
     private val catalog = VendorCatalog(jdbc)
+    /** 좌석 원장(ADR 0048) — 수동 기록은 벤더 연결 기능과 무관하게 된다. 동기화 요청은 연결이 있어야 한다(없으면 404). */
+    private val seats = SeatLedger(jdbc, manager, clock)
     private val random = SecureRandom()
     private val key = SecretKeySpec(Base64.getDecoder().decode(encryptionKey).also { require(it.size == 32) }, "AES")
 
@@ -79,6 +82,11 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                     .param("tenant", tenant).param("actor", actor).param("path", operation).param("key", idempotencyKey).update()
             }
             val result = when {
+                // 좌석 수동 기록(ADR 0048 §3의 1·2행) — 활성 연결이 있는 제품은 배정·해제·가져오기가 409 connector_managed.
+                SEAT_IMPORT.matches(operation) -> importSeats(tenant, actor, operation.split('/')[2], body)
+                SEAT_CREATE.matches(operation) -> assignSeat(tenant, actor, operation.split('/')[2], body)
+                SEAT_RELEASE.matches(operation) -> releaseSeat(tenant, actor, operation.split('/')[2], operation.split('/')[4], body)
+                SEAT_EDIT.matches(operation) -> correctSeat(tenant, actor, operation.split('/')[2], operation.split('/')[4], body)
                 operation == "PUT /collection-policy" -> onboarding.savePolicy(tenant, actor, body, now)
                 operation == "POST /onboarding/complete" -> onboarding.complete(tenant, actor, now)
                 operation == "POST /teams" -> createTeam(tenant, body, now)
@@ -96,7 +104,7 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                 operation == "POST /installation-update-notifications" -> notifyInstallations(tenant, actor, body)
                 // 좌석 동기화 요청(ADR 0048 §7) — 다음 주기 실행이 가져간다. 결과는 작업 상태 조회로 본다.
                 operation.startsWith("POST /vendors/") && operation.endsWith("/connection/sync") ->
-                    operationNode((seatLedger ?: fail("not_found", 404)).requestSync(tenant, actor, operation.split('/')[2]))
+                    operationNode(seats.requestSync(tenant, actor, operation.split('/')[2]))
                 else -> fail("not_found", 404)
             }
             if (operation.startsWith("POST ")) {
@@ -346,6 +354,56 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
         val notices = rows.map { it.second.copy(organization = organization) }.sortedBy { order.getValue(it.installationId) }
         return operationNode(notifier.notify(tenant, actor, notices))
     }
+    private fun assignSeat(tenant: UUID, actor: UUID, vendorId: String, body: JsonNode): JsonNode {
+        val expected = body.path("expectedVersion").takeUnless { it.isMissingNode || it.isNull }?.let { long(body, "expectedVersion") }
+        val seat = seats.assign(tenant, vendorId, actor, SeatSource.MANUAL, text(body, "account", 320), memberChoice(body) ?: SeatLedger.MemberChoice.Automatic,
+            optionalText(body, "tierId", 100), optionalText(body, "note", 1000), expected)
+        return seatResponse(tenant, seat)
+    }
+    private fun releaseSeat(tenant: UUID, actor: UUID, vendorId: String, rawSeat: String, body: JsonNode): JsonNode {
+        val id = seatOf(tenant, vendorId, rawSeat)
+        return seatResponse(tenant, seats.release(tenant, id, actor, SeatSource.MANUAL, long(body, "expectedVersion")))
+    }
+    private fun correctSeat(tenant: UUID, actor: UUID, vendorId: String, rawSeat: String, body: JsonNode): JsonNode {
+        val id = seatOf(tenant, vendorId, rawSeat)
+        val automatic = body.path("memberLink").takeUnless { it.isMissingNode }?.let {
+            if (!it.isString || it.asString() != "automatic" || body.has("memberId")) fail("invalid_request", 400, "memberLink")
+            SeatLedger.MemberChoice.Automatic
+        }
+        val tier = if (body.has("tierId")) SeatLedger.Change(optionalText(body, "tierId", 100)) else null
+        val note = if (body.has("note")) SeatLedger.Change(optionalText(body, "note", 1000)) else null
+        return seatResponse(tenant, seats.correct(tenant, id, actor, long(body, "expectedVersion"), automatic ?: memberChoice(body), tier, note))
+    }
+    private fun importSeats(tenant: UUID, actor: UUID, vendorId: String, body: JsonNode): JsonNode {
+        val mode = text(body, "mode", 10)
+        if (mode !in setOf("preview", "apply")) fail("invalid_request", 400, "mode")
+        val csv = body.path("csv").takeIf { it.isString }?.asString() ?: fail("invalid_request", 400, "csv")
+        val result = seats.importCsv(tenant, vendorId, actor, csv, mode == "apply")
+        return node(mapOf("import" to result, "provisional" to seats.authority(tenant, vendorId).provisional))
+    }
+    /** `memberId`: UUID 면 관리자 연결, null 이면 관리자가 "잇지 않음"으로 정함, 없으면 null(자동 규칙·그대로). */
+    private fun memberChoice(body: JsonNode): SeatLedger.MemberChoice? {
+        if (!body.has("memberId")) return null
+        val value = body.path("memberId")
+        if (value.isNull) return SeatLedger.MemberChoice.Unlinked
+        if (!value.isString) fail("invalid_request", 400, "memberId")
+        return SeatLedger.MemberChoice.Member(uuid(value.asString()))
+    }
+    /** 경로의 좌석이 그 조직·그 등록 제품의 것인지 확인한다. 아니면 404. */
+    private fun seatOf(tenant: UUID, vendorId: String, raw: String): UUID {
+        val id = uuid(raw)
+        val seat = seats.seat(tenant, id)
+        if (seat == null || seat.vendorId != vendorId) fail("not_found", 404, "seatAssignmentId")
+        return id
+    }
+    private fun seatResponse(tenant: UUID, seat: SeatLedger.Seat): JsonNode = node(mapOf(
+        "seat" to SeatView.of(seat), "warnings" to seats.warnings(tenant, seat.vendorId), "provisional" to seats.authority(tenant, seat.vendorId).provisional))
+    private fun optionalText(node: JsonNode, field: String, max: Int): String? {
+        val value = node.path(field)
+        if (value.isMissingNode || value.isNull) return null
+        return value.takeIf { it.isString }?.asString()?.trim()?.takeIf { it.length in 1..max } ?: fail("invalid_request", 400, field)
+    }
+
     /** 접수한 작업 — 작업 상태 조회(`GET O/operations/{operationId}`)와 같은 모양. */
     private fun operationNode(operation: Operation): JsonNode = node(mapOf(
         "operationId" to operation.id, "kind" to operation.kind.wire, "status" to operation.status.wire,
@@ -482,4 +540,11 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
         return String(cipher.doFinal(bytes.copyOfRange(12,bytes.size)), Charsets.UTF_8)
     }
     private fun fail(code: String, status: Int, field: String? = null): Nothing = throw ManagementException(code, status, field)
+
+    private companion object {
+        val SEAT_CREATE = Regex("POST /vendors/[^/]+/seats")
+        val SEAT_IMPORT = Regex("POST /vendors/[^/]+/seats/import")
+        val SEAT_RELEASE = Regex("POST /vendors/[^/]+/seats/[^/]+/release")
+        val SEAT_EDIT = Regex("PATCH /vendors/[^/]+/seats/[^/]+")
+    }
 }

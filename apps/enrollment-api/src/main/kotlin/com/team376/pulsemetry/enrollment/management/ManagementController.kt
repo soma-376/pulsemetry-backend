@@ -5,7 +5,6 @@ import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
 import org.springframework.beans.factory.ObjectProvider
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementStore
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger
 import com.team376.pulsemetry.security.user.UserAuthException
 import com.team376.pulsemetry.security.user.UserAuthService
 import jakarta.servlet.http.HttpServletRequest
@@ -49,9 +48,9 @@ class ManagementConfig {
     @Bean
     fun managementStore(jdbc: JdbcClient, manager: PlatformTransactionManager, mapper: ObjectMapper, clock: Clock,
         properties: ManagementProperties, invitationMail: ObjectProvider<InvitationMailer>,
-        installationNotifier: ObjectProvider<InstallationNotifier>, seatLedger: ObjectProvider<SeatLedger>): ManagementStore = ManagementStore(jdbc, manager, mapper, clock,
+        installationNotifier: ObjectProvider<InstallationNotifier>): ManagementStore = ManagementStore(jdbc, manager, mapper, clock,
             properties.responseEncryptionKey, { InitialOnboardingManifest.create(properties.onboardingOtlpEndpoint, mapper) }, invitationMail.ifAvailable,
-            installationNotifier.ifAvailable, seatLedger.ifAvailable)
+            installationNotifier.ifAvailable)
 }
 
 @RestController
@@ -59,13 +58,14 @@ class ManagementConfig {
 @RequestMapping("/api/v1/organizations/{organizationId}")
 class ManagementController(private val auth: UserAuthService, private val store: ManagementStore, private val mapper: ObjectMapper) {
     @RequestMapping(path = ["/teams", "/member-team-assignments", "/invitations/batch", "/invitations/{invitationId}/revoke", "/invitations/{invitationId}/reissue", "/vendors", "/onboarding/complete",
-        "/installation-update-notifications", "/vendors/{vendorId}/connection/sync"], method = [RequestMethod.POST])
+        "/installation-update-notifications", "/vendors/{vendorId}/connection/sync", "/vendors/{vendorId}/seats", "/vendors/{vendorId}/seats/import",
+        "/vendors/{vendorId}/seats/{seatId}/release"], method = [RequestMethod.POST])
     fun post(@PathVariable organizationId: UUID, @RequestBody(required = false) body: JsonNode?, request: HttpServletRequest) = handle(organizationId, body, request)
 
     @RequestMapping(path = ["/teams/{teamId}"], method = [RequestMethod.PATCH, RequestMethod.DELETE])
     fun team(@PathVariable organizationId: UUID, @RequestBody(required = false) body: JsonNode?, request: HttpServletRequest) = handle(organizationId, body, request)
 
-    @RequestMapping(path = ["/members/{memberId}"], method = [RequestMethod.PATCH])
+    @RequestMapping(path = ["/members/{memberId}", "/vendors/{vendorId}/seats/{seatId}"], method = [RequestMethod.PATCH])
     fun member(@PathVariable organizationId: UUID, @RequestBody(required = false) body: JsonNode?, request: HttpServletRequest) = handle(organizationId, body, request)
 
     @RequestMapping(path = ["/vendors/{vendorId}/contract"], method = [RequestMethod.PUT, RequestMethod.DELETE])
@@ -106,6 +106,15 @@ class ManagementController(private val auth: UserAuthService, private val store:
             return ResponseEntity.accepted().header("Cache-Control", "no-store")
                 .location(URI("/api/v1/organizations/$tenant/operations/${result.path("operationId").asString()}")).body(result)
         }
+        // 좌석 명령(ADR 0048): 새 배정은 201 + Location, 좌석 응답은 ETag "seat-{판}". 가져오기는 200 이다.
+        if (Regex("/vendors/[^/]+/seats(/.*)?").matches(path)) {
+            val seat = result.path("seat")
+            val status = if (request.method == "POST" && path.endsWith("/seats") && seat.path("version").asLong() == 1L) 201 else 200
+            val response = ResponseEntity.status(status).header("Cache-Control", "no-store")
+            if (!seat.isMissingNode) response.eTag("seat-${seat.path("version").asLong()}")
+            if (status == 201) response.location(URI(request.requestURI + "/" + seat.path("seatAssignmentId").asString()))
+            return response.body(result)
+        }
         val created = request.method == "POST" && path in listOf("/teams", "/vendors")
         val response = ResponseEntity.status(if (created) 201 else 200).header("Cache-Control", "no-store")
         if (created) response.location(URI(request.requestURI + "/" + if (path == "/teams") result.path("teamId").asString() else result.path("vendor").path("vendorId").asString()))
@@ -128,17 +137,20 @@ internal fun managementActor(auth: UserAuthService, tenant: UUID, request: HttpS
 @org.springframework.core.annotation.Order(-20)
 class ManagementErrors {
     @ExceptionHandler(ManagementException::class)
-    fun domain(error: ManagementException): ResponseEntity<*> = response(error.status, error.code, error.field)
+    fun domain(error: ManagementException): ResponseEntity<*> = response(error.status, error.code, error.field, error.detail)
     @ExceptionHandler(org.springframework.dao.DataAccessException::class)
     fun database(): ResponseEntity<*> = response(503, "unavailable", null)
     @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException::class, org.springframework.web.method.annotation.MethodArgumentTypeMismatchException::class)
     fun malformed(): ResponseEntity<*> = response(400, "invalid_request", null)
-    private fun response(status: Int, code: String, field: String?): ResponseEntity<*> {
+    private fun response(status: Int, code: String, field: String?, detail: Any? = null): ResponseEntity<*> {
         val requestId = UUID.randomUUID().toString()
         val builder = ResponseEntity.status(status).header("X-Request-Id", requestId).header("Cache-Control", "no-store")
         if (status == 503) builder.header("Retry-After", "2")
         val fields = if (field == null) emptyList() else listOf(mapOf("field" to field, "code" to code))
-        return builder.body(mapOf<String, Any>("error" to mapOf<String, Any>("code" to code, "message" to "관리 요청을 처리할 수 없습니다.",
-            "fieldErrors" to fields), "requestId" to requestId))
+        val body = mutableMapOf<String, Any>("error" to mapOf<String, Any>("code" to code, "message" to "관리 요청을 처리할 수 없습니다.",
+            "fieldErrors" to fields), "requestId" to requestId)
+        // 구조화된 사유(예: CSV 가져오기의 행별 오류)가 있을 때만 가산한다.
+        detail?.let { body["details"] = it }
+        return builder.body(body)
     }
 }
