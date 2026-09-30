@@ -55,6 +55,8 @@ class SettingsService(
 	private val catalog: VendorCatalog,
 	/** 설치 업데이트 안내를 보낼 채널이 있는가(관리 기능과 메일이 모두 켜진 배포 — ADR 0043). */
 	private val notificationsEnabled: Boolean = false,
+	/** 좌석 원장(ADR 0048) — 벤더별 좌석 수와 활성·보유 좌석 합계. */
+	private val seats: SeatService,
 ) {
 
 	/** 설치 목록의 정책 적용 필터. 없으면 전부다. */
@@ -72,6 +74,7 @@ class SettingsService(
 		val manifest = activeManifest(organization.id) ?: throw DashboardException(ErrorCode.NOT_FOUND)
 		val observed = observations.fix(organization.id, token.asOf, QueryReader.SEOUL)
 		val vendors = vendors(organization.id, token.asOf, observed)
+		val assessment = seats.assess(organization.id, token.asOf, emptySet(), withReviews = false)
 		val activeVendors = vendors.filter { it.contractStatus == ContractStatus.active }
 		val rollout = rollout(organization.id, manifest.version)
 		val products = if (managementEnabled) catalog.snapshot().products else emptyList()
@@ -87,7 +90,8 @@ class SettingsService(
 					?.sumOf { it.contract!!.monthlySeatFeeUsd!!.toBigDecimal() }?.let(Money::format),
 				contractedSeats = activeVendors.takeIf { it.all { vendor -> vendor.contract != null } }
 					?.sumOf { it.contract!!.tiers.sumOf { tier -> tier.seats } },
-				activeSeats7d = null,
+				activeSeats7d = seats.activeSeats(organization.id, assessment, 7),
+				assignedSeats = assessment.held.size.toLong().takeIf { assessment.products.any { it.availability != Availability.UNAVAILABLE } },
 				meteredMonthToDate = Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null),
 				detectedProducts = detected(observed, vendors.map { it.kind }.toSet()),
 				unmappedObservations = observed.observed[VendorObservations.UNMAPPED]?.let { row ->
@@ -226,7 +230,18 @@ class SettingsService(
 	 */
 	private fun managedVendors(tenantId: UUID, asOf: Instant): List<Vendor> {
 		val connections = VendorConnections.active(source, mapper, tenantId).associateBy { it.vendorId }
-		return contractVendors(tenantId, asOf).map { it.copy(seatSource = SeatSourceView.of(it.kind, it.contract?.planId, connections[it.vendorId])) }
+		val assessment = seats.assess(tenantId, asOf, emptySet(), withReviews = false)
+		val states = assessment.products.associateBy { it.product.vendorId }
+		val heldBy = assessment.held.groupingBy { it.vendorId }.eachCount()
+		return contractVendors(tenantId, asOf).map { vendor ->
+			val state = states[vendor.vendorId]
+			val seatSection: Section<VendorSeats> = if (state == null || state.availability == Availability.UNAVAILABLE) Section(Availability.UNAVAILABLE, state?.reason, null) else {
+				val held = (heldBy[vendor.vendorId] ?: 0).toLong()
+				val contracted = vendor.contract?.takeIf { vendor.contractStatus == ContractStatus.active }?.tiers?.sumOf { it.seats }
+				Section(state.availability, state.reason, VendorSeats(held, contracted, contracted?.let { maxOf(it - held, 0L) }))
+			}
+			vendor.copy(seatSource = SeatSourceView.of(vendor.kind, vendor.contract?.planId, connections[vendor.vendorId]), seats = seatSection)
+		}
 	}
 
 	private fun contractVendors(tenantId: UUID, asOf: Instant): List<Vendor> = source.sql("""
@@ -239,7 +254,8 @@ class SettingsService(
 		val status = ContractStatus.at(contract?.effectiveFrom?.let(LocalDate::parse), contract?.effectiveTo?.let(LocalDate::parse), asOf)
 		Vendor(rs.getString("vendor_id"), rs.getString("display_name"), rs.getString("kind"), rs.getString("source"), rs.getLong("version"),
 			null, null, null, null, VendorObservations.UNOBSERVED, if (status == ContractStatus.active) CONFIGURED else NEEDS_REVIEW, contract, status,
-			Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null), emptyList(), SeatSourceView.of(rs.getString("kind"), contract?.planId, null))
+			Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null), emptyList(), SeatSourceView.of(rs.getString("kind"), contract?.planId, null),
+			Section(Availability.UNAVAILABLE, null, null))
 	}.list()
 
 	/** 가장 최근 보존 정리 작업(ADR 0047) — 화면이 새로고침 뒤에도 마지막 정리의 상태를 다시 보게 한다. */

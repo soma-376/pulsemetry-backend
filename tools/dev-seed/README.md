@@ -130,6 +130,7 @@ ClickHouse 이벤트·수신 기록은 이 ID를 참조한다. 기본 설치는 
 | OpenAI 계약 | Business, Standard 6석 × $25 + Premium 2석 × $125 = 월 $400. 최초 계약 미입력(v1) → 14일 전 관리자 입력(v2) 이력 |
 | Copilot 계약 | Business 5석 × $19 = 월 $95, 기준일 전날 만료 |
 | Cursor 등록 | 제품만 등록, 계약 없음 |
+| 좌석 원장 | 사람별 좌석(ADR 0048) — 구매 수량으로 채우지 않는다. Claude 수동 5석(member4·8·10 표준, admin 프리미엄, 구성원 없는 외부 계정 하나), OpenAI 수동 2석(member3·5), Copilot 연결 원천 3석(기준일 0시 동기화 — seed-dev-7·seed-dev-11 은 관리자가 member7·member11 에 이었고 seed-bot 은 구성원 없음). Cursor 는 좌석을 기록하지 않았다(`seat_source_not_recorded`). 연결 자격증명은 풀 수 없는 자리표시자다 — 로컬에서 벤더 연결을 켜면 그 연결의 동기화는 `credential_key_unavailable` 로 실패한다 |
 
 모든 단가는 합성 테스트 입력이며 공시 가격을 자동 적용한 것이 아니다. 계약 좌석 수는 실제 구성원 배정이나
 관측 인원과 별개다. 유효 계약 두 개의 월 금액 합은 $760이지만, 만료·미입력 제품도 있어 전체 계약 합계는
@@ -218,6 +219,8 @@ fixture의 설치 행은 API와 같은 규칙이다 — 적용 판은 설치가 
 `canNotify`는 local 프로필(관리 기능·메일 켬) 기준으로 구성원이 활성이고 적용이 확인되지 않은 설치(시드 A는 미적용 3대와 미확인 1대)다(ADR 0043).
 기존 Anthropic $1,200 / OpenAI $0 기간 약정은 호환성·0/null 회귀 검증용으로 남긴다.
 기간 약정과 좌석 계약을 연결·합산하지 않는다. 관리 벤더의 관측 지표는 카탈로그의 명시 매핑(`claude_code` → `claude_team`, `codex` → `openai_biz`)으로 잇는 관측만 쓴다(ADR 0044).
+fixture의 `seats`는 위 좌석 원장의 행이다(계정은 합성 이메일·로그인뿐). 기준일이 지나면 Copilot 동기화가 `seats.stale-after`(local 26시간)보다 오래되어
+그 제품 원장은 `seat_sync_outdated`이고, 설치 보고가 기준일 0시에 끝나므로 회수 후보는 관측 부족(`observation_incomplete`)으로 빠진다 — 정상으로 꾸미지 않는다.
 A의 Claude·OpenAI 등록 제품은 관측이 있고, Cursor·Copilot은 매핑이 없어 `unobserved`·null이다. fixture는 기준일 0시를 기준 시각으로 쓰고 최근 7·30일은 기준일 전날까지다.
 fixture는 수집 구간으로 완전성을 판정하지 않는다 — 관측이 있으면 `partial`이고 창에서 센 0은 null이다. C의 설정에는 매핑 없는 관측(`unknown`)이 따로 보인다.
 

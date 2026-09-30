@@ -58,6 +58,10 @@ class OverviewComparisonTest {
 				IngestThresholds(Duration.ofMinutes(15), Duration.ofMinutes(5), Duration.ofHours(3)), Clock.systemUTC()),
 			aggregator = UsageAggregator(assembly.clickHouse),
 			references = references,
+			seats = SeatService(
+				SeatLedgerReader(DashboardTestStores.writer, ledger, mapper, com.team376.pulsemetry.dashboard.snapshot.RetentionBoundaryReader(DashboardTestStores.writer),
+					com.team376.pulsemetry.dashboard.snapshot.SnapshotCompleteness(DashboardTestStores.writer, DashboardTestStores.writer, Duration.ofHours(1))),
+				OrganizationPolicies(DashboardTestStores.writer, 14), Duration.ofHours(26)),
 		)
 	}
 

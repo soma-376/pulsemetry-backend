@@ -161,6 +161,7 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
                 "recorded_by" to member(if (kind == "openai_biz") 1 else 0))
         }
     }
+    if (name == "A") seats(name, tenant, origin, at(0), ::add, ::member)
     fun invitation(index: Int, state: String): Pair<String, String> {
         val code = hash("seed-$name-$index-$state").take(12).uppercase().chunked(4).joinToString("-")
         val invitationId = id("$name/invitation/$index/$state")
@@ -306,6 +307,53 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
         "first_observed_at" to events.minOfOrNull { it["source_time"].toString() }, "last_received_at" to ledger.maxOfOrNull { it["received_time"].toString() },
         "has_pre_ledger_history" to false, "updated_at" to at(0))
     return SeedData(name, asOf, rows, events, ledger, codes)
+}
+
+/**
+ * A 의 좌석 원장(ADR 0048). 구매 수량으로 채우지 않고 사람별 좌석을 넣는다 — 수동 원천(Claude Team·OpenAI Business)과 커넥터 원천(Copilot, 기준일 0시에
+ * 마지막으로 동기화한 연결), 구성원에 잇지 않은 좌석을 함께 둔다. Cursor 는 좌석을 기록하지 않았다(그 제품만 `seat_source_not_recorded`).
+ *
+ * - member4·member8 은 Claude 를 쓰는 사람, member10 은 설치는 있지만 Claude 사용이 없는 사람(수집 근거가 이어지면 유휴 후보),
+ *   admin(member1)은 설치가 없는 사람(관측 부족이라 후보가 아니다), 외부 계정 하나는 구성원이 없다.
+ * - 시드의 설치 보고는 기준일 0시에 끝난다 — 그 뒤의 날은 완전하지 않으므로 기준일이 지나면 후보는 모두 관측 부족으로 빠진다(정상이라고 꾸미지 않는다).
+ * - 연결의 자격증명은 풀 수 없는 자리표시자다(비밀이 아니다). 로컬에서 벤더 연결을 켜면 그 연결의 동기화는 `credential_key_unavailable` 로 실패한다.
+ */
+private fun seats(name: String, tenant: String, origin: String, syncedAt: String, add: (String, Array<out Pair<String, Any?>>) -> Unit, member: (Int) -> String) {
+    fun row(table: String, vararg fields: Pair<String, Any?>) = add(table, fields)
+    fun email(index: Int) = when (index) { 0 -> "owner"; 1 -> "admin"; else -> "member$index" } + "@seed-${name.lowercase()}.example.test"
+    fun seat(key: String, vendor: String, account: String, kind: String, memberIndex: Int?, link: String?, tier: String?, source: String, run: String?) {
+        val seatId = id("$name/seat/$key")
+        row("enrollment.seat_assignments", "id" to seatId, "tenant_id" to tenant, "vendor_id" to id("$name/vendor/$vendor"), "account" to account,
+            "account_kind" to kind, "vendor_account_ref" to null, "account_email" to account.takeIf { kind == "email" }, "state" to "assigned", "source" to source,
+            "member_id" to memberIndex?.let(member), "member_link" to link, "tier_id" to tier?.let { id("$name/vendor/$vendor/tier/$it") }, "vendor_tier" to null,
+            "assigned_at" to origin, "release_effective_on" to null, "released_at" to null, "vendor_last_activity_at" to null, "note" to null,
+            "version" to 1, "updated_at" to if (run != null) syncedAt else origin)
+        row("enrollment.seat_assignment_events", "seat_assignment_id" to seatId, "version" to 1, "tenant_id" to tenant, "state" to "assigned", "source" to source,
+            "member_id" to memberIndex?.let(member), "member_link" to link, "tier_id" to tier?.let { id("$name/vendor/$vendor/tier/$it") }, "vendor_tier" to null,
+            "release_effective_on" to null, "note" to null, "actor_id" to if (run == null) member(0) else null, "sync_run_id" to run, "operation_id" to null,
+            "recorded_at" to if (run != null) syncedAt else origin, "assigned_at" to origin)
+    }
+    // 연결과 동기화 실행을 먼저 넣는다(이력이 실행을 가리킨다). Copilot 연결이 기준일 0시에 목록을 읽었다.
+    val connection = id("$name/vendor-connection/copilot")
+    val run = id("$name/seat-sync-run/copilot")
+    row("enrollment.vendor_connections", "id" to connection, "tenant_id" to tenant, "vendor_id" to id("$name/vendor/copilot"), "connector" to "copilot",
+        "settings" to encode(mapOf("organization" to "seed-org")), "credential_ciphertext" to "c2VlZC1wbGFjZWhvbGRlci1ub3QtYS1zZWNyZXQ=",
+        "credential_key_id" to "seed-placeholder", "credential_updated_at" to origin, "check_status" to "unverified", "checked_at" to null,
+        "sync_claimed_by" to null, "sync_claimed_until" to null, "last_sync_succeeded_at" to syncedAt, "last_sync_failed_at" to null, "last_sync_error" to null,
+        "version" to 1, "created_at" to origin, "created_by" to member(1), "updated_at" to origin, "updated_by" to member(1), "deleted_at" to null, "deleted_by" to null,
+        "sync_requested_operation_id" to null)
+    row("enrollment.seat_sync_runs", "id" to run, "tenant_id" to tenant, "connection_id" to connection, "trigger" to "schedule", "worker" to "seed",
+        "started_at" to syncedAt, "finished_at" to syncedAt, "status" to "succeeded", "error" to null, "listed_seats" to 3, "changed_seats" to 3, "operation_id" to null)
+    // 수동 원천 — 관리자가 기록했다. 이메일이 구성원과 같으면 이메일 일치로 잇는다.
+    listOf(4 to "standard", 8 to "standard", 10 to "standard", 1 to "premium").forEach { (index, tier) ->
+        seat("claude_team/member$index", "claude_team", email(index), "email", index, "email_match", tier, "manual", null)
+    }
+    seat("claude_team/contractor", "claude_team", "contractor@partner.example.test", "email", null, null, null, "manual", null)
+    listOf(3, 5).forEach { index -> seat("openai_biz/member$index", "openai_biz", email(index), "email", index, "email_match", "standard", "manual", null) }
+    // 커넥터 원천 — 로그인 계정은 관리자가 이었다.
+    seat("copilot/seed-dev-7", "copilot", "seed-dev-7", "github_login", 7, "admin", null, "connector", run)
+    seat("copilot/seed-dev-11", "copilot", "seed-dev-11", "github_login", 11, "admin", null, "connector", run)
+    seat("copilot/seed-bot", "copilot", "seed-bot", "github_login", null, null, null, "connector", run)
 }
 
 /** B는 조직과 오너만 만든다. A/C의 팀·설정·수집 데이터 생성 경로를 공유하지 않는다. */

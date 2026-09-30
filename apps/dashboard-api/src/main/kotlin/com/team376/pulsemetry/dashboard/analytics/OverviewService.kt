@@ -4,9 +4,14 @@ import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.Axis
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.Side
 import com.team376.pulsemetry.dashboard.organization.Organization
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
+import com.team376.pulsemetry.dashboard.request.QueryReader
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
+import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
 import org.slf4j.LoggerFactory
 import java.math.BigDecimal
+import java.math.MathContext
+import java.math.RoundingMode
+import java.time.LocalDate
 import java.util.UUID
 
 /**
@@ -31,6 +36,7 @@ class OverviewService(
 	private val frames: AnalyticsFrames,
 	private val aggregator: UsageAggregator,
 	private val references: SnapshotReferences,
+	private val seats: SeatService,
 ) {
 
 	private val log = LoggerFactory.getLogger(OverviewService::class.java)
@@ -54,13 +60,67 @@ class OverviewService(
 				current = if (frame.empty) null else Usage.of(organizationTotals, pricingMixed, frame.currentComplete),
 				previous = previousTotals?.let { Usage.of(it, pricingMixed, frame.previousComplete) },
 			),
-			seats = SEATS,
+			seats = seatsOf(frame, products),
 			alerts = OverviewResponse.Alerts(Availability.UNAVAILABLE, Availability.EVALUATION_NOT_CONFIGURED, frame.now.toString(), null, null, null),
 			trend = trendOf(frame),
 			modelMix = modelMixOf(snapshot, pricingMixed, frame.empty),
 			waste = WASTE,
 			teamUsage = teamUsageOf(snapshot, pricingMixed, frame, products),
 			productUsage = productUsageOf(snapshot, pricingMixed, frame, products),
+		)
+	}
+
+	/**
+	 * 좌석과 효율 (개요 요청서 "좌석과 효율", ADR 0048). 범위(`scopeVendorIds`)는 유효한 계약이 있고, 좌석 원장을 쓸 수 있고, 사용량을 그 제품에 잇는
+	 * 관측 제품 매핑이 있는 등록 제품이다 — 같은 벤더 범위의 환산가치와 좌석료를 비교하려면 셋 다 있어야 한다. 빠진 제품이 있으면 partial(첫 사유).
+	 * 좌석료 배분은 월 요금 × 기간 일수 / 30 인 추정(`estimated_30_day`)이다. 기간마다 그 기간 끝(기준 시각 이전)의 계약·원장으로 따로 계산한다.
+	 * 회수 추정(`reclaimEstimate`)은 회수 가능 조건(회수 실행)이 없어 null 이고, 회수 검토 수는 가산 필드 `reclaimCandidates` 다.
+	 */
+	private fun seatsOf(frame: AnalyticsFrames.Frame, mapping: List<SnapshotReferences.Product>): OverviewResponse.Seats {
+		val snapshot = frame.snapshot
+		val roster = references.roster(snapshot).filter { it.status in setOf("active", "suspended") }.map { it.id }.toSet()
+		val latest = seats.assess(frame.organization.id, snapshot.asOf, roster)
+		val contracted = latest.products.filter { it.product.contractStatus == ContractStatus.active && it.product.contract != null }
+		if (contracted.isEmpty()) return OverviewResponse.Seats(Availability.UNAVAILABLE, Availability.NOT_APPLICABLE, emptyList(), null, null, null, null, null)
+		val observable = latest.ledger.observableKinds
+		val scope = contracted.filter { it.availability != Availability.UNAVAILABLE && it.product.kind in observable }
+		val excluded = contracted - scope.toSet()
+		val reason = excluded.firstOrNull()?.let { it.reason ?: "product_unobservable" }
+		if (scope.isEmpty()) return OverviewResponse.Seats(Availability.UNAVAILABLE, reason, emptyList(), null, null, null, null, null)
+		val scopeIds = scope.map { it.product.vendorId }.sorted()
+		val current = seatPeriod(frame, Side.CURRENT, frame.period.current.dates(), roster, scopeIds, mapping, frame.currentComplete)
+		val previous = if (frame.comparable) frame.period.previous?.let { seatPeriod(frame, Side.PREVIOUS, it.dates(), roster, scopeIds, mapping, frame.previousComplete) } else null
+		if (current == null) return OverviewResponse.Seats(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, scopeIds, null, null, null, null, null)
+		val candidates = latest.candidates.count { it.seat.vendorId in scopeIds }.toLong().takeIf { latest.candidateSection().first != Availability.UNAVAILABLE }
+		return OverviewResponse.Seats(if (excluded.isEmpty()) Availability.AVAILABLE else Availability.PARTIAL, reason, scopeIds, ESTIMATED_30_DAY, current, previous, null, candidates)
+	}
+
+	/** 한 기간의 좌석 값. 계약 좌석·월 요금은 그 기간 끝의 계약, 활성 좌석은 그 기간에 그 제품을 쓴 보유 좌석이다. 금액을 모르면 null. */
+	private fun seatPeriod(frame: AnalyticsFrames.Frame, side: Side, dates: List<LocalDate>, roster: Set<UUID>, scopeIds: List<String>,
+		mapping: List<SnapshotReferences.Product>, complete: Boolean): OverviewResponse.SeatPeriod? {
+		val end = minOf(dates.max().plusDays(1).atStartOfDay(QueryReader.SEOUL).toInstant(), frame.snapshot.asOf)
+		val assessment = seats.assess(frame.organization.id, end, roster, withReviews = false)
+		val products = assessment.products.map { it.product }.filter { it.vendorId in scopeIds && it.contract != null &&
+			it.contractStatus == ContractStatus.active }
+		if (products.isEmpty()) return null
+		val held = assessment.held.filter { seat -> products.any { it.vendorId == seat.vendorId } }
+		val kindOf = products.associate { it.vendorId to it.kind }
+		val memberUsage = if (frame.empty || held.any { it.memberId == null }) null
+			else aggregator.totals(frame.snapshot, side, Axis.MEMBER_PRODUCT, products = mapping)
+		val productUsage = if (frame.empty) emptyMap() else aggregator.totals(frame.snapshot, side, Axis.PRODUCT, products = mapping)
+		val monthlyFee = products.map { it.contract!!.monthlySeatFeeUsd?.toBigDecimal() }.takeIf { fees -> fees.all { it != null } }?.sumOf { it!! } ?: return null
+		val equivalent = products.map { product ->
+			val totals = productUsage[listOf(product.kind)]
+			if (totals == null || !totals.hasUsage) BigDecimal.ZERO.takeIf { complete } else totals.equivalentCost(frame.pricingMixed)
+		}.takeIf { costs -> costs.all { it != null } }?.sumOf { it!! } ?: return null
+		val allocated = monthlyFee * BigDecimal(dates.size) / BigDecimal(30)
+		return OverviewResponse.SeatPeriod(
+			contractedSeats = products.sumOf { p -> p.contract!!.tiers.sumOf { it.seats } },
+			activeSeats = memberUsage?.let { usage -> held.count { usage[listOf(it.memberId.toString(), kindOf[it.vendorId])]?.hasUsage == true }.toLong() },
+			monthlyFeeUsd = Money.format(monthlyFee),
+			allocatedFeeUsd = Money.format(allocated.setScale(12, RoundingMode.HALF_UP)),
+			equivalentCostUsd = Money.format(equivalent),
+			efficiency = if (allocated.signum() == 0) null else equivalent.divide(allocated, MathContext.DECIMAL64).toDouble(),
 		)
 	}
 
@@ -233,8 +293,8 @@ class OverviewService(
 		private const val ATTRIBUTION_BASIS = "event_time"
 		private const val TOP_TEAMS = 3
 
-		/** 계약 모델이 화면의 좌석×월 요금과 맞지 않아 좌석 section 은 지원하지 않는다. */
-		private val SEATS = OverviewResponse.Seats(Availability.UNAVAILABLE, Availability.NOT_APPLICABLE, emptyList(), null, null, null, null)
+		/** 기존 화면의 월 요금 × 일수 / 30 — 배분 **추정액**이다(요청서). */
+		private const val ESTIMATED_30_DAY = "estimated_30_day"
 
 		private val WASTE = OverviewResponse.Waste(
 			availability = Availability.UNAVAILABLE,

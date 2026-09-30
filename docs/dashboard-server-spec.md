@@ -214,12 +214,12 @@ type ProductRef = { kind: string | null; displayName: string | null };
 
 ### 좌석 원장 조회 (ADR 0048)
 
-구성원 화면의 좌석 요약·구성원별 `seatState`·회수 후보, 회수 후보 목록, 구성원 좌석은 **하나의 좌석 원장**(enrollment `seat_assignments`와 판별 이력)에서 계산한다.
+구성원 화면의 좌석 요약·구성원별 `seatState`·회수 후보, 회수 후보 목록, 구성원 좌석, 개요의 좌석과 효율, 설정의 좌석 수는 **하나의 좌석 원장**(enrollment `seat_assignments`와 판별 이력)에서 계산한다.
 구매 수량(`tiers[].seats`)이나 사용자 수로 좌석을 만들지 않는다.
 
 - **기준 시각으로 다시 세운다 — snapshot 에 복제하지 않는다.** 원장은 판마다 이력(`seat_assignment_events`, 판의 상태·원천·구성원 연결·등급·배정 시각)을 남기므로
   기준 시각 이전의 마지막 판이 그 시각의 좌석이다. 구성원 화면(`/members/dashboard`·`/members`·`/members/unassigned`)의 기준 시각은 snapshot 의 asOf,
-  회수 후보·구성원 좌석은 현재 상태 토큰의 asOf 다. 구성원 화면에 실은 회수 후보 첫 페이지는 snapshot asOf 의 토큰으로 내므로 다음 페이지를 `/seat-reclaim-candidates`로 이어 읽는다.
+  회수 후보·구성원 좌석은 현재 상태 토큰의 asOf, 개요는 snapshot 의 asOf(기간 값은 그 기간 끝), 설정은 설정 토큰의 asOf 다. 구성원 화면에 실은 회수 후보 첫 페이지는 snapshot asOf 의 토큰으로 내므로 다음 페이지를 `/seat-reclaim-candidates`로 이어 읽는다.
   그래서 캐시 DDL·`QUERY_CONTRACT`는 바뀌지 않았다. 판이 없는 값 — 벤더 활동 시각, 연결의 동기화 상태 — 은 현재 값이다.
 - **제품 단위 가용성** — 원장이 그 제품에 대해 비었거나 낡았으면 그 제품만 낮춘다.
 
@@ -251,6 +251,17 @@ type ProductRef = { kind: string | null; displayName: string | null };
   `canReclaim`은 false, `reason`은 `vendor_control_unavailable`(회수 실행이 아직 없다)이다. `tierId`는 모르면 null(요청서는 문자열), 절감액은 null,
   `vendorAccount`(가산)는 좌석의 벤더 계정이다(`account`는 구성원의 계정).
 - **구성원 좌석** `GET O/members/{memberId}/seats`: 로스터에 없는 구성원은 404(다른 조직·없는 ID·UUID 아님 포함). 보관한 등록 제품의 좌석은 싣지 않는다.
+- **개요 좌석과 효율**(`/analytics/overview`의 `seats`): 같은 벤더 범위의 환산가치와 좌석료를 비교한다. 범위(`scopeVendorIds`)는 유효한 계약이 있고,
+  원장이 unavailable 이 아니고, 관측 제품 매핑이 있는 등록 제품이다 — 셋 중 하나라도 없으면 그 제품을 빼고 `partial`(뺀 첫 제품의 원장 사유, 매핑 없음은 `product_unobservable`).
+  유효한 계약이 없으면 unavailable `not_applicable`, 범위가 비면 unavailable(첫 사유)이다. 기간마다(`current`·`previous`) **그 기간 끝**(기준 시각 이전)의 계약·원장으로 따로 센다.
+  `contractedSeats`는 계약 좌석, `monthlyFeeUsd`는 월 요금 합(하나라도 미입력이면 그 기간 null), `allocatedFeeUsd` = 월 요금 × 기간 일수 / 30(`allocationBasis = estimated_30_day` — 배분 **추정액**이다),
+  `equivalentCostUsd`는 범위 제품의 환산가치 합(완전한 기간의 사용 없음은 0, 단가 없는 사용이 있으면 null), `efficiency` = 환산가치 / 배분액.
+  `activeSeats`는 그 기간에 그 제품을 쓴 보유 좌석 수이고 구성원에 이어지지 않은 보유 좌석이 있으면 null 이다. `reclaimEstimate`는 회수 실행이 없어 null,
+  `reclaimCandidates`(가산)는 범위 제품의 회수 후보 수(판정할 수 없으면 null)다.
+- **설정 좌석**(`/settings`·`/vendors`·`/vendors/{vendorId}`): vendor 마다 `seats: Section<{assigned, contracted, unallocated}>`(가산)를 낸다 — 가용성·사유는 위 표,
+  `assigned`는 보유 좌석, `contracted`·`unallocated`는 계약이 유효할 때만(아니면 null). `summary.assignedSeats`(가산)는 쓸 수 있는 원장의 보유 좌석 합이고
+  모든 제품이 unavailable 이면 null 이다. `summary.activeSeats7d`는 기준일(서울) 전날까지 7일 동안 그 제품을 쓴 보유 좌석 수다 — 모든 보유 좌석이 구성원에 이어지고
+  관측 가능한 제품일 때만 내고, 창이 모두 완전하면 0 포함 정확한 수, 아니면 센 수가 있을 때만 그 수다(§7.3 관측 인원과 같은 규칙). 관측 사용자 수를 좌석으로 쓰지 않는다.
 
 ```ts
 type MemberSeatsResponse = { meta: CurrentMeta; memberId: string; policy: { idleDays: number; version: number }; seats: MemberSeat[] };
@@ -444,7 +455,7 @@ enrollment Flyway는 이 앱에서 실행하지 않는다. 새 원천 테이블�
 관리 기능이 켜져 있으면 editContracts·editCollectionPolicy는 true이고 저장은 enrollment-api에 요청한다.
 collectionPolicy.collectRawContent는 프롬프트·응답 중 하나라도 허용됐는지다. 도구 내용·API 원문은 이 선택과 별개다.
 두 플래그가 다를 때 온보딩 조회는 null로 표현해 명시적 재선택을 받는다.
-설정의 계약 좌석·월 요금과 개요의 좌석 집계는 별개이며 후자는 아직 unavailable이다.
+설정의 계약 좌석·월 요금은 계약의 값이고, 보유·활성 좌석과 개요의 좌석 집계는 좌석 원장의 값이다(위 "좌석 원장 조회").
 실제 벤더 좌석 회수·알림 평가·원격 정책 갱신 완료·실제 청구액은 구현하지 않는다.
 
 ## 7. 등록 제품과 계약 정정
@@ -474,8 +485,8 @@ ID는 관리 API와 같은 vendorId UUID다. 공급자 관측·기존 기간 약
 - 오늘(서울)이 계약 시작일~종료일 안이면 configured다. 종료일 null은 상한 없음이며 기간 밖은 needs_review다.
 - `summary.monthlySeatFeeUsd`와 `contractedSeats`: 합계는 contractStatus=active인 계약만 포함한다. 만료·시작 예정·미입력은 제외하며 UI에 제외 건수를 표시한다. 유효 계약이 없으면 월 계약액과 좌석 수는 0이다. 유효 계약 자체의 필요한 값이 누락되면 해당 합계는 null이다. 이는 유효 계약 기준 합계이며 실제 전체 지출이나 자동 해지·갱신을 의미하지 않는다.
 - 단가 0의 유효 계약은 무료로 입력된 값이며 미입력과 다르다. 표시할 때 null은 `-`, 숫자 0은 0으로 구분한다.
-- 등록 제품의 firstSeenAt/lastSeenAt·activeUsers7d/30d·observation은 아래 §7.3의 관측 지표다. 좌석 배정·청구의 근거가 아니므로
-  활성 좌석 합계(`summary.activeSeats7d`)는 null이다. 계약 좌석에서 관측 사용자 수를 빼서 미사용 좌석이나 절감액을 만들지 않는다.
+- 등록 제품의 firstSeenAt/lastSeenAt·activeUsers7d/30d·observation은 아래 §7.3의 관측 지표다. 좌석 배정·청구의 근거가 아니다.
+  활성 좌석 합계(`summary.activeSeats7d`)와 제품별 좌석(`seats`)은 좌석 원장에서 센다("좌석 원장 조회"). 계약 좌석에서 관측 사용자 수를 빼서 미사용 좌석이나 절감액을 만들지 않는다.
 - 계약 없는 제품도 표시 이름을 바꿀 수 있다. 계약 비우기·제품 삭제·정정의 저장 규칙은 Enrollment 명세 §12를 따른다.
 
 목록 페이지는 같은 snapshotId로 이어 읽고, 저장 후에는 첫 페이지부터 새 snapshot으로 읽는다.
@@ -527,7 +538,7 @@ type UnmappedObservations = ObservedFields & { observedProducts: string[]; first
   실행 가능 여부는 `capabilities`로 판단한다. 이 배포에 그 구현이 조립됐는지는 말하지 않는다 — 연결 저장이 422 `connector_unavailable`로 알린다.
 - `connection`: 활성 연결의 비밀 아닌 기록. 자격증명은 `{configured, updatedAt}`뿐이고, 이 앱은 `vendor_connections`의 암호문·키 열을 고르지 않는다(`VendorConnections`).
   `sync.status`는 성공한 동기화가 없으면 `pending`, 마지막 시도가 실패면 `failing`(마지막 성공 값은 남는다), 아니면 `succeeded`다.
-- 연결 상태는 조회 기준 시각의 고정값이 아니라 **현재 값**이다 — 관측 지표(§7.3)처럼 snapshot에 고정하지 않는다. 좌석 원장의 값과 그 신선도는 좌석 조회가 따로 낸다.
+- 연결 상태는 조회 기준 시각의 고정값이 아니라 **현재 값**이다 — 관측 지표(§7.3)처럼 snapshot에 고정하지 않는다. 좌석 원장의 값과 그 신선도는 vendor 의 `seats`(가산)가 따로 낸다("좌석 원장 조회").
 
 ### 계약 기간 상태 (`contractStatus`)
 

@@ -40,7 +40,12 @@ data class Vendor(
 	val checks: List<VendorCheck>,
 	/** 좌석 원천(가산, ADR 0048) — 권위·커넥터 설명·활성 연결. 자격증명은 설정됨 여부와 갱신 시각만 낸다. 연결 상태는 기준 시각이 아니라 현재 값이다. */
 	val seatSource: SeatSourceView,
+	/** 이 제품의 좌석 수(가산, ADR 0048) — 좌석 원장의 기준 시각 값. 원장을 쓸 수 없으면 unavailable 과 사유. */
+	val seats: Section<VendorSeats>,
 )
+
+/** 제품 하나의 좌석 — 보유(배정·해제 예정·배정 대기), 유효한 계약의 좌석, 계약 좌석 − 보유(0 미만은 0). 계약이 유효하지 않으면 계약·미배정은 null. */
+data class VendorSeats(val assigned: Long, val contracted: Long?, val unallocated: Long?)
 
 /**
  * `version`·`effectiveAt`·`updatedBy` 는 원문 선택이 실린 manifest 의 것이다. 회수 기준·집계 보존은 manifest 와 따로 저장하고
@@ -95,7 +100,10 @@ data class SettingsSummary(
 	val unconfiguredVendors: Long,
 	val monthlySeatFeeUsd: String?,
 	val contractedSeats: Long?,
+	/** 지난 7일(기준일 전날까지) 그 제품을 쓴 보유 좌석 수(ADR 0048) — 판정할 수 없으면 null. */
 	val activeSeats7d: Long?,
+	/** 보유 좌석 수(가산, ADR 0048) — 쓸 수 있는 원장만 센다. 모든 제품의 원장이 unavailable 이면 null. */
+	val assignedSeats: Long?,
 	val meteredMonthToDate: Section<MeteredSummary>,
 	/** 매핑으로 관측됐지만 조직이 등록하지 않은 카탈로그 제품(가산 — ADR 0044). 벤더 목록에는 넣지 않는다. */
 	val detectedProducts: List<DetectedProduct>,

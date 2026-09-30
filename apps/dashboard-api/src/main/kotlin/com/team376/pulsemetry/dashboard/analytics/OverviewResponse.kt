@@ -63,6 +63,8 @@ data class OverviewResponse(
 		val current: SeatPeriod?,
 		val previous: SeatPeriod?,
 		val reclaimEstimate: ReclaimEstimate?,
+		/** 회수 검토 수(가산, ADR 0048) — 범위 제품의 회수 후보 수. 후보를 판정할 수 없으면 null. */
+		val reclaimCandidates: Long?,
 	)
 
 	data class SeatPeriod(

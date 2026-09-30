@@ -155,13 +155,15 @@ class AnalyticsConfig {
 		mapper: ObjectMapper,
 		clock: Clock,
 		catalog: VendorCatalog,
+		seats: SeatService,
 	): SettingsService = SettingsService(
 		source, observations, frames, tokens, codec, mapper, OrganizationPolicies(source, properties.members.idleDays), clock, managementEnabled, catalog,
 		// 안내는 enrollment-api 가 메일로 보낸다(ADR 0043). 두 앱이 같은 설정 값을 받는다.
 		notificationsEnabled = managementEnabled && mailEnabled,
+		seats = seats,
 	)
 
 	@Bean
-	fun overviewService(frames: AnalyticsFrames, aggregator: UsageAggregator, references: SnapshotReferences): OverviewService =
-		OverviewService(frames, aggregator, references)
+	fun overviewService(frames: AnalyticsFrames, aggregator: UsageAggregator, references: SnapshotReferences, seats: SeatService): OverviewService =
+		OverviewService(frames, aggregator, references, seats)
 }

@@ -86,6 +86,30 @@ class SeedScenarioTest {
         assertEquals(encode(frontendFixture(a)), encode(frontendFixture(scenario("A", date))))
     }
 
+    @Test fun `A의 좌석은 사람별 원장이다 — 수동·커넥터 원천과 미연결 좌석이 있고 구매 수량으로 채우지 않는다`() {
+        val seats = a.rows.getValue("enrollment.seat_assignments")
+        val events = a.rows.getValue("enrollment.seat_assignment_events")
+        val vendor = { kind: String -> id("A/vendor/$kind") }
+        assertEquals<Map<Any?, Int>>(mapOf("manual" to 7, "connector" to 3), seats.groupingBy { it["source"] }.eachCount())
+        assertEquals<Map<String, Int>>(mapOf(vendor("claude_team") to 5, vendor("openai_biz") to 2, vendor("copilot") to 3), seats.groupingBy { it["vendor_id"] as String }.eachCount())
+        assertTrue(seats.none { it["vendor_id"] == vendor("cursor") }, "Cursor 는 좌석을 기록하지 않았다")
+        assertEquals<List<Any?>>(listOf("contractor@partner.example.test", "seed-bot"), seats.filter { it["member_id"] == null }.map { it["account"] }.sortedBy { it.toString() })
+        // 계약의 구매 수량(Claude 10석)과 좌석 수(5)는 다르다 — 수량에서 만들지 않았다.
+        assertNotEquals<Int>(10, seats.count { it["vendor_id"] == vendor("claude_team") })
+        // 판마다 이력 한 행. 수동은 관리자, 커넥터는 동기화 실행이 행위자다.
+        assertEquals(seats.map { it["id"] }.toSet(), events.map { it["seat_assignment_id"] }.toSet())
+        events.forEach { event ->
+            val seat = seats.single { it["id"] == event["seat_assignment_id"] }
+            if (seat["source"] == "connector") assertEquals(listOf(id("A/seat-sync-run/copilot"), null), listOf(event["sync_run_id"], event["actor_id"]))
+            else assertEquals(listOf(null, id("A/member/0")), listOf(event["sync_run_id"], event["actor_id"]))
+        }
+        assertEquals("github_login", seats.single { it["account"] == "seed-dev-7" }["account_kind"])
+        val connection = a.rows.getValue("enrollment.vendor_connections").single()
+        assertEquals(a.rows.getValue("enrollment.seat_sync_runs").single()["finished_at"], connection["last_sync_succeeded_at"])
+        // A 만 좌석이 있다.
+        assertNull(c.rows["enrollment.seat_assignments"])
+    }
+
     @Test fun `같은 기준일은 동일하고 조직과 다른 기준일은 구분된다`() {
         assertEquals(a.fingerprint, scenario("A", date).fingerprint)
         assertEquals(3, listOf(a, b, c).map { it.tenantId }.distinct().size)

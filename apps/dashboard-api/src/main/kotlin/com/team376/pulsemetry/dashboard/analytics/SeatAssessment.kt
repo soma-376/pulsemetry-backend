@@ -147,6 +147,37 @@ class SeatLedgerReader(
 		}.filterNotNull().toMap()
 	}
 
+	/**
+	 * 기준 시각의 서울 날짜 전날까지 [days] 일 동안 쓴 (구성원, 카탈로그 제품)과 그 창이 모두 완전한가(ADR 0042) — 설정의 활성 좌석(7일)이 쓴다.
+	 * 창은 설정의 벤더 관측 지표(ADR 0044)와 같다.
+	 */
+	fun activity(tenant: UUID, asOf: Instant, days: Int, mapping: Map<String, String>): Pair<Set<Pair<UUID, String>>, Boolean> {
+		val today = asOf.atZone(QueryReader.SEOUL).toLocalDate()
+		val dates = (1..days).map { today.minusDays(it.toLong()) }
+		val deletedBefore = boundaries.read(tenant).deletedBefore
+		val complete = completeness.completeDates(tenant, dates, QueryReader.SEOUL, asOf, deletedBefore).containsAll(dates)
+		if (mapping.isEmpty()) return emptySet<Pair<UUID, String>>() to complete
+		val params = linkedMapOf(
+			"tenant" to ClickHouseParam.string(tenant.toString()),
+			"from" to ClickHouseParam.instant(today.minusDays(days.toLong()).atStartOfDay(QueryReader.SEOUL).toInstant()),
+			"until" to ClickHouseParam.instant(today.atStartOfDay(QueryReader.SEOUL).toInstant()),
+			"observed" to ClickHouseParam.stringArray(mapping.keys.toList()),
+			"catalog" to ClickHouseParam.stringArray(mapping.keys.map { mapping.getValue(it) }),
+		)
+		deletedBefore?.let { params["deleted_before"] = ClickHouseParam.instant(it) }
+		val sql = """
+			SELECT DISTINCT assumeNotNull(member_id) AS m, transform(product, {observed:Array(String)}, {catalog:Array(String)}, '') AS kind
+			FROM telemetry_events FINAL
+			WHERE tenant_id = {tenant:String} AND record_status = 'active' AND signal = 'log' AND isNotNull(member_id)
+			  AND source_time >= {from:DateTime64(9, 'UTC')} AND source_time < {until:DateTime64(9, 'UTC')}${if (deletedBefore != null) " AND source_time >= {deleted_before:DateTime64(9, 'UTC')}" else ""}
+			  AND kind != ''
+			SETTINGS do_not_merge_across_partitions_select_final = 1
+		""".trimIndent()
+		val used = clickHouse.query(sql, params) { row -> runCatching { UUID.fromString(row.path("m").asString()) }.getOrNull()?.let { it to row.path("kind").asString() } }
+			.filterNotNull().toSet()
+		return used to complete
+	}
+
 	/** 구성원별 설치(등록·폐기 시각). 관측 근거 — 설치가 없던 사람의 사용 없음은 관측이 아니다. */
 	fun installations(tenant: UUID): Map<UUID, List<Pair<Instant, Instant?>>> =
 		source.sql("SELECT member_id, created_at, revoked_at FROM enrollment.installations WHERE tenant_id = :tenant").param("tenant", tenant)

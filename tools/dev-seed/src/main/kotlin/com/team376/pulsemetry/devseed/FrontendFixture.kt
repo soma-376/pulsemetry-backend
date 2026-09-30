@@ -91,6 +91,10 @@ internal fun frontendFixture(data: SeedData): Row {
         "catalog" to mapOf("catalogVersion" to snapshot.version, "items" to catalog, "plans" to plans),
         "teams" to rows("teams").map { mapOf("teamId" to it["id"], "teamName" to it["name"], "version" to 1) },
         "members" to members, "managedVendors" to vendors, "installations" to installations,
+        // 좌석 원장(ADR 0048) — 사람별 좌석. 계약의 구매 수량이 아니다. 계정은 시드의 합성 이메일·로그인뿐이다.
+        "seats" to rows("seat_assignments").map { seat -> mapOf("seatAssignmentId" to seat["id"], "vendorId" to seat["vendor_id"], "account" to seat["account"],
+            "accountKind" to seat["account_kind"], "state" to seat["state"], "source" to seat["source"], "memberId" to seat["member_id"],
+            "memberLink" to seat["member_link"], "tierId" to seat["tier_id"], "assignedAt" to seat["assigned_at"], "version" to seat["version"]) },
         "onboarding" to mapOf("organizationId" to data.tenantId, "completed" to true, "completedAt" to origin,
             "policy" to mapOf("confirmed" to true, "confirmedAt" to origin, "version" to desiredVersion, "collectRawContent" to false),
             "selectedVendorCount" to vendors.size, "canComplete" to true, "nextStep" to "complete"),

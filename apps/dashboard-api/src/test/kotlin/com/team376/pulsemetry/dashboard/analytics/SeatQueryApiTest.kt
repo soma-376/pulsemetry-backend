@@ -14,6 +14,7 @@ import com.team376.pulsemetry.dashboard.support.TestDashboardAuthenticator
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatSource
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.data.Offset
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -58,11 +59,11 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 
 	private data class Org(val tenant: UUID, val admin: UUID, val members: Map<String, UUID>, val claude: String, val copilot: String?, val seats: Map<String, UUID>)
 
-	private fun register(tenant: UUID, admin: UUID, kind: String, plan: String, seats: Int): String {
+	private fun register(tenant: UUID, admin: UUID, kind: String, plan: String, seats: Int, effectiveFrom: String = "2026-01-01"): String {
 		val id = "$kind-${UUID.randomUUID()}"
 		DashboardTestStores.writer.sql("INSERT INTO enrollment.managed_vendors (tenant_id,vendor_id,kind,source,created_at) VALUES (:t,:id,:kind,'manual',:at)")
 			.param("t", tenant).param("id", id).param("kind", kind).param("at", Timestamp.from(ago(90))).update()
-		val contract = """{"version":1,"planId":"$plan","effectiveFrom":"2026-01-01","effectiveTo":null,"termNote":null,
+		val contract = """{"version":1,"planId":"$plan","effectiveFrom":"$effectiveFrom","effectiveTo":null,"termNote":null,
 			"tiers":[{"tierId":"tier-$kind","label":"Standard","seats":$seats,"monthlyFeePerSeatUsd":"30"}],"monthlySeatFeeUsd":"${30 * seats}","confirmedAt":"2026-01-01T00:00:00Z","confirmedBy":"$admin"}"""
 		DashboardTestStores.writer.sql("INSERT INTO enrollment.vendor_contract_versions (tenant_id,vendor_id,version,display_name,contract,recorded_at,recorded_by) VALUES (:t,:id,1,:name,CAST(:c AS jsonb),:at,:admin)")
 			.param("t", tenant).param("id", id).param("name", "$kind 계약").param("c", contract).param("at", Timestamp.from(ago(90))).param("admin", admin).update()
@@ -254,5 +255,110 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		assertThat(seatSection()).describedAs("Claude 는 여전히 쓸 수 있다").isEqualTo("partial" to "seat_sync_pending")
 		val copilotSeat = ok(org.tenant, "/members/${org.members.getValue("admin")}/seats").at("/seats/0")
 		assertThat(copilotSeat.path("ledgerAvailability").asString() to copilotSeat.path("ledgerReason").asString()).isEqualTo("unavailable" to "seat_sync_pending")
+	}
+
+	@Test
+	@DisplayName("설정 — 벤더마다 좌석 수(보유·계약·미배정)와 보유 좌석 합계, 활성 좌석(7일)은 모든 보유 좌석을 판정할 수 있을 때만")
+	fun settingsSeats() {
+		val org = organization()
+		val settings = ok(org.tenant, "/settings")
+		assertThat(settings.at("/summary/assignedSeats").asLong()).isEqualTo(7)
+		assertThat(settings.at("/summary/activeSeats7d").isNull).describedAs("미연결·관측 불가 좌석이 있다").isTrue()
+		val vendors = settings.at("/vendors/items").toList().associateBy { it.path("vendorId").asString() }
+		assertThat(vendors.getValue(org.claude).path("seats").let { listOf(it.path("availability").asString(), it.at("/data/assigned").asLong(), it.at("/data/contracted").asLong(), it.at("/data/unallocated").asLong()) })
+			.containsExactly("available", 6L, 10L, 4L)
+		assertThat(vendors.getValue(org.copilot!!).path("seats").let { listOf(it.path("availability").asString(), it.at("/data/assigned").asLong(), it.at("/data/unallocated").asLong()) })
+			.containsExactly("available", 1L, 4L)
+		JsonStructure.assertMatches("settings-response.example.json", settings)
+
+		// 관측 가능한 제품뿐이어도 구성원에 잇지 않은 좌석(외부 계정)이 있으면 판정할 수 없다.
+		val only = organization(withCopilot = false)
+		fun activeSeats7d() = ok(only.tenant, "/settings").at("/summary/activeSeats7d")
+		fun release(name: String) {
+			val seat = ledger(ago(1)).seat(only.tenant, only.seats.getValue(name))!!
+			ledger(ago(1)).release(only.tenant, seat.id, only.admin, SeatSource.MANUAL, seat.version)
+		}
+		assertThat(activeSeats7d().isNull).describedAs("구성원 없는 좌석이 있다").isTrue()
+		// 판정할 수 없는 좌석을 해제하면 지난 7일 안에 쓴 보유 좌석(eli)만 센다.
+		listOf("outside", "fox").forEach(::release)
+		assertThat(activeSeats7d().asLong()).isEqualTo(1)
+		// eli 의 좌석도 해제하면 7일 안에 쓴 보유 좌석이 없다 — 창이 모두 완전하므로 모름이 아니라 0 이다.
+		release("eli")
+		assertThat(activeSeats7d().let { it.isNumber && it.asLong() == 0L }).describedAs(activeSeats7d().toString()).isTrue()
+		// 좌석 없는 구성원의 설치가 5일 전부터 보고하지 않으면 창이 완전하지 않다 — 센 좌석이 없으니 0 이라고 말할 수 없다.
+		val quiet = SourceFixtures.insertInstallation(only.tenant, only.members.getValue("nobody"))
+		SourceFixtures.setInstallationTimes(quiet, ago(60))
+		SourceFixtures.insertSegment(quiet, ago(60), ago(5))
+		assertThat(activeSeats7d().isNull).isTrue()
+		// 좌석을 기록하지 않은 제품은 그 제품만 unavailable 이다.
+		val openai = register(only.tenant, only.admin, "openai_biz", "business", 3, effectiveFrom = "2099-01-01")
+		fun openaiSeats() = ok(only.tenant, "/settings").at("/vendors/items").toList().single { it.path("vendorId").asString() == openai }.path("seats")
+		assertThat(openaiSeats().let { it.path("availability").asString() to it.path("reason").asString() }).isEqualTo("unavailable" to "seat_source_not_recorded")
+		// 좌석을 기록하면 쓸 수 있다 — 계약이 아직 시작하지 않았으므로 계약 좌석·미배정은 모른다.
+		ledger(ago(1)).assign(only.tenant, openai, only.admin, SeatSource.MANUAL, "dana-${only.tenant.toString().take(8)}@example.test")
+		assertThat(openaiSeats().let { listOf(it.path("availability").asString(), it.at("/data/assigned").asLong(), it.at("/data/contracted").isNull, it.at("/data/unallocated").isNull) })
+			.containsExactly("available", 1L, true, true)
+
+		// 모든 제품의 원장을 쓸 수 없으면 보유 좌석 합계도 모른다 — 0 이 아니다.
+		val unrecorded = DashboardTestStores.insertTenant()
+		SourceFixtures.setSummary(unrecorded, firstReceivedAt = ago(90))
+		val owner = SourceFixtures.insertMember(unrecorded, "owner-${UUID.randomUUID()}@example.test", role = "admin")
+		SourceFixtures.insertManifest(unrecorded, 1, owner, signals = """{"logs":true,"metrics":true,"traces":true}""", activatedAt = ago(90))
+		register(unrecorded, owner, "openai_biz", "business", 3)
+		with(ok(unrecorded, "/settings").path("summary")) {
+			assertThat(listOf(path("assignedSeats").isNull, path("activeSeats7d").isNull)).containsOnly(true)
+		}
+	}
+
+	@Test
+	@DisplayName("개요 — 좌석 범위는 유효한 계약·쓸 수 있는 원장·관측 매핑이 있는 제품이고, 좌석료는 월 요금 × 일수 / 30 추정이며 회수 검토 수를 싣는다")
+	fun overviewSeats() {
+		val org = organization()
+		val seats = ok(org.tenant, "/analytics/overview?$period").path("seats")
+		// Copilot 은 관측 매핑이 없어 범위 밖 — partial.
+		assertThat(listOf(seats.path("availability").asString(), seats.path("reason").asString(), seats.path("allocationMethod").asString()))
+			.containsExactly("partial", "product_unobservable", "estimated_30_day")
+		assertThat(seats.path("scopeVendorIds").toList().map { it.asString() }).containsExactly(org.claude)
+		with(seats.path("current")) {
+			assertThat(path("contractedSeats").asLong()).isEqualTo(10)
+			assertThat(path("activeSeats").isNull).describedAs("미연결 좌석이 있다").isTrue()
+			assertThat(path("monthlyFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("300")
+			assertThat(path("allocatedFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("70")
+			// 기간(8일 전~2일 전) 안의 claude_code 사용은 eli 의 1달러뿐이다.
+			assertThat(path("equivalentCostUsd").asString().toBigDecimal()).isEqualByComparingTo("1")
+			assertThat(path("efficiency").asDouble()).isCloseTo(1.0 / 70.0, Offset.offset(1e-9))
+		}
+		// 비교 기간(앞 주)도 완전해 그 기간 끝의 계약·원장으로 따로 계산한다 — 그 주의 claude_code 사용은 hana·ivy 의 2달러다.
+		assertThat(seats.at("/previous/contractedSeats").asLong()).isEqualTo(10)
+		assertThat(seats.at("/previous/equivalentCostUsd").asString().toBigDecimal()).isEqualByComparingTo("2")
+		assertThat(seats.path("reclaimEstimate").isNull).describedAs("회수 가능 조건이 없다").isTrue()
+		assertThat(seats.path("reclaimCandidates").asLong()).isEqualTo(2)
+		JsonStructure.assertMatches("overview-response.example.json", ok(org.tenant, "/analytics/overview?$period"))
+
+		// 사용이 없는 완전한 기간의 환산가치는 0(효율 0)이고, 수집 근거가 없는 기간은 좌석 값을 만들지 않는다 — 환산가치를 모르면 비교할 수 없다.
+		val today = now.atZone(QueryReader.SEOUL).toLocalDate()
+		fun overviewSeats(from: Long, to: Long) = ok(org.tenant, "/analytics/overview?startDate=${today.minusDays(from)}&endDate=${today.minusDays(to)}&timeZone=Asia/Seoul").path("seats")
+		with(overviewSeats(40, 34).path("current")) {
+			assertThat(path("equivalentCostUsd").asString().toBigDecimal()).isEqualByComparingTo("0")
+			assertThat(path("efficiency").asDouble()).isZero()
+		}
+		val beforeInstall = overviewSeats(75, 69)
+		assertThat(beforeInstall.path("availability").asString() to beforeInstall.path("reason").asString()).isEqualTo("unavailable" to "source_not_available")
+		assertThat(beforeInstall.path("current").isNull).isTrue()
+
+		// 계약이 아직 시작하지 않은 제품(OpenAI)의 후보는 범위 밖이다 — 조직의 후보는 셋이지만 개요의 회수 검토 수는 범위(Claude)의 둘이다.
+		val openai = register(org.tenant, org.admin, "openai_biz", "business", 3, effectiveFrom = "2099-01-01")
+		ledger(ago(60)).assign(org.tenant, openai, org.admin, SeatSource.MANUAL, "dana-${org.tenant.toString().take(8)}@example.test")
+		assertThat(ok(org.tenant, "/seat-reclaim-candidates").at("/candidates/data/totalCount").asInt()).isEqualTo(3)
+		val scoped = ok(org.tenant, "/analytics/overview?$period").path("seats")
+		assertThat(scoped.path("scopeVendorIds").toList().map { it.asString() }).containsExactly(org.claude)
+		assertThat(scoped.path("reclaimCandidates").asLong()).isEqualTo(2)
+
+		// 유효한 계약이 없으면 좌석 section 자체가 해당 없다.
+		val none = DashboardTestStores.insertTenant()
+		SourceFixtures.setSummary(none, firstReceivedAt = ago(90))
+		val body = ok(none, "/analytics/overview?$period").path("seats")
+		assertThat(body.path("availability").asString() to body.path("reason").asString()).isEqualTo("unavailable" to "not_applicable")
+		assertThat(body.path("current").isNull).isTrue()
 	}
 }

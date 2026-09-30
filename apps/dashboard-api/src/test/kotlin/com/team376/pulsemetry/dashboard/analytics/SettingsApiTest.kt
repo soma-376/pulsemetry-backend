@@ -45,6 +45,7 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 	@Autowired private lateinit var mapper: ObjectMapper
 	@Autowired private lateinit var clock: Clock
 	@Autowired private lateinit var catalog: VendorCatalog
+	@Autowired private lateinit var seats: SeatService
 
 	@BeforeEach
 	fun backfillDone() {
@@ -317,7 +318,7 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		val organization = requireNotNull(organizations.find(org.tenant))
 		// 앱 조립과 같은 경로로 만든다 — 관리 기능과 메일이 모두 켜져야 채널이 있다.
 		fun service(management: Boolean, mail: Boolean) = AnalyticsConfig().settingsService(management, mail, properties, source, observations, frames, tokens, codec,
-			mapper, clock, catalog)
+			mapper, clock, catalog, seats)
 		fun notifiable(service: SettingsService) = service.installations(organization, null, PageRequest(100, null), null).installations.items
 			.associate { it.installationId to it.canNotify }
 

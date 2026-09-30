@@ -19,6 +19,8 @@ object JsonStructure {
 		// 관측 제품별 사용 — ADR 0045.
 		"overview-response.example.json" to mapOf(
 			"" to setOf("productUsage"),
+			// 회수 검토 수 — ADR 0048.
+			"/seats" to setOf("reclaimCandidates"),
 			"/teamUsage/topTeams/0" to setOf("products"),
 			"/teamUsage/unassigned" to setOf("products"),
 		),
@@ -32,11 +34,11 @@ object JsonStructure {
 		),
 		// 관측됐지만 등록하지 않은 제품·매핑 없는 관측 — ADR 0044.
 		"settings-response.example.json" to mapOf(
-			"/summary" to setOf("detectedProducts", "unmappedObservations"),
+			"/summary" to setOf("detectedProducts", "unmappedObservations", "assignedSeats"),
 			// 조직 정책 설정의 판·저장 시각·출처·저장할 수 있는 값 — ADR 0046. 마지막 보존 정리 작업 — ADR 0047.
 			"/collectionPolicy" to setOf("settingsVersion", "settingsUpdatedAt", "settingsUpdatedBy", "reclaimIdleDaysSource", "options", "cleanupOperationId"),
 			// 등록 제품의 좌석 원천(권위·커넥터 설명·활성 연결) — ADR 0048.
-			"/vendors/items/0" to setOf("seatSource"),
+			"/vendors/items/0" to setOf("seatSource", "seats"),
 		),
 	)
 
