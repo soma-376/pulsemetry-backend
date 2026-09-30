@@ -13,6 +13,10 @@ dependencies {
 	implementation(project(":libs:telemetry-ops-persistence"))
 	implementation(libs.spring.boot.starter.webmvc)
 	implementation(libs.spring.boot.starter.security)
+	// outbox 의 메일을 SMTP 로 보낸다 (ADR 0037). JavaMailSender 는 설정(pulsemetry.mail.*)으로 직접 만든다.
+	implementation(libs.spring.boot.starter.mail)
+	// 일시 실패와 영구 실패를 SMTP 응답 코드로 가른다. 그 코드는 구현 쪽 예외 타입에 있다.
+	implementation(libs.angus.mail)
 	implementation(libs.jackson.module.kotlin)
 	// manifest 재동기화가 저장된 정책을 telemetryctl 원본 스키마로 검증한다 (ADR 0019).
 	// 계약 테스트도 같은 검증기를 쓴다.
@@ -24,6 +28,8 @@ dependencies {
 	// 앱 컨텍스트가 뜨려면 실제 PostgreSQL 이 필요하다 (Flyway 가 기동 시 마이그레이션한다).
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.postgresql)
+	// 메일 수신 컨테이너로 실제 SMTP 발송을 검증한다.
+	testImplementation(libs.testcontainers)
 }
 
 // 실행 산출물은 bootJar 하나다. plain jar 를 만들면 Dockerfile 이 둘 중 하나를 골라내야 한다.

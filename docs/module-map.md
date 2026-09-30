@@ -47,6 +47,7 @@ pulsemetry-backend
 │   ├── enrollment-api/              com.team376.pulsemetry.enrollment
 │   │                                ├ auth/           사용자 인증 HTTP·필터·키 설정
 │   │                                ├ inquiry/        로그인 전 도입 문의 접수 HTTP·출처별 제한 필터
+│   │                                ├ mail/           메일 설정 바인딩·SMTP 발송 구현·발송 작업의 주기 실행 (ADR 0037)
 │   │                                └ management/     온보딩·정책·팀·초대·제품·계약 관리 HTTP
 │   ├── telemetry-ingest/            com.team376.pulsemetry.telemetry
 │   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
@@ -72,7 +73,7 @@ pulsemetry-backend
 │                                    Docker 전용 개발 데이터·인증 키 초기화와 시드 관리
 └── libs/
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
-    │                                └ enrollment 엔티티·사용자 인증 저장소·관리 명령·문의 접수·DB 카탈로그 · Flyway 마이그레이션
+    │                                └ enrollment 엔티티·사용자 인증 저장소·관리 명령·문의 접수·메일 outbox·DB 카탈로그 · Flyway 마이그레이션
     ├── security/                    com.team376.pulsemetry.security
     │                                └ 사용자 JWT·세션·암호 검증과 OTLP 경로의 ptt_ 검증 · telemetry token 해시
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
@@ -181,6 +182,7 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 | registered product / seat contract | `managed_vendors` · `vendor_contract_versions` · `management_commands` | `:libs:enrollment-persistence` — 등록·정정·이름 변경·보관·멱등 명령 저장 |
 | user authentication | `user_sessions` · `user_refresh_tokens` · `user_authorization_codes` · `auth_attempts` | `:libs:enrollment-persistence`의 인증 저장소. 정책·검증은 `:libs:security`, HTTP 조립은 enrollment-api |
 | vendor catalog | `vendor_catalog_vendors` · `vendor_catalog_products` · `vendor_catalog_plans` | `:libs:enrollment-persistence`의 Flyway가 초기화. 관리자 편집 API는 없음 |
+| mail | `mail_outbox` | `:libs:enrollment-persistence`의 메일 outbox(`mail`) — 업무 쓰기가 같은 트랜잭션에서 적재하고, enrollment-api의 발송 작업이 선점해 결과를 기록 (ADR 0037) |
 | inquiry | `inquiries` · `inquiry_attempts` | `:libs:enrollment-persistence`의 문의 저장소(`inquiry`) — enrollment-api의 공개 접수 명령. 조직에 속하지 않으며 조직·계정·초대를 만들지 않음 |
 | telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` · `telemetry_ingest_ledger` · `telemetry_retention_fence` | `:libs:telemetry-persistence` |
 | telemetry ops | RDS `telemetry_ops.tenant_ingest_summary` · `tenant_summary_backfill` · `tenant_retention_boundary` · `retention_operations` | `:libs:telemetry-ops-persistence` |

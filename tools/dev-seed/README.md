@@ -51,7 +51,9 @@ CLI 설치는 A의 `plan`에 나오는 대기 초대 또는 관리자 API로 발
 ```
 
 각 앱의 `application-local.yaml`이 로컬 인증·관리 기능과 DB 계정 설정을 제공한다.
-Compose가 `build/dev-auth`에 인증 키와 응답 암호화 키를 만들며 기존 키는 덮어쓰지 않는다.
+Compose가 `build/dev-auth`에 인증 키와 응답 암호화 키, 메일 본문 암호화 키를 만들며 기존 키는 덮어쓰지 않는다.
+메일 키가 없던 기존 디렉터리에는 다음 `docker compose up -d --build`에서 메일 키만 더한다.
+서버가 보낸 메일은 Compose의 메일 수신 컨테이너가 받는다. `http://localhost:8025`에서 확인하며 실제로 발송되지 않는다.
 서버는 키를 읽기만 한다. 키가 없으면 먼저 Compose 초기화를 실행한다.
 키 경로는 Gradle bootRun의 앱 디렉터리 기준이며 다른 위치에서 실행할 때는
 `PULSEMETRY_DEV_AUTH_DIR`에 키 디렉터리의 절대 경로를 지정한다.

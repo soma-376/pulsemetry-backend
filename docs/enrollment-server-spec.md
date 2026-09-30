@@ -387,6 +387,16 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.token-hash-secret` | 없음 | telemetry token 의 HMAC-SHA256 키. **비어 있으면 기동 실패.** auth-proxy(ai-telemetry-pipeline)와 같은 값을 써야 OTLP 인증이 성립한다. dev 인프라에서는 `DevEdgeStack` 의 `TokenHashSecretArn` 이 가리키는 Secrets Manager 값. 키 변경 = 발급된 전 토큰 무효 |
 | `pulsemetry.invitation.default-ttl-hours` | `72` | `expires_in_hours` 생략 시 만료 시간 |
 | `pulsemetry.binaries.dir` | `./binaries` | CLI 바이너리가 놓인 서버 로컬 디렉터리 |
+| `pulsemetry.mail.enabled` | `false` | 메일 발송(ADR 0037)을 켠다. 켜면 아래 열한 값이 **모두 필요하다 — 하나라도 비면 기동 실패**. 꺼져 있으면 outbox에 적재하지도 보내지도 않는다 |
+| `pulsemetry.mail.smtp.host` · `.port` | 없음 | SMTP 서버 |
+| `pulsemetry.mail.smtp.username` · `.password` | 없음 | SMTP 계정. 로그·응답에 싣지 않는다 |
+| `pulsemetry.mail.smtp.starttls` | 없음 | STARTTLS를 요구하는가(`true`·`false`). 운영 SMTP는 `true` |
+| `pulsemetry.mail.from` | 없음 | 발신 주소 |
+| `pulsemetry.mail.encryption-key` | 없음 | 대기 중인 메일 본문의 AES-256-GCM 키(Base64 32바이트). 바꾸면 그때 대기 중이던 메일은 본문을 읽지 못해 실패로 끝난다 |
+| `pulsemetry.mail.dispatch-interval` | 없음 | 발송 작업이 outbox를 보는 주기(ISO-8601 기간) |
+| `pulsemetry.mail.retry-interval` | 없음 | 일시 실패 뒤 다시 시도하기까지의 간격 |
+| `pulsemetry.mail.max-attempts` | 없음 | 한 메일의 최대 시도 횟수(1 이상) |
+| `pulsemetry.mail.send-timeout` | 없음 | SMTP 연결·읽기·쓰기 각각의 제한 시간. 선점 임대는 이 값의 네 배다 |
 | `pulsemetry.inquiries.enabled` | `false` | 도입 문의 접수(§2.2)를 켠다. 켜면 아래 네 값이 **모두 필요하다 — 하나라도 비면 기동 실패** |
 | `pulsemetry.inquiries.duplicate-window` | 없음 | 같은 회사·이메일의 재전송을 같은 접수로 보는 시간(ISO-8601 기간, 예: `PT10M`) |
 | `pulsemetry.inquiries.rate-limit.requests` | 없음 | 출처 하나가 창 안에 보낼 수 있는 요청 수(1 이상) |
@@ -394,6 +404,8 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.inquiries.allowed-origins` | 없음 | 문의 폼을 띄우는 프론트 출처(쉼표로 구분) |
 
 DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_PASSWORD` 로 덮어쓴다.
+메일의 키는 `PULSEMETRY_MAIL_ENABLED` · `_FROM` · `_ENCRYPTION_KEY` · `_DISPATCH_INTERVAL` · `_RETRY_INTERVAL` · `_MAX_ATTEMPTS` · `_SEND_TIMEOUT` ·
+`_SMTP_HOST` · `_SMTP_PORT` · `_SMTP_USERNAME` · `_SMTP_PASSWORD` · `_SMTP_STARTTLS` 로 준다. local 프로필은 Compose의 메일 수신 컨테이너(`localhost:1025`)로 켠다.
 문의 접수의 다섯 키는 `PULSEMETRY_INQUIRIES_ENABLED` · `_DUPLICATE_WINDOW` · `_RATE_LIMIT_REQUESTS` · `_RATE_LIMIT_WINDOW` · `_ALLOWED_ORIGINS` 로 준다.
 local 프로필은 개발용 값(10분, 1분에 10회, 출처 3000·3107)으로 켠다. 운영 수치의 배포 기본값은 두지 않는다.
 
@@ -489,7 +501,7 @@ export PULSEMETRY_ADMIN_API_TOKEN=...
 ## 10. 로컬 실행
 
 ```sh
-docker compose up -d --build              # PostgreSQL · ClickHouse · 일회성 시드
+docker compose up -d --build              # PostgreSQL · ClickHouse · 메일 수신 컨테이너 · 일회성 시드
 docker compose logs -f dev-seed
 docker compose ps -a dev-seed             # Exited (0) 확인
 # ingest와 공유하는 HMAC 키. enrollment의 local 기본값과 맞춘다.
@@ -506,6 +518,8 @@ A는 정책 확인과 벤더 선택을 갖춘 온보딩 완료 상태이고 B/C�
 A/B/C 완료 기록이 있으면 기존 변경을 유지하고 건너뛰며 미완료 기록은 자동 삭제 없이 실패로 알린다.
 서버에는 자동 시드와 `PULSEMETRY_LOCAL_SEED_ENABLED` 설정이 없다.
 시나리오·기준일 선택과 Docker 초기화/검증은 [개발 시드 가이드](../tools/dev-seed/README.md)를 따른다.
+local 프로필의 서버는 메일을 Compose의 수신 컨테이너로 보낸다. 받은 메일은 `http://localhost:8025`에서 본다 — 밖으로 나가는 메일은 없다.
+메일 본문 암호화 키는 시드 컨테이너가 `build/dev-auth`에 만든다. 이 키가 없던 기존 개발 환경은 `docker compose up -d --build`를 한 번 더 실행한다.
 
 **팀이 배정되지 않은 초대 대상은 설치 후에도 소속이 없다.** 그러면 `telemetry_events.team_id_as_of` 가 null·`team_ids_as_of` 가 빈 배열이 된다(`member_id` 는
 채워진다) — 보강 배선이 틀린 것이 아니다.
@@ -863,6 +877,7 @@ Flyway가 enrollment 스키마의 진실원이다. 관련 추가 마이그레이
 | V10 | 공통 공급사·제품·플랜 카탈로그와 초기 목록 |
 | V11 | openai_biz의 복수 좌석 유형 입력 허용 |
 | V13 | 도입 문의 접수(`inquiries`)와 출처별 문의 요청 수 제한(`inquiry_attempts`) |
+| V14 | 메일 outbox(`mail_outbox`) — 적재·선점·결과와 암호화한 대기 본문 (ADR 0037) |
 
 V12는 이 표에 없다 — 사용자 로그인 방식 작업이 예약한 번호다. Flyway는 이미 적용한 판보다 낮은 번호를 뒤늦게 받지 않으므로,
 V13이 먼저 적용된 DB에는 V12를 넣을 수 없다. 머지 순서가 뒤집히면 그 작업이 번호를 다시 매긴다.

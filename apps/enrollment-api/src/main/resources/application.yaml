@@ -62,6 +62,21 @@ pulsemetry:
     enabled: ${PULSEMETRY_MANAGEMENT_ENABLED:false}
     response-encryption-key: ${PULSEMETRY_MANAGEMENT_RESPONSE_ENCRYPTION_KEY:}
     onboarding-otlp-endpoint: ${PULSEMETRY_ONBOARDING_OTLP_ENDPOINT:}
+  # 메일 발송(ADR 0037). 켜면 아래 값이 모두 필요하다 — 비어 있으면 기동이 실패한다.
+  mail:
+    enabled: ${PULSEMETRY_MAIL_ENABLED:false}
+    from: ${PULSEMETRY_MAIL_FROM:}
+    encryption-key: ${PULSEMETRY_MAIL_ENCRYPTION_KEY:}
+    dispatch-interval: ${PULSEMETRY_MAIL_DISPATCH_INTERVAL:}
+    retry-interval: ${PULSEMETRY_MAIL_RETRY_INTERVAL:}
+    max-attempts: ${PULSEMETRY_MAIL_MAX_ATTEMPTS:}
+    send-timeout: ${PULSEMETRY_MAIL_SEND_TIMEOUT:}
+    smtp:
+      host: ${PULSEMETRY_MAIL_SMTP_HOST:}
+      port: ${PULSEMETRY_MAIL_SMTP_PORT:}
+      username: ${PULSEMETRY_MAIL_SMTP_USERNAME:}
+      password: ${PULSEMETRY_MAIL_SMTP_PASSWORD:}
+      starttls: ${PULSEMETRY_MAIL_SMTP_STARTTLS:}
   # 도입 문의 접수. 켜면 아래 값이 모두 필요하다 — 비어 있으면 기동이 실패한다.
   inquiries:
     enabled: ${PULSEMETRY_INQUIRIES_ENABLED:false}
