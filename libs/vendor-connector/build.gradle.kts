@@ -13,3 +13,14 @@ dependencies {
 
 	testImplementation(libs.spring.boot.starter.test)
 }
+
+// 벤더 실계정 검증(읽기 전용, docs/vendor-connector-verification.md). 빌드·테스트에 들어가지 않는 별도 태스크다 —
+// 자격증명 환경 변수가 없으면 건너뛰지 않고 종료 코드 2로 실패한다.
+//   PULSEMETRY_VERIFY_CREDENTIAL=… PULSEMETRY_VERIFY_SETTING_ORGANIZATION=… ./gradlew :libs:vendor-connector:verifyVendorAccount -Pvendor=copilot
+tasks.register<JavaExec>("verifyVendorAccount") {
+	group = "vendor"
+	description = "벤더 실계정으로 연결 확인과 좌석 목록을 읽는다(읽기 전용)"
+	classpath = sourceSets["main"].runtimeClasspath
+	mainClass.set("com.team376.pulsemetry.connector.vendor.VendorAccountCheckKt")
+	args(providers.gradleProperty("vendor").getOrElse(""))
+}

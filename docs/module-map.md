@@ -101,7 +101,7 @@ pulsemetry-backend
     ├── telemetry-ops-persistence/   com.team376.pulsemetry.persistence.telemetryops
     │                                RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필 · 삭제 경계 · 보존 작업 기록
     └── vendor-connector/            com.team376.pulsemetry.connector.vendor
-                                     벤더 좌석 커넥터 — 포트(인터페이스·값 타입)·커넥터 설명·조립 검사 (ADR 0048). Spring 없음
+                                     벤더 좌석 커넥터 — 포트·커넥터 설명·조립 검사·벤더 넷의 구현(JDK HTTP)·실계정 검증 태스크 (ADR 0048). Spring 없음
 ```
 
 `settings.gradle.kts`의 `include`는 위 모듈들이다. **5절이 예고한 모듈이 전부 섰다.**
