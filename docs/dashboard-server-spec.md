@@ -464,7 +464,8 @@ type UnmappedObservations = ObservedFields & { observedProducts: string[]; first
 
 - `authority`·`provisional`: ADR 0048 §3의 우선순위 표다 — 활성 연결이 있으면 `connector`, 현재 계약 플랜에 커넥터가 있는데 연결이 없으면 `manual`·`provisional=true`(연결 전의 임시 기록),
   커넥터가 없는 플랜(계약 없음 포함)은 `manual`·`provisional=false`.
-- `connector`: 현재 계약 플랜의 커넥터 설명(계정 종류·필요한 설정 키·capability). 호출 없이 읽는 값이다. 이 배포에 그 구현이 있는지는 말하지 않는다 — 연결 저장이 422 `connector_unavailable`로 알린다.
+- `connector`: 현재 계약 플랜의 커넥터 설명(계정 종류·필요한 설정 키·구현한 기능 `capabilities`·벤더 문서가 근거를 준 기능 `supported`). 호출 없이 읽는 값이다.
+  실행 가능 여부는 `capabilities`로 판단한다. 이 배포에 그 구현이 조립됐는지는 말하지 않는다 — 연결 저장이 422 `connector_unavailable`로 알린다.
 - `connection`: 활성 연결의 비밀 아닌 기록. 자격증명은 `{configured, updatedAt}`뿐이고, 이 앱은 `vendor_connections`의 암호문·키 열을 고르지 않는다(`VendorConnections`).
   `sync.status`는 성공한 동기화가 없으면 `pending`, 마지막 시도가 실패면 `failing`(마지막 성공 값은 남는다), 아니면 `succeeded`다.
 - 연결 상태는 조회 기준 시각의 고정값이 아니라 **현재 값**이다 — 관측 지표(§7.3)처럼 snapshot에 고정하지 않는다. 좌석 원장의 값과 그 신선도는 좌석 조회가 따로 낸다.

@@ -6,5 +6,8 @@ plugins {
 }
 
 dependencies {
+	// 벤더 응답(JSON)을 트리로 읽는다. 버전은 Boot BOM 이 관리한다(Jackson 3).
+	implementation("tools.jackson.core:jackson-databind")
+
 	testImplementation(libs.spring.boot.starter.test)
 }

@@ -93,7 +93,8 @@ class SeatSourceApiTest : AbstractDashboardApiTest() {
 		val settings = ok(org.tenant, "/settings")
 		with(sourceOf(settings, copilot)) {
 			assertThat(listOf(path("authority").asString(), path("provisional").asBoolean())).containsExactly("connector", false)
-			assertThat(path("connector").path("capabilities").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "seat_restore")
+			assertThat(path("connector").path("capabilities").toList().map { it.asString() }).containsExactly("seat_list")
+			assertThat(path("connector").path("supported").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "seat_restore")
 			val connection = path("connection")
 			assertThat(connection.path("connectionId").asString()).isEqualTo(connectionId.toString())
 			assertThat(connection.path("settings").path("organization").asString()).isEqualTo("octo-org")

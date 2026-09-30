@@ -95,6 +95,16 @@ curl "https://api.anthropic.com/v1/organizations/users?limit=20" \
 
 역할 값은 `user`·`managed`·`owner`·`membership_admin`·`primary_owner`다.
 
+2026-10-01 재확인([사용자 관리](https://platform.claude.com/docs/en/manage-claude/user-management)):
+
+- 목록 순서: "`GET /v1/organizations/users` returns the organization's members, most recently added first."
+- 대기 중 초대도 좌석을 잡는다: "If your organization's plan draws members from a finite pool of purchased seats, a pending invite consumes a seat."
+  초대 목록은 `GET /v1/organizations/invites`(`read:members`)이고 "returns the organization's invites, most recent first, across the `pending`, `accepted`, and `expired` states; there is no status filter."
+  구성원과 같은 ID 기반 페이지다("Member and invite lists use ID-based pagination").
+- 구성원 응답에는 좌석을 차지하는지가 따로 없다("returning any purchased seat they occupied" — 좌석 없는 구성원이 있을 수 있다). 커넥터는 구성원을 좌석 보유로 기록한다.
+  조직 요약(`analytics/summaries`의 `assigned_seat_count`)과의 대조는 실계정 검증 절차에 둔다.
+- 한도 초과는 429다. `Retry-After` 헤더는 이 문서에 없다 — 커넥터는 헤더가 있으면 따르고 없으면 설정한 재시도 간격을 쓴다.
+
 활동 여부는 별도의 [Claude Enterprise Analytics API](https://platform.claude.com/docs/en/manage-claude/analytics-api)로 본다(`read:analytics`).
 
 - `GET /v1/organizations/analytics/users`: 하루 단위 사용자별 활동. 행의 `actor`에 `email`·`user_id`·`deleted`가 있다.
@@ -425,6 +435,17 @@ curl -L \
 (문서 예시의 `assignee`·`organization`·`assigning_team`에는 URL 등 필드가 더 있다. 여기서는 쓰는 필드만 옮겼다.)
 
 - 식별자는 GitHub `login`이다. **이메일이 없다.** Pulsemetry 구성원(이메일)과 잇는 대응은 조직이 제공해야 한다.
+- 2026-10-01 재확인: 담당자는 "**assignee**: any of: **null** [or] **Simple User**"다 — null 인 좌석은 계정 키가 없어 원장에 넣지 않는다.
+  예시 curl은 표준 헤더를 "omit[s] these standard headers for brevity". 표준 헤더는
+  [REST 시작하기](https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api?apiVersion=2022-11-28)의
+  `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `Authorization: Bearer YOUR-TOKEN`이다.
+  페이지는 [페이지 문서](https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api?apiVersion=2022-11-28)대로
+  `link` 헤더의 `rel="next"`가 없으면 끝이다("Once the `link` header no longer includes a link to the next page, all of the results are returned").
+  응답 상태: 200·401·403·404·500.
+- 한도([REST 한도](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api?apiVersion=2022-11-28)):
+  "If you exceed your primary rate limit, you will receive a `403` or `429` response, and the `x-ratelimit-remaining` header will be `0`."
+  "If the `retry-after` response header is present, you should not retry your request until after that many seconds has elapsed."
+  "If the `x-ratelimit-remaining` header is `0`, you should not retry your request until after the time, in UTC epoch seconds, specified by the `x-ratelimit-reset` header."
 - 마지막 활동: "Users must have telemetry enabled in their IDE for Copilot in the IDE activity to be reflected in last_activity_at."
   값이 비어 있다고 미사용으로 확정할 수 없다.
 - 조직 요약 `GET /orgs/{org}/copilot/billing`은 `seat_breakdown`(`total`·`added_this_cycle`·`pending_cancellation`·`pending_invitation`·`active_this_cycle`·`inactive_this_cycle`)과 `plan_type`을 준다. 금액은 없다.
@@ -527,8 +548,25 @@ curl -X GET \
 }
 ```
 
+2026-10-01 재확인: 요청은 `GET https://cloudcommerceconsumerprocurement.googleapis.com/v1/{parent=billingAccounts/*/orders/*/licensePool}:enumerateLicensedUsers`,
+`pageSize`("The maximum number of users to return. The service may return fewer than this value." — 최대값은 문서에 없다), `pageToken`.
+`nextPageToken`: "If this field is omitted, there are no subsequent pages."
+
 `LicensedUser` 필드: `username`("Format: `name@domain.com`"), `assignTime`("Timestamp when the license was assigned"),
 `recentUsageTime`("Timestamp when the license was recently used"). 응답 최상위에 `nextPageToken`이 있다.
+
+#### 인증 — 서비스 계정 키로 액세스 토큰 받기 (2026-10-01 확인)
+
+액세스 토큰은 한 시간이면 끝나 저장해 둘 수 없다. 서버 간 호출은 서비스 계정 키로 서명한 JWT 를 토큰으로 바꾼다
+([서비스 계정 OAuth](https://developers.google.com/identity/protocols/oauth2/service-account)).
+
+- JWT 헤더 `{"alg":"RS256","typ":"JWT", "kid":"…"}`(kid 선택). 서명은 "RSA using SHA-256 hashing algorithm".
+- 주장: `iss`("The email address of the service account."), `scope`, `aud`("When making an access token request this value is always `https://oauth2.googleapis.com/token`."),
+  `exp`("This value has a maximum of 1 hour after the issued time."), `iat`.
+- 요청: `POST https://oauth2.googleapis.com/token`, `Content-Type: application/x-www-form-urlencoded`, `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `assertion=<JWT>`.
+- 응답 예시: `{"access_token": "…", "scope": "…", "token_type": "Bearer", "expires_in": 3600}`.
+- 키 파일([키 만들기](https://docs.cloud.google.com/iam/docs/keys-create-delete))은 `type`·`project_id`·`private_key_id`·`private_key`(PKCS#8 PEM)·`client_email`·`client_id`·`auth_uri`·`token_uri` 등을 담는다.
+  커넥터의 자격증명은 이 JSON 전체이고, 쓰는 필드는 `client_email`·`private_key`·`private_key_id`다.
 
 ### 좌석 회수 — 지원
 

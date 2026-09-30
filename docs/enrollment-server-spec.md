@@ -932,7 +932,9 @@ type SeatSource = {
   provisional: boolean;             // 커넥터가 있는 플랜인데 연결이 없어 수동 기록이 임시로 권위다
   connector: {                      // 현재 계약 플랜의 커넥터 설명. null 이면 그 플랜은 수동 원천이다
     connectorId: string; accountKind: "email" | "github_login";
-    capabilities: ("seat_list" | "seat_release" | "seat_restore" | "billing")[]; settingKeys: string[];
+    capabilities: Capability[];     // 이 저장소가 구현한 기능 — 실행 가능 여부는 이것으로 판단한다
+    supported: Capability[];        // 벤더 문서가 근거를 준 기능(capabilities ⊆ supported)
+    settingKeys: string[];
   } | null;
   connection: {
     connectionId: string; version: number; connectorId: string; settings: Record<string, string>;
@@ -942,16 +944,17 @@ type SeatSource = {
     createdAt: string; updatedAt: string;
   } | null;
 };
+type Capability = "seat_list" | "seat_release" | "seat_restore" | "billing";
 ```
 
-| 커넥터 | 제품 · 플랜 | 계정 | settingKeys | capabilities |
-| --- | --- | --- | --- | --- |
-| `claude_enterprise` | `claude_team` · `enterprise` | 이메일 | 없음 | 조회·해제·복원·청구 |
-| `cursor_enterprise` | `cursor` · `cursor_enterprise` | 이메일 | 없음 | 조회·해제·청구 |
-| `copilot` | `copilot` · `copilot_business`·`copilot_enterprise` | GitHub 로그인 | `organization` | 조회·해제·복원 |
-| `gemini` | `gemini` · `gemini_standard`·`gemini_enterprise` | 이메일 | `billingAccount`·`order`·`project` | 조회·해제·복원 |
+| 커넥터 | 제품 · 플랜 | 계정 | settingKeys | 자격증명 | supported | capabilities(구현) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `claude_enterprise` | `claude_team` · `enterprise` | 이메일 | 없음 | Admin API 키(`read:members`) | 조회·해제·복원·청구 | 조회 |
+| `cursor_enterprise` | `cursor` · `cursor_enterprise` | 이메일 | 없음 | Admin API 키 | 조회·해제·청구 | 조회 |
+| `copilot` | `copilot` · `copilot_business`·`copilot_enterprise` | GitHub 로그인 | `organization` | 토큰(`manage_billing:copilot` 또는 `read:org`) | 조회·해제·복원 | 조회 |
+| `gemini` | `gemini` · `gemini_standard`·`gemini_enterprise` | 이메일 | `billingAccount`·`order`·`project` | 서비스 계정 키 JSON 전체 | 조회·해제·복원 | 조회 |
 
-표는 `docs/vendor-connector-evidence.md`의 결론을 옮긴 커넥터 설명이다. 그 밖의 제품·플랜(Claude Team, OpenAI, Cursor Teams, `other`)은 커넥터가 없고 수동 원천이다.
+`supported`는 `docs/vendor-connector-evidence.md`의 결론을 옮긴 것이고, 구현은 지금 좌석 목록(과 연결 확인)뿐이다. 그 밖의 제품·플랜(Claude Team, OpenAI, Cursor Teams, `other`)은 커넥터가 없고 수동 원천이다.
 
 - 커넥터는 등록 제품의 **현재 계약 플랜**으로 고른다. 계약이 없거나, 그 플랜에 커넥터가 없거나, 이 배포에 그 커넥터의 구현이 없으면 422 `connector_unavailable`이다.
 - `settings`는 커넥터의 `settingKeys`와 정확히 같은 키의 문자열(1~200자, 제어 문자 없음)이어야 하고, `credential`은 1~8192자의 비어 있지 않은 문자열이어야 한다. 아니면 400 `invalid_request`(field `settings`·`credential`·`expectedVersion`).

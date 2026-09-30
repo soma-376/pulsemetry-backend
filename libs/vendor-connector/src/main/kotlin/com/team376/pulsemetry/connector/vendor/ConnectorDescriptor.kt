@@ -31,8 +31,9 @@ enum class Capability(val wire: String) {
 }
 
 /**
- * 커넥터 설명 — 호출 없이 읽는 값 (ADR 0048 §8). 어느 등록 제품·계약 플랜에 쓰는지, 계정 종류, 연결에 필요한 비밀 아닌 설정, 할 수 있는 일.
- * 권위 판정(커넥터가 있는 플랜인가)과 조회 앱의 capability 표시가 이것만 본다.
+ * 커넥터 설명 — 호출 없이 읽는 값 (ADR 0048 §8). 어느 등록 제품·계약 플랜에 쓰는지, 계정 종류, 연결에 필요한 비밀 아닌 설정,
+ * 벤더가 지원하는 기능([supported] — 벤더 문서 근거)과 이 저장소가 구현한 기능([capabilities] ⊆ supported).
+ * 권위 판정(커넥터가 있는 플랜인가)과 조회 앱의 capability 표시가 이것만 본다. 구현이 늘면 [capabilities] 를 넓힌다.
  */
 data class ConnectorDescriptor(
 	val id: String,
@@ -43,10 +44,14 @@ data class ConnectorDescriptor(
 	val accountKind: AccountKind,
 	/** 연결에 필요한 비밀 아닌 설정의 키. 설정은 정확히 이 키들이어야 한다. */
 	val settingKeys: List<String>,
+	/** 벤더 문서가 근거를 준 기능. */
+	val supported: Set<Capability>,
+	/** 이 저장소가 구현한 기능. 구현이 이것과 다르면 조립이 실패한다. */
 	val capabilities: Set<Capability>,
 ) {
 	init {
 		require(Capability.SEAT_LIST in capabilities) { "좌석 목록은 모든 커넥터가 한다" }
+		require(supported.containsAll(capabilities)) { "벤더 문서에 근거가 없는 기능을 구현하지 않는다" }
 		require(plans.isNotEmpty()) { "플랜이 없다" }
 	}
 }
@@ -56,21 +61,24 @@ data class ConnectorDescriptor(
  * 그 제품은 커넥터가 없는 플랜이다(ADR 0048 §3의 1행).
  */
 object ConnectorDescriptors {
+	/** 지금 구현한 기능 — 좌석 목록(과 연결 확인)뿐이다. 해제·복원·청구는 아직 구현하지 않았다. */
+	private val LISTING = setOf(Capability.SEAT_LIST)
+
 	/** Claude Enterprise: 구성원 조회·제거·재초대(수락 대기), 사용량 기반 계약의 사용 비용. 등급·활동 시각은 주지 않는다. */
 	val CLAUDE_ENTERPRISE = ConnectorDescriptor("claude_enterprise", "claude_team", setOf("enterprise"), AccountKind.EMAIL, emptyList(),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE, Capability.BILLING))
+		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE, Capability.BILLING), LISTING)
 
 	/** Cursor Enterprise: 구성원 조회·제거, 현재 주기의 사용 지출. 복원 API 는 없다. */
 	val CURSOR_ENTERPRISE = ConnectorDescriptor("cursor_enterprise", "cursor", setOf("cursor_enterprise"), AccountKind.EMAIL, emptyList(),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.BILLING))
+		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.BILLING), LISTING)
 
 	/** GitHub Copilot: 좌석 조회·취소(주기 말 효력)·재배정. 계정은 GitHub 로그인이고 조직 이름이 설정이다. */
 	val COPILOT = ConnectorDescriptor("copilot", "copilot", setOf("copilot_business", "copilot_enterprise"), AccountKind.GITHUB_LOGIN, listOf("organization"),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE))
+		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE), LISTING)
 
-	/** Gemini Code Assist: 라이선스 풀 조회·해제·배정. 청구 계정·주문·요청 프로젝트가 설정이다. */
+	/** Gemini Code Assist: 라이선스 풀 조회·해제·배정. 청구 계정·주문·요청 프로젝트가 설정이다. 자격증명은 서비스 계정 키(JSON)다. */
 	val GEMINI = ConnectorDescriptor("gemini", "gemini", setOf("gemini_standard", "gemini_enterprise"), AccountKind.EMAIL, listOf("billingAccount", "order", "project"),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE))
+		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE), LISTING)
 
 	val ALL: List<ConnectorDescriptor> = listOf(CLAUDE_ENTERPRISE, CURSOR_ENTERPRISE, COPILOT, GEMINI)
 

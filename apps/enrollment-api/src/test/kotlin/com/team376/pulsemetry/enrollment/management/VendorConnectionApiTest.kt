@@ -120,7 +120,9 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
         with(copilot.path("seatSource")) {
             assertThat(listOf(path("authority").asString(), path("provisional").asBoolean(), path("connector").path("connectorId").asString()))
                 .containsExactly("manual", true, "copilot")
-            assertThat(path("connector").path("capabilities").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "seat_restore")
+            // 구현한 기능은 좌석 목록뿐이고, 벤더가 지원하는 기능은 문서의 결론이다.
+            assertThat(path("connector").path("capabilities").toList().map { it.asString() }).containsExactly("seat_list")
+            assertThat(path("connector").path("supported").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "seat_restore")
             assertThat(path("connector").path("accountKind").asString()).isEqualTo("github_login")
             assertThat(path("connection").isNull).isTrue()
         }
@@ -206,7 +208,7 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
         val cursor = vendor("cursor", "cursor_enterprise", token)
         assertThat(errorOf(connect(openai, token, settings = emptyMap<String, String>()))).isEqualTo(422 to "connector_unavailable")
         // Cursor Enterprise 는 설명(커넥터가 있는 플랜)은 있지만 이 배포에 구현이 없다.
-        assertThat(cursor.at("/seatSource/connector/capabilities").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "billing")
+        assertThat(cursor.at("/seatSource/connector/supported").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "billing")
         assertThat(errorOf(connect(cursor.path("vendorId").asString(), token, settings = emptyMap<String, String>()))).isEqualTo(422 to "connector_unavailable")
 
         val copilot = vendor("copilot", "copilot_business", token).path("vendorId").asString()

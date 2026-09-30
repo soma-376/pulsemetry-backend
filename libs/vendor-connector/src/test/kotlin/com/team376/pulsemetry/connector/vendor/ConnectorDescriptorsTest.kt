@@ -22,7 +22,7 @@ class ConnectorDescriptorsTest {
 	)
 
 	@Test
-	fun `제품·플랜마다 커넥터와 capability 는 벤더 문서의 결론 표와 같다`() {
+	fun `제품·플랜마다 커넥터와 벤더가 지원하는 기능은 벤더 문서의 결론 표와 같다`() {
 		val expected = mapOf(
 			"claude_team" to "enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE, BILLING),
 			"cursor" to "cursor_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, BILLING),
@@ -31,9 +31,13 @@ class ConnectorDescriptorsTest {
 			"gemini" to "gemini_standard" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE),
 			"gemini" to "gemini_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE),
 		)
-		val actual = catalog.associateWith { (product, plan) -> ConnectorDescriptors.forPlan(product, plan)?.capabilities }.filterValues { it != null }
+		val actual = catalog.associateWith { (product, plan) -> ConnectorDescriptors.forPlan(product, plan)?.supported }.filterValues { it != null }
 		assertThat(actual).isEqualTo(expected)
 		assertThat(ConnectorDescriptors.forPlan("copilot", null)).isNull()
+		// 이 저장소가 구현한 기능은 좌석 목록뿐이다 — 해제·복원·청구를 구현하면 넓힌다.
+		assertThat(ConnectorDescriptors.ALL.map { it.capabilities }).containsOnly(setOf(SEAT_LIST))
+		assertThatThrownBy { ConnectorDescriptor("x", "copilot", setOf("copilot_business"), AccountKind.GITHUB_LOGIN, emptyList(), setOf(SEAT_LIST), setOf(SEAT_LIST, BILLING)) }
+			.describedAs("문서 근거가 없는 기능은 구현으로 선언하지 못한다").isInstanceOf(IllegalArgumentException::class.java)
 	}
 
 	@Test
@@ -64,18 +68,21 @@ class ConnectorDescriptorsTest {
 
 	@Test
 	fun `지원하지 않는 기능은 구현이 갖지 않는 것으로 드러나고 설명과 다르면 조립이 실패한다`() {
-		val cursor = Fake(ConnectorDescriptors.CURSOR_ENTERPRISE, withRelease = true, withRestore = false, withBilling = true)
+		// 해제·청구까지 구현했다고 선언한 설명(복원은 벤더 문서에 근거가 없다).
+		val controlled = ConnectorDescriptors.CURSOR_ENTERPRISE.copy(capabilities = setOf(SEAT_LIST, SEAT_RELEASE, BILLING))
+		val cursor = Fake(controlled, withRelease = true, withRestore = false, withBilling = true)
 		val connectors = SeatConnectors(listOf(cursor))
 		assertThat(connectors.forPlan("cursor", "cursor_enterprise")?.restore).isNull()
 		assertThat(connectors.forPlan("cursor", "cursor_teams")).isNull()
 		assertThat(connectors.byId("cursor_enterprise")).isSameAs(cursor)
 
-		assertThatThrownBy { SeatConnectors(listOf(Fake(ConnectorDescriptors.CURSOR_ENTERPRISE, withRelease = true, withRestore = true, withBilling = true))) }
+		assertThatThrownBy { SeatConnectors(listOf(Fake(controlled, withRelease = true, withRestore = true, withBilling = true))) }
 			.isInstanceOf(IllegalArgumentException::class.java).hasMessageContaining("cursor_enterprise")
 		assertThatThrownBy { SeatConnectors(listOf(Fake(ConnectorDescriptors.COPILOT, withRelease = false, withRestore = true, withBilling = false))) }
+			.describedAs("설명은 목록뿐인데 복원을 구현").isInstanceOf(IllegalArgumentException::class.java)
+		assertThatThrownBy { SeatConnectors(listOf(cursor, Fake(controlled, withRelease = true, withRestore = false, withBilling = true))) }
 			.isInstanceOf(IllegalArgumentException::class.java)
-		assertThatThrownBy { SeatConnectors(listOf(cursor, Fake(ConnectorDescriptors.CURSOR_ENTERPRISE, withRelease = true, withRestore = false, withBilling = true))) }
-			.isInstanceOf(IllegalArgumentException::class.java)
+		assertThat(SeatConnectors(listOf(Fake(ConnectorDescriptors.COPILOT, withRelease = false, withRestore = false, withBilling = false))).byId("copilot")).isNotNull()
 	}
 
 	@Test
