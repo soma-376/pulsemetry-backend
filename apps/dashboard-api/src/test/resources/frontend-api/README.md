@@ -24,4 +24,4 @@
 - 필드를 더하는 커밋에서 이 목록과 `docs/dashboard-server-spec.md`의 타입 블록을 함께 고친다. 근거 ADR을 주석으로 단다.
 - 요청서가 그 필드를 받아들여 예시에 들어오면(사본을 다시 복사하면) 목록에서 지운다.
 - 지금 선언: 개요 `productUsage`·`teamUsage.topTeams[].products`·`teamUsage.unassigned.products`, 팀 목록 `teams.items[].products`·`unassigned.products`(ADR 0045),
-  설정 `summary.detectedProducts`·`summary.unmappedObservations`(ADR 0044), 설정 `collectionPolicy.settingsVersion`·`settingsUpdatedAt`·`settingsUpdatedBy`·`reclaimIdleDaysSource`·`options`(ADR 0046).
+  설정 `summary.detectedProducts`·`summary.unmappedObservations`(ADR 0044), 설정 `collectionPolicy.settingsVersion`·`settingsUpdatedAt`·`settingsUpdatedBy`·`reclaimIdleDaysSource`·`options`(ADR 0046)·`cleanupOperationId`(ADR 0047).

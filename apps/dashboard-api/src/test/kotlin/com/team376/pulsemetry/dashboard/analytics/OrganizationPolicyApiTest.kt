@@ -13,8 +13,15 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationKind
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationStore
+import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.jdbc.datasource.DataSourceTransactionManager
+import org.springframework.jdbc.datasource.DriverManagerDataSource
 import tools.jackson.databind.JsonNode
+import java.time.Clock
 import java.time.Instant
+import java.time.ZoneOffset
 import java.time.LocalDateTime
 import java.util.UUID
 
@@ -95,6 +102,25 @@ class OrganizationPolicyApiTest : AbstractDashboardApiTest() {
 		assertThat(Instant.parse(policy.path("settingsUpdatedAt").asString())).isEqualTo(at)
 		assertThat(policy.path("settingsUpdatedBy").asString()).isEqualTo(org.admin.toString())
 		assertThat(reclaimPolicies(org)).containsOnly(30 to 5L)
+	}
+
+	@Test
+	@DisplayName("설정은 그 조직의 가장 최근 보존 정리 작업을 가리킨다 — 다른 종류·다른 조직의 작업은 아니다(ADR 0047)")
+	fun latestCleanup() {
+		val org = organization()
+		assertThat(ok(org.tenant, "/settings").at("/collectionPolicy/cleanupOperationId").isNull).isTrue()
+		val dataSource = DriverManagerDataSource(DashboardTestStores.postgres.jdbcUrl, DashboardTestStores.postgres.username, DashboardTestStores.postgres.password)
+		val jdbc = JdbcClient.create(dataSource)
+		val manager = DataSourceTransactionManager(dataSource)
+		fun operations(at: String) = OperationStore(jdbc, manager, Clock.fixed(Instant.parse(at), ZoneOffset.UTC))
+		val kind = OperationKind.RETENTION_CLEANUP
+		val older = operations("2026-09-20T00:00:00Z").create(org.tenant, kind, org.admin, listOf("analysis_source")).id
+		val newer = operations("2026-09-21T00:00:00Z").create(org.tenant, kind, org.admin, listOf("analysis_source")).id
+		operations("2026-09-22T00:00:00Z").create(org.tenant, OperationKind.INSTALLATION_NOTIFICATION, org.admin, listOf("i"))
+		val other = organization()
+		operations("2026-09-23T00:00:00Z").create(other.tenant, kind, other.admin, listOf("analysis_source"))
+
+		assertThat(ok(org.tenant, "/settings").at("/collectionPolicy/cleanupOperationId").asString()).isEqualTo(newer.toString()).isNotEqualTo(older.toString())
 	}
 
 	@Test

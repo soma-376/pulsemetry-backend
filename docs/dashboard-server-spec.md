@@ -160,6 +160,7 @@ type ProductRef = { kind: string | null; displayName: string | null };
 //   settingsUpdatedAt: string | null; settingsUpdatedBy: string | null;
 //   reclaimIdleDaysSource: "organization" | "default";   default = 서버 기본 설정
 //   options: { reclaimIdleDays: number[]; aggregateRetentionMonths: (number | null)[] };   저장할 수 있는 값(null = 무기한)
+//   cleanupOperationId: string | null;                  이 조직의 가장 최근 보존 정리 작업(ADR 0047) — 새로고침 뒤에도 마지막 정리의 상태를 작업 상태 조회로 본다
 // GET O/seat-reclaim-candidates 에 더한 키(가산)
 //   policy: { idleDays: number; version: number };     구성원 화면의 policy 와 같다
 ```

@@ -114,6 +114,7 @@ class SettingsService(
 				settingsUpdatedBy = policy.updatedBy?.toString(),
 				reclaimIdleDaysSource = policy.reclaimIdleDaysSource,
 				options = POLICY_OPTIONS,
+				cleanupOperationId = latestCleanup(organization.id)?.toString(),
 			),
 			policyRollout = rollout,
 			alertRules = ALERT_RULES,
@@ -230,6 +231,11 @@ class SettingsService(
 			null, null, null, null, VendorObservations.UNOBSERVED, if (status == ContractStatus.active) CONFIGURED else NEEDS_REVIEW, contract, status,
 			Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null), emptyList())
 	}.list()
+
+	/** 가장 최근 보존 정리 작업(ADR 0047) — 화면이 새로고침 뒤에도 마지막 정리의 상태를 다시 보게 한다. */
+	private fun latestCleanup(tenantId: UUID): UUID? = source.sql(
+		"SELECT id FROM enrollment.operations WHERE tenant_id = :tenant AND kind = 'retention_cleanup' ORDER BY created_at DESC, id DESC LIMIT 1",
+	).param("tenant", tenantId).query(UUID::class.java).optional().orElse(null)
 
 	private data class Manifest(val version: Long, val collectsRawContent: Boolean, val effectiveAt: Instant, val createdBy: UUID)
 

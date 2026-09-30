@@ -59,6 +59,8 @@ data class CollectionPolicy(
 	val reclaimIdleDaysSource: String,
 	/** 저장할 수 있는 값(가산). 집계 보존의 null 은 무기한이다. */
 	val options: PolicyOptions,
+	/** 이 조직의 가장 최근 보존 정리 작업(가산 — ADR 0047). 진행은 작업 상태 조회로 본다. 없으면 null. */
+	val cleanupOperationId: String?,
 )
 
 data class PolicyOptions(val reclaimIdleDays: List<Int>, val aggregateRetentionMonths: List<Int?>)
