@@ -5,6 +5,10 @@ import com.team376.pulsemetry.connector.vendor.ConnectorDescriptors
 import com.team376.pulsemetry.connector.vendor.VendorSeat
 import com.team376.pulsemetry.connector.vendor.VendorSeatState
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.persistence.enrollment.operation.Operation
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationKind
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationStatus
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationStore
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
@@ -28,6 +32,7 @@ import java.util.UUID
  */
 class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManager, private val clock: Clock) {
 	private val tx = TransactionTemplate(manager)
+	private val operations = OperationStore(jdbc, manager, clock)
 
 	/** 구성원 연결의 선택 (ADR 0048 §4). */
 	sealed interface MemberChoice {
@@ -84,8 +89,8 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 		val recordedAt: Instant,
 	)
 
-	/** 선점한 동기화 실행 하나. */
-	data class SyncRun(val id: UUID, val tenantId: UUID, val connectionId: UUID, val vendorId: String, val worker: String)
+	/** 선점한 동기화 실행 하나. [operationId] 는 이 실행이 끝내는 동기화 요청 작업이다(없으면 주기 실행). */
+	data class SyncRun(val id: UUID, val tenantId: UUID, val connectionId: UUID, val vendorId: String, val worker: String, val operationId: UUID? = null)
 
 	sealed interface SyncResult {
 		/** 목록을 반영했다. [changed] 는 판이 오른(또는 새로 생긴) 좌석 수다. */
@@ -178,24 +183,78 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 
 	/**
 	 * 연결의 동기화를 선점한다. 활성 연결이고 선점이 없거나 기한이 지났을 때만 된다 — 아니면 null(다른 실행이 돌고 있다).
-	 * 기한이 지난 진행 중 실행은 `abandoned` 로 닫는다.
+	 * 기한이 지난 진행 중 실행은 `abandoned` 로 닫고, 그 실행이 끝내려던 요청 작업을 이어받는다. 연결에 걸린 요청이 있으면 가져가 시작한다.
+	 * 계기는 요청 작업이 있으면 `request`, 없으면 `schedule` 이다.
 	 */
-	fun startRun(tenant: UUID, connectionId: UUID, trigger: String, worker: String, lease: Duration): SyncRun? = write {
-		require(trigger == "schedule" || trigger == "request") { "알 수 없는 동기화 계기" }
+	fun startRun(tenant: UUID, connectionId: UUID, worker: String, lease: Duration): SyncRun? = write {
 		require(!lease.isNegative && !lease.isZero) { "선점 기한은 양수여야 한다" }
 		val now = now()
-		val vendorId = jdbc.sql("""SELECT vendor_id FROM enrollment.vendor_connections WHERE id = :id AND tenant_id = :tenant AND deleted_at IS NULL
-				AND (sync_claimed_until IS NULL OR sync_claimed_until <= :now) FOR UPDATE SKIP LOCKED""")
-			.param("id", connectionId).param("tenant", tenant).param("now", Timestamp.from(now)).query(String::class.java).optional().orElse(null)
-			?: return@write null
+		val (vendorId, requested) = jdbc.sql("""SELECT vendor_id, sync_requested_operation_id FROM enrollment.vendor_connections WHERE id = :id AND tenant_id = :tenant
+				AND deleted_at IS NULL AND (sync_claimed_until IS NULL OR sync_claimed_until <= :now) FOR UPDATE SKIP LOCKED""")
+			.param("id", connectionId).param("tenant", tenant).param("now", Timestamp.from(now))
+			.query { rs, _ -> rs.getString(1) to rs.getObject(2, UUID::class.java) }.optional().orElse(null) ?: return@write null
+		val carried = jdbc.sql("SELECT operation_id FROM enrollment.seat_sync_runs WHERE connection_id = :id AND status = 'running' AND operation_id IS NOT NULL")
+			.param("id", connectionId).query { rs, _ -> rs.getObject(1, UUID::class.java) }.optional().orElse(null)
 		jdbc.sql("UPDATE enrollment.seat_sync_runs SET status = 'failed', error = 'abandoned', finished_at = :now WHERE connection_id = :id AND status = 'running'")
 			.param("now", Timestamp.from(now)).param("id", connectionId).update()
+		// 이어받은 요청이 있으면 걸린 요청은 다음 실행 몫으로 남긴다 — 실행 하나가 요청 하나를 끝낸다.
+		val operation = carried ?: requested
+		if (carried == null && requested != null) {
+			jdbc.sql("UPDATE enrollment.vendor_connections SET sync_requested_operation_id = NULL WHERE id = :id").param("id", connectionId).update()
+			if (operations.find(tenant, requested)?.status == OperationStatus.PENDING) operations.start(tenant, requested)
+		}
 		jdbc.sql("UPDATE enrollment.vendor_connections SET sync_claimed_by = :worker, sync_claimed_until = :until WHERE id = :id")
 			.param("worker", worker).param("until", Timestamp.from(now.plus(lease))).param("id", connectionId).update()
-		val run = SyncRun(UUID.randomUUID(), tenant, connectionId, vendorId, worker)
-		jdbc.sql("INSERT INTO enrollment.seat_sync_runs (id, tenant_id, connection_id, trigger, worker, started_at, status) VALUES (:id, :tenant, :connection, :trigger, :worker, :now, 'running')")
-			.param("id", run.id).param("tenant", tenant).param("connection", connectionId).param("trigger", trigger).param("worker", worker).param("now", Timestamp.from(now)).update()
+		val run = SyncRun(UUID.randomUUID(), tenant, connectionId, vendorId, worker, operation)
+		jdbc.sql("""INSERT INTO enrollment.seat_sync_runs (id, tenant_id, connection_id, trigger, worker, started_at, status, operation_id)
+				VALUES (:id, :tenant, :connection, :trigger, :worker, :now, 'running', :operation)""")
+			.param("id", run.id).param("tenant", tenant).param("connection", connectionId).param("trigger", if (operation != null) "request" else "schedule")
+			.param("worker", worker).param("now", Timestamp.from(now)).param("operation", operation, Types.OTHER).update()
 		run
+	}
+
+	/**
+	 * 동기화할 차례인 연결(조직, 연결 ID). 선점되지 않았고, 요청이 걸려 있거나 마지막 시도(성공·실패)가 [interval] 보다 오래됐거나 시도한 적이 없는 것.
+	 * 요청이 걸린 연결이 먼저, 그다음은 오래된 순이다.
+	 */
+	fun dueConnections(interval: Duration): List<Pair<UUID, UUID>> {
+		val now = now()
+		return jdbc.sql("""SELECT tenant_id, id FROM enrollment.vendor_connections
+			WHERE deleted_at IS NULL AND (sync_claimed_until IS NULL OR sync_claimed_until <= :now)
+			  AND (sync_requested_operation_id IS NOT NULL OR greatest(last_sync_succeeded_at, last_sync_failed_at) IS NULL
+			       OR greatest(last_sync_succeeded_at, last_sync_failed_at) <= :due)
+			ORDER BY sync_requested_operation_id IS NULL, greatest(last_sync_succeeded_at, last_sync_failed_at) NULLS FIRST, id""")
+			.param("now", Timestamp.from(now)).param("due", Timestamp.from(now.minus(interval)))
+			.query { rs, _ -> rs.getObject(1, UUID::class.java) to rs.getObject(2, UUID::class.java) }.list()
+	}
+
+	/**
+	 * 관리자의 "지금 동기화" (ADR 0048 §7). 활성 연결에 요청 작업(`seat_sync`, 대상 = 연결 ID)을 걸어 둔다 — 다음 주기 실행이 가져간다.
+	 * 아직 끝나지 않은 요청이 걸려 있으면 그 작업을 돌려준다(같은 연결에 요청을 쌓지 않는다). 연결이 없으면 404.
+	 */
+	fun requestSync(tenant: UUID, actor: UUID, vendorId: String): Operation = write {
+		RegisteredProducts.requireManager(jdbc, tenant, actor)
+		RegisteredProducts.lock(jdbc, tenant, vendorId)
+		val (connectionId, requested) = jdbc.sql("""SELECT id, sync_requested_operation_id FROM enrollment.vendor_connections
+				WHERE tenant_id = :tenant AND vendor_id = :vendor AND deleted_at IS NULL FOR UPDATE""")
+			.param("tenant", tenant).param("vendor", vendorId).query { rs, _ -> rs.getObject(1, UUID::class.java) to rs.getObject(2, UUID::class.java) }
+			.optional().orElse(null) ?: fail("not_found", 404, "vendorId")
+		requested?.let { operations.find(tenant, it) }?.takeUnless { it.status.closed }?.let { return@write it }
+		val operation = operations.create(tenant, OperationKind.SEAT_SYNC, actor, listOf(connectionId.toString()))
+		jdbc.sql("UPDATE enrollment.vendor_connections SET sync_requested_operation_id = :operation WHERE id = :id")
+			.param("operation", operation.id).param("id", connectionId).update()
+		operation
+	}
+
+	/** 지운 연결에 걸려 있던 요청을 `connection_removed` 로 끝낸다. 주기 실행이 매번 부른다. */
+	fun abandonRemovedRequests(): Int = write {
+		val stale = jdbc.sql("SELECT id, tenant_id, sync_requested_operation_id FROM enrollment.vendor_connections WHERE deleted_at IS NOT NULL AND sync_requested_operation_id IS NOT NULL FOR UPDATE")
+			.query { rs, _ -> Triple(rs.getObject(1, UUID::class.java), rs.getObject(2, UUID::class.java), rs.getObject(3, UUID::class.java)) }.list()
+		stale.forEach { (connection, tenant, operation) ->
+			if (operations.find(tenant, operation)?.status?.closed == false) operations.abort(tenant, operation, "connection_removed")
+			jdbc.sql("UPDATE enrollment.vendor_connections SET sync_requested_operation_id = NULL WHERE id = :id").param("id", connection).update()
+		}
+		stale.size
 	}
 
 	/** 벤더 목록 **전체**로 원장을 맞춘다. 목록의 계정 키가 형식에 맞지 않거나 겹치면 반영하지 않고 실패로 닫는다. */
@@ -204,7 +263,9 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 		if (!ownsRun(run)) return@write SyncResult.Lost
 		val now = now()
 		if (product == null || !claimed(run)) {
+			// 실행이 아직 제 것인데 선점이 없다 — 연결이 지워졌다(보관 포함). 요청 작업도 끝낸다.
 			closeRun(run, "failed", "claim_lost", null, null, now)
+			settle(run, "connection_removed")
 			return@write SyncResult.Lost
 		}
 		val kind = ConnectorDescriptors.accountKind(product.kind)
@@ -267,6 +328,7 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 		jdbc.sql("""UPDATE enrollment.vendor_connections SET last_sync_succeeded_at = :now, last_sync_failed_at = NULL, last_sync_error = NULL,
 				sync_claimed_by = NULL, sync_claimed_until = NULL WHERE id = :id""")
 			.param("now", Timestamp.from(now)).param("id", run.connectionId).update()
+		settle(run, null)
 		SyncResult.Applied(seats.size, changed)
 	}
 
@@ -277,10 +339,19 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 		val now = now()
 		if (!claimed(run)) {
 			closeRun(run, "failed", "claim_lost", null, null, now)
+			settle(run, "connection_removed")
 			return@write false
 		}
 		failConnection(run, error, now)
 		true
+	}
+
+	/** 실행이 끝내는 요청 작업에 결과를 옮긴다. [error] 가 null 이면 성공이다. */
+	private fun settle(run: SyncRun, error: String?) {
+		val operation = run.operationId?.let { operations.find(run.tenantId, it) } ?: return
+		if (operation.status != OperationStatus.RUNNING) return
+		if (error == null) operations.succeed(run.tenantId, operation.id, run.connectionId.toString())
+		else operations.fail(run.tenantId, operation.id, run.connectionId.toString(), error)
 	}
 
 	// ---- 읽기 ----
@@ -423,6 +494,7 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 
 	private fun failConnection(run: SyncRun, error: String, now: Instant) {
 		closeRun(run, "failed", error, null, null, now)
+		settle(run, error)
 		jdbc.sql("""UPDATE enrollment.vendor_connections SET last_sync_failed_at = :now, last_sync_error = :error, sync_claimed_by = NULL, sync_claimed_until = NULL
 			WHERE id = :id""").param("now", Timestamp.from(now)).param("error", error).param("id", run.connectionId).update()
 	}

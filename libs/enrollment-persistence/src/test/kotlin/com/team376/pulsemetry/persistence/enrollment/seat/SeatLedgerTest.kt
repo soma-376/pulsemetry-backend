@@ -5,6 +5,9 @@ import com.team376.pulsemetry.connector.vendor.ConnectorDescriptors
 import com.team376.pulsemetry.connector.vendor.VendorSeat
 import com.team376.pulsemetry.connector.vendor.VendorSeatState
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationKind
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationStatus
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationStore
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger.Change
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger.MemberChoice
 import com.team376.pulsemetry.persistence.enrollment.support.AbstractPersistenceIntegrationTest
@@ -71,7 +74,8 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 	@AfterEach
 	fun cleanUp() {
 		// 다른 조직의 계약 버전이 이 조직의 구성원을 가리킬 수 있어 표마다 모든 조직을 먼저 지운다.
-		listOf("seat_assignment_events", "seat_assignments", "seat_sync_runs", "vendor_connections", "vendor_contract_versions", "managed_vendors", "members").forEach { table ->
+		tenants.forEach { jdbc.sql("DELETE FROM enrollment.operation_targets WHERE operation_id IN (SELECT id FROM enrollment.operations WHERE tenant_id = :t)").param("t", it).update() }
+		listOf("seat_assignment_events", "seat_assignments", "seat_sync_runs", "vendor_connections", "operations", "vendor_contract_versions", "managed_vendors", "members").forEach { table ->
 			tenants.forEach { jdbc.sql("DELETE FROM enrollment.$table WHERE tenant_id = :t").param("t", it).update() }
 		}
 		tenants.forEach { jdbc.sql("DELETE FROM enrollment.tenants WHERE id = :t").param("t", it).update() }
@@ -104,7 +108,7 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 	private fun code(block: () -> Unit): Pair<String, Int> = try { block(); "ok" to 200 } catch (e: ManagementException) { e.code to e.status }
 
 	private fun run(vendorId: String, worker: String = "worker-a", lease: Duration = Duration.ofMinutes(5)): SeatLedger.SyncRun =
-		ledger.startRun(tenant, connections.find(tenant, vendorId)!!.id, "schedule", worker, lease)!!
+		ledger.startRun(tenant, connections.find(tenant, vendorId)!!.id, worker, lease)!!
 
 	@Test
 	fun `구매 수량은 좌석이 아니다 — 계약만 있는 제품의 원장은 비어 있다`() {
@@ -301,10 +305,10 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 	fun `중복 실행 방지 — 선점 중인 연결은 다시 잡히지 않고 기한이 지나면 다른 실행이 가져가며 앞선 실행은 아무것도 쓰지 못한다`() {
 		connect(copilot)
 		val first = run(copilot, worker = "worker-a", lease = Duration.ofMinutes(5))
-		assertThat(ledger.startRun(tenant, first.connectionId, "request", "worker-b", Duration.ofMinutes(5))).isNull()
+		assertThat(ledger.startRun(tenant, first.connectionId, "worker-b", Duration.ofMinutes(5))).isNull()
 
 		clock.now = clock.now.plus(Duration.ofMinutes(6))
-		val second = ledger.startRun(tenant, first.connectionId, "request", "worker-b", Duration.ofMinutes(5))!!
+		val second = ledger.startRun(tenant, first.connectionId, "worker-b", Duration.ofMinutes(5))!!
 		assertThat(jdbc.sql("SELECT status || ':' || error FROM enrollment.seat_sync_runs WHERE id = :id").param("id", first.id).query(String::class.java).single())
 			.isEqualTo("failed:abandoned")
 		assertThat(ledger.applyListing(first, listOf(VendorSeat("octocat")))).isEqualTo(SeatLedger.SyncResult.Lost)
@@ -312,7 +316,7 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 		assertThat(ledger.seats(tenant, copilot)).isEmpty()
 		assertThat(ledger.applyListing(second, listOf(VendorSeat("octocat")))).isEqualTo(SeatLedger.SyncResult.Applied(1, 1))
 		// 다른 조직의 ID 로는 잡히지 않는다.
-		assertThat(ledger.startRun(tenant(), second.connectionId, "schedule", "worker-c", Duration.ofMinutes(5))).isNull()
+		assertThat(ledger.startRun(tenant(), second.connectionId, "worker-c", Duration.ofMinutes(5))).isNull()
 	}
 
 	@Test
@@ -323,5 +327,74 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 		assertThat(ledger.applyListing(sync, listOf(VendorSeat("octocat")))).isEqualTo(SeatLedger.SyncResult.Lost)
 		assertThat(ledger.seats(tenant, copilot)).isEmpty()
 		assertThat(jdbc.sql("SELECT error FROM enrollment.seat_sync_runs WHERE id = :id").param("id", sync.id).query(String::class.java).single()).isEqualTo("claim_lost")
+	}
+
+	private fun operation(id: UUID) = OperationStore(jdbc, manager, clock).find(tenant, id)!!
+
+	@Test
+	fun `동기화 요청 — 걸어 둔 요청은 주기와 무관하게 다음 실행이 가져가 결과를 작업에 옮기고, 끝나기 전의 요청은 쌓지 않는다`() {
+		connect(copilot)
+		ledger.applyListing(run(copilot), listOf(VendorSeat("octocat")))
+		val interval = Duration.ofHours(1)
+		assertThat(ledger.dueConnections(interval)).describedAs("방금 동기화했다").doesNotContain(tenant to connections.find(tenant, copilot)!!.id)
+
+		val requested = ledger.requestSync(tenant, admin, copilot)
+		assertThat(listOf(requested.kind, requested.status)).containsExactly(OperationKind.SEAT_SYNC, OperationStatus.PENDING)
+		assertThat(requested.targets.map { it.targetId }).containsExactly(connections.find(tenant, copilot)!!.id.toString())
+		assertThat(ledger.requestSync(tenant, admin, copilot).id).describedAs("끝나지 않은 요청을 돌려준다").isEqualTo(requested.id)
+		assertThat(ledger.dueConnections(interval).first()).isEqualTo(tenant to connections.find(tenant, copilot)!!.id)
+
+		val sync = run(copilot)
+		assertThat(sync.operationId).isEqualTo(requested.id)
+		assertThat(operation(requested.id).status).isEqualTo(OperationStatus.RUNNING)
+		assertThat(jdbc.sql("SELECT trigger FROM enrollment.seat_sync_runs WHERE id = :id").param("id", sync.id).query(String::class.java).single()).isEqualTo("request")
+		ledger.applyListing(sync, listOf(VendorSeat("octocat"), VendorSeat("hubot")))
+		assertThat(operation(requested.id).status).isEqualTo(OperationStatus.SUCCEEDED)
+		assertThat(ledger.dueConnections(interval)).doesNotContain(tenant to sync.connectionId)
+
+		// 끝난 요청 뒤에는 새 요청이다. 실패하면 사유가 작업에 남는다.
+		val second = ledger.requestSync(tenant, admin, copilot)
+		assertThat(second.id).isNotEqualTo(requested.id)
+		ledger.failRun(run(copilot), "invalid_credentials")
+		assertThat(operation(second.id).let { it.status to it.targets.single().reason }).isEqualTo(OperationStatus.FAILED to "invalid_credentials")
+		clock.now = clock.now.plus(interval).plusSeconds(1)
+		assertThat(ledger.dueConnections(interval)).contains(tenant to sync.connectionId)
+	}
+
+	@Test
+	fun `동기화 요청 — 선점을 잃은 실행의 요청은 다음 실행이 이어받고, 지운 연결의 요청은 connection_removed 로 끝난다`() {
+		connect(copilot)
+		val requested = ledger.requestSync(tenant, admin, copilot)
+		val first = run(copilot, worker = "worker-a", lease = Duration.ofMinutes(5))
+		clock.now = clock.now.plus(Duration.ofMinutes(6))
+		val second = run(copilot, worker = "worker-b")
+		assertThat(second.operationId).isEqualTo(requested.id)
+		assertThat(ledger.applyListing(first, listOf(VendorSeat("octocat")))).isEqualTo(SeatLedger.SyncResult.Lost)
+		assertThat(operation(requested.id).status).isEqualTo(OperationStatus.RUNNING)
+		ledger.applyListing(second, listOf(VendorSeat("octocat")))
+		assertThat(operation(requested.id).status).isEqualTo(OperationStatus.SUCCEEDED)
+
+		val pending = ledger.requestSync(tenant, admin, copilot)
+		connections.delete(tenant, admin, copilot, connections.find(tenant, copilot)!!.version)
+		assertThat(ledger.abandonRemovedRequests()).isEqualTo(1)
+		assertThat(operation(pending.id).let { it.status to it.targets.single().reason }).isEqualTo(OperationStatus.FAILED to "connection_removed")
+		assertThat(ledger.abandonRemovedRequests()).isZero()
+
+		// 실행 중에 연결을 지우면 그 실행의 요청도 끝난다.
+		connect(copilot)
+		val third = ledger.requestSync(tenant, admin, copilot)
+		val running = run(copilot)
+		connections.delete(tenant, admin, copilot, connections.find(tenant, copilot)!!.version)
+		assertThat(ledger.applyListing(running, listOf(VendorSeat("octocat")))).isEqualTo(SeatLedger.SyncResult.Lost)
+		assertThat(operation(third.id).let { it.status to it.targets.single().reason }).isEqualTo(OperationStatus.FAILED to "connection_removed")
+	}
+
+	@Test
+	fun `동기화 요청 — 연결이 없거나 다른 조직·구성원(member)이면 걸지 못한다`() {
+		assertThat(code { ledger.requestSync(tenant, admin, copilot) }).isEqualTo("not_found" to 404)
+		connect(copilot)
+		assertThat(code { ledger.requestSync(tenant, dana, copilot) }).isEqualTo("forbidden" to 403)
+		val other = tenant()
+		assertThat(code { ledger.requestSync(other, member(other, "admin@other.example.test", "admin"), copilot) }).isEqualTo("not_found" to 404)
 	}
 }

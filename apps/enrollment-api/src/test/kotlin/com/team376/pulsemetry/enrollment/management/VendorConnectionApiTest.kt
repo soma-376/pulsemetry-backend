@@ -1,32 +1,21 @@
 package com.team376.pulsemetry.enrollment.management
 
-import com.team376.pulsemetry.connector.vendor.BillingReader
-import com.team376.pulsemetry.connector.vendor.Capability
-import com.team376.pulsemetry.connector.vendor.ConnectionTarget
-import com.team376.pulsemetry.connector.vendor.ConnectorDescriptor
-import com.team376.pulsemetry.connector.vendor.ConnectorDescriptors
-import com.team376.pulsemetry.connector.vendor.ConnectorFailure
-import com.team376.pulsemetry.connector.vendor.ControlResult
-import com.team376.pulsemetry.connector.vendor.ControlStatus
-import com.team376.pulsemetry.connector.vendor.SeatConnector
-import com.team376.pulsemetry.connector.vendor.SeatRelease
-import com.team376.pulsemetry.connector.vendor.SeatRestore
-import com.team376.pulsemetry.connector.vendor.VendorSeat
+import com.team376.pulsemetry.connector.vendor.MockVendorServer
+import com.team376.pulsemetry.connector.vendor.reply
 import com.team376.pulsemetry.enrollment.auth.AbstractUserAuthApiTest
 import com.team376.pulsemetry.enrollment.auth.AuthClockConfig
 import com.team376.pulsemetry.enrollment.support.EnrollmentTestData
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
-import org.springframework.context.annotation.Bean
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import org.springframework.context.annotation.Import
 import tools.jackson.databind.JsonNode
 import java.net.URI
@@ -34,14 +23,13 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.util.Base64
 import java.util.UUID
-import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * 벤더 연결 명령 (ADR 0048 §6). 기대값은 ADR 의 문장에서 쓴다 — 커넥터는 제품·계약 플랜으로 고르고 이 배포에 구현이 없으면 만들 수 없다,
  * 자격증명은 암호문으로만 남고 응답·로그·멱등 기록에 없다, 교체는 확인 상태를 되돌리고 대상이 바뀌면 동기화 기록을 비운다, 삭제·보관은 암호문을 지운다,
  * 확인은 트랜잭션 밖에서 부르고 그 사이 연결이 바뀌면 결과를 쓰지 않는다.
  *
- * 이 테스트 배포는 Copilot 과 Claude Enterprise 의 가짜 구현만 조립한다(Cursor Enterprise 는 설명만 있고 구현이 없다). 실제 벤더 호출은 하지 않는다.
+ * 커넥터는 실제 구현이고 벤더 API 는 모의 서버(JDK 내장 HTTP 서버)다 — 실제 벤더를 부르지 않는다. 확인 결과는 모의 서버의 응답으로 정한다.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = ["pulsemetry.user-auth.enabled=true", "pulsemetry.management.enabled=true",
@@ -50,42 +38,36 @@ import java.util.concurrent.CopyOnWriteArrayList
         "pulsemetry.user-auth.allowed-origins=http://localhost:3000",
         "pulsemetry.vendor-connections.enabled=true",
         "pulsemetry.vendor-connections.credential-keys.k1=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
-        "pulsemetry.vendor-connections.credential-key-id=k1"])
+        "pulsemetry.vendor-connections.credential-key-id=k1",
+        "pulsemetry.vendor-connections.sync.interval=PT1H", "pulsemetry.vendor-connections.sync.check-interval=PT1H", "pulsemetry.vendor-connections.sync.lease=PT5M",
+        "pulsemetry.vendor-connections.http.request-timeout=PT5S", "pulsemetry.vendor-connections.http.max-attempts=2",
+        "pulsemetry.vendor-connections.http.retry-backoff=PT0S", "pulsemetry.vendor-connections.http.max-retry-wait=PT0S"])
 @AutoConfigureMockMvc
-@Import(PostgresContainerConfig::class, EnrollmentTestData::class, AuthClockConfig::class, VendorConnectionApiTest.FakeConnectors::class)
+@Import(PostgresContainerConfig::class, EnrollmentTestData::class, AuthClockConfig::class)
 @ExtendWith(OutputCaptureExtension::class)
 class VendorConnectionApiTest : AbstractUserAuthApiTest() {
 
-    /** 확인 호출만 흉내 낸다 — 받은 대상을 남기고, 정한 실패를 던진다. */
-    class FakeConnector(override val descriptor: ConnectorDescriptor) : SeatConnector {
-        @Volatile var failure: ConnectorFailure.Kind? = null
-        @Volatile var during: (() -> Unit)? = null
-        val seen = CopyOnWriteArrayList<ConnectionTarget>()
-        override fun verify(target: ConnectionTarget) {
-            seen += target
-            during?.invoke()
-            failure?.let { throw ConnectorFailure(it) }
+    companion object {
+        /** Copilot·Claude 의 벤더 API 를 흉내 낸다. 클래스 하나가 같은 서버를 쓴다. */
+        val vendors = MockVendorServer()
+
+        @JvmStatic @DynamicPropertySource fun vendorApis(registry: DynamicPropertyRegistry) {
+            listOf("copilot", "claude_enterprise", "cursor_enterprise", "gemini").forEach { id ->
+                registry.add("pulsemetry.vendor-connections.base-urls.$id") { vendors.base.toString() }
+            }
         }
-        override fun listSeats(target: ConnectionTarget): List<VendorSeat> = emptyList()
-        override val release: SeatRelease? = SeatRelease { _, _ -> ControlResult(ControlStatus.COMPLETED) }.takeIf { Capability.SEAT_RELEASE in descriptor.capabilities }
-        override val restore: SeatRestore? = SeatRestore { _, _ -> ControlResult(ControlStatus.COMPLETED) }.takeIf { Capability.SEAT_RESTORE in descriptor.capabilities }
-        override val billing: BillingReader? = BillingReader { _, _, _ -> emptyList() }.takeIf { Capability.BILLING in descriptor.capabilities }
-        fun reset() { failure = null; during = null; seen.clear() }
     }
 
-    @TestConfiguration(proxyBeanMethods = false)
-    class FakeConnectors {
-        @Bean fun copilotConnector() = FakeConnector(ConnectorDescriptors.COPILOT)
-        @Bean fun claudeConnector() = FakeConnector(ConnectorDescriptors.CLAUDE_ENTERPRISE)
-    }
+    private val copilotSeats = "/orgs/octo-org/copilot/billing/seats"
 
-    @Autowired private lateinit var copilotConnector: FakeConnector
-    @Autowired private lateinit var claudeConnector: FakeConnector
+    @BeforeEach fun vendorReplies() {
+        vendors.received.clear()
+        vendors.on("GET", copilotSeats, reply(200, """{"total_seats":0,"seats":[]}"""))
+        vendors.on("GET", "/v1/organizations/users", reply(200, """{"data":[],"has_more":false,"first_id":null,"last_id":null}"""))
+    }
 
     private val secret = "fake-vendor-credential-" + "Zq9".repeat(12)
     private val secretVariants get() = listOf(secret, Base64.getEncoder().encodeToString(secret.toByteArray()))
-
-    @AfterEach fun resetFakes() { copilotConnector.reset(); claudeConnector.reset() }
 
     private fun json(response: HttpResponse<String>): JsonNode = mapper.readTree(response.body())
 
@@ -152,15 +134,17 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
         // 확인: 커넥터는 복호화한 같은 자격증명과 비밀 아닌 설정을 받는다.
         clock.now = clock.now.plusSeconds(30)
         val verified = source(verify(vendorId, token))
-        assertThat(copilotConnector.seen.single().let { it.credential.reveal() to it.settings }).isEqualTo(secret to mapOf("organization" to "octo-org"))
+        // 커넥터는 복호화한 같은 자격증명을 문서의 헤더로 보내고, 비밀 아닌 설정(조직)을 경로에 쓴다.
+        assertThat(vendors.requests(copilotSeats).single().let { it.header("Authorization") to it.param("per_page") }).isEqualTo("Bearer $secret" to "1")
         assertThat(listOf(verified.at("/connection/check/status").asString(), verified.at("/connection/check/checkedAt").asString()))
             .containsExactly("verified", clock.now.toString())
         assertThat(verified.at("/connection/version").asLong()).describedAs("확인은 판을 올리지 않는다").isEqualTo(1)
 
-        val outcomes = listOf(ConnectorFailure.Kind.INVALID_CREDENTIALS to "invalid_credentials", ConnectorFailure.Kind.INSUFFICIENT_PERMISSION to "insufficient_permission",
-            ConnectorFailure.Kind.UNAVAILABLE to "unavailable", ConnectorFailure.Kind.RATE_LIMITED to "unavailable")
-        outcomes.forEach { (kind, expected) ->
-            copilotConnector.failure = kind
+        val outcomes = listOf(reply(401, """{"message":"Bad credentials"}""") to "invalid_credentials",
+            reply(403, """{"message":"Must have admin rights"}""") to "insufficient_permission",
+            reply(503, "{}") to "unavailable", reply(429, "{}", "Retry-After" to "60") to "unavailable")
+        outcomes.forEach { (answer, expected) ->
+            vendors.on("GET", copilotSeats, answer)
             assertThat(source(verify(vendorId, token)).at("/connection/check/status").asString()).isEqualTo(expected)
         }
 
@@ -202,14 +186,14 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.vendor_connections WHERE vendor_id = :id").param("id", vendorId).query(Int::class.java).single()).isEqualTo(2)
     }
 
-    @Test fun `커넥터는 제품과 계약 플랜으로 고른다 — 커넥터가 없는 플랜·이 배포에 구현이 없는 플랜은 연결할 수 없고 설정은 설명의 키와 같아야 한다`() {
+    @Test fun `커넥터는 제품과 계약 플랜으로 고른다 — 커넥터가 없는 플랜은 연결할 수 없고 설정은 설명의 키와 같아야 한다`() {
         val token = adminToken()
         val openai = vendor("openai_biz", "business", token).path("vendorId").asString()
         val cursor = vendor("cursor", "cursor_enterprise", token)
         assertThat(errorOf(connect(openai, token, settings = emptyMap<String, String>()))).isEqualTo(422 to "connector_unavailable")
-        // Cursor Enterprise 는 설명(커넥터가 있는 플랜)은 있지만 이 배포에 구현이 없다.
         assertThat(cursor.at("/seatSource/connector/supported").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "billing")
-        assertThat(errorOf(connect(cursor.path("vendorId").asString(), token, settings = emptyMap<String, String>()))).isEqualTo(422 to "connector_unavailable")
+        assertThat(source(connect(cursor.path("vendorId").asString(), token, settings = emptyMap<String, String>())).at("/connection/connectorId").asString())
+            .isEqualTo("cursor_enterprise")
 
         val copilot = vendor("copilot", "copilot_business", token).path("vendorId").asString()
         listOf(
@@ -227,7 +211,7 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
             assertThat(errorOf(response)).describedAs(change.toString()).isEqualTo(400 to "invalid_request")
             assertThat(json(response).at("/error/fieldErrors/0/field").asString()).isEqualTo(change.keys.single())
         }
-        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.vendor_connections").query(Int::class.java).single()).isZero()
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.vendor_connections WHERE vendor_id = :id").param("id", copilot).query(Int::class.java).single()).isZero()
 
         // 설정이 없는 커넥터(Claude Enterprise)는 빈 설정이다.
         val claudeVendor = vendor("claude_team", "enterprise", token)
@@ -245,14 +229,14 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
         val token = adminToken()
         val vendorId = vendor("copilot", "copilot_business", token).path("vendorId").asString()
         connect(vendorId, token)
-        copilotConnector.during = {
+        vendors.on("GET", copilotSeats, {
             jdbc.sql("UPDATE enrollment.vendor_connections SET version = version + 1 WHERE vendor_id = :id AND deleted_at IS NULL").param("id", vendorId).update()
-        }
+            MockVendorServer.Reply(200, """{"total_seats":0,"seats":[]}""")
+        })
         assertThat(errorOf(verify(vendorId, token))).isEqualTo(409 to "version_conflict")
         assertThat(jdbc.sql("SELECT check_status::text FROM enrollment.vendor_connections WHERE vendor_id = :id").param("id", vendorId).query(String::class.java).single())
             .isEqualTo("unverified")
 
-        copilotConnector.during = null
         jdbc.sql("UPDATE enrollment.vendor_connections SET credential_key_id = 'retired' WHERE vendor_id = :id").param("id", vendorId).update()
         val unavailable = verify(vendorId, token)
         assertThat(errorOf(unavailable)).isEqualTo(503 to "credential_key_unavailable")

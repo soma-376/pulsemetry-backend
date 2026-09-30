@@ -25,6 +25,8 @@ dependencies {
 	testImplementation(libs.spring.boot.starter.webmvc.test)
 	// PostgresContainerConfig 는 영속성 모듈이 testFixtures 로 노출한다.
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
+	// 좌석 동기화 통합 테스트가 벤더 API 모의 서버(JDK 내장 HTTP 서버)를 쓴다.
+	testImplementation(testFixtures(project(":libs:vendor-connector")))
 	// 앱 컨텍스트가 뜨려면 실제 PostgreSQL 이 필요하다 (Flyway 가 기동 시 마이그레이션한다).
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.postgresql)

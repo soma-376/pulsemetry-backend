@@ -220,7 +220,7 @@ snapshot을 쓰지 않는 현재 상태 조회다.
 ```ts
 type OperationResponse = {
   operationId: string;
-  kind: "seat_reclaim" | "seat_restore" | "installation_notification" | "retention_cleanup";
+  kind: "seat_reclaim" | "seat_restore" | "installation_notification" | "retention_cleanup" | "seat_sync";
   status: "pending" | "running" | "awaiting_admin_action" | "succeeded" | "partially_failed" | "failed";
   createdAt: string;
   completedAt: string | null; // succeeded·partially_failed·failed일 때만 값이 있다
@@ -252,7 +252,8 @@ type OperationResponse = {
   `succeeded`는 논리 삭제 완료이고 물리 제거 완료가 아니다.
   `logically_deleted`는 논리 삭제 완료이며 물리 제거 완료가 아니다. 삭제한 행 수와 상세 문구는 싣지 않는다.
 - 그 조직에 없는 작업은 404 `not_found`다. 다른 조직의 작업, 없는 ID, UUID가 아닌 ID가 같은 응답이다. **실패한 작업은 404가 아니라 200과 `status=failed`다.**
-- 작업을 만드는 명령은 설치 업데이트 안내(`installation_notification` — 대상 ID는 설치 ID, 결과는 메일 발송 결과) 하나다. 나머지 종류는 아직 만드는 명령이 없다.
+- 작업을 만드는 명령은 설치 업데이트 안내(`installation_notification` — 대상 ID는 설치 ID, 결과는 메일 발송 결과), 수집 정책 저장의 보존 단축(`retention_cleanup`, ADR 0047),
+  좌석 동기화 요청(`seat_sync` — 대상 ID는 벤더 연결 ID, 결과는 동기화 실행의 결과이고 실패 사유는 Enrollment 명세 §12 "벤더 연결"의 실패 코드, ADR 0048)이다. 회수·복원은 아직 만드는 명령이 없다.
 
 ## 3. 벤더와 플랜 카탈로그
 

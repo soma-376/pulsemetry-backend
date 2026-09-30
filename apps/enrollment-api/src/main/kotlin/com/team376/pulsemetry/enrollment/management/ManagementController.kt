@@ -5,6 +5,7 @@ import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
 import org.springframework.beans.factory.ObjectProvider
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementStore
+import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger
 import com.team376.pulsemetry.security.user.UserAuthException
 import com.team376.pulsemetry.security.user.UserAuthService
 import jakarta.servlet.http.HttpServletRequest
@@ -48,9 +49,9 @@ class ManagementConfig {
     @Bean
     fun managementStore(jdbc: JdbcClient, manager: PlatformTransactionManager, mapper: ObjectMapper, clock: Clock,
         properties: ManagementProperties, invitationMail: ObjectProvider<InvitationMailer>,
-        installationNotifier: ObjectProvider<InstallationNotifier>): ManagementStore = ManagementStore(jdbc, manager, mapper, clock,
+        installationNotifier: ObjectProvider<InstallationNotifier>, seatLedger: ObjectProvider<SeatLedger>): ManagementStore = ManagementStore(jdbc, manager, mapper, clock,
             properties.responseEncryptionKey, { InitialOnboardingManifest.create(properties.onboardingOtlpEndpoint, mapper) }, invitationMail.ifAvailable,
-            installationNotifier.ifAvailable)
+            installationNotifier.ifAvailable, seatLedger.ifAvailable)
 }
 
 @RestController
@@ -58,7 +59,7 @@ class ManagementConfig {
 @RequestMapping("/api/v1/organizations/{organizationId}")
 class ManagementController(private val auth: UserAuthService, private val store: ManagementStore, private val mapper: ObjectMapper) {
     @RequestMapping(path = ["/teams", "/member-team-assignments", "/invitations/batch", "/invitations/{invitationId}/revoke", "/invitations/{invitationId}/reissue", "/vendors", "/onboarding/complete",
-        "/installation-update-notifications"], method = [RequestMethod.POST])
+        "/installation-update-notifications", "/vendors/{vendorId}/connection/sync"], method = [RequestMethod.POST])
     fun post(@PathVariable organizationId: UUID, @RequestBody(required = false) body: JsonNode?, request: HttpServletRequest) = handle(organizationId, body, request)
 
     @RequestMapping(path = ["/teams/{teamId}"], method = [RequestMethod.PATCH, RequestMethod.DELETE])
@@ -100,8 +101,8 @@ class ManagementController(private val auth: UserAuthService, private val store:
         }
         val result = store.command(tenant, actor, "${request.method} $path", body ?: mapper.createObjectNode(), request.getHeader("Idempotency-Key"), etag)
         if (request.method == "DELETE" || path.endsWith("/revoke")) return ResponseEntity.noContent().build<Void>()
-        // 안내는 접수만 했다 — 결과는 작업 상태 조회(dashboard-api)로 본다(ADR 0039·0043). 멱등 재시도도 같은 작업을 가리킨다.
-        if (path == "/installation-update-notifications") {
+        // 안내·동기화 요청은 접수만 했다 — 결과는 작업 상태 조회(dashboard-api)로 본다(ADR 0039·0043·0048). 멱등 재시도도 같은 작업을 가리킨다.
+        if (path == "/installation-update-notifications" || (path.startsWith("/vendors/") && path.endsWith("/connection/sync"))) {
             return ResponseEntity.accepted().header("Cache-Control", "no-store")
                 .location(URI("/api/v1/organizations/$tenant/operations/${result.path("operationId").asString()}")).body(result)
         }

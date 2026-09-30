@@ -3,6 +3,8 @@
 // 라이브러리 모듈이므로 Spring Boot 플러그인을 적용하지 않는다 — 실행 가능한 산출물이 아니다. Spring 에 의존하지 않는다.
 plugins {
 	`java-library`
+	// 모의 벤더 서버를 앱의 통합 테스트와 나눈다 (ADR 0008 — 별도 test 모듈을 만들지 않는다).
+	`java-test-fixtures`
 }
 
 dependencies {

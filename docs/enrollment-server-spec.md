@@ -498,6 +498,14 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.vendor-connections.enabled` | `false` | 벤더 연결(§12 "벤더 연결", ADR 0048)을 켠다. 관리 기능도 켜야 하고 아래 두 값이 **모두 필요하다 — 없으면 기동 실패** |
 | `pulsemetry.vendor-connections.credential-keys.<키 ID>` | 없음 | 벤더 자격증명의 AES-256-GCM 키(Base64 32바이트). 키 ID는 `[A-Za-z0-9_-]{1,64}`. 옛 키는 그 키로 암호화된 연결(`vendor_connections.credential_key_id`)이 남아 있는 동안 둔다 |
 | `pulsemetry.vendor-connections.credential-key-id` | 없음 | 새 암호문을 만드는 키의 ID. 키 목록에 있어야 한다 |
+| `pulsemetry.vendor-connections.sync.interval` | 없음 | 연결 하나를 다시 동기화하는 간격(마지막 시도부터). 벤더 권장 주기보다 짧게 두지 않는다(Cursor는 "polled at most once per hour") |
+| `pulsemetry.vendor-connections.sync.check-interval` | 없음 | 차례인 연결을 찾는 주기. "지금 동기화" 요청이 기다리는 최대 시간이다 |
+| `pulsemetry.vendor-connections.sync.lease` | 없음 | 한 연결의 선점 기한. 한 번의 동기화(모든 페이지 × 시도 횟수 × 시간 제한)보다 길게 |
+| `pulsemetry.vendor-connections.http.request-timeout` | 없음 | 벤더 호출 하나의 시간 제한 |
+| `pulsemetry.vendor-connections.http.max-attempts` | 없음 | 호출 하나의 최대 시도 횟수(첫 시도 포함). 일시 장애·한도 초과만 다시 시도한다 |
+| `pulsemetry.vendor-connections.http.retry-backoff` | 없음 | 벤더가 대기 시간을 알려 주지 않은 일시 장애 뒤의 대기 |
+| `pulsemetry.vendor-connections.http.max-retry-wait` | 없음 | 벤더가 알려 준 대기 시간(`Retry-After` 등)의 상한. 넘으면 기다리지 않고 `rate_limited`로 남긴다 |
+| `pulsemetry.vendor-connections.base-urls.<커넥터 ID>` · `.gemini-token-url` | 벤더 공식 주소 | 모의 서버·스테이징에서만 바꾼다 |
 
 DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_PASSWORD` 로 덮어쓴다.
 메일의 키는 `PULSEMETRY_MAIL_ENABLED` · `_FROM` · `_ENCRYPTION_KEY` · `_DISPATCH_INTERVAL` · `_RETRY_INTERVAL` · `_MAX_ATTEMPTS` · `_SEND_TIMEOUT` ·
@@ -507,6 +515,7 @@ DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_P
 local 프로필은 개발용 값(10분, 1분에 10회, 출처 3000·3107)으로 켠다. 운영 수치의 배포 기본값은 두지 않는다.
 설치 보고의 네 키는 `PULSEMETRY_HEARTBEAT_ENABLED` · `_REPORT_INTERVAL` · `_RETRY_AFTER` · `_HISTORY_RETENTION` 으로 준다. local 프로필은 1분 · 5초 · 400일로 켠다.
 벤더 연결은 `PULSEMETRY_VENDOR_CONNECTIONS_ENABLED` · `PULSEMETRY_VENDOR_CONNECTIONS_CREDENTIAL_KEY_ID`와 키마다 `PULSEMETRY_VENDORCONNECTIONS_CREDENTIALKEYS_<키 ID>`로 준다.
+동기화·호출 수치는 `PULSEMETRY_VENDOR_CONNECTIONS_SYNC_INTERVAL` · `_SYNC_CHECK_INTERVAL` · `_SYNC_LEASE` · `_HTTP_REQUEST_TIMEOUT` · `_HTTP_MAX_ATTEMPTS` · `_HTTP_RETRY_BACKOFF` · `_HTTP_MAX_RETRY_WAIT`로 준다.
 관리 응답 암호화 키·메일 키와 다른 값을 쓴다 — 수명과 노출이 다르다(ADR 0048 §6).
 
 ---
@@ -799,6 +808,7 @@ POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`, 8~128자)를 보낸다.
 | `PUT /vendors/{vendorId}/connection` | `{expectedVersion,settings,credential}` | 200 `{seatSource}`, ETag `"connection-{version}"` — 아래 "벤더 연결" |
 | `DELETE /vendors/{vendorId}/connection` | `If-Match: "connection-{version}"` | 204, 자격증명 삭제 |
 | `POST /vendors/{vendorId}/connection/verify` | 본문 없음 | 200 `{seatSource}`, 확인 결과를 연결에 남김 |
+| `POST /vendors/{vendorId}/connection/sync` | 본문 없음, `Idempotency-Key` | 202 OperationResponse(`seat_sync`), Location(작업 상태 조회) — 아래 "벤더 연결"의 동기화 |
 
 팀 배정은 최대 100명, 전체 검증 후 한 트랜잭션으로 적용한다. `teamId:null`은 배정 해제다.
 효력 시각은 서버 시각이며 과거 ClickHouse 팩트는 바꾸지 않는다.
@@ -966,6 +976,30 @@ type Capability = "seat_list" | "seat_release" | "seat_restore" | "billing";
 - 자격증명은 AES-256-GCM 암호문(`pulsemetry.vendor-connections.credential-keys`, §8)으로만 저장한다. 요청은 PUT이라 멱등 응답 기록(요청 해시·응답)을 남기지 않는다.
   행의 키 ID가 설정에 없으면(옛 키를 너무 일찍 뺀 경우) 확인은 503 `credential_key_unavailable`이다 — 평문으로 떨어지지 않는다.
 - 설정 조회(dashboard-api)의 벤더마다 같은 `seatSource`가 있다. 등록·정정 응답(`VendorResponse`)의 vendor에도 같은 필드가 있다.
+
+**좌석 동기화**(ADR 0048 §3·§7). enrollment-api 안의 주기 작업이 `sync.check-interval`마다 차례인 연결을 찾아 하나씩 동기화한다.
+차례는 선점되지 않았고, 동기화 요청이 걸려 있거나 마지막 시도(성공·실패)가 `sync.interval`보다 오래됐거나 시도한 적이 없는 연결이다.
+연결 행을 `FOR UPDATE SKIP LOCKED`로 선점하고(기한 `sync.lease`), 연결마다 진행 중인 실행은 하나다. 여러 인스턴스가 떠도 한 연결을 두 번 돌리지 않는다.
+
+- 한 번의 동기화: 자격증명 복호화 → 계약 플랜의 커넥터가 연결의 커넥터와 같은지 확인 → 벤더 좌석 목록(모든 페이지) → 좌석 원장에 **목록 전체로** 반영.
+  목록의 계정은 벤더가 보고한 상태가 되고 목록에 없는 보유 좌석은 해제된다(수동 원천 행 포함). 관리자가 정한 구성원 연결·계약 등급·메모는 덮지 않는다.
+- 실패는 원장을 바꾸지 않는다. 연결의 `sync`가 `failing`이 되고 마지막 성공 값은 남는다. **한 연결의 실패가 다른 연결을 막지 않는다.**
+
+| 실패 코드 | 뜻 |
+| --- | --- |
+| `invalid_credentials` · `insufficient_permission` | 벤더가 자격증명·권한을 거절했다(401·403) |
+| `directory_managed` · `vendor_rejected` | 벤더 규칙이 거절했다(그 밖의 4xx — 조직 이름·주문이 틀린 경우 포함) |
+| `rate_limited` | 한도 초과. 벤더의 대기 시간이 `http.max-retry-wait`보다 길거나 시도 횟수를 다 썼다 |
+| `vendor_unavailable` | 5xx·연결 실패·시간 초과가 `http.max-attempts`번 이어졌다 |
+| `invalid_response` | 응답이 문서의 모양이 아니다(필수 필드 없음, 끝나지 않는 페이지) |
+| `invalid_listing` | 목록의 계정 키가 형식에 맞지 않거나 겹친다 |
+| `plan_mismatch` | 계약을 비웠거나 커넥터가 다른 플랜으로 정정했다 — 벤더를 부르지 않는다 |
+| `connector_unavailable` · `credential_key_unavailable` · `sync_error` | 이 배포에 구현이 없다 · 행의 암호화 키가 설정에 없다 · 그 밖의 예외 |
+
+- **지금 동기화**(`POST …/connection/sync`): 활성 연결에 `seat_sync` 작업(대기, 대상 = 연결 ID)을 걸어 둔다. 다음 주기 실행이 주기와 무관하게 가져가 실행하고
+  결과를 대상 결과로 옮긴다(성공, 또는 위 실패 코드로 실패). 끝나지 않은 요청이 걸려 있으면 새 요청을 만들지 않고 그 작업을 돌려준다.
+  선점을 잃은 실행의 요청은 다음 실행이 이어받는다. 연결을 지우면 걸린 요청은 `connection_removed`로 실패한다. 연결이 없으면 404, 벤더 연결이 꺼진 배포도 404다.
+- 실행 기록은 `seat_sync_runs`(시작·끝·결과·오류 코드·목록의 좌석 수·바뀐 좌석 수, 계기 `schedule`·`request`)다.
 
 ### 조회·관리 오류
 
@@ -1169,6 +1203,7 @@ Flyway가 enrollment 스키마의 진실원이다. 관련 추가 마이그레이
 | V19 | 조직 정책 설정(`organization_policy_settings`) — 회수 기준·집계 보존과 그 판 (ADR 0046) |
 | V20 | 보존 정리 요청(`retention_cleanup_requests`) (ADR 0047) |
 | V21 | 벤더 연결(`vendor_connections` — 자격증명 암호문·확인·동기화 선점과 결과)·동기화 실행(`seat_sync_runs`)·좌석 원장(`seat_assignments`)과 판별 이력(`seat_assignment_events`) (ADR 0048) |
+| V22 | 좌석 동기화 요청 — 작업 종류 `seat_sync`, 연결의 요청 칸(`sync_requested_operation_id`), 실행이 끝내는 요청(`seat_sync_runs.operation_id`) (ADR 0048 §7) |
 
 V12는 이 표에 없다 — 사용자 로그인 방식 작업이 예약한 번호다. Flyway는 이미 적용한 판보다 낮은 번호를 뒤늦게 받지 않으므로,
 V13이 먼저 적용된 DB에는 V12를 넣을 수 없다. 머지 순서가 뒤집히면 그 작업이 번호를 다시 매긴다.

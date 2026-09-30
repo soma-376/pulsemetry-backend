@@ -6,6 +6,8 @@ import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
 import com.team376.pulsemetry.persistence.enrollment.mail.MailDeliveryView
 import com.team376.pulsemetry.persistence.enrollment.operation.OperationStore
 import com.team376.pulsemetry.persistence.enrollment.operation.RetentionCleanupRequests
+import com.team376.pulsemetry.persistence.enrollment.operation.Operation
+import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatSourceView
 import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnectionStore
 import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnections
@@ -39,7 +41,9 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
     /** 초대 메일. 메일 기능이 꺼진 배포에서는 null 이고 초대는 발송 없이 코드만 발급한다. */
     private val invitationMail: InvitationMailer? = null,
     /** 설치 업데이트 안내(ADR 0043). 메일 기능이 꺼진 배포에서는 null 이고 안내 요청은 422 다 — 접수한 척하지 않는다. */
-    private val installationNotifier: InstallationNotifier? = null) {
+    private val installationNotifier: InstallationNotifier? = null,
+    /** 좌석 원장(ADR 0048). 벤더 연결이 꺼진 배포에서는 null 이고 동기화 요청은 404 다. */
+    private val seatLedger: SeatLedger? = null) {
     private val tx = TransactionTemplate(manager)
     private val onboarding = OnboardingStore(jdbc, mapper, initialManifest,
         RetentionCleanupRequests(jdbc, manager, OperationStore(jdbc, manager, clock)), invitationMail != null)
@@ -90,6 +94,9 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                 operation.startsWith("PUT /vendors/") -> saveVendor(tenant, actor, operation.split('/')[2], body, now)
                 operation.startsWith("DELETE /vendors/") -> removeVendor(tenant, actor, operation.split('/')[2], operation.endsWith("/contract"), version, now)
                 operation == "POST /installation-update-notifications" -> notifyInstallations(tenant, actor, body)
+                // 좌석 동기화 요청(ADR 0048 §7) — 다음 주기 실행이 가져간다. 결과는 작업 상태 조회로 본다.
+                operation.startsWith("POST /vendors/") && operation.endsWith("/connection/sync") ->
+                    operationNode((seatLedger ?: fail("not_found", 404)).requestSync(tenant, actor, operation.split('/')[2]))
                 else -> fail("not_found", 404)
             }
             if (operation.startsWith("POST ")) {
@@ -337,14 +344,15 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
         val organization = jdbc.sql("SELECT name FROM enrollment.tenants WHERE id=:id").param("id", tenant).query(String::class.java).single()
         val order = ids.withIndex().associate { it.value to it.index }
         val notices = rows.map { it.second.copy(organization = organization) }.sortedBy { order.getValue(it.installationId) }
-        val operation = notifier.notify(tenant, actor, notices)
-        return node(mapOf(
-            "operationId" to operation.id, "kind" to operation.kind.wire, "status" to operation.status.wire,
-            "createdAt" to operation.createdAt.toString(), "completedAt" to operation.completedAt?.toString(),
-            "results" to operation.targets.map { mapOf("targetId" to it.targetId, "status" to it.status.wire, "reason" to it.reason, "action" to it.action) },
-            "canRestore" to false, "restoreUntil" to null, "retention" to null,
-        ))
+        return operationNode(notifier.notify(tenant, actor, notices))
     }
+    /** 접수한 작업 — 작업 상태 조회(`GET O/operations/{operationId}`)와 같은 모양. */
+    private fun operationNode(operation: Operation): JsonNode = node(mapOf(
+        "operationId" to operation.id, "kind" to operation.kind.wire, "status" to operation.status.wire,
+        "createdAt" to operation.createdAt.toString(), "completedAt" to operation.completedAt?.toString(),
+        "results" to operation.targets.map { mapOf("targetId" to it.targetId, "status" to it.status.wire, "reason" to it.reason, "action" to it.action) },
+        "canRestore" to false, "restoreUntil" to null, "retention" to null,
+    ))
     private fun addMembership(member: UUID, team: UUID, now: Instant) {
         jdbc.sql("INSERT INTO enrollment.team_memberships(id,member_id,team_id,joined_at) VALUES (:id,:member,:team,:now)")
             .param("id", UUID.randomUUID()).param("member", member).param("team", team).param("now", Timestamp.from(now)).update()

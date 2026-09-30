@@ -2,24 +2,15 @@ package com.team376.pulsemetry.enrollment.management
 
 import com.team376.pulsemetry.connector.vendor.ConnectionTarget
 import com.team376.pulsemetry.connector.vendor.ConnectorFailure
-import com.team376.pulsemetry.connector.vendor.SeatConnector
 import com.team376.pulsemetry.connector.vendor.SeatConnectors
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
 import com.team376.pulsemetry.persistence.enrollment.seat.ConnectionCheck
-import com.team376.pulsemetry.persistence.enrollment.seat.CredentialCipher
 import com.team376.pulsemetry.persistence.enrollment.seat.CredentialKeyUnavailable
 import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnectionStore
 import com.team376.pulsemetry.security.user.UserAuthService
 import jakarta.servlet.http.HttpServletRequest
-import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
-import org.springframework.boot.context.properties.ConfigurationProperties
-import org.springframework.boot.context.properties.EnableConfigurationProperties
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
 import org.springframework.http.ResponseEntity
-import org.springframework.jdbc.core.simple.JdbcClient
-import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -28,36 +19,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import tools.jackson.databind.JsonNode
-import tools.jackson.databind.ObjectMapper
-import java.time.Clock
 import java.util.UUID
-
-/** 벤더 연결 설정 (ADR 0048 §6). 켜면 관리 기능도 켜야 하고 자격증명 키가 필요하다 — 없으면 기동이 실패한다. */
-@ConfigurationProperties("pulsemetry.vendor-connections")
-class VendorConnectionProperties {
-    var enabled = false
-    /** 키 ID → Base64 32바이트. 옛 키는 그 키로 암호화된 연결이 남아 있는 동안 둔다 */
-    var credentialKeys: Map<String, String> = emptyMap()
-    /** 새 암호문을 만드는 키의 ID */
-    var credentialKeyId = ""
-}
-
-@Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(prefix = "pulsemetry.vendor-connections", name = ["enabled"], havingValue = "true")
-@EnableConfigurationProperties(VendorConnectionProperties::class)
-class VendorConnectionConfig {
-    @Bean
-    fun vendorConnectionStore(jdbc: JdbcClient, manager: PlatformTransactionManager, clock: Clock, mapper: ObjectMapper,
-        properties: VendorConnectionProperties, management: ObjectProvider<ManagementProperties>): VendorConnectionStore {
-        requireNotNull(management.ifAvailable) { "pulsemetry.vendor-connections 는 pulsemetry.management 를 함께 켜야 한다" }
-        require(properties.credentialKeyId.isNotBlank()) { "pulsemetry.vendor-connections.credential-key-id 가 비어 있다" }
-        return VendorConnectionStore(jdbc, manager, clock, CredentialCipher(properties.credentialKeys, properties.credentialKeyId), mapper)
-    }
-
-    /** 이 배포가 조립한 커넥터 구현. 설명이 있어도 구현이 없는 플랜에는 연결을 만들 수 없다. */
-    @Bean
-    fun seatConnectors(connectors: ObjectProvider<SeatConnector>) = SeatConnectors(connectors.orderedStream().toList())
-}
 
 /**
  * 등록 제품의 벤더 연결 — 추가·교체(PUT), 삭제(DELETE), 확인(POST verify) (ADR 0048 §6).

@@ -15,6 +15,9 @@ enum class OperationKind(val wire: String) {
     SEAT_RESTORE("seat_restore"),
     INSTALLATION_NOTIFICATION("installation_notification"),
     RETENTION_CLEANUP("retention_cleanup"),
+
+    /** 관리자의 "지금 동기화" 요청(ADR 0048 §7). 대상은 벤더 연결 ID 하나다. */
+    SEAT_SYNC("seat_sync"),
     ;
 
     companion object {

@@ -6,7 +6,7 @@ import java.net.URI
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
- * 벤더 API 를 흉내 내는 JDK 내장 HTTP 서버(테스트 전용 — 새 의존성 없이). 경로마다 응답을 차례로 꺼내고, 마지막 응답은 계속 되풀이한다.
+ * 벤더 API 를 흉내 내는 JDK 내장 HTTP 서버(testFixtures — 커넥터 테스트와 앱의 동기화 통합 테스트가 같이 쓴다. 새 의존성 없이). 경로마다 응답을 차례로 꺼내고, 마지막 응답은 계속 되풀이한다.
  * 받은 요청(메서드·경로·쿼리·헤더·본문)을 남긴다.
  */
 class MockVendorServer : AutoCloseable {
