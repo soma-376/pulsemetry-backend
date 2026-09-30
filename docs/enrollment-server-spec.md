@@ -634,6 +634,9 @@ type ContractWrite = {
 초대는 최대 100명, role은 `admin`·`member`, `teamId`는 UUID 또는 null이다.
 **메일 발송을 접수하지 않으므로 `queued`를 반환하지 않는다.** `issued`의 코드를 사용자에게 전달한다.
 신규 초대의 기본 만료는 72시간이다. 기존 초대가 있으면 `already_invited`이며 기존 원본 코드를 재조회하지 않는다.
+만료만 된 초대도 기존 초대다 — 재발급(§13.3)으로 살린다.
+초대가 취소(`revoke`)돼 남은 초대가 없는 대기자(`invited`)는 다시 초대할 수 있다. 새 구성원을 만들지 않고 **같은 `memberId`**에
+새 초대를 발급하며(`issued`), 요청의 `teamId`·`role`을 그 구성원에 적용하고 version을 올린다. 취소한 코드는 되살아나지 않는다.
 
 벤더 kind/plan은 dashboard-api의 [벤더 카탈로그](dashboard-server-spec.md#3-벤더와-플랜-카탈로그)에서 얻는다.
 카탈로그 `id`를 kind로 보내며 조직에 등록된 `vendorId` UUID와 혼동하지 않는다.

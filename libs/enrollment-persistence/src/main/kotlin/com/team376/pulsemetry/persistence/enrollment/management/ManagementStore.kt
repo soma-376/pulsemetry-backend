@@ -212,14 +212,22 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
             val existing = jdbc.sql("SELECT id,status::text FROM enrollment.members WHERE tenant_id=:tenant AND lower(email)=:email")
                 .param("tenant", tenant).param("email", email).query { rs, _ -> rs.getObject(1, UUID::class.java) to rs.getString(2) }.list()
             if (existing.size > 1) reason = "ambiguous_email"
-            val status = when { reason != null -> "rejected"; existing.firstOrNull()?.second == "invited" -> "already_invited"; existing.isNotEmpty() -> "already_member"; else -> "issued" }
+            val waiting = existing.firstOrNull()?.takeIf { it.second == "invited" }?.first
+            // 초대가 취소돼 남은 초대가 없는 대기자는 같은 구성원으로 다시 초대한다. 만료만 된 초대는 재발급 대상이다.
+            val again = reason == null && waiting != null && jdbc.sql("SELECT count(*) FROM enrollment.invitations WHERE target_member_id=:id AND revoked_at IS NULL")
+                .param("id", waiting).query(Int::class.java).single() == 0
+            val status = when { reason != null -> "rejected"; again -> "issued"; waiting != null -> "already_invited"; existing.isNotEmpty() -> "already_member"; else -> "issued" }
             var code: String? = null
             var invitation: UUID? = null
             if (status == "issued") {
-                val member = UUID.randomUUID()
-                jdbc.sql("INSERT INTO enrollment.members(id,tenant_id,email,role,status,created_at,updated_at) VALUES (:id,:tenant,:email,CAST(:role AS enrollment.member_role),'invited',:now,:now)")
-                    .param("id", member).param("tenant", tenant).param("email", email).param("role", role).param("now", Timestamp.from(now)).update()
-                if (team != null) addMembership(member, team, now)
+                val member = if (again) waiting!! else UUID.randomUUID()
+                if (again) {
+                    reinvite(member, role, team, now)
+                } else {
+                    jdbc.sql("INSERT INTO enrollment.members(id,tenant_id,email,role,status,created_at,updated_at) VALUES (:id,:tenant,:email,CAST(:role AS enrollment.member_role),'invited',:now,:now)")
+                        .param("id", member).param("tenant", tenant).param("email", email).param("role", role).param("now", Timestamp.from(now)).update()
+                    if (team != null) addMembership(member, team, now)
+                }
                 code = (1..12).map { "0123456789ABCDEFGHJKMNPQRSTVWXYZ"[random.nextInt(32)] }.joinToString("").chunked(4).joinToString("-")
                 invitation = UUID.randomUUID()
                 jdbc.sql("INSERT INTO enrollment.invitations(id,tenant_id,target_member_id,created_by_member_id,code_hash,expires_at,created_at) VALUES (:id,:tenant,:member,:actor,:hash,:expires,:now)")
@@ -230,6 +238,16 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                 "expiresAt" to if (invitation != null) now.plusSeconds(72 * 3600).toString() else null, "code" to code)
         }
         return node(mapOf("results" to results))
+    }
+    /** 다시 초대할 때 요청의 역할과 팀을 그 구성원에 적용한다. 구성원 ID는 바뀌지 않는다. */
+    private fun reinvite(member: UUID, role: String, team: UUID?, now: Instant) {
+        val old = jdbc.sql("SELECT updated_at FROM enrollment.members WHERE id=:id FOR UPDATE").param("id", member)
+            .query { rs, _ -> rs.getTimestamp(1).toInstant() }.single()
+        val open = jdbc.sql("SELECT team_id FROM enrollment.team_memberships WHERE member_id=:id AND left_at IS NULL")
+            .param("id", member).query(UUID::class.java).list().toSet()
+        if (open != setOfNotNull(team)) moveTeam(member, team, now)
+        jdbc.sql("UPDATE enrollment.members SET role=CAST(:role AS enrollment.member_role),updated_at=:now WHERE id=:id")
+            .param("role", role).param("now", Timestamp.from(advance(now, old))).param("id", member).update()
     }
     private fun revoke(tenant: UUID, raw: String, now: Instant): JsonNode {
         val count = jdbc.sql("UPDATE enrollment.invitations SET revoked_at=:now WHERE tenant_id=:tenant AND id=:id AND revoked_at IS NULL AND (used_at IS NULL OR signup_used_at IS NULL)")

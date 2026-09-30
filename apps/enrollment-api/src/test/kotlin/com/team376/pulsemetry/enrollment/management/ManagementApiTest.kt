@@ -361,6 +361,58 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         assertThat(mapper.readTree(listing.body()).path("nextCursor").isNull).isFalse()
     }
 
+    @Test fun `취소된 초대의 대기자는 같은 구성원으로 다시 초대하고 요청의 팀과 역할을 적용한다`() {
+        val token = adminToken()
+        val team = mapper.readTree(manage("POST", "/teams", mapOf("teamName" to "다시 초대 팀"), token).body()).path("teamId").asString()
+        fun invite(role: String, teamId: String?) = mapper.readTree(manage("POST", "/invitations/batch",
+            mapOf("invitations" to listOf(mapOf("email" to "again@example.test", "teamId" to teamId, "role" to role))), token).body()).path("results")[0]
+        fun invited() = jdbc.sql("SELECT id, role::text, status::text, updated_at FROM enrollment.members WHERE lower(email)='again@example.test'")
+            .query { r, _ -> listOf(r.getString(1), r.getString(2), r.getString(3), r.getTimestamp(4).toInstant().toEpochMilli()) }.list()
+        val first = invite("member", null)
+        assertThat(first.path("status").asString()).isEqualTo("issued")
+        val before = invited().single()
+        // 살아 있는 초대가 있으면 새로 발급하지 않는다.
+        assertThat(invite("admin", team).path("status").asString()).isEqualTo("already_invited")
+        assertThat(manage("POST", "/invitations/${first.path("invitationId").asString()}/revoke", emptyMap<String, String>(), token).statusCode()).isEqualTo(204)
+
+        val second = invite("admin", team)
+        assertThat(second.path("status").asString()).isEqualTo("issued")
+        assertThat(InvitationCode.matches(second.path("code").asString())).isTrue()
+        assertThat(second.path("code").asString()).isNotEqualTo(first.path("code").asString())
+        assertThat(second.path("invitationId").asString()).isNotEqualTo(first.path("invitationId").asString())
+        assertThat(second.path("expiresAt").asString()).isEqualTo(clock.now.plusSeconds(72 * 3600).toString())
+        // 새 구성원을 만들지 않는다. 같은 ID에 요청의 역할과 팀이 적용되고 version이 오른다.
+        val after = invited().single()
+        assertThat(after[0]).isEqualTo(before[0])
+        assertThat(after.subList(1, 3)).isEqualTo(listOf("admin", "invited"))
+        assertThat(after[3] as Long).isGreaterThan(before[3] as Long)
+        assertThat(jdbc.sql("SELECT team_id::text FROM enrollment.team_memberships WHERE member_id=CAST(:id AS uuid) AND left_at IS NULL").param("id", after[0]).query(String::class.java).list())
+            .isEqualTo(listOf(team))
+        val waiting = mapper.readTree(manage("GET", "/invitations?status=pending&memberStatus=invited&limit=100", null, token).body()).path("items").toList()
+            .filter { it.path("email").asString() == "again@example.test" }
+        assertThat(waiting.map { it.path("invitationId").asString() }).isEqualTo(listOf(second.path("invitationId").asString()))
+        assertThat(waiting.single().path("memberId").asString()).isEqualTo(before[0])
+        assertThat(waiting.single().path("memberVersion").asLong()).isEqualTo(after[3])
+        // 취소한 코드는 죽은 채이고 새 코드로만 가입한다.
+        val signupBody = mapOf("code" to first.path("code").asString(), "email" to "again@example.test", "password" to password)
+        assertThat(post("signup", signupBody).statusCode()).isEqualTo(409)
+        assertThat(post("signup", signupBody + ("code" to second.path("code").asString())).statusCode()).isEqualTo(201)
+        assertThat(invite("member", null).path("status").asString()).isEqualTo("already_member")
+    }
+
+    @Test fun `만료만 된 초대의 대기자는 다시 초대하지 않고 재발급으로 살린다`() {
+        val token = adminToken()
+        val input = mapOf("invitations" to listOf(mapOf("email" to "lapsed@example.test", "teamId" to null, "role" to "member")))
+        val issued = mapper.readTree(manage("POST", "/invitations/batch", input, token).body()).path("results")[0]
+        val id = UUID.fromString(issued.path("invitationId").asString())
+        jdbc.sql("UPDATE enrollment.invitations SET expires_at=:past WHERE id=:id").param("past", java.sql.Timestamp.from(clock.now.minusSeconds(60))).param("id", id).update()
+        val again = mapper.readTree(manage("POST", "/invitations/batch", input, token).body()).path("results")[0]
+        assertThat(again.path("status").asString()).isEqualTo("already_invited")
+        assertThat(again.path("code").isNull).isTrue()
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.invitations WHERE target_member_id=(SELECT target_member_id FROM enrollment.invitations WHERE id=:id)").param("id", id).query(Int::class.java).single()).isEqualTo(1)
+        assertThat(manage("POST", "/invitations/$id/reissue", emptyMap<String, String>(), token).statusCode()).isEqualTo(200)
+    }
+
     @Test fun `재발급해도 이미 소비한 설치 권한은 다시 열리지 않는다`() {
         val token = adminToken()
         val issued = mapper.readTree(manage("POST", "/invitations/batch", mapOf("invitations" to listOf(mapOf("email" to "consumed@example.test", "role" to "member"))), token).body()).path("results")[0]
