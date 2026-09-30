@@ -12,7 +12,7 @@ import java.time.Duration
 @ConfigurationProperties(prefix = "pulsemetry.dashboard")
 data class DashboardApiProperties(
 
-	/** 503 응답의 `Retry-After`. 초 단위로 싣는다. */
+	/** 503 응답과 진행 중인 작업 조회(ADR 0039)의 `Retry-After`. 초 단위로 싣는다. */
 	val retryAfter: Duration,
 
 	val clickhouse: ClickHouse,

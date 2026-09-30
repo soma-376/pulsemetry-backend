@@ -18,9 +18,11 @@ import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheClient
 import com.team376.pulsemetry.dashboard.request.PageCursorCodec
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
 import com.team376.pulsemetry.dashboard.source.ClickHouseSourceReader
+import com.team376.pulsemetry.persistence.telemetryops.RetentionOperationStore
 import com.team376.pulsemetry.persistence.telemetryops.TenantIngestSummaryStore
 import com.team376.pulsemetry.persistence.telemetryops.TenantSummaryBackfill
 import com.team376.pulsemetry.persistence.enrollment.management.VendorCatalog
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationReader
 import com.zaxxer.hikari.HikariDataSource
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.annotation.Bean
@@ -51,6 +53,13 @@ class AnalyticsConfig {
 	@Bean
 	fun ingestStatusReader(sourceDataSource: HikariDataSource, ledger: ClickHouseSourceReader, source: JdbcClient): IngestStatusReader =
 		IngestStatusReader(TenantIngestSummaryStore(sourceDataSource), TenantSummaryBackfill(sourceDataSource), ledger, source)
+
+	/** 작업 기록(`enrollment`)과 삭제 실행 기록(`telemetry_ops`)은 읽기만 한다 — 원천 계정. 쓰는 쪽은 다른 앱이다(ADR 0039). */
+	@Bean
+	fun operationReader(source: JdbcClient): OperationReader = OperationReader(source)
+
+	@Bean
+	fun retentionOperations(sourceDataSource: HikariDataSource): RetentionOperationStore = RetentionOperationStore(sourceDataSource)
 
 	/** 두 기간 모두 완전 관측일 때만 비교를 공개한다 — v1 에는 그 근거가 없다. */
 	@Bean

@@ -220,5 +220,8 @@ class SeedScenarioTest {
         assertEquals(tables.size, statements.size)
         assertTrue(statements.all { "WHERE" in it && id("A") in it && id("B") !in it && "TRUNCATE" !in it })
         assertFailsWith<IllegalArgumentException> { resetStatements("real-tenant", tables) }
+        // 작업 기록은 구성원을 가리킨다. 대상 → 작업 → 구성원 순서로 지운다.
+        val order = resetStatements("A", tables + setOf("operations", "operation_targets")).map { it.substringAfter("enrollment.").substringBefore(" ") }
+        assertTrue(order.indexOf("operation_targets") < order.indexOf("operations") && order.indexOf("operations") < order.indexOf("members"))
     }
 }

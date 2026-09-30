@@ -44,6 +44,7 @@
 | `/vendors` | limit=20(최대 100), cursor, snapshotId | VendorsResponse |
 | `/vendors/{vendorId}` | 없음 | VendorResponse |
 | `/installations` | policyStatus=outdated, limit=20(최대 100), cursor, snapshotId | InstallationsResponse |
+| `/operations/{operationId}` | 없음 | OperationResponse |
 
 기간은 필수 `startDate`, `endDate` (`YYYY-MM-DD`, 종료일 포함, 1~366일)와 선택 `timeZone`이다.
 시간대는 `Asia/Seoul`만 지원하며 생략 시에도 같은 값이다.
@@ -91,6 +92,45 @@ type Usage = {
 - 최근 수신만으로 수집 정상·장애를 확정하지 않는다. unknown/empty를 정상으로 바꾸지 않는다.
 - 수동 계약의 좌석 수·월 단가는 저장·조회하지만 실제 벤더 좌석 사용/회수는 연결하지 않는다.
 - 알림·회수 실행·기존 설치로의 정책 배포·보존 설정 조작은 capability=false 또는 unavailable 상태다.
+
+### 작업 상태 조회
+
+`GET /api/v1/organizations/{organizationId}/operations/{operationId}` — 명령이 접수한 뒤 요청 밖에서 끝나는 일의 상태다(ADR 0039).
+이 앱은 읽기만 한다. 작업을 만들고 결과를 기록하는 쪽은 그 명령을 받은 앱과 실행 주체이며, 기록은 `enrollment.operations`·`operation_targets`에 있다.
+snapshot을 쓰지 않는 현재 상태 조회다.
+
+```ts
+type OperationResponse = {
+  operationId: string;
+  kind: "seat_reclaim" | "seat_restore" | "installation_notification" | "retention_cleanup";
+  status: "pending" | "running" | "awaiting_admin_action" | "succeeded" | "partially_failed" | "failed";
+  createdAt: string;
+  completedAt: string | null; // succeeded·partially_failed·failed일 때만 값이 있다
+  results: {
+    targetId: string; // 무엇의 ID인지는 kind가 정한다
+    status: "pending" | "awaiting_admin_action" | "succeeded" | "failed";
+    reason: string | null; // failed일 때의 실패 분류 코드
+    action: string | null; // 관리자가 시스템 밖에서 해야 하는(했던) 조치의 코드
+  }[];
+  canRestore: boolean;
+  restoreUntil: string | null;
+  retention: {
+    status: "running" | "incomplete" | "logically_deleted" | "failed";
+    requestedBefore: string; deletedBefore: string | null;
+    startedAt: string; finishedAt: string | null;
+  } | null;
+};
+```
+
+- 작업의 `status`는 대상 결과에서 계산한 값이다. 기다리는 대상이 남아 있으면 `running`, 기다리는 대상이 없고 조치 대기가 남아 있으면 `awaiting_admin_action`,
+  모두 끝났으면 전부 성공일 때만 `succeeded`다. 성공이 하나도 없으면 `failed`, 섞였으면 `partially_failed`다. `results`는 작업에 넣은 순서다.
+- `awaiting_admin_action`은 시스템이 끝낼 수 없는 대상이다. 관리자가 `action`의 조치를 시스템 밖에서 하고 확인해야 성공이 된다. 자동으로 성공이 되지 않는다.
+- `Retry-After`(초)는 `pending`·`running`에만 싣는다. 값은 `pulsemetry.dashboard.retry-after`다. 조치 대기와 끝난 작업에는 없다 — 클라이언트는 헤더가 없으면 반복 조회를 멈춘다.
+- `canRestore`는 성공한 대상이 있는 끝난 `seat_reclaim`이고 `restoreUntil` 전이며, 그 회수를 되돌리는 실패하지 않은 복원 작업이 없을 때만 true다.
+- `retention`은 `retention_cleanup` 작업이 가리키는 가장 최근 삭제 실행(`telemetry_ops.retention_operations`)이다. 아직 실행된 적이 없으면 null이다.
+  `logically_deleted`는 논리 삭제 완료이며 물리 제거 완료가 아니다. 삭제한 행 수와 상세 문구는 싣지 않는다.
+- 그 조직에 없는 작업은 404 `not_found`다. 다른 조직의 작업, 없는 ID, UUID가 아닌 ID가 같은 응답이다. **실패한 작업은 404가 아니라 200과 `status=failed`다.**
+- 이 저장소에는 아직 작업을 만드는 명령이 없다. 첫 명령이 생기기 전까지 이 조회가 돌려줄 작업은 없다.
 
 ## 3. 벤더와 플랜 카탈로그
 
