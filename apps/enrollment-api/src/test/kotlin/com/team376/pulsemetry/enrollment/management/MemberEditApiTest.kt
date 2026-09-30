@@ -303,6 +303,27 @@ class MemberEditApiTest : AbstractUserAuthApiTest() {
         assertThat(errorCode(invalid)).isEqualTo("invalid_request")
     }
 
+    @Test fun `초대 목록은 대상 구성원의 상태를 싣고 그 상태로 거른다`() {
+        val token = adminToken()
+        val waiting = json(manage("POST", "/invitations/batch",
+            mapOf("invitations" to listOf(mapOf("email" to "waiting@example.test", "teamId" to null, "role" to "member"))), token)).path("results")[0].path("invitationId").asString()
+        fun items(query: String) = json(manage("GET", "/invitations?$query", null, token)).path("items").toList()
+
+        // setup 의 초대는 가입을 마친 구성원(active)의 것이고, 방금 발급한 초대의 대상은 아직 invited 다.
+        val all = items("limit=100")
+        assertThat(all.first { it.path("invitationId").asString() == waiting }.path("memberStatus").asString()).isEqualTo("invited")
+        assertThat(all.first { it.path("memberId").asString() == member.toString() }.path("memberStatus").asString()).isEqualTo("active")
+        // 둘 다 초대 상태는 pending 이다 — 아직 합류하지 않은 사람은 구성원 상태로 가른다.
+        assertThat(all.map { it.path("status").asString() }.toSet()).containsExactly("pending")
+        assertThat(items("limit=100&status=pending&memberStatus=invited").map { it.path("invitationId").asString() }.toMutableList()).containsExactly(waiting)
+        assertThat(items("limit=100&memberStatus=active").map { it.path("memberId").asString() }.toMutableList()).containsExactly(member.toString())
+        assertThat(items("limit=100&memberStatus=suspended")).isEmpty()
+
+        val invalid = manage("GET", "/invitations?memberStatus=removed", null, token)
+        assertThat(invalid.statusCode()).isEqualTo(400)
+        assertThat(errorCode(invalid)).isEqualTo("invalid_request")
+    }
+
     /** 초대 → 가입 → 로그인한 일반 구성원의 토큰 봉투. */
     private fun session(email: String): JsonNode {
         val id = data.member(tenant, email, role = MemberRole.member, status = MemberStatus.invited).id

@@ -695,7 +695,7 @@ PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계
 | `GET /onboarding` | 없음 | 200 OnboardingState |
 | `PUT /collection-policy` | `{expectedVersion,collectRawContent}` | 200 PolicySaved |
 | `POST /onboarding/complete` | `{}`, Idempotency-Key | 200 OnboardingState |
-| `GET /invitations` | limit=20(1~100), cursor, status? | 200 InvitationPage |
+| `GET /invitations` | limit=20(1~100), cursor, status?, memberStatus? | 200 InvitationPage |
 | `POST /invitations/{invitationId}/reissue` | `{}`, Idempotency-Key | 200 ReissuedInvitation |
 
 ### 13.1 상태와 완료
@@ -767,6 +767,7 @@ type InvitationPage = {
     revokedAt: string | null;
     status: "pending" | "expired" | "used" | "revoked";
     memberId: string;
+    memberStatus: "invited" | "active" | "suspended";
     team: { teamId: string; teamName: string } | null;
     memberVersion: number;
   }[];
@@ -787,6 +788,8 @@ pending은 가입 또는 설치 중 하나만 남은 경우도 포함하므로 �
 `memberId`는 초대 대상 구성원의 불변 ID다. `team`과 `memberVersion`은 그 구성원의 현재 팀과 version이며,
 초대 대기자의 팀·역할 편집(§12 `PATCH /members/{memberId}`)에 그대로 쓴다. 이메일로 초대와 구성원을 짝짓지 않는다.
 `role`은 구성원에 저장된 현재 역할이다. 편집하면 목록의 값도 바뀐다.
+`memberStatus`는 초대 대상 구성원의 상태다. 가입이나 설치 중 하나를 마친 구성원은 `active`이고 초대는 남은 용도 때문에 `pending`일 수 있다.
+아직 합류하지 않은 사람만 보려면 `memberStatus=invited`로 거른다. 값은 `invited`·`active`·`suspended`이고 그 밖은 400 `invalid_request`다.
 
 재발급은 만료 여부와 관계없이 아직 폐기되지 않고 소비 권한이 남은 초대에만 허용한다.
 기존 코드를 즉시 폐기하고 새 ID·코드·72시간 만료를 만든다. 두 작업은 원자적이다.

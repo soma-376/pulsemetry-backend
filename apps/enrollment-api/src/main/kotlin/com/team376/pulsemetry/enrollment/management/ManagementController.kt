@@ -77,9 +77,9 @@ class ManagementController(private val auth: UserAuthService, private val store:
     @GetMapping("/invitations")
     fun invitations(@PathVariable organizationId: UUID, @RequestParam(defaultValue = "20") limit: Int,
         @RequestParam(required = false) cursor: String?, @RequestParam(required = false) status: String?,
-        request: HttpServletRequest): ResponseEntity<JsonNode> {
+        @RequestParam(required = false) memberStatus: String?, request: HttpServletRequest): ResponseEntity<JsonNode> {
         authorize(organizationId, request)
-        return ResponseEntity.ok().header("Cache-Control", "no-store").body(store.invitations(organizationId, limit, cursor, status))
+        return ResponseEntity.ok().header("Cache-Control", "no-store").body(store.invitations(organizationId, limit, cursor, status, memberStatus))
     }
 
     private fun authorize(tenant: UUID, request: HttpServletRequest): UUID {

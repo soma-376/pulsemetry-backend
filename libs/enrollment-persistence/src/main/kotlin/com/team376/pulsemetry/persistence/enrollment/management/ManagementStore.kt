@@ -34,8 +34,8 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
     private val key = SecretKeySpec(Base64.getDecoder().decode(encryptionKey).also { require(it.size == 32) }, "AES")
 
     fun onboarding(tenant: UUID): JsonNode = onboarding.state(tenant)
-    fun invitations(tenant: UUID, limit: Int, cursor: String?, status: String? = null): JsonNode =
-        onboarding.invitations(tenant, limit, cursor?.let(::uuid), status, clock.instant())
+    fun invitations(tenant: UUID, limit: Int, cursor: String?, status: String? = null, memberStatus: String? = null): JsonNode =
+        onboarding.invitations(tenant, limit, cursor?.let(::uuid), status, memberStatus, clock.instant())
 
     fun command(tenant: UUID, actor: UUID, operation: String, body: JsonNode, idempotencyKey: String?, version: Long? = null): JsonNode =
         requireNotNull(tx.execute {
