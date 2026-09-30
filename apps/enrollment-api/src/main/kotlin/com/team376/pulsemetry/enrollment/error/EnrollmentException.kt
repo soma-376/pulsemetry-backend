@@ -45,6 +45,12 @@ class EnrollmentException(
 			"요청 형식이 올바르지 않습니다. CLI 를 최신 버전으로 업데이트한 뒤 다시 시도하세요.",
 		)
 
+		/** 설치 보고(heartbeat)의 본문이 계약을 어긴다. 데몬은 이번 보고를 버리고 다음 주기에 새로 보낸다. */
+		fun malformedReport() = EnrollmentException(
+			EnrollmentErrorCode.INVALID_REQUEST,
+			"설치 보고 형식이 올바르지 않습니다. 데몬을 최신 버전으로 업데이트하세요.",
+		)
+
 		fun invitationNotFound() = EnrollmentException(
 			EnrollmentErrorCode.INVITATION_NOT_FOUND,
 			"초대 코드를 찾을 수 없습니다. 관리자에게 새 코드를 요청하세요.",

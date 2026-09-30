@@ -89,6 +89,12 @@ pulsemetry:
     allowed-origins: ${PULSEMETRY_INQUIRIES_ALLOWED_ORIGINS:}
     # 접수된 문의를 알릴 담당자 주소. 메일을 같이 켜면 필요하다.
     notification-recipient: ${PULSEMETRY_INQUIRIES_NOTIFICATION_RECIPIENT:}
+  # 설치 보고(heartbeat) 수신(ADR 0040). 켜면 아래 값이 모두 필요하다 — 비어 있으면 기동이 실패한다.
+  heartbeat:
+    enabled: ${PULSEMETRY_HEARTBEAT_ENABLED:false}
+    report-interval: ${PULSEMETRY_HEARTBEAT_REPORT_INTERVAL:}
+    retry-after: ${PULSEMETRY_HEARTBEAT_RETRY_AFTER:}
+    history-retention: ${PULSEMETRY_HEARTBEAT_HISTORY_RETENTION:}
   # 초대 응답의 설치 명령과 부트스트랩 스크립트가 쓰는 주소. Host 헤더에서 유도하지 않는다.
   public-base-url: ${PULSEMETRY_PUBLIC_BASE_URL:http://localhost:8080}
   admin:

@@ -31,8 +31,9 @@
 
 위 흐름의 마지막 단계(설정 병합·백업·daemon 자동 실행 등록)는 클라이언트의 몫이며 서버는 관여하지 않는다.
 
-**범위 밖**: 웹 대시보드 조회 API, heartbeat,
+**범위 밖**: 웹 대시보드 조회 API,
 `uninstall`/`repair`, 데이터 파이프라인.
+설치된 데몬의 주기 보고(heartbeat)는 §4.5가 받는다. 그 값으로 수집 상태와 적용 현황을 판정하는 것은 조회 API의 몫이다.
 초대 이메일은 조직 관리 API의 초대(§12·§13.3)가 보낸다. 관리자 키 경로(`POST /v1/invitations`)는 메일을 보내지 않고 설치 명령을 응답으로 돌려준다.
 
 ---
@@ -43,6 +44,7 @@
 |---|---|---|---|
 | POST | `/v1/enroll` | 없음 (초대 코드 자체가 자격) | 201 |
 | POST | `/v1/installations/telemetry-token` | `Authorization: Bearer <installation_token>` | 200 |
+| POST | `/v1/installations/{installation_id}/heartbeat` | `Authorization: Bearer <installation_token>` | 200 |
 | GET | `/v1/manifest` | `Authorization: Bearer <사용자 RT>` | 200 |
 | GET | `/v1/healthz` | 없음 | 200 |
 | POST | `/v1/invitations` | `X-Admin-Token` | 201 |
@@ -252,6 +254,50 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 토큰과 초대 코드 원본을 **로그에 남기지 않는다.** 에러 응답에도 담지 않는다 —
 파싱 실패 메시지에는 요청 본문 조각이 섞여 있어 그대로 흘리면 코드가 새어 나간다.
 
+### 4.5 설치 보고 — `POST /v1/installations/{installation_id}/heartbeat`
+
+데몬이 생존, 적용한 manifest 판, 수집 경로의 상태를 주기적으로 보고한다. 요청·응답의 필드와 데몬의 동작은
+허브 `contracts/enrollment-api.md` §7이 정하고, 기계 판독 원본은 telemetryctl `contracts/installation-heartbeat.schema.json`이다.
+서버의 검증과 저장은 [ADR 0040](adr/0040-설치-보고는-최신-상태-한-행과-수집-구간-이력으로-저장한다.md)을 따른다.
+`pulsemetry.heartbeat.enabled`로 켠다. 꺼져 있으면 이 경로는 404다.
+
+**처리 순서**
+
+1. 자격증명을 본다. 판정은 토큰 재발급(§4.3)과 같다 — 없거나 무효면 401 `unauthorized`. `ptt_`와 사용자 토큰은 받지 않는다. **인증되지 않은 요청의 본문은 읽지 않는다.**
+2. 본문을 읽는다(16 KiB까지, `Content-Type: application/json`). 계약 스키마가 받는 본문을 받고 거부하는 본문을 400 `invalid_request`로 거부한다.
+   이 경로는 모르는 키를 무시한다. `receiving_since`·`last_delivered_at`이 `sent_at`보다 뒤면 400이다.
+3. 설치 행을 잠근다. 폐기된 설치면 403 `installation_revoked`, 경로의 `installation_id`가 자격증명의 설치와 다르면 403 `forbidden`이다.
+4. 한 트랜잭션으로 기록하고 200으로 답한다(`Cache-Control: no-store`).
+
+**기록하는 것**
+
+| 곳 | 값 |
+|---|---|
+| `installations.last_seen_at` | **서버가 받은 시각.** 데몬 시계의 값이 아니다 |
+| `installations.client_version` | 데몬 버전(50자까지). `updated_at`은 바꾸지 않는다 |
+| `installation_heartbeats` | 설치당 한 행 — 마지막 보고의 값 전부(프로세스 식별자, 버전·아키텍처, 보고한 판과 그 manifest, 수집 경로, 누적 개수, 시각) |
+| `installation_collection_segments` | 수집 중이었다고 보고로 확인된 구간. 손실이 보고된 구간은 따로 남긴다(`lost` > 0) |
+| `installation_manifest_assignments.applied_at` | 보고한 판이 그 조직의 manifest일 때, 그 판을 **처음** 보고받은 시각. 배정 행이 없으면 만든다 |
+
+- 본문의 시각은 (받은 시각 − `sent_at`)만큼 옮겨 저장한다. 데몬 시계가 틀려도 구간의 길이는 맞다.
+- 수집 구간은 경로가 `local`이고 상위 전달기가 돌고 수신기가 듣고 있을 때만 쓴다. 같은 프로세스가 손실 없이 이어 보고하면 구간을 늘리고,
+  프로세스가 바뀌거나 수집이 끊겼다 이어지면 새 구간을 연다. 잃은 개수가 늘면 직전 보고부터 이번 보고까지가 손실 구간이다. 등록 시각보다 앞은 자른다.
+- **적용 확인은 보고로만 생긴다.** enroll과 정책 저장은 `applied_at`을 채우지 않는다. 서버가 그 조직의 판으로 갖고 있지 않은 판을 보고하면
+  적용 확인을 기록하지 않고 응답의 `acknowledged_config_revision`은 null이다. 그래도 생존은 기록한다.
+- 설치가 **지금 집행하는 판**은 `installation_heartbeats.applied_config_revision`이다. `applied_at`은 그 판을 적용한 적이 있다는 이력이다.
+- 구간은 끝 시각이 `history-retention`보다 오래되면 그 설치의 다음 보고 때 지운다.
+
+**응답**
+
+```json
+{"received_at": "2026-09-30T01:05:00.412Z", "expected_config_revision": 4, "acknowledged_config_revision": 3, "report_interval_seconds": 300}
+```
+
+`expected_config_revision`은 그 조직의 활성 manifest 판(없으면 null), `report_interval_seconds`는 `pulsemetry.heartbeat.report-interval`이다.
+응답은 manifest를 싣지 않는다 — 재조회는 §11.1이다.
+
+저장소 장애는 **503 `heartbeat_unavailable` + `Retry-After`** 다. 401·403으로 돌리지 않는다 — 데몬이 재등록이 필요하다고 오해한다.
+
 ---
 
 ## 5. Manifest
@@ -368,6 +414,8 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | 권한 부족 (admin·owner 아님) | 403 | `forbidden` |
 | 대상 member 정지됨 (초대 발급·enroll) | 403 | `forbidden` |
 | installation 폐기됨 | 403 | `installation_revoked` |
+| 설치 보고의 경로 설치가 자격증명의 설치와 다름 (§4.5) | 403 | `forbidden` |
+| 설치 보고의 저장소 장애 (§4.5) | 503 | `heartbeat_unavailable` |
 | 알 수 없는 경로 | 404 | `not_found` |
 | 지원하지 않는 메서드 | 405 | `method_not_allowed` |
 | 문의 접수의 요청 수 초과 (§2.2) | 429 | `rate_limited` |
@@ -408,6 +456,10 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.inquiries.rate-limit.requests` | 없음 | 출처 하나가 창 안에 보낼 수 있는 요청 수(1 이상) |
 | `pulsemetry.inquiries.rate-limit.window` | 없음 | 요청 수를 세는 창(ISO-8601 기간) |
 | `pulsemetry.inquiries.allowed-origins` | 없음 | 문의 폼을 띄우는 프론트 출처(쉼표로 구분) |
+| `pulsemetry.heartbeat.enabled` | `false` | 설치 보고 수신(§4.5)을 켠다. 켜면 아래 세 값이 **모두 필요하다 — 하나라도 비면 기동 실패** |
+| `pulsemetry.heartbeat.report-interval` | 없음 | 응답으로 데몬에 주는 보고 주기(ISO-8601 기간). 계약의 범위인 60초 이상 3600초 이하 |
+| `pulsemetry.heartbeat.retry-after` | 없음 | 저장소 장애(503)의 `Retry-After`(1초 이상) |
+| `pulsemetry.heartbeat.history-retention` | 없음 | 수집 구간 이력을 남겨 두는 기간(하루 이상) |
 
 DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_PASSWORD` 로 덮어쓴다.
 메일의 키는 `PULSEMETRY_MAIL_ENABLED` · `_FROM` · `_ENCRYPTION_KEY` · `_DISPATCH_INTERVAL` · `_RETRY_INTERVAL` · `_MAX_ATTEMPTS` · `_SEND_TIMEOUT` ·
@@ -415,6 +467,7 @@ DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_P
 수락 주소와 통지 수신자는 `PULSEMETRY_INVITATION_ACCEPT_URL` · `PULSEMETRY_INQUIRIES_NOTIFICATION_RECIPIENT` 로 준다.
 문의 접수의 다섯 키는 `PULSEMETRY_INQUIRIES_ENABLED` · `_DUPLICATE_WINDOW` · `_RATE_LIMIT_REQUESTS` · `_RATE_LIMIT_WINDOW` · `_ALLOWED_ORIGINS` 로 준다.
 local 프로필은 개발용 값(10분, 1분에 10회, 출처 3000·3107)으로 켠다. 운영 수치의 배포 기본값은 두지 않는다.
+설치 보고의 네 키는 `PULSEMETRY_HEARTBEAT_ENABLED` · `_REPORT_INTERVAL` · `_RETRY_AFTER` · `_HISTORY_RETENTION` 으로 준다. local 프로필은 1분 · 5초 · 400일로 켠다.
 
 ---
 
@@ -910,6 +963,7 @@ Flyway가 enrollment 스키마의 진실원이다. 관련 추가 마이그레이
 | V13 | 도입 문의 접수(`inquiries`)와 출처별 문의 요청 수 제한(`inquiry_attempts`) |
 | V14 | 메일 outbox(`mail_outbox`) — 적재·선점·결과와 암호화한 대기 본문 (ADR 0037) |
 | V15 | 공통 작업 기록(`operations`)과 대상별 결과(`operation_targets`) — 비동기 작업의 상태·사유·조치 대기·복원 기한 (ADR 0039) |
+| V16 | 설치 보고의 최신 상태(`installation_heartbeats`)와 수집 구간 이력(`installation_collection_segments`) (ADR 0040) |
 
 V12는 이 표에 없다 — 사용자 로그인 방식 작업이 예약한 번호다. Flyway는 이미 적용한 판보다 낮은 번호를 뒤늦게 받지 않으므로,
 V13이 먼저 적용된 DB에는 V12를 넣을 수 없다. 머지 순서가 뒤집히면 그 작업이 번호를 다시 매긴다.

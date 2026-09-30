@@ -95,6 +95,15 @@ interface InstallationRepository : JpaRepository<Installation, UUID> {
 	 */
 	@Query("SELECT i.memberId FROM Installation i WHERE i.id = :id")
 	fun findMemberIdById(@Param("id") id: UUID): UUID?
+
+	/**
+	 * 설치가 보고한 생존 시각과 데몬 버전을 남긴다 (ADR 0040). `updated_at` 은 건드리지 않는다 — 주기 보고는 설치의 변경이 아니다.
+	 *
+	 * 엔티티 setter 대신 UPDATE 문이다. 같은 트랜잭션의 다른 수정 쿼리가 영속성 컨텍스트를 비워도 순서에 의존하지 않는다.
+	 */
+	@Modifying(flushAutomatically = true, clearAutomatically = true)
+	@Query("UPDATE Installation i SET i.lastSeenAt = :now, i.clientVersion = :version WHERE i.id = :id")
+	fun recordSeen(@Param("id") id: UUID, @Param("now") now: Instant, @Param("version") version: String): Int
 }
 
 interface InstallationCredentialRepository : JpaRepository<InstallationCredential, UUID> {
@@ -143,4 +152,24 @@ interface InstallationManifestAssignmentRepository :
 	JpaRepository<InstallationManifestAssignment, InstallationManifestAssignmentId> {
 
 	fun findAllByIdInstallationId(installationId: UUID): List<InstallationManifestAssignment>
+
+	/**
+	 * 설치가 그 manifest 를 적용했다고 보고했다 (ADR 0040). 배정 행이 없으면 만들고, `applied_at` 이 비어 있을 때만 채운다 —
+	 * 적용 확인 시각은 그 판을 **처음** 보고받은 시각이고 같은 보고를 다시 받아도 바뀌지 않는다.
+	 */
+	@Modifying(flushAutomatically = true, clearAutomatically = true)
+	@Query(
+		nativeQuery = true,
+		value = """
+		INSERT INTO enrollment.installation_manifest_assignments (installation_id, manifest_id, assigned_at, applied_at)
+		VALUES (:installationId, :manifestId, :now, :now)
+		ON CONFLICT (installation_id, manifest_id)
+		DO UPDATE SET applied_at = COALESCE(enrollment.installation_manifest_assignments.applied_at, EXCLUDED.applied_at)
+		""",
+	)
+	fun acknowledge(
+		@Param("installationId") installationId: UUID,
+		@Param("manifestId") manifestId: UUID,
+		@Param("now") now: Instant,
+	): Int
 }

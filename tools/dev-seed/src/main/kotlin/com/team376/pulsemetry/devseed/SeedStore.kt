@@ -209,7 +209,7 @@ internal fun resetStatements(scenario: String, present: Set<String>): List<Strin
         "organization_onboarding" to "tenant_id=$tenant", "management_commands" to "tenant_id=$tenant", "vendor_contract_versions" to "tenant_id=$tenant", "managed_vendors" to "tenant_id=$tenant") + listOf(
         "user_refresh_tokens" to "session_id IN (SELECT id FROM enrollment.user_sessions WHERE member_id IN ($members))",
         "user_sessions" to "member_id IN ($members)", "user_authorization_codes" to "member_id IN ($members)",
-    ) + listOf("telemetry_tokens", "installation_credentials", "installation_manifest_assignments").map { it to "installation_id IN ($installations)" } +
+    ) + listOf("installation_collection_segments", "installation_heartbeats", "telemetry_tokens", "installation_credentials", "installation_manifest_assignments").map { it to "installation_id IN ($installations)" } +
         listOf("contract_memberships", "contract_token_discounts", "contract_term_commitments").map { it to "contract_id IN ($contracts)" } +
         listOf("contracts", "installations", "invitations", "manifests").map { it to "tenant_id=$tenant" } +
         listOf("team_memberships" to "member_id IN ($members)") + listOf("teams", "members").map { it to "tenant_id=$tenant" } + listOf("tenants" to "id=$tenant")

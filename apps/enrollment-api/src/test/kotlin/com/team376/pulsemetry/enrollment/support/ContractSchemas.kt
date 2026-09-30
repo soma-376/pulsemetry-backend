@@ -26,6 +26,7 @@ object ContractSchemas {
 
 	const val ENVELOPE_ID: String = BASE_IRI + "enrollment-envelope.schema.json"
 	const val MANIFEST_ID: String = BASE_IRI + "enrollment-manifest.schema.json"
+	const val HEARTBEAT_ID: String = BASE_IRI + "installation-heartbeat.schema.json"
 
 	private val contractsDir: Path by lazy {
 		val configured = System.getProperty("pulsemetry.contracts.dir")
@@ -43,6 +44,7 @@ object ContractSchemas {
 					MANIFEST_ID to read("enrollment-manifest.schema.json"),
 					BASE_IRI + "user-auth.schema.json" to read("user-auth.schema.json"),
 					BASE_IRI + "manifest-resync.schema.json" to read("manifest-resync.schema.json"),
+					HEARTBEAT_ID to read("installation-heartbeat.schema.json"),
 				),
 			)
 		}
@@ -70,6 +72,12 @@ object ContractSchemas {
 	/** 사용자 AT 의 클레임. */
 	fun userClaimsSchema(): Schema =
 		registry.getSchema(SchemaLocation.of(BASE_IRI + "user-auth.schema.json#/\$defs/access_token_claims"))
+
+	/** `POST /v1/installations/{installation_id}/heartbeat` 요청 본문. */
+	fun heartbeatRequestSchema(): Schema = registry.getSchema(SchemaLocation.of("$HEARTBEAT_ID#/\$defs/request"))
+
+	/** 같은 경로의 200 응답. */
+	fun heartbeatResponseSchema(): Schema = registry.getSchema(SchemaLocation.of("$HEARTBEAT_ID#/\$defs/response"))
 
 	fun validate(schema: Schema, json: String): List<Error> = schema.validate(json, InputFormat.JSON)
 

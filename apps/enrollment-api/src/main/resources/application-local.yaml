@@ -43,6 +43,11 @@ pulsemetry:
       window: ${PULSEMETRY_INQUIRIES_RATE_LIMIT_WINDOW:PT1M}
     allowed-origins: http://localhost:3000,http://localhost:3107
     notification-recipient: ${PULSEMETRY_INQUIRIES_NOTIFICATION_RECIPIENT:sales@pulsemetry.example.test}
+  heartbeat:
+    enabled: true
+    report-interval: ${PULSEMETRY_HEARTBEAT_REPORT_INTERVAL:PT1M}
+    retry-after: ${PULSEMETRY_HEARTBEAT_RETRY_AFTER:PT5S}
+    history-retention: ${PULSEMETRY_HEARTBEAT_HISTORY_RETENTION:P400D}
   admin:
     api-token: ${PULSEMETRY_ADMIN_API_TOKEN:local-development-admin-token}
   token-hash-secret: ${PULSEMETRY_TOKEN_HASH_SECRET:local-development-token-hash-secret}

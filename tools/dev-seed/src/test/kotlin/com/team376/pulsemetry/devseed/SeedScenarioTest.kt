@@ -223,5 +223,8 @@ class SeedScenarioTest {
         // 작업 기록은 구성원을 가리킨다. 대상 → 작업 → 구성원 순서로 지운다.
         val order = resetStatements("A", tables + setOf("operations", "operation_targets")).map { it.substringAfter("enrollment.").substringBefore(" ") }
         assertTrue(order.indexOf("operation_targets") < order.indexOf("operations") && order.indexOf("operations") < order.indexOf("members"))
+        // 설치 보고는 설치를 가리킨다. 설치보다 먼저 지운다.
+        val reports = resetStatements("A", tables + setOf("installation_heartbeats", "installation_collection_segments")).map { it.substringAfter("enrollment.").substringBefore(" ") }
+        assertTrue(listOf("installation_heartbeats", "installation_collection_segments").all { it in reports && reports.indexOf(it) < reports.indexOf("installations") })
     }
 }
