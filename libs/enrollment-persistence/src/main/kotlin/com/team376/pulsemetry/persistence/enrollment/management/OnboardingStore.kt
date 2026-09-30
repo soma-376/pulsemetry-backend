@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.persistence.enrollment.management
 
 import com.team376.pulsemetry.persistence.enrollment.mail.MailDeliveryView
+import com.team376.pulsemetry.persistence.enrollment.operation.RetentionCleanupRequests
 import org.springframework.jdbc.core.simple.JdbcClient
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
@@ -12,6 +13,8 @@ import java.util.UUID
 /** 쓰기는 ManagementStore의 조직 잠금·트랜잭션 안에서 실행한다. */
 class OnboardingStore(private val jdbc: JdbcClient, private val mapper: ObjectMapper,
     private val initialManifest: () -> JsonNode,
+    /** 집계 보존을 줄인 저장이 남기는 보존 정리 요청(ADR 0047). */
+    private val cleanups: RetentionCleanupRequests,
     /** 초대 메일을 적재하는 배포인가. 메일이 없는 초대의 발송 상태 사유를 가른다. */
     private val mailEnabled: Boolean = false) {
     private fun node(value: Any): JsonNode = mapper.valueToTree(value)
@@ -67,6 +70,9 @@ class OnboardingStore(private val jdbc: JdbcClient, private val mapper: ObjectMa
         val manifestVersion = if (changesChoice) saveManifest(tenant, actor, current, choice.booleanValue(), now) else current?.first ?: 0L
         val settings = if (changesSettings) saveSettings(tenant, actor, stored,
             if (changesReclaim) reclaim else stored.reclaimIdleDays, if (changesRetention) retention else stored.aggregateRetentionMonths, now) else stored
+        // 집계 보존이 바뀌었으면 같은 트랜잭션에서 보존 정리 요청을 정리한다 — 줄였으면 요청과 작업이 생긴다(ADR 0047).
+        val cleanup = if (settings.aggregateRetentionMonths != stored.aggregateRetentionMonths)
+            cleanups.onRetentionChanged(tenant, actor, stored.aggregateRetentionMonths, settings.aggregateRetentionMonths, now) else null
         val collect = if (changesChoice) choice.booleanValue() else current?.second?.path("privacy")?.let { privacy ->
             privacy.path("collect_user_prompts").booleanValue().takeIf { it == privacy.path("collect_assistant_responses").booleanValue() }
         }
@@ -74,8 +80,8 @@ class OnboardingStore(private val jdbc: JdbcClient, private val mapper: ObjectMa
             "application" to "future_enrollments", "existingInstallationsUpdated" to false,
             "reclaimIdleDays" to settings.reclaimIdleDays, "aggregateRetentionMonths" to settings.aggregateRetentionMonths,
             "settingsVersion" to settings.version, "settingsUpdatedAt" to settings.updatedAt?.toString(),
-            // 보존 기간 단축의 정리 작업은 아직 만들지 않는다 — 요청으로 남기는 일은 보존 작업 연결이 한다.
-            "cleanupOperationId" to null))
+            // 이 저장이 만든 보존 정리 작업. 진행은 작업 상태 조회로 본다.
+            "cleanupOperationId" to cleanup))
     }
 
     /** 허용 목록의 정수(또는 [nullable] 이면 null). 그 밖은 400 이다. */

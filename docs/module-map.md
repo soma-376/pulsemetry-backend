@@ -124,6 +124,8 @@ pulsemetry-backend
 fence·두 분석 테이블의 DELETE(ClickHouse) — 의 코드는 각 쓰기 소유 모듈(`:libs:telemetry-ops-persistence`·`:libs:telemetry-persistence`)에
 있고 이 앱은 조립만 한다. DDL 은 적용하지 않는다. 분석 테이블 모듈이 보강 단계를 타고 `:libs:enrollment-persistence`를 끌어오므로
 JPA·Flyway 자동설정을 끈다 — 켜 두면 대상 DB 의 `public`에 Flyway 이력 테이블이 생긴다.
+요청 모드(`--requests`, [ADR 0047](adr/0047-집계-보존-단축은-보존-정리-요청으로-남기고-보존-작업의-요청-모드가-실행한다.md))는 enrollment 의 보존 정리 요청을 선점해 같은 삭제를 실행하고
+결과를 공통 작업 기록에 옮긴다 — 그 코드는 `:libs:enrollment-persistence`(`operation`)에 있고 이 앱은 그 모듈에 직접 의존한다.
 두 번째 쓰는 주체가 생기면 `:libs:dashboard-persistence`로 내린다.
 원천 연결은 앱이 직접 세운다 — RDS는 `pulsemetry.dashboard.rds.source`로 만든 읽기 전용 주 DataSource(JPA·`JdbcClient`가 쓴다, Flyway는 끈다),
 ClickHouse는 `source/`의 읽기 전용 클라이언트다. 적재 모듈의 `ClickHouseHttpClient`와 따로 두는 것은 요구가 반대라서다(계정 인증·요청마다의
@@ -187,7 +189,7 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 | mail | `mail_outbox` | `:libs:enrollment-persistence`의 메일 outbox(`mail`) — 업무 쓰기가 같은 트랜잭션에서 적재하고, enrollment-api의 발송 작업이 선점해 결과를 기록 (ADR 0037) |
 | inquiry | `inquiries` · `inquiry_attempts` | `:libs:enrollment-persistence`의 문의 저장소(`inquiry`) — enrollment-api의 공개 접수 명령. 조직에 속하지 않으며 조직·계정·초대를 만들지 않음 |
 | installation report | `installation_heartbeats` · `installation_collection_segments` | `:libs:enrollment-persistence`의 설치 보고 저장소(`installation`) — enrollment-api가 데몬 heartbeat를 받아 기록. `installations.last_seen_at`·`installation_manifest_assignments.applied_at`은 enrollment 도메인 그대로 enrollment-api가 씀 (ADR 0040). dashboard-api는 읽기 전용 계정으로 읽어 수집 상태를 판정함 (ADR 0041) |
-| operation | `operations` · `operation_targets` | `:libs:enrollment-persistence`의 공통 작업 기록(`operation`) — 작업을 만드는 명령과 그 실행 주체가 생성·전이를 기록하고, dashboard-api는 읽기 전용 계정으로 조회만 함 (ADR 0039). 지금 생산자는 enrollment-api의 설치 업데이트 안내(`installation`의 `InstallationNotifier` — 메일 발송 결과를 대상 결과로 옮김, ADR 0043) 하나 |
+| operation | `operations` · `operation_targets` · `retention_cleanup_requests` | `:libs:enrollment-persistence`의 공통 작업 기록(`operation`) — 작업을 만드는 명령과 그 실행 주체가 생성·전이를 기록하고, dashboard-api는 읽기 전용 계정으로 조회만 함 (ADR 0039). 생산자는 enrollment-api의 설치 업데이트 안내(`installation`의 `InstallationNotifier` — 메일 발송 결과를 대상 결과로 옮김, ADR 0043)와 수집 정책 저장의 보존 정리 요청(`RetentionCleanupRequests` — 집계 보존 단축이 요청과 작업을 만들고, `:apps:retention-worker`의 요청 모드가 선점·결과 기록, ADR 0047) |
 | telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` · `telemetry_ingest_ledger` · `telemetry_retention_fence` | `:libs:telemetry-persistence` |
 | telemetry ops | RDS `telemetry_ops.tenant_ingest_summary` · `tenant_summary_backfill` · `tenant_retention_boundary` · `retention_operations` | `:libs:telemetry-ops-persistence` |
 | dashboard cache | RDS `dashboard_cache.snapshots` · `snapshot_teams` · `snapshot_members` · `snapshot_complete_days`(ADR 0042) · `snapshot_products`(관측 제품 매핑 복제, ADR 0045) · `vendor_observation_sets` · `vendor_observations`(설정의 벤더 관측 고정, ADR 0044), ClickHouse `dashboard_cache.snapshot_usage` · `snapshot_observed_days` · `snapshot_member_activity`(+ 입구 `snapshot_intake`·뷰 둘) | `:apps:dashboard-api` |

@@ -206,7 +206,8 @@ internal fun resetStatements(scenario: String, present: Set<String>): List<Strin
     val members = "SELECT id FROM enrollment.members WHERE tenant_id=$tenant"
     val installations = "SELECT id FROM enrollment.installations WHERE tenant_id=$tenant"
     val contracts = "SELECT id FROM enrollment.contracts WHERE tenant_id=$tenant"
-    val clauses = listOf("operation_targets" to "operation_id IN (SELECT id FROM enrollment.operations WHERE tenant_id=$tenant)", "operations" to "tenant_id=$tenant",
+    val clauses = listOf("operation_targets" to "operation_id IN (SELECT id FROM enrollment.operations WHERE tenant_id=$tenant)",
+        "retention_cleanup_requests" to "tenant_id=$tenant", "operations" to "tenant_id=$tenant",
         "organization_onboarding" to "tenant_id=$tenant", "organization_policy_settings" to "tenant_id=$tenant", "management_commands" to "tenant_id=$tenant", "vendor_contract_versions" to "tenant_id=$tenant", "managed_vendors" to "tenant_id=$tenant") + listOf(
         "user_refresh_tokens" to "session_id IN (SELECT id FROM enrollment.user_sessions WHERE member_id IN ($members))",
         "user_sessions" to "member_id IN ($members)", "user_authorization_codes" to "member_id IN ($members)",

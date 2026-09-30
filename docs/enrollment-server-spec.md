@@ -992,7 +992,7 @@ type PolicySaved = {
   aggregateRetentionMonths: 12 | 24 | 36 | null; // null = 무기한
   settingsVersion: number;                      // 저장 전 0
   settingsUpdatedAt: string | null;
-  cleanupOperationId: string | null;            // 보존 기간을 줄였을 때의 정리 작업. 아직 만들지 않아 늘 null
+  cleanupOperationId: string | null;            // 이 저장이 만든 보존 정리 작업(ADR 0047). 없으면 null
 };
 ```
 
@@ -1026,7 +1026,19 @@ installation_manifest_assignments를 적용 완료로 변경하지 않는다(`ap
   원문 선택과 설정을 함께 보내면 한 트랜잭션이다.
 - 설정의 판은 값이 실제로 바뀔 때만 1 오른다. 같은 값을 다시 보내면 같은 판·같은 저장 시각이다.
 - 저장하지 않은 조직의 유효값은 조회 서버가 정한다 — 회수 기준은 dashboard-api의 `pulsemetry.dashboard.members.idle-days`, 집계 보존은 무기한이다(대시보드 명세 "조직 정책 설정").
-- 집계 보존을 저장해도 지금은 아무것도 지우지 않는다(`cleanupOperationId`=null). 원문 보존 일수는 저장하지 않는다 — 원천(원본 아카이브의 수명)이 이 저장소에 없다.
+- 원문 보존 일수는 저장하지 않는다 — 원천(원본 아카이브의 수명)이 이 저장소에 없다.
+
+**집계 보존 단축 → 보존 정리 요청**(ADR 0047). 집계 보존이 바뀐 저장만 다룬다(같은 트랜잭션).
+
+| 저장 | 결과 |
+| --- | --- |
+| 줄였다(유한 값이 작아짐, 무기한 → 유한) | `retention_cleanup` 작업(대기, 대상 `analysis_source`)과 `enrollment.retention_cleanup_requests` 요청을 만들고 `cleanupOperationId`로 돌려준다 |
+| 한 번도 실행하지 않은 요청이 있다 | 그 요청을 `superseded`로 닫고 작업을 같은 사유로 실패시킨다. 새 값이 유한이면(늘린 값이라도) 새 요청을 만든다. 무기한이면 없다 |
+| 늘렸고 대체할 요청이 없다 · 무기한으로 바꿨다 | 아무것도 하지 않는다(`cleanupOperationId`=null). 지운 기록은 되돌리지 않는다 |
+
+- 경계는 저장 시각의 KST 날짜에서 N개월 전 자정이다(`as_of`에 고정 — 다시 실행해도 같은 경계).
+- 이 앱은 지우지 않는다. 실행은 `:apps:retention-worker --requests`(주기 실행은 배포 환경)가 기존 보존 삭제 순서 그대로 하고, 진행은 dashboard-api의 작업 상태 조회로 본다
+  (대시보드 명세 "작업 상태 조회" — `retention`에 가장 최근 삭제 실행의 상태).
 
 ### 13.3 초대 목록·재발급
 

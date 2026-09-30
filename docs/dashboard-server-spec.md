@@ -167,7 +167,7 @@ type ProductRef = { kind: string | null; displayName: string | null };
 - 설정의 `collectionPolicy.reclaimIdleDays`·`aggregateRetentionMonths`는 유효값이다. `version`·`effectiveAt`·`updatedBy`는 여전히 원문 선택이 실린 manifest의 것이다.
 - 구성원 화면의 `policy`(`idleDays`·`version`)와 회수 후보의 `idleDays`·`policy`는 유효 회수 기준과 **설정의 판**이다(고정 0이 아니다).
 - `rawContentRetentionDays`는 null이다. 원문 보존 기간의 원천(원본 아카이브의 수명)이 이 저장소에 없다.
-- 집계 보존 값은 표시·저장만 한다. 보존 기간 단축의 삭제는 아직 이어져 있지 않다.
+- 집계 보존을 줄인 저장은 보존 정리 작업을 만든다(enrollment 명세 §13.2, ADR 0047). 진행은 아래 "작업 상태 조회"로 본다.
 
 ### 기간 완전성과 비교 (ADR 0042)
 
@@ -245,6 +245,10 @@ type OperationResponse = {
 - `Retry-After`(초)는 `pending`·`running`에만 싣는다. 값은 `pulsemetry.dashboard.retry-after`다. 조치 대기와 끝난 작업에는 없다 — 클라이언트는 헤더가 없으면 반복 조회를 멈춘다.
 - `canRestore`는 성공한 대상이 있는 끝난 `seat_reclaim`이고 `restoreUntil` 전이며, 그 회수를 되돌리는 실패하지 않은 복원 작업이 없을 때만 true다.
 - `retention`은 `retention_cleanup` 작업이 가리키는 가장 최근 삭제 실행(`telemetry_ops.retention_operations`)이다. 아직 실행된 적이 없으면 null이다.
+- 보존 정리 작업(ADR 0047): 요청 모드의 보존 작업이 선점하면 `running`, 삭제 실행이 `logically_deleted`면 `succeeded`(대상 `analysis_source` 성공)다.
+  `incomplete`·`failed`인 실행 뒤에는 작업이 `running`인 채로 `retention.status`가 그 값이고 다음 실행이 같은 경계로 이어서 끝낸다. 정한 횟수 안에 끝내지 못하면
+  대상 실패(`retention_incomplete`·`retention_failed`)로 `failed`다. 실행 전에 새 저장이 대체하면 `superseded`로 `failed`다.
+  `succeeded`는 논리 삭제 완료이고 물리 제거 완료가 아니다.
   `logically_deleted`는 논리 삭제 완료이며 물리 제거 완료가 아니다. 삭제한 행 수와 상세 문구는 싣지 않는다.
 - 그 조직에 없는 작업은 404 `not_found`다. 다른 조직의 작업, 없는 ID, UUID가 아닌 ID가 같은 응답이다. **실패한 작업은 404가 아니라 200과 `status=failed`다.**
 - 작업을 만드는 명령은 설치 업데이트 안내(`installation_notification` — 대상 ID는 설치 ID, 결과는 메일 발송 결과) 하나다. 나머지 종류는 아직 만드는 명령이 없다.

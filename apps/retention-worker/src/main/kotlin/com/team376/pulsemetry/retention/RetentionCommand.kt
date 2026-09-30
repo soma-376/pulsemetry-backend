@@ -25,6 +25,17 @@ data class RetentionCommand(val tenantId: UUID, val retentionMonths: Int, val as
 		const val TENANT = "tenant"
 		const val RETENTION_MONTHS = "retention-months"
 		const val AS_OF = "as-of"
+		/** 요청 모드(ADR 0047) — 저장된 보존 정리 요청을 하나씩 실행한다. 값을 받지 않는다. */
+		const val REQUESTS = "requests"
+
+		/** 두 모드 중 하나. `--requests` 와 명령 인자를 섞으면 [IllegalArgumentException]. */
+		fun invocation(args: ApplicationArguments): RetentionInvocation {
+			if (!args.containsOption(REQUESTS)) return RetentionInvocation.Single(parse(args))
+			require(args.nonOptionArgs.isEmpty()) { "위치 인자는 받지 않는다: ${args.nonOptionArgs}" }
+			require(args.getOptionValues(REQUESTS).isNullOrEmpty()) { "--$REQUESTS 는 값을 받지 않는다" }
+			require(listOf(TENANT, RETENTION_MONTHS, AS_OF).none(args::containsOption)) { "--$REQUESTS 와 --$TENANT·--$RETENTION_MONTHS·--$AS_OF 를 함께 주지 않는다" }
+			return RetentionInvocation.Requests
+		}
 
 		/** 인자가 빠졌거나 형식이 틀리면 [IllegalArgumentException]. 위치 인자는 받지 않는다 — 잘못 붙인 값이 조용히 무시되지 않게. */
 		fun parse(args: ApplicationArguments): RetentionCommand {
@@ -49,6 +60,12 @@ data class RetentionCommand(val tenantId: UUID, val retentionMonths: Int, val as
 			return values.single()
 		}
 	}
+}
+
+/** 보존 작업의 실행 방식 — 인자로 준 명령 하나, 또는 저장된 보존 정리 요청들(ADR 0047). */
+sealed interface RetentionInvocation {
+	data class Single(val command: RetentionCommand) : RetentionInvocation
+	data object Requests : RetentionInvocation
 }
 
 /**

@@ -4,6 +4,8 @@ import com.team376.pulsemetry.persistence.enrollment.installation.AppliedPolicyV
 import com.team376.pulsemetry.persistence.enrollment.installation.InstallationNotifier
 import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
 import com.team376.pulsemetry.persistence.enrollment.mail.MailDeliveryView
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationStore
+import com.team376.pulsemetry.persistence.enrollment.operation.RetentionCleanupRequests
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
@@ -36,7 +38,8 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
     /** 설치 업데이트 안내(ADR 0043). 메일 기능이 꺼진 배포에서는 null 이고 안내 요청은 422 다 — 접수한 척하지 않는다. */
     private val installationNotifier: InstallationNotifier? = null) {
     private val tx = TransactionTemplate(manager)
-    private val onboarding = OnboardingStore(jdbc, mapper, initialManifest, invitationMail != null)
+    private val onboarding = OnboardingStore(jdbc, mapper, initialManifest,
+        RetentionCleanupRequests(jdbc, manager, OperationStore(jdbc, manager, clock)), invitationMail != null)
     private val catalog = VendorCatalog(jdbc)
     private val random = SecureRandom()
     private val key = SecretKeySpec(Base64.getDecoder().decode(encryptionKey).also { require(it.size == 32) }, "AES")

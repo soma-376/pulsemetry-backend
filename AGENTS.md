@@ -95,6 +95,7 @@ libs/telemetry-ops-persistence/ 수집 운영 기록의 RDS 쪽 — telemetry_op
 ./gradlew :apps:telemetry-ingest:bootRun          # OTLP 수집 서버 (4316)
 ./gradlew :apps:dashboard-api:bootRun             # 분석 조회 API (8081) — PULSEMETRY_DASHBOARD_RETRY_AFTER 필수
 ./gradlew :apps:retention-worker:bootRun --args='--tenant=<uuid> --retention-months=<N> --as-of=<ISO-8601>'  # 보존 삭제 한 번 — 설정 전부 필수, 종료 코드 0·1·2·3
+./gradlew :apps:retention-worker:bootRun --args='--requests'  # 요청 모드 — 저장된 보존 정리 요청을 차례로 실행(ADR 0047). requests.lease·max-runs 필수
 docker compose up -d --build                      # 로컬 DB·마이그레이션·A/B/C 시드·개발 인증 키 준비
 docker compose ps -a dev-seed                     # 일회성 준비 작업의 Exited (0) 확인
 ```
@@ -187,6 +188,8 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   (`TenantRetentionBoundaryStore.advance`). ClickHouse 이미지를 올리면 증거 테스트가 먼저 통과해야 한다.
   삭제는 `:apps:retention-worker` 만 한다 — 발효 → fence → drain → DELETE → 남은 행 0 확인의 순서를 바꾸지 마라(ADR 0024 §4).
   그 앱은 JPA·Flyway 자동설정을 `spring.autoconfigure.exclude` 로 끈다 — 분석 테이블 모듈이 enrollment-persistence 를 끌어온다.
+  조직이 집계 보존을 줄이면 저장 명령이 보존 정리 요청을 남기고, 그 앱의 요청 모드(`--requests`)가 같은 순서로 실행한다(ADR 0047) —
+  enrollment-api·dashboard-api 에서 원본을 지우지 마라. 요청 모드는 기존 인자 모드와 종료 코드를 바꾸지 않는다.
 - **`GET /v1/manifest`는 사용자 RT만 받고 한 서버 트랜잭션에서 정책과 토큰을 회전한다**(ADR 0019 · 허브 ADR 0008).
   AT·`pit_`·`ptt_`는 받지 않는다. 로컬 적용 완료를 보장하지 않으며 OTLP는 여전히 `ptt_`다. 상태를 바꾸는 GET이라
   캐시·프리페치·자동 재시도를 걸지 않는다. 저장된 정책은 빌드 때 jar에 넣은 telemetryctl 원본 스키마로 검증한다 —
