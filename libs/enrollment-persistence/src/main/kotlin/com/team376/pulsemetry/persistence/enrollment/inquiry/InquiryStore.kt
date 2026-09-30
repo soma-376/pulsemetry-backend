@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.persistence.enrollment.inquiry
 
+import com.team376.pulsemetry.persistence.enrollment.mail.InquiryNotifier
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
@@ -32,7 +33,9 @@ class InquiryException(val code: String, val status: Int, val field: String? = n
  * 도입 문의의 저장과 남용 제한. 문의는 조직에 속하지 않으며 조직·계정·초대를 만들지 않는다.
  * 출처 주소는 해시로만 남긴다.
  */
-class InquiryStore(private val jdbc: JdbcClient, manager: PlatformTransactionManager, private val clock: Clock, private val limits: InquiryLimits) {
+class InquiryStore(private val jdbc: JdbcClient, manager: PlatformTransactionManager, private val clock: Clock, private val limits: InquiryLimits,
+    /** 담당자 통지. 메일 기능이 꺼진 배포에서는 null 이고 문의는 저장만 된다. */
+    private val notifier: InquiryNotifier? = null) {
     private val tx = TransactionTemplate(manager)
 
     /** 출처 하나의 요청을 센다. 검증에 실패한 요청과 재전송도 센다. 한도를 넘으면 429 `rate_limited`. */
@@ -78,6 +81,8 @@ class InquiryStore(private val jdbc: JdbcClient, manager: PlatformTransactionMan
                 VALUES (:id,:company,:email,:hash,:source,:now)""")
                 .param("id", id).param("company", name).param("email", address).param("hash", request)
                 .param("source", sourceHash(source)).param("now", Timestamp.from(now)).update()
+            // 저장과 같은 트랜잭션에서 담당자 통지를 적재한다. 재전송은 새로 저장하지 않으므로 통지도 한 번이다.
+            notifier?.enqueue(id, name, address, now)
             InquiryReceipt(id, "received", now)
         })
     }

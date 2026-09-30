@@ -1,6 +1,8 @@
 package com.team376.pulsemetry.enrollment.inquiry
 
 import com.team376.pulsemetry.persistence.enrollment.inquiry.InquiryException
+import com.team376.pulsemetry.persistence.enrollment.mail.InquiryNotifier
+import org.springframework.beans.factory.ObjectProvider
 import com.team376.pulsemetry.persistence.enrollment.inquiry.InquiryLimits
 import com.team376.pulsemetry.persistence.enrollment.inquiry.InquiryReceipt
 import com.team376.pulsemetry.persistence.enrollment.inquiry.InquiryStore
@@ -37,6 +39,8 @@ class InquiryProperties {
     var rateLimit: RateLimit = RateLimit()
     /** 문의 폼을 띄우는 프론트 출처 */
     var allowedOrigins: List<String> = emptyList()
+    /** 접수된 문의를 알릴 담당자 주소. 메일 기능을 같이 켰을 때 필요하다 */
+    var notificationRecipient: String = ""
 
     class RateLimit {
         /** 출처 하나가 [window] 안에 보낼 수 있는 요청 수 */
@@ -49,12 +53,13 @@ class InquiryProperties {
 @ConditionalOnProperty(prefix = "pulsemetry.inquiries", name = ["enabled"], havingValue = "true")
 class InquiryConfig {
     @Bean
-    fun inquiryStore(jdbc: JdbcClient, manager: PlatformTransactionManager, clock: Clock, properties: InquiryProperties): InquiryStore {
+    fun inquiryStore(jdbc: JdbcClient, manager: PlatformTransactionManager, clock: Clock, properties: InquiryProperties,
+        notifier: ObjectProvider<InquiryNotifier>): InquiryStore {
         require(properties.allowedOrigins.any { it.isNotBlank() }) { "pulsemetry.inquiries.allowed-origins 가 비어 있다" }
         return InquiryStore(jdbc, manager, clock, InquiryLimits(
             requireNotNull(properties.duplicateWindow) { "pulsemetry.inquiries.duplicate-window 가 비어 있다" },
             requireNotNull(properties.rateLimit.requests) { "pulsemetry.inquiries.rate-limit.requests 가 비어 있다" },
-            requireNotNull(properties.rateLimit.window) { "pulsemetry.inquiries.rate-limit.window 가 비어 있다" }))
+            requireNotNull(properties.rateLimit.window) { "pulsemetry.inquiries.rate-limit.window 가 비어 있다" }), notifier.ifAvailable)
     }
 }
 

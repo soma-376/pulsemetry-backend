@@ -1,6 +1,11 @@
 package com.team376.pulsemetry.enrollment.mail
 
+import com.team376.pulsemetry.enrollment.config.PulsemetryProperties
+import com.team376.pulsemetry.enrollment.inquiry.InquiryProperties
+import com.team376.pulsemetry.enrollment.management.ManagementProperties
 import com.team376.pulsemetry.persistence.enrollment.mail.ClaimedMail
+import com.team376.pulsemetry.persistence.enrollment.mail.InquiryNotifier
+import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
 import com.team376.pulsemetry.persistence.enrollment.mail.MailDispatcher
 import com.team376.pulsemetry.persistence.enrollment.mail.MailOutbox
 import com.team376.pulsemetry.persistence.enrollment.mail.MailPolicy
@@ -102,6 +107,23 @@ class MailConfig {
 
     @Bean
     fun mailDispatcher(outbox: MailOutbox, transport: MailTransport) = MailDispatcher(outbox, transport)
+
+    /** 관리 기능과 메일을 함께 켠 배포에서만 초대 메일을 적재한다. 설치 명령의 주소는 부트스트랩 주소와 같은 설정이다. */
+    @Bean
+    @ConditionalOnProperty(prefix = "pulsemetry.management", name = ["enabled"], havingValue = "true")
+    fun invitationMailer(outbox: MailOutbox, management: ManagementProperties, server: PulsemetryProperties): InvitationMailer {
+        require(management.invitationAcceptUrl.isNotBlank()) { "pulsemetry.management.invitation-accept-url 가 비어 있다" }
+        return InvitationMailer(outbox, management.invitationAcceptUrl, server.baseUrl())
+    }
+
+    /** 문의 접수와 메일을 함께 켠 배포에서만 담당자에게 통지한다. */
+    @Bean
+    @ConditionalOnProperty(prefix = "pulsemetry.inquiries", name = ["enabled"], havingValue = "true")
+    fun inquiryNotifier(outbox: MailOutbox, inquiries: InquiryProperties): InquiryNotifier {
+        require(inquiries.notificationRecipient.isNotBlank()) { "pulsemetry.inquiries.notification-recipient 가 비어 있다" }
+        try { InternetAddress(inquiries.notificationRecipient, true) } catch (_: AddressException) { throw IllegalArgumentException("pulsemetry.inquiries.notification-recipient 가 메일 주소가 아니다") }
+        return InquiryNotifier(outbox, inquiries.notificationRecipient)
+    }
 
     @Bean
     fun mailDispatchJob(dispatcher: MailDispatcher, properties: MailProperties) = MailDispatchJob(positive(properties.dispatchInterval, "dispatch-interval")) { dispatcher.runOnce() }

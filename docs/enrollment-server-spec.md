@@ -32,7 +32,8 @@
 위 흐름의 마지막 단계(설정 병합·백업·daemon 자동 실행 등록)는 클라이언트의 몫이며 서버는 관여하지 않는다.
 
 **범위 밖**: 웹 대시보드 조회 API, heartbeat,
-`uninstall`/`repair`, 초대 이메일 발송, 데이터 파이프라인.
+`uninstall`/`repair`, 데이터 파이프라인.
+초대 이메일은 조직 관리 API의 초대(§12·§13.3)가 보낸다. 관리자 키 경로(`POST /v1/invitations`)는 메일을 보내지 않고 설치 명령을 응답으로 돌려준다.
 
 ---
 
@@ -115,6 +116,9 @@
 ```
 
 - `status`는 `received` 하나다. 접수했다는 뜻이며 담당자 확인이나 초대 발급을 뜻하지 않는다.
+- **담당자 통지**: 메일 기능(`pulsemetry.mail.enabled`)을 함께 켠 배포에서는 저장과 같은 트랜잭션에서 담당자(`pulsemetry.inquiries.notification-recipient`)에게 통지 메일을 적재한다(ADR 0038).
+  통지에는 접수 번호·접수 시각·회사명·회사 이메일이 담긴다. 재전송은 새로 저장하지 않으므로 통지도 한 번이다.
+  문의 응답에는 통지의 발송 상태를 싣지 않는다. 메일이 꺼져 있으면 문의는 저장만 된다.
 - **재전송**: 같은 회사명·이메일이 `duplicate-window` 안에 다시 오면 저장하지 않고 앞선 접수의 본문을 그대로 돌려준다(201, 같은 `inquiryId`·`receivedAt`).
   같은지는 정규화한 값으로 본다 — 회사명은 NFKC·소문자·연속 공백 하나, 이메일은 소문자. 판정은 가장 최근 접수가 기준이고,
   그 시간이 지난 뒤의 같은 입력은 새 문의다. 같은 입력의 동시 요청도 한 번만 저장한다.
@@ -397,6 +401,8 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.mail.retry-interval` | 없음 | 일시 실패 뒤 다시 시도하기까지의 간격 |
 | `pulsemetry.mail.max-attempts` | 없음 | 한 메일의 최대 시도 횟수(1 이상) |
 | `pulsemetry.mail.send-timeout` | 없음 | SMTP 연결·읽기·쓰기 각각의 제한 시간. 선점 임대는 이 값의 네 배다 |
+| `pulsemetry.management.invitation-accept-url` | 없음 | 초대 메일의 수락 링크가 가리키는 프론트 주소(fragment 없는 http(s) 주소). 관리 기능과 메일을 **함께 켜면 필수** — 비면 기동 실패 |
+| `pulsemetry.inquiries.notification-recipient` | 없음 | 접수된 문의를 알릴 담당자 주소. 문의 접수와 메일을 **함께 켜면 필수** — 비면 기동 실패 |
 | `pulsemetry.inquiries.enabled` | `false` | 도입 문의 접수(§2.2)를 켠다. 켜면 아래 네 값이 **모두 필요하다 — 하나라도 비면 기동 실패** |
 | `pulsemetry.inquiries.duplicate-window` | 없음 | 같은 회사·이메일의 재전송을 같은 접수로 보는 시간(ISO-8601 기간, 예: `PT10M`) |
 | `pulsemetry.inquiries.rate-limit.requests` | 없음 | 출처 하나가 창 안에 보낼 수 있는 요청 수(1 이상) |
@@ -406,6 +412,7 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_PASSWORD` 로 덮어쓴다.
 메일의 키는 `PULSEMETRY_MAIL_ENABLED` · `_FROM` · `_ENCRYPTION_KEY` · `_DISPATCH_INTERVAL` · `_RETRY_INTERVAL` · `_MAX_ATTEMPTS` · `_SEND_TIMEOUT` ·
 `_SMTP_HOST` · `_SMTP_PORT` · `_SMTP_USERNAME` · `_SMTP_PASSWORD` · `_SMTP_STARTTLS` 로 준다. local 프로필은 Compose의 메일 수신 컨테이너(`localhost:1025`)로 켠다.
+수락 주소와 통지 수신자는 `PULSEMETRY_INVITATION_ACCEPT_URL` · `PULSEMETRY_INQUIRIES_NOTIFICATION_RECIPIENT` 로 준다.
 문의 접수의 다섯 키는 `PULSEMETRY_INQUIRIES_ENABLED` · `_DUPLICATE_WINDOW` · `_RATE_LIMIT_REQUESTS` · `_RATE_LIMIT_WINDOW` · `_ALLOWED_ORIGINS` 로 준다.
 local 프로필은 개발용 값(10분, 1분에 10회, 출처 3000·3107)으로 켠다. 운영 수치의 배포 기본값은 두지 않는다.
 
@@ -684,7 +691,18 @@ type InvitationsResponse = {
     email: string; invitationId: string | null;
     status: "issued" | "already_member" | "already_invited" | "rejected";
     reason: string | null; expiresAt: string | null; code: string | null;
+    delivery: Delivery | null; // issued인 항목에만 있다
   }[];
+};
+// 초대 메일의 발송 상태. 발급(status)과 별개의 사실이다 (ADR 0038).
+type Delivery = {
+  status: "queued" | "sending" | "sent" | "failed" | "cancelled" | "not_sent";
+  reason: "mail_disabled" | "not_queued" | null; // not_sent일 때만 값이 있다
+  queuedAt: string | null;      // 적재 시각
+  lastAttemptAt: string | null; // 마지막 발송 시도 시각
+  sentAt: string | null;        // SMTP 서버가 받은 시각. sent일 때만 값이 있다
+  failureCode: string | null;   // 실패 분류 코드. 재시도 대기(queued) 중에는 마지막 시도의 사유
+  attempts: number;
 };
 type ContractWrite = {
   planId: string; effectiveFrom: string; effectiveTo: string | null;
@@ -694,7 +712,14 @@ type ContractWrite = {
 ```
 
 초대는 최대 100명, role은 `admin`·`member`, `teamId`는 UUID 또는 null이다.
-**메일 발송을 접수하지 않으므로 `queued`를 반환하지 않는다.** `issued`의 코드를 사용자에게 전달한다.
+발급 결과의 `status`는 코드 발급만 말한다. **발급은 발송이 아니다** — 초대 메일의 상태는 `delivery`가 따로 말한다(ADR 0038).
+메일 기능(`pulsemetry.mail.enabled`)이 켜져 있으면 발급과 같은 트랜잭션에서 초대 메일을 outbox에 적재하고(`delivery.status=queued`), 발송 작업이 SMTP로 보낸다(ADR 0037).
+메일에는 조직 이름·코드·만료 시각, 수락 링크(`pulsemetry.management.invitation-accept-url`에 `#code=…`를 붙인 주소 — 코드를 쿼리에 싣지 않는다), 설치 명령(§2.1의 `install_commands`와 같은 형태)이 담긴다. 제목에는 코드가 없다.
+메일 기능이 꺼져 있으면 `delivery`는 `{status:"not_sent", reason:"mail_disabled"}`다. **적재되지 않은 메일을 `queued`로 내지 않는다.** 그때는 `issued`의 코드를 관리자가 직접 전달한다.
+`sent`는 SMTP 서버가 메시지를 받았다는 뜻이고 수신함 도착을 뜻하지 않는다. 실패 코드는 `recipient_rejected` · `message_rejected` · `invalid_address`(재시도하지 않음),
+`recipient_deferred` · `smtp_deferred` · `smtp_auth_failed` · `smtp_unavailable` · `send_error`(재시도), `outcome_unknown`이다.
+같은 멱등 키의 재시도는 저장된 응답을 그대로 돌려주므로 `delivery`도 최초 시점의 값이고 메일은 한 통이다. 최신 발송 상태는 목록(§13.3)에서 본다.
+초대 취소(`revoke`)는 그 초대의 아직 보내지 않은 메일을 취소한다(`cancelled`). 이미 나간 메일은 되돌리지 못하고, 그 안의 코드는 폐기돼 쓸 수 없다.
 신규 초대의 기본 만료는 72시간이다. 기존 초대가 있으면 `already_invited`이며 기존 원본 코드를 재조회하지 않는다.
 만료만 된 초대도 기존 초대다 — 재발급(§13.3)으로 살린다.
 초대가 취소(`revoke`)돼 남은 초대가 없는 대기자(`invited`)는 다시 초대할 수 있다. 새 구성원을 만들지 않고 **같은 `memberId`**에
@@ -835,12 +860,14 @@ type InvitationPage = {
     memberStatus: "invited" | "active" | "suspended";
     team: { teamId: string; teamName: string } | null;
     memberVersion: number;
+    delivery: Delivery; // §12. 이 초대의 메일 발송 상태
   }[];
   nextCursor: string | null;
 };
 type ReissuedInvitation = {
   invitationId: string; replacesInvitationId: string;
   code: string; expiresAt: string;
+  delivery: Delivery; // 새 초대의 메일
 };
 ```
 
@@ -861,7 +888,11 @@ pending은 가입 또는 설치 중 하나만 남은 경우도 포함하므로 �
 소비된 가입/설치 권한은 새 초대에도 소비 시각을 유지한다. 기존 계정·설치·세션은 삭제하지 않는다.
 폐기됐거나 두 용도 모두 소비한 초대는 409 `invitation_unavailable`이다.
 같은 멱등 키의 재시도는 최초 새 코드를 재전달한다. 재시도 응답 저장에는 §12의 암호화를 사용한다.
-이 API도 메일을 발송하지 않는다.
+재발급은 새 초대의 메일을 같은 트랜잭션에서 적재하고, 폐기한 초대의 아직 보내지 않은 메일을 취소한다. 이미 나간 메일 뒤의 재발급은 새 메일을 한 통 더 보낸다.
+같은 멱등 키의 재시도는 메일을 다시 만들지 않는다.
+
+목록의 `delivery`는 그 초대의 현재 발송 상태다. 메일을 적재한 적 없는 초대(메일 기능을 켜기 전의 초대, 관리자 키 경로의 초대)는
+`not_sent`이고 `reason`은 메일이 켜져 있으면 `not_queued`, 꺼져 있으면 `mail_disabled`다.
 
 ## 14. 소유 스키마와 검증
 
@@ -891,7 +922,8 @@ organization_onboarding에는 정책 확인자·시각과 완료자만 남는다
 주요 검증은 `:apps:enrollment-api:test`의 UserAuthApiTest(인증)와 ManagementApiTest(관리·온보딩)다.
 팀/초대/계약 쓰기, 조직 격리, 온보딩 완료 조건, 정책 판 보존, 재발급 소비 상태 계승을 실제 PostgreSQL에서 확인한다.
 서버 API 구현, 프론트 배선, 실제 시드 E2E 통과는 별도로 확인한다.
-프론트 온보딩에서 계약 입력은 선택이며 설정의 계약 관리도 API에 연결돼 있다. 초대 메일 발송은 구현하지 않는다.
+프론트 온보딩에서 계약 입력은 선택이며 설정의 계약 관리도 API에 연결돼 있다.
+초대 메일과 문의 통지는 `InvitationMailApiTest`가 실제 SMTP(메일 수신 컨테이너)로 도착을 확인한다.
 전체 화면의 연동 완료 여부는 [E2E 목표 시나리오](frontend-e2e-scenarios.md)와 실제 실행 결과를 대조한다.
 
 ### 계약 기간 상태 (`contractStatus`)

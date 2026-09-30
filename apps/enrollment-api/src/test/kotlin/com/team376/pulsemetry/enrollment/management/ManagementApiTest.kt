@@ -361,6 +361,29 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         assertThat(mapper.readTree(listing.body()).path("nextCursor").isNull).isFalse()
     }
 
+    @Test fun `메일이 꺼진 배포의 초대는 코드만 발급하고 발송하지 않았다고 표시한다`() {
+        val token = adminToken()
+        val issued = mapper.readTree(manage("POST", "/invitations/batch", mapOf("invitations" to listOf(mapOf("email" to "nomail@example.test", "teamId" to null, "role" to "member"))), token).body()).path("results")[0]
+        assertThat(issued.path("status").asString()).isEqualTo("issued")
+        assertThat(InvitationCode.matches(issued.path("code").asString())).isTrue()
+        fun notSent(delivery: JsonNode) {
+            // 적재된 것처럼 보이게 하지 않는다.
+            assertThat(listOf(delivery.path("status").asString(), delivery.path("reason").asString(), delivery.path("attempts").asInt())).isEqualTo(listOf("not_sent", "mail_disabled", 0))
+            assertThat(listOf(delivery.path("queuedAt"), delivery.path("lastAttemptAt"), delivery.path("sentAt"), delivery.path("failureCode")).all { it.isNull }).isTrue()
+        }
+        notSent(issued.path("delivery"))
+        val listed = mapper.readTree(manage("GET", "/invitations?limit=100", null, token).body()).path("items").toList()
+        assertThat(listed).isNotEmpty()
+        listed.forEach { notSent(it.path("delivery")) }
+        val renewed = mapper.readTree(manage("POST", "/invitations/${issued.path("invitationId").asString()}/reissue", emptyMap<String, String>(), token).body())
+        notSent(renewed.path("delivery"))
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.mail_outbox").query(Int::class.java).single()).isEqualTo(0)
+        // 발급하지 않은 결과에는 발송 상태가 없다.
+        val again = mapper.readTree(manage("POST", "/invitations/batch", mapOf("invitations" to listOf(mapOf("email" to "nomail@example.test", "teamId" to null, "role" to "member"))), token).body()).path("results")[0]
+        assertThat(again.path("status").asString()).isEqualTo("already_invited")
+        assertThat(again.path("delivery").isNull).isTrue()
+    }
+
     @Test fun `취소된 초대의 대기자는 같은 구성원으로 다시 초대하고 요청의 팀과 역할을 적용한다`() {
         val token = adminToken()
         val team = mapper.readTree(manage("POST", "/teams", mapOf("teamName" to "다시 초대 팀"), token).body()).path("teamId").asString()

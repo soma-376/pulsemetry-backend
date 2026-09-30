@@ -9,6 +9,8 @@ import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
+import com.team376.pulsemetry.persistence.enrollment.mail.InquiryNotifier
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
@@ -208,11 +210,13 @@ class InquiryApiTest {
     }
 
     @Test fun `켰을 때 운영 수치와 허용 출처가 비어 있으면 기동하지 않는다`() {
+        // 메일이 꺼진 배포 — 통지 빈이 없다.
+        @Suppress("UNCHECKED_CAST") val noNotifier = mock(ObjectProvider::class.java) as ObjectProvider<InquiryNotifier>
         fun start(change: InquiryProperties.() -> Unit) = InquiryConfig().inquiryStore(mock(JdbcClient::class.java), mock(PlatformTransactionManager::class.java), Clock.systemUTC(),
             InquiryProperties().apply {
                 enabled = true; duplicateWindow = Duration.ofMinutes(10); allowedOrigins = listOf(ORIGIN)
                 rateLimit.requests = 5; rateLimit.window = Duration.ofMinutes(1)
-            }.apply(change))
+            }.apply(change), noNotifier)
         start {}
         assertThatThrownBy { start { duplicateWindow = null } }.hasMessageContaining("pulsemetry.inquiries.duplicate-window")
         assertThatThrownBy { start { rateLimit.requests = null } }.hasMessageContaining("pulsemetry.inquiries.rate-limit.requests")

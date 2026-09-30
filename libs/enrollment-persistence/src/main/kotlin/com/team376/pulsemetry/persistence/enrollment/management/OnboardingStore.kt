@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.persistence.enrollment.management
 
+import com.team376.pulsemetry.persistence.enrollment.mail.MailDeliveryView
 import org.springframework.jdbc.core.simple.JdbcClient
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
@@ -10,7 +11,9 @@ import java.util.UUID
 
 /** 쓰기는 ManagementStore의 조직 잠금·트랜잭션 안에서 실행한다. */
 class OnboardingStore(private val jdbc: JdbcClient, private val mapper: ObjectMapper,
-    private val initialManifest: () -> JsonNode) {
+    private val initialManifest: () -> JsonNode,
+    /** 초대 메일을 적재하는 배포인가. 메일이 없는 초대의 발송 상태 사유를 가른다. */
+    private val mailEnabled: Boolean = false) {
     private fun node(value: Any): JsonNode = mapper.valueToTree(value)
     fun state(tenant: UUID): JsonNode {
         val saved = jdbc.sql("""SELECT o.policy_confirmed_at,t.onboarding_completed_at
@@ -86,9 +89,12 @@ class OnboardingStore(private val jdbc: JdbcClient, private val mapper: ObjectMa
                     CASE WHEN i.revoked_at IS NOT NULL THEN 'revoked'
                          WHEN i.used_at IS NOT NULL AND i.signup_used_at IS NOT NULL THEN 'used'
                          WHEN i.expires_at <= :now THEN 'expired' ELSE 'pending' END AS status,
-                    team.open_count,team.team_id,team.team_name
+                    team.open_count,team.team_id,team.team_name,
+                    o.status AS mail_status,o.attempts AS mail_attempts,o.queued_at AS mail_queued_at,o.last_attempt_at AS mail_last_attempt_at,
+                    o.finished_at AS mail_finished_at,o.failure_code AS mail_failure_code
                 FROM enrollment.invitations i
                 JOIN enrollment.members m ON m.id=i.target_member_id AND m.tenant_id=i.tenant_id
+                LEFT JOIN enrollment.mail_outbox o ON o.dedup_key='invitation:' || i.id::text
                 LEFT JOIN LATERAL (SELECT count(*) AS open_count,min(t.id::text) AS team_id,min(t.name) AS team_name
                     FROM enrollment.team_memberships tm JOIN enrollment.teams t ON t.id=tm.team_id
                     WHERE tm.member_id=m.id AND tm.left_at IS NULL) team ON true
@@ -99,12 +105,17 @@ class OnboardingStore(private val jdbc: JdbcClient, private val mapper: ObjectMa
             .param("limit", limit + 1).query { r, _ ->
                 // 열린 소속이 하나일 때만 현재 팀으로 본다.
                 val team = if (r.getLong("open_count") == 1L) mapOf("teamId" to r.getString("team_id"), "teamName" to r.getString("team_name")) else null
+                // 초대의 발급 상태와 메일의 발송 상태는 다른 사실이다(ADR 0038).
+                val delivery = r.getString("mail_status")?.let { status ->
+                    MailDeliveryView.of(status, r.getInt("mail_attempts"), r.getTimestamp("mail_queued_at").toInstant(), r.getTimestamp("mail_last_attempt_at")?.toInstant(),
+                        r.getTimestamp("mail_finished_at")?.toInstant(), r.getString("mail_failure_code"))
+                } ?: MailDeliveryView.notSent(mailEnabled)
                 mapOf("invitationId" to r.getString("id"), "email" to r.getString("email"), "role" to r.getString("role"),
                     "createdAt" to r.getTimestamp("created_at").toInstant().toString(), "expiresAt" to r.getTimestamp("expires_at").toInstant().toString(),
                     "installationUsedAt" to r.getTimestamp("used_at")?.toInstant()?.toString(), "signupUsedAt" to r.getTimestamp("signup_used_at")?.toInstant()?.toString(),
                     "revokedAt" to r.getTimestamp("revoked_at")?.toInstant()?.toString(), "status" to r.getString("status"),
                     "memberId" to r.getString("member_id"), "memberStatus" to r.getString("member_status"), "team" to team,
-                    "memberVersion" to r.getTimestamp("member_updated_at").toInstant().toEpochMilli())
+                    "memberVersion" to r.getTimestamp("member_updated_at").toInstant().toEpochMilli(), "delivery" to delivery)
             }.list()
         return node(mapOf("items" to rows.take(limit), "nextCursor" to if (rows.size > limit) rows[limit-1]["invitationId"] else null))
     }

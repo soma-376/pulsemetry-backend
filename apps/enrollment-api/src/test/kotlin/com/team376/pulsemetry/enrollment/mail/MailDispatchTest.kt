@@ -2,6 +2,7 @@ package com.team376.pulsemetry.enrollment.mail
 
 import com.team376.pulsemetry.enrollment.auth.AuthClockConfig
 import com.team376.pulsemetry.enrollment.auth.AuthTestClock
+import com.team376.pulsemetry.enrollment.support.MailpitServer
 import com.team376.pulsemetry.persistence.enrollment.mail.ClaimedMail
 import com.team376.pulsemetry.persistence.enrollment.mail.MailDelivery
 import com.team376.pulsemetry.persistence.enrollment.mail.MailDispatcher
@@ -29,16 +30,8 @@ import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
-import org.testcontainers.containers.GenericContainer
-import org.testcontainers.containers.wait.strategy.Wait
 import tools.jackson.databind.JsonNode
-import tools.jackson.databind.ObjectMapper
 import java.net.ServerSocket
-import java.net.Socket
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -68,31 +61,17 @@ class MailDispatchTest {
     @Autowired private lateinit var job: MailDispatchJob
     @Autowired private lateinit var jdbc: JdbcClient
     @Autowired private lateinit var manager: PlatformTransactionManager
-    @Autowired private lateinit var mapper: ObjectMapper
     @Autowired private lateinit var clock: AuthTestClock
-    private val http = HttpClient.newHttpClient()
     private val start = Instant.parse("2026-09-09T12:00:00Z")
 
     @BeforeEach fun setup() {
         jdbc.sql("TRUNCATE enrollment.mail_outbox").update()
         clock.now = start
-        api("DELETE", "/api/v1/messages")
-        chaos()
+        MailpitServer.reset()
     }
 
-    private fun api(method: String, path: String, body: String? = null): JsonNode {
-        val request = HttpRequest.newBuilder(URI("http://${mailpit.host}:${mailpit.getMappedPort(8025)}$path")).header("Content-Type", "application/json")
-            .method(method, body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()).build()
-        val response = http.send(request, HttpResponse.BodyHandlers.ofString())
-        assertThat(response.statusCode()).withFailMessage("$method $path → ${response.statusCode()}").isEqualTo(200)
-        return if (response.body().trimStart().startsWith("{")) mapper.readTree(response.body()) else mapper.createObjectNode()
-    }
-    /** 수신 컨테이너가 SMTP 단계마다 지정한 코드로 거절하게 한다. 인자가 없으면 정상이다. */
-    private fun chaos(recipient: Int? = null, sender: Int? = null, authentication: Int? = null) {
-        fun trigger(code: Int?, fallback: Int) = mapOf("ErrorCode" to (code ?: fallback), "Probability" to if (code == null) 0 else 100)
-        api("PUT", "/api/v1/chaos", mapper.writeValueAsString(mapOf("Recipient" to trigger(recipient, 451), "Sender" to trigger(sender, 451), "Authentication" to trigger(authentication, 535))))
-    }
-    private fun received(): List<JsonNode> = api("GET", "/api/v1/messages").path("messages").toList()
+    private fun chaos(recipient: Int? = null, sender: Int? = null, authentication: Int? = null) = MailpitServer.chaos(recipient, sender, authentication)
+    private fun received(): List<JsonNode> = MailpitServer.received()
     private fun draft(key: String, recipient: String = "member@example.test", subject: String = "Pulsemetry 초대", body: String = "초대 코드: $SECRET\n코드는 72시간 동안 유효합니다.") =
         MailDraft(key, "invitation", recipient, subject, body)
     private fun delivery(key: String): MailDelivery = requireNotNull(outbox.delivery(key))
@@ -112,13 +91,11 @@ class MailDispatchTest {
         clock.now = start.plusSeconds(7)
         assertThat(dispatcher.runOnce()).isEqualTo(1)
         val message = received().single()
-        assertThat(message.path("To").toList().map { it.path("Address").asString() }).isEqualTo(listOf("member@example.test"))
+        assertThat(MailpitServer.recipients(message)).isEqualTo(listOf("member@example.test"))
         assertThat(message.path("From").path("Address").asString()).isEqualTo(FROM)
         assertThat(message.path("Subject").asString()).isEqualTo("Pulsemetry 초대")
-        val detail = api("GET", "/api/v1/message/${message.path("ID").asString()}")
-        assertThat(detail.path("Text").asString().replace("\r\n", "\n").trim()).isEqualTo("초대 코드: $SECRET\n코드는 72시간 동안 유효합니다.")
-        val headers = api("GET", "/api/v1/message/${message.path("ID").asString()}/headers")
-        assertThat(headers.path("X-Pulsemetry-Mail-Id").toList().map { it.asString() }).isEqualTo(listOf(queued.id.toString()))
+        assertThat(MailpitServer.text(message)).isEqualTo("초대 코드: $SECRET\n코드는 72시간 동안 유효합니다.")
+        assertThat(MailpitServer.header(message, "X-Pulsemetry-Mail-Id")).isEqualTo(listOf(queued.id.toString()))
 
         val sent = delivery("invitation:1")
         assertThat(listOf(sent.status, sent.attempts, sent.failureCode, sent.failureDetail)).isEqualTo(listOf("sent", 1, null, null))
@@ -138,7 +115,7 @@ class MailDispatchTest {
         assertThat(again).isEqualTo(first)
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.mail_outbox").query(Int::class.java).single()).isEqualTo(1)
         assertThat(dispatcher.runOnce()).isEqualTo(1)
-        assertThat(received().single().path("To").toList().single().path("Address").asString()).isEqualTo("member@example.test")
+        assertThat(MailpitServer.recipients(received().single())).isEqualTo(listOf("member@example.test"))
         // 보낸 뒤의 재적재도 다시 보내지 않는다.
         assertThat(outbox.enqueue(draft("invitation:dup")).status).isEqualTo("sent")
         assertThat(dispatcher.runOnce()).isEqualTo(0)
@@ -404,35 +381,11 @@ class MailDispatchTest {
     private fun properties() = MailProperties().apply {
         enabled = true; from = FROM; encryptionKey = KEY
         dispatchInterval = Duration.ofHours(24); retryInterval = Duration.ofMinutes(5); maxAttempts = 3; sendTimeout = Duration.ofSeconds(5)
-        smtp.host = mailpit.host; smtp.port = mailpit.getMappedPort(1025); smtp.username = "test-user"; smtp.password = "test-password"; smtp.starttls = false
+        smtp.host = MailpitServer.host; smtp.port = MailpitServer.smtpPort; smtp.username = "test-user"; smtp.password = "test-password"; smtp.starttls = false
     }
 
     companion object {
-        /** 메일 수신 컨테이너. SMTP 1025, 조회 API 8025. 아무 계정이나 받고, 단계별 거절을 API 로 켠다. */
-        private val mailpit: GenericContainer<*> = GenericContainer("axllent/mailpit:v1.27").withExposedPorts(1025, 8025)
-            .withEnv("MP_ENABLE_CHAOS", "true").withEnv("MP_SMTP_AUTH_ACCEPT_ANY", "1").withEnv("MP_SMTP_AUTH_ALLOW_INSECURE", "1")
-            .waitingFor(Wait.forHttp("/readyz").forPort(8025)).also { it.start(); awaitSmtp(it) }
-
-        /** 조회 API 가 먼저 뜬다. SMTP 가 인사말(220)을 줄 때까지 기다리지 않으면 첫 발송들이 연결 실패로 끝난다. */
-        private fun awaitSmtp(container: GenericContainer<*>) {
-            val deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos()
-            while (true) {
-                val ready = runCatching {
-                    Socket(container.host, container.getMappedPort(1025)).use { socket ->
-                        socket.soTimeout = 2000
-                        socket.getInputStream().bufferedReader().readLine()?.startsWith("220") == true
-                    }
-                }.getOrDefault(false)
-                if (ready) return
-                check(System.nanoTime() < deadline) { "메일 수신 컨테이너의 SMTP 가 준비되지 않았다" }
-                Thread.sleep(100)
-            }
-        }
-
-        @JvmStatic @DynamicPropertySource fun smtp(registry: DynamicPropertyRegistry) {
-            registry.add("pulsemetry.mail.smtp.host") { mailpit.host }
-            registry.add("pulsemetry.mail.smtp.port") { mailpit.getMappedPort(1025) }
-        }
+        @JvmStatic @DynamicPropertySource fun smtp(registry: DynamicPropertyRegistry) = MailpitServer.register(registry)
     }
 }
 

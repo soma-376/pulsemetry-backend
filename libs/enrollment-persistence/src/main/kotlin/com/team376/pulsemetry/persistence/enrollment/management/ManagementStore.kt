@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.persistence.enrollment.management
 
+import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
+import com.team376.pulsemetry.persistence.enrollment.mail.MailDeliveryView
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
@@ -26,9 +28,11 @@ class ManagementException(val code: String, val status: Int, val field: String? 
 /** 관리 명령의 원자성과 재시도 응답을 보장한다. 빈·HTTP·ClickHouse 의존성은 없다. */
 class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransactionManager,
     private val mapper: ObjectMapper, private val clock: Clock, encryptionKey: String,
-    initialManifest: () -> JsonNode) {
+    initialManifest: () -> JsonNode,
+    /** 초대 메일. 메일 기능이 꺼진 배포에서는 null 이고 초대는 발송 없이 코드만 발급한다. */
+    private val invitationMail: InvitationMailer? = null) {
     private val tx = TransactionTemplate(manager)
-    private val onboarding = OnboardingStore(jdbc, mapper, initialManifest)
+    private val onboarding = OnboardingStore(jdbc, mapper, initialManifest, invitationMail != null)
     private val catalog = VendorCatalog(jdbc)
     private val random = SecureRandom()
     private val key = SecretKeySpec(Base64.getDecoder().decode(encryptionKey).also { require(it.size == 32) }, "AES")
@@ -205,7 +209,7 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
             val role = text(item, "role", 20)
             val team = item.path("teamId").takeUnless { it.isNull || it.isMissingNode }?.let { uuid(it.asString()) }
             var reason: String? = null
-            if (!Regex("[^\\s@]+@[^\\s@]+\\.[^\\s@]+").matches(email)) reason = "invalid_email"
+            if (!Regex("[^\\s@]+@[^\\s@]+\\.[^\\s@]+").matches(email) || email.any(Char::isISOControl)) reason = "invalid_email"
             if (!seen.add(email)) reason = "duplicate_email"
             if (role !in setOf("admin", "member")) reason = "role_not_assignable"
             if (team != null && jdbc.sql("SELECT count(*) FROM enrollment.teams WHERE tenant_id=:tenant AND id=:id AND status='active'").param("tenant", tenant).param("id", team).query(Int::class.java).single() == 0) reason = "team_not_found"
@@ -219,6 +223,7 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
             val status = when { reason != null -> "rejected"; again -> "issued"; waiting != null -> "already_invited"; existing.isNotEmpty() -> "already_member"; else -> "issued" }
             var code: String? = null
             var invitation: UUID? = null
+            var delivery: Map<String, Any?>? = null
             if (status == "issued") {
                 val member = if (again) waiting!! else UUID.randomUUID()
                 if (again) {
@@ -233,9 +238,11 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                 jdbc.sql("INSERT INTO enrollment.invitations(id,tenant_id,target_member_id,created_by_member_id,code_hash,expires_at,created_at) VALUES (:id,:tenant,:member,:actor,:hash,:expires,:now)")
                     .param("id", invitation).param("tenant", tenant).param("member", member).param("actor", actor).param("hash", hash(code))
                     .param("expires", Timestamp.from(now.plusSeconds(72 * 3600))).param("now", Timestamp.from(now)).update()
+                // 발급과 같은 트랜잭션에서 초대 메일을 적재한다. 발급은 발송이 아니다 — 상태는 따로 낸다(ADR 0038).
+                delivery = mail(tenant, invitation, email, code, now.plusSeconds(72 * 3600))
             }
             mapOf("email" to email, "invitationId" to invitation, "status" to status, "reason" to reason,
-                "expiresAt" to if (invitation != null) now.plusSeconds(72 * 3600).toString() else null, "code" to code)
+                "expiresAt" to if (invitation != null) now.plusSeconds(72 * 3600).toString() else null, "code" to code, "delivery" to delivery)
         }
         return node(mapOf("results" to results))
     }
@@ -250,10 +257,19 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
             .param("role", role).param("now", Timestamp.from(advance(now, old))).param("id", member).update()
     }
     private fun revoke(tenant: UUID, raw: String, now: Instant): JsonNode {
+        val id = uuid(raw)
         val count = jdbc.sql("UPDATE enrollment.invitations SET revoked_at=:now WHERE tenant_id=:tenant AND id=:id AND revoked_at IS NULL AND (used_at IS NULL OR signup_used_at IS NULL)")
-            .param("now", Timestamp.from(now)).param("tenant", tenant).param("id", uuid(raw)).update()
+            .param("now", Timestamp.from(now)).param("tenant", tenant).param("id", id).update()
         if (count == 0) fail("invitation_unavailable", 409)
+        // 폐기한 코드의 메일이 아직 나가지 않았으면 보내지 않는다.
+        invitationMail?.cancel(id)
         return node(emptyMap<String, String>())
+    }
+    /** 초대 메일을 적재하고 그 발송 상태를 돌려준다. 메일 기능이 꺼져 있으면 발송하지 않았다고 말한다. */
+    private fun mail(tenant: UUID, invitation: UUID, email: String, code: String, expiresAt: Instant): Map<String, Any?> {
+        val mailer = invitationMail ?: return MailDeliveryView.notSent(false)
+        val organization = jdbc.sql("SELECT name FROM enrollment.tenants WHERE id=:id").param("id", tenant).query(String::class.java).single()
+        return MailDeliveryView.of(mailer.enqueue(invitation, organization, email, code, expiresAt))
     }
     private fun reissue(tenant: UUID, actor: UUID, raw: String, now: Instant): JsonNode {
         val old = jdbc.sql("""SELECT target_member_id,used_at,signup_used_at FROM enrollment.invitations
@@ -269,7 +285,9 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
             VALUES (:id,:tenant,:member,:actor,:hash,:expires,:now,:used,:signup)""")
             .param("id", id).param("tenant", tenant).param("member", old.first).param("actor", actor).param("hash", hash(code))
             .param("expires", Timestamp.from(expires)).param("now", Timestamp.from(now)).param("used", old.second).param("signup", old.third).update()
-        return node(mapOf("invitationId" to id, "replacesInvitationId" to raw, "code" to code, "expiresAt" to expires.toString()))
+        val email = jdbc.sql("SELECT email FROM enrollment.members WHERE id=:id").param("id", old.first).query(String::class.java).single()
+        return node(mapOf("invitationId" to id, "replacesInvitationId" to raw, "code" to code, "expiresAt" to expires.toString(),
+            "delivery" to mail(tenant, id, email, code, expires)))
     }
     private fun addMembership(member: UUID, team: UUID, now: Instant) {
         jdbc.sql("INSERT INTO enrollment.team_memberships(id,member_id,team_id,joined_at) VALUES (:id,:member,:team,:now)")

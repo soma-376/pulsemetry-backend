@@ -1,6 +1,8 @@
 package com.team376.pulsemetry.enrollment.management
 
+import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import org.springframework.beans.factory.ObjectProvider
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementStore
 import com.team376.pulsemetry.security.user.UserAuthException
 import com.team376.pulsemetry.security.user.UserAuthService
@@ -34,6 +36,8 @@ class ManagementProperties {
     var enabled = false
     var responseEncryptionKey = ""
     var onboardingOtlpEndpoint = ""
+    /** 초대 메일의 수락 링크가 가리키는 프론트 주소. 메일 기능을 같이 켰을 때 필요하다 */
+    var invitationAcceptUrl = ""
 }
 
 @Configuration(proxyBeanMethods = false)
@@ -42,8 +46,8 @@ class ManagementProperties {
 class ManagementConfig {
     @Bean
     fun managementStore(jdbc: JdbcClient, manager: PlatformTransactionManager, mapper: ObjectMapper, clock: Clock,
-        properties: ManagementProperties): ManagementStore = ManagementStore(jdbc, manager, mapper, clock,
-            properties.responseEncryptionKey) { InitialOnboardingManifest.create(properties.onboardingOtlpEndpoint, mapper) }
+        properties: ManagementProperties, invitationMail: ObjectProvider<InvitationMailer>): ManagementStore = ManagementStore(jdbc, manager, mapper, clock,
+            properties.responseEncryptionKey, { InitialOnboardingManifest.create(properties.onboardingOtlpEndpoint, mapper) }, invitationMail.ifAvailable)
 }
 
 @RestController
