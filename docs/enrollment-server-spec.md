@@ -664,6 +664,46 @@ psql postgresql://pulsemetry:pulsemetry@localhost:5432/pulsemetry \
 
 이 절차가 **compose 단독 E2E** 다 — 자동화는 PROJ-106 에서 이미지·CI 와 함께 다룬다(ADR 0016 Follow-up).
 
+### 10.2 데몬 → 서버 → 화면 실경로 검증
+
+설치 보고 묶음(§4.5 설치 보고, 수집 상태 판정, 정책 재조회·적용, 업데이트 확인)이 끝에서 끝까지 이어지는지 한 번에 본다.
+데몬 쪽은 telemetryctl 의 통합 테스트 `TestIntegrationEndToEndInstallationReportFromEnrollmentToDashboard`(빌드 태그 `integration`)가,
+화면 쪽은 프론트의 `tests/e2e-daemon/installation-report.spec.ts`(`playwright.daemon.config.ts`)가 맡는다. 둘은 **같은 단계 디렉터리**로 걸음을 맞춘다 —
+데몬 쪽이 단계마다 `<단계>.ready`(관찰값 JSON)를 쓰고 화면 쪽이 확인한 뒤 `<단계>.seen`을 쓴다.
+
+데몬 테스트는 데몬 바이너리를 띄우지 않고 **실제 데몬 코드**(`daemon.Run`)를 테스트 프로세스 안에서 임시 설치·메모리 키링으로 돌린다 —
+개발자 PC의 키체인·자동 시작 등록을 건드리지 않는다. 서버는 실제 HTTP 로 부른다.
+
+준비:
+
+- 세 서버를 local 프로필로 띄운다(설치 보고 주기 1분, 메일 켬). ingest 는 `PULSEMETRY_TELEMETRY_OPS_ENABLED=true`, dashboard-api 의
+  `pulsemetry.dashboard.ingest.*`·`completeness.settle-after` 는 local 값 그대로다. 프론트는 서버의 허용 origin 주소로 띄운다.
+- **manifest 가 없는 조직**을 쓴다(시드 B). 테스트가 최초 정책을 저장하면 전달 주소가 `PULSEMETRY_ONBOARDING_OTLP_ENDPOINT` 가 된다 — 띄운 ingest 주소로 맞춘다.
+  시드 A 의 manifest 는 `http://localhost:4316` 고정이라 다른 ingest 로 보낼 수 있다. 테스트는 등록으로 받은 전달 주소가 `PULSEMETRY_IT_INGEST_URL` 과 다르면 보내지 않고 멈춘다.
+- 업데이트 확인용 릴리스 자산(바이너리와 `pulsemetry_release.json` — telemetryctl `task release:assets`)을 `PULSEMETRY_BINARIES_DIR` 에 둔다(§6.3).
+
+```sh
+# telemetryctl — 단계 디렉터리는 비어 있는 새 디렉터리
+PULSEMETRY_IT_SERVER_URL=http://localhost:8080 PULSEMETRY_IT_DASHBOARD_URL=http://localhost:8081 PULSEMETRY_IT_INGEST_URL=http://localhost:4316 \
+PULSEMETRY_IT_TENANT_ID=<시드 B 조직 ID> PULSEMETRY_IT_ADMIN_EMAIL=owner@seed-b.example.test PULSEMETRY_IT_ADMIN_PASSWORD=<개발 시드 비밀번호> \
+PULSEMETRY_IT_RELEASE_METADATA=<바이너리 디렉터리>/pulsemetry_release.json PULSEMETRY_IT_RELEASE_PLATFORM=darwin PULSEMETRY_IT_RELEASE_ARCH=arm64 \
+PULSEMETRY_IT_STAGE_DIR=<단계 디렉터리> go test -tags integration -count=1 -timeout 20m -run TestIntegrationEndToEnd ./internal/daemon &
+
+# frontend — 실서버 E2E 와 같은 .env.local 값에 단계 디렉터리를 더한다
+E2E_DAEMON_STAGE_DIR=<단계 디렉터리> npx playwright test --config=playwright.daemon.config.ts
+```
+
+| 단계 | 데몬 쪽이 만드는 것과 확인하는 것 | 화면이 확인하는 것 |
+| --- | --- | --- |
+| `enrolled` | 최초 정책 → 초대 발급 → 실제 `POST /v1/enroll` → 데몬 기동 직후 보고에 서버가 그 판을 적용 확인. `GET O/installations` 의 적용 판·`lastHeartbeatAt`, 수집 상태 `empty`(수신 이력 없음)·보고 설치 1 | 정책 적용 현황 "적용 1대", 설치 행의 판·마지막 보고, 헤더 "수신 대기 · 보고 중인 설치 1대" |
+| `collecting` | 수신기에 OTLP 로그 → 데몬이 ingest 로 전달 → 수집 상태 `healthy`·`lastReceivedAt` | 헤더 "수집 정상 · 마지막 수신" |
+| `outdated` | 관리자가 정책 저장(판 +1). 이 PC 의 사용자 세션이 없어 데몬은 `login_required` — 설치는 미적용·알림 가능 | "미적용 1대", 미적용 목록의 이전 판·선택 칸 |
+| `applied` | 사용자 로그인 → 다음 보고의 답으로 재조회·적용 → 서버가 새 판 적용 확인 | "적용 1대", 적용 목록의 새 판 |
+| `updates` | 릴리스 메타데이터로 `ready`(최신 판·업데이트 있음), 메타데이터를 치우면 `unsupported` — 끝나면 되돌린다 | 없음(데몬 로컬 API) |
+
+이 검증은 조직에 정책·초대·설치·수집 데이터를 실제로 만든다. 끝나면 DB 볼륨을 새로 만든다(`docker compose down -v` 뒤 다시 올린다).
+설치 보고가 1분 주기라 한 번 도는 데 2분 남짓 걸린다.
+
 테스트는 Testcontainers 로 실제 PostgreSQL 을 띄우므로 Docker 데몬이 필요하다.
 H2 등 임베디드 DB 로 대체하지 않는다 — jsonb·부분 유니크 인덱스·스키마 분리를 검증할 수 없다.
 
