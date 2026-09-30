@@ -58,3 +58,6 @@ pulsemetry:
       down-after: 24h
     completeness:
       settle-after: 1h
+    # 로컬에는 벤더 연결이 없다(수동 기록만) — 연결을 켜 볼 때 동기화 간격보다 길게 둔다.
+    seats:
+      stale-after: 26h

@@ -27,6 +27,8 @@ data class DashboardApiProperties(
 	val ingest: Ingest,
 
 	val completeness: Completeness,
+
+	val seats: Seats,
 ) {
 	init {
 		require(retryAfter.toSeconds() >= 1) {
@@ -175,6 +177,19 @@ data class DashboardApiProperties(
 	) {
 		init {
 			require(!settleAfter.isNegative && !settleAfter.isZero) { "pulsemetry.dashboard.completeness.settle-after 는 0보다 커야 한다: $settleAfter" }
+		}
+	}
+
+	/** 좌석 원장 조회의 운영 수치 (ADR 0048 §7). 기본값이 없다. */
+	data class Seats(
+		/**
+		 * 연결의 마지막 성공 동기화가 이보다 오래되면 그 제품의 좌석 값을 낡았다고 표시한다(`partial`, `seat_sync_outdated`).
+		 * enrollment-api 의 동기화 간격(`pulsemetry.vendor-connections.sync.interval`)보다 길어야 한다 — 짧으면 정상 주기 사이에도 늘 낡아 보인다.
+		 */
+		val staleAfter: Duration,
+	) {
+		init {
+			require(!staleAfter.isNegative && !staleAfter.isZero) { "pulsemetry.dashboard.seats.stale-after 는 0보다 커야 한다: $staleAfter" }
 		}
 	}
 

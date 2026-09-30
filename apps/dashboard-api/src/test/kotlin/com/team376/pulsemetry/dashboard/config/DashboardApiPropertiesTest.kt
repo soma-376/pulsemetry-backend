@@ -120,7 +120,17 @@ class DashboardApiPropertiesTest {
 		"pulsemetry.dashboard.ingest.delayed-after=5m",
 		"pulsemetry.dashboard.ingest.down-after=3h",
 		"pulsemetry.dashboard.completeness.settle-after=1h",
+		"pulsemetry.dashboard.seats.stale-after=26h",
 	)
+
+	@ParameterizedTest
+	@ValueSource(strings = ["", "0s", "-1h"])
+	@DisplayName("좌석 원장의 낡음 기준이 없거나 0 이하면 기동이 실패한다 — 기본값이 없다 (ADR 0048)")
+	fun seatStaleAfterIsRequired(value: String) {
+		runner.withPropertyValues(*complete.filterNot { it.startsWith("pulsemetry.dashboard.seats.stale-after=") }.toTypedArray())
+			.run { assertThat(it).hasFailed() }
+		runner.withPropertyValues(*complete, "pulsemetry.dashboard.seats.stale-after=$value").run { assertThat(it).hasFailed() }
+	}
 
 	@ParameterizedTest
 	@ValueSource(strings = ["", "0s", "-1m"])

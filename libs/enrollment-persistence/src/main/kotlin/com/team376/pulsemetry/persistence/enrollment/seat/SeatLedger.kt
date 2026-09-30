@@ -601,9 +601,10 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 	/** 판마다 한 행 — 바뀐 뒤의 값과 행위자 하나. */
 	private fun event(seat: Seat, actor: UUID? = null, syncRun: UUID? = null): Seat {
 		jdbc.sql("""INSERT INTO enrollment.seat_assignment_events (seat_assignment_id, version, tenant_id, state, source, member_id, member_link, tier_id, vendor_tier,
-				release_effective_on, note, actor_id, sync_run_id, recorded_at)
+				release_effective_on, note, actor_id, sync_run_id, recorded_at, assigned_at)
 			VALUES (:id, :version, :tenant, :state, :source, :member, :link,
-				:tier, :vendorTier, :effective, :note, :actor, :run, :at)""")
+				:tier, :vendorTier, :effective, :note, :actor, :run, :at, :assignedAt)""")
+			.param("assignedAt", Timestamp.from(seat.assignedAt))
 			.param("id", seat.id).param("version", seat.version).param("tenant", seat.tenantId).param("state", seat.state.wire).param("source", seat.source.wire)
 			.param("member", seat.memberId, Types.OTHER).param("link", seat.memberLink?.wire, Types.VARCHAR).param("tier", seat.tierId, Types.VARCHAR)
 			.param("vendorTier", seat.vendorTier, Types.VARCHAR).param("effective", seat.releaseEffectiveOn, Types.DATE).param("note", seat.note, Types.VARCHAR)

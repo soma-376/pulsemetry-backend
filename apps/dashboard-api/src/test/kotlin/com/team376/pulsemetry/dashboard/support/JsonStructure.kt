@@ -22,6 +22,10 @@ object JsonStructure {
 			"/teamUsage/topTeams/0" to setOf("products"),
 			"/teamUsage/unassigned" to setOf("products"),
 		),
+		// 회수 후보의 좌석 벤더 계정 — ADR 0048.
+		"members-response.example.json" to mapOf(
+			"/reclaimCandidates/data/items/0" to setOf("vendorAccount"),
+		),
 		"teams-response.example.json" to mapOf(
 			"/teams/items/0" to setOf("products"),
 			"/unassigned" to setOf("products"),

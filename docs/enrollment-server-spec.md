@@ -1274,6 +1274,7 @@ Flyway가 enrollment 스키마의 진실원이다. 관련 추가 마이그레이
 | V20 | 보존 정리 요청(`retention_cleanup_requests`) (ADR 0047) |
 | V21 | 벤더 연결(`vendor_connections` — 자격증명 암호문·확인·동기화 선점과 결과)·동기화 실행(`seat_sync_runs`)·좌석 원장(`seat_assignments`)과 판별 이력(`seat_assignment_events`) (ADR 0048) |
 | V22 | 좌석 동기화 요청 — 작업 종류 `seat_sync`, 연결의 요청 칸(`sync_requested_operation_id`), 실행이 끝내는 요청(`seat_sync_runs.operation_id`) (ADR 0048 §7) |
+| V23 | 좌석 이력에 보유 구간의 시작(`seat_assignment_events.assigned_at`) — 조회가 기준 시각의 좌석을 이력으로 다시 세운다 (ADR 0048 §7) |
 
 V12는 이 표에 없다 — 사용자 로그인 방식 작업이 예약한 번호다. Flyway는 이미 적용한 판보다 낮은 번호를 뒤늦게 받지 않으므로,
 V13이 먼저 적용된 DB에는 V12를 넣을 수 없다. 머지 순서가 뒤집히면 그 작업이 번호를 다시 매긴다.

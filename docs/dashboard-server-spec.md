@@ -39,6 +39,7 @@
 | `/members` | 기간, q, limit=20(최대 100), cursor, snapshotId | MemberListResponse |
 | `/members/unassigned` | 기간, limit=20(최대 100), cursor, snapshotId | MemberListResponse |
 | `/seat-reclaim-candidates` | limit=20(최대 100), cursor, snapshotId | ReclaimCandidatesResponse |
+| `/members/{memberId}/seats` | snapshotId(선택 — 현재 상태 토큰) | MemberSeatsResponse — 아래 "좌석 원장 조회" |
 | `/ingest-status` | 없음 | IngestStatusResponse |
 | `/settings` | 없음 | SettingsResponse |
 | `/vendors` | limit=20(최대 100), cursor, snapshotId | VendorsResponse |
@@ -120,7 +121,7 @@ type ProductRef = { kind: string | null; displayName: string | null };
 - 서로 다른 토큰 의미 프로파일을 섞거나 필수 토큰 값이 누락되면 합계가 null일 수 있다.
 - 환산 비용과 실제 청구액은 별개다. 인보이스 원천이 없으므로 실제 청구액은 null이다.
 - 최근 수신만으로 수집 정상·장애를 확정하지 않는다. unknown/empty를 정상으로 바꾸지 않는다.
-- 수동 계약의 좌석 수·월 단가는 저장·조회하지만 실제 벤더 좌석 사용/회수는 연결하지 않는다.
+- 좌석은 좌석 원장(ADR 0048)의 값이다 — 계약의 구매 수량이 아니다. 원장은 기준 시각으로 다시 세우고 제품 단위로 가용성을 낸다(아래 "좌석 원장 조회"). 회수 실행은 아직 없다.
 - 알림·회수 실행·기존 설치로의 정책 배포·보존 설정 조작은 capability=false 또는 unavailable 상태다. 기존 설치는 새 정책을 서버가 밀어 넣지 않고
   설치 보고의 응답으로 알고 스스로 받는다(enrollment 명세 §4.5). 관리자가 할 수 있는 것은 아래 "정책 적용 현황과 업데이트 안내"의 확인 요청 메일뿐이다.
 
@@ -210,6 +211,62 @@ type ProductRef = { kind: string | null; displayName: string | null };
   끊긴 뒤의 값을 앞의 누적에 이어 붙이지 않는다. 사용이 없는 완전한 날은 앞날의 값 그대로다(첫날이면 0).
 - 마지막 날의 값이 있으면 그 기간의 팀 `current.sessionCount`와 같다. 기간 세션 수를 날짜로 나누거나 보간해 만들지 않는다.
 - 같은 snapshot 의 사용량 행에서 계산하므로 목록과 상세가 같다. 이 규칙을 더하면서 판정 규칙 판을 `dashboard-v4`로 올렸다 — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
+
+### 좌석 원장 조회 (ADR 0048)
+
+구성원 화면의 좌석 요약·구성원별 `seatState`·회수 후보, 회수 후보 목록, 구성원 좌석은 **하나의 좌석 원장**(enrollment `seat_assignments`와 판별 이력)에서 계산한다.
+구매 수량(`tiers[].seats`)이나 사용자 수로 좌석을 만들지 않는다.
+
+- **기준 시각으로 다시 세운다 — snapshot 에 복제하지 않는다.** 원장은 판마다 이력(`seat_assignment_events`, 판의 상태·원천·구성원 연결·등급·배정 시각)을 남기므로
+  기준 시각 이전의 마지막 판이 그 시각의 좌석이다. 구성원 화면(`/members/dashboard`·`/members`·`/members/unassigned`)의 기준 시각은 snapshot 의 asOf,
+  회수 후보·구성원 좌석은 현재 상태 토큰의 asOf 다. 구성원 화면에 실은 회수 후보 첫 페이지는 snapshot asOf 의 토큰으로 내므로 다음 페이지를 `/seat-reclaim-candidates`로 이어 읽는다.
+  그래서 캐시 DDL·`QUERY_CONTRACT`는 바뀌지 않았다. 판이 없는 값 — 벤더 활동 시각, 연결의 동기화 상태 — 은 현재 값이다.
+- **제품 단위 가용성** — 원장이 그 제품에 대해 비었거나 낡았으면 그 제품만 낮춘다.
+
+| 등록 제품 | 가용성 | 사유 |
+| --- | --- | --- |
+| 활성 연결, 성공한 동기화 없음 | unavailable | `seat_sync_pending`(시도 전) · `seat_sync_failing`(실패만) |
+| 활성 연결, 마지막 시도가 실패 | partial | `seat_sync_failing` |
+| 활성 연결, 마지막 성공이 `seats.stale-after`보다 오래됨 | partial | `seat_sync_outdated` |
+| 연결 없음, 기록된 좌석 없음 | unavailable | `seat_source_not_recorded` |
+| 연결 없음, 커넥터가 있는 플랜(연결 전 임시 기록) | partial | `seat_source_provisional` |
+| 그 밖 | available | — |
+
+  여러 제품을 합친 섹션은 모두 unavailable 이면 unavailable(첫 사유), 하나라도 낮으면 partial(첫 사유), 등록 제품이 없으면 unavailable `not_applicable`이다.
+- **`seatState`**: 쓸 수 있는 원장(unavailable 이 아닌 제품)에 보유 좌석(배정·해제 예정·배정 대기)이 있으면 `assigned`, 없고 벤더 제어·관리자 조치로 해제된 좌석이 있으면 `reclaimed`,
+  모든 등록 제품의 원장을 쓸 수 있으면 `unassigned`, 아니면 `unknown`(좌석이 없다고 말할 근거가 없다). 현재 팀·역할과 별개다.
+- **좌석 요약**(`summary.seats`): 쓸 수 있는 원장만 센다. `contracted`·`unallocated`는 유효한 계약(contractStatus=active)이 있는 제품 범위에서만 —
+  `unallocated`는 제품마다 max(계약 좌석 − 보유 좌석, 0)의 합이다(계약 좌석에서 사람 수를 빼지 않는다). `assigned`는 보유 좌석 수.
+  `activeInPeriod`는 선택 기간에 그 제품(관측 제품 매핑)을 쓴 보유 좌석 수이고, 모든 보유 좌석이 구성원에 이어지고 관측 가능한 제품일 때만 낸다(아니면 null).
+  `inactiveAssigned`는 그중 쓰지 않은 좌석 수이고, 기간 전체가 완전하고 그 좌석들의 구성원이 기간 내내 설치를 갖고 있을 때만 낸다. `reclaimCandidates`는 회수 후보 수,
+  `estimatedMonthlySavingsUsd`는 계약의 해지·감액 조건 원천이 없어 null 이다.
+- **회수 후보**: 배정(`assigned`) 좌석 중 다음을 **모두** 만족할 때만이다. 사용 이벤트가 없다는 것만으로 후보로 만들지 않는다.
+  1. 구성원에 이어져 있고 그 구성원이 로스터(활성·정지)에 있다.
+  2. 그 제품의 원장이 unavailable 이 아니고, 관측 제품 매핑이 있다(ADR 0044 — 지금은 Claude·OpenAI 제품뿐이다).
+  3. 유휴 일수 ≥ 조직의 회수 기준. 유휴 일수 = 시작부터 기준 시각까지의 완전한 24시간 수, 시작 = 마지막 사용(그 제품의 텔레메트리 사용과 벤더 활동 시각 중 늦은 것)과
+     배정 시각 중 늦은 것(사용이 없으면 배정 시각).
+  4. 관측이 충분하다 — 확정된 마지막 날까지의 [회수 기준]일이 모두 완전하고(ADR 0042), 기준 시각 앞 [회수 기준]일 동안 등록돼 폐기되지 않은 그 구성원의 설치가 있다.
+
+  유휴 일수 내림차순 + 좌석 ID 오름차순이다. 판정하지 못한 배정 좌석(미연결·관측 매핑 없음·원장 없음·관측 부족)이 있으면 목록에서 빼고 `partial` `observation_incomplete`다.
+  `canReclaim`은 false, `reason`은 `vendor_control_unavailable`(회수 실행이 아직 없다)이다. `tierId`는 모르면 null(요청서는 문자열), 절감액은 null,
+  `vendorAccount`(가산)는 좌석의 벤더 계정이다(`account`는 구성원의 계정).
+- **구성원 좌석** `GET O/members/{memberId}/seats`: 로스터에 없는 구성원은 404(다른 조직·없는 ID·UUID 아님 포함). 보관한 등록 제품의 좌석은 싣지 않는다.
+
+```ts
+type MemberSeatsResponse = { meta: CurrentMeta; memberId: string; policy: { idleDays: number; version: number }; seats: MemberSeat[] };
+type MemberSeat = {
+  seatAssignmentId: string; version: number; vendorId: string; vendorName: string; kind: string;
+  contractVersion: number | null; tierId: string | null; tierLabel: string | null; vendorTier: string | null;
+  account: string; accountKind: "email" | "github_login";
+  state: "assigned" | "pending_assignment" | "pending_release" | "released"; source: string; memberLink: "email_match" | "admin" | null;
+  assignedAt: string; releaseEffectiveOn: string | null; releasedAt: string | null;
+  ledgerAvailability: "available" | "partial" | "unavailable"; ledgerReason: string | null;
+  lastUsedAt: string | null;   // 그 제품의 마지막 사용(텔레메트리·벤더 활동 중 늦은 것). 모르면 null — 미사용이 아니다
+  idleDays: number | null;     // 관측할 수 있는 배정 좌석만
+  reviewReason: "not_assigned" | "seat_unlinked" | "seat_source_unavailable" | "product_unobservable" | "in_use" | "observation_incomplete" | null; // null = 후보
+  reclaimCandidate: boolean; canReclaim: boolean; reclaimReason: string | null;
+};
+```
 
 ### 작업 상태 조회
 
@@ -370,6 +427,7 @@ enrollment-api와 같은 값을 준다(local 프로필은 둘 다 true).
 | `pulsemetry.dashboard.members.idle-days` | 조직이 회수 기준을 저장하지 않았을 때의 회수 후보 기준 기간(ADR 0046) |
 | `pulsemetry.dashboard.ingest` | 수집 상태 판정의 임계값 — window·delayed-after·down-after. 셋 다 기본값이 없다(아래 "공통 헤더 수집 현황") |
 | `pulsemetry.dashboard.completeness.settle-after` | 기간 완전성의 확정 대기(`PULSEMETRY_DASHBOARD_COMPLETENESS_SETTLE_AFTER`). 기본값 없음, 0보다 크다. 데몬의 재시도 전체와 적재가 끝나는 시간보다 길게. local 1시간 |
+| `pulsemetry.dashboard.seats.stale-after` | 연결의 마지막 성공 동기화가 이보다 오래되면 그 제품의 좌석을 낡았다고 표시(`PULSEMETRY_DASHBOARD_SEATS_STALE_AFTER`, ADR 0048). 기본값 없음, 0보다 크다. enrollment-api 의 동기화 간격보다 길게. local 26시간 |
 | `pulsemetry.dashboard.retry-after` | 일시 장애 재시도 간격 |
 
 정확한 환경변수 이름은 [application.yaml](../apps/dashboard-api/src/main/resources/application.yaml)에 매핑돼 있다.

@@ -113,3 +113,8 @@ pulsemetry:
     # settle-after: 하루가 끝난 뒤 그날을 확정하기까지 기다리는 시간 — 데몬의 전송(재시도 포함)·서버 적재가 끝나는 시간보다 길게.
     completeness:
       settle-after: ${PULSEMETRY_DASHBOARD_COMPLETENESS_SETTLE_AFTER:}
+
+    # 좌석 원장 조회의 운영 수치 (ADR 0048 §7). 기본값 없음.
+    # stale-after: 연결의 마지막 성공 동기화가 이보다 오래되면 그 제품의 좌석을 낡았다고 표시한다 — enrollment-api 의 동기화 간격보다 길게.
+    seats:
+      stale-after: ${PULSEMETRY_DASHBOARD_SEATS_STALE_AFTER:}

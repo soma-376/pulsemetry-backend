@@ -34,20 +34,59 @@ data class MemberSummary(
 	val seats: Section<SeatSummary>,
 )
 
+/**
+ * 회수 후보 (ADR 0048 §7). `account` 는 구성원의 계정(이메일), `vendorAccount` 는 좌석의 벤더 계정(가산 — Copilot 은 GitHub 로그인).
+ * `tierId` 는 모르면 null 이다(요청서는 문자열 — 등급을 주지 않는 벤더의 좌석은 등급을 모른다). 절감액은 계약의 해지·감액 조건 원천이 없어 null 이다.
+ */
 data class ReclaimCandidate(
 	val seatAssignmentId: String,
 	val memberId: String,
 	val account: String,
 	val team: TeamRef,
 	val vendorId: String,
-	val tierId: String,
+	val tierId: String?,
 	val version: Long,
 	val lastUsedAt: String?,
 	val idleDays: Long,
 	val estimatedMonthlySavingsUsd: String?,
 	val canReclaim: Boolean,
 	val reason: String?,
+	val vendorAccount: String,
 )
+
+/**
+ * 구성원 상세의 벤더 좌석 한 자리 (`GET O/members/{memberId}/seats`). 좌석 원장의 기준 시각 값과 그 판정(관측·검토·회수 가능)을 싣는다.
+ * `lastUsedAt` 은 그 제품의 도구 사용(관측 제품 매핑)과 벤더 활동 중 늦은 것, `idleDays` 는 관측할 수 있을 때만 있다.
+ */
+data class MemberSeat(
+	val seatAssignmentId: String,
+	val version: Long,
+	val vendorId: String,
+	val vendorName: String,
+	val kind: String,
+	val contractVersion: Long?,
+	val tierId: String?,
+	val tierLabel: String?,
+	val vendorTier: String?,
+	val account: String,
+	val accountKind: String,
+	val state: String,
+	val source: String,
+	val memberLink: String?,
+	val assignedAt: String,
+	val releaseEffectiveOn: String?,
+	val releasedAt: String?,
+	val ledgerAvailability: String,
+	val ledgerReason: String?,
+	val lastUsedAt: String?,
+	val idleDays: Long?,
+	val reviewReason: String?,
+	val reclaimCandidate: Boolean,
+	val canReclaim: Boolean,
+	val reclaimReason: String?,
+)
+
+data class MemberSeatsResponse(val meta: CurrentMeta, val memberId: String, val policy: IdlePolicy, val seats: List<MemberSeat>)
 
 data class IdlePolicy(val idleDays: Int, val version: Long)
 

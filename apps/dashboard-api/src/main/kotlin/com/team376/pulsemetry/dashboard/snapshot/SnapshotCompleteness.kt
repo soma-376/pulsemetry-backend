@@ -18,7 +18,7 @@ class SnapshotCompleteness(
 	private val source: JdbcClient,
 	private val cache: JdbcClient,
 	/** 하루가 끝난 뒤 그날을 확정하기까지 기다리는 시간(전송·적재가 끝나는 시간). 필수 설정이다. */
-	private val settle: Duration,
+	val settle: Duration,
 ) {
 	init {
 		require(!settle.isNegative && !settle.isZero) { "확정 대기 시간은 0보다 커야 한다: $settle" }

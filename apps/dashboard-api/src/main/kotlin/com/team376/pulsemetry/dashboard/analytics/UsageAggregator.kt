@@ -34,6 +34,9 @@ class UsageAggregator(
 		/** 카탈로그 제품(ADR 0045). 키는 snapshot 에 복제한 매핑으로 잇고 매핑 없는 관측은 [UNMAPPED_PRODUCT] 다. */
 		PRODUCT(listOf(PRODUCT_KEY)),
 		TEAM_PRODUCT(listOf("team_id_as_of", PRODUCT_KEY)),
+
+		/** 구성원 × 카탈로그 제품 — 좌석의 기간 중 사용(ADR 0048). */
+		MEMBER_PRODUCT(listOf("member_id", PRODUCT_KEY)),
 	}
 
 	/** 한 팀으로 좁히는 조건. [teamId] 가 null 이면 미배분(`team_id_as_of IS NULL`)이다. */

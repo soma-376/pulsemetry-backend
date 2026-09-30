@@ -7,6 +7,8 @@ import com.team376.pulsemetry.dashboard.analytics.CurrentStateTokens
 import com.team376.pulsemetry.dashboard.analytics.IngestStatusReader
 import com.team376.pulsemetry.dashboard.analytics.IngestThresholds
 import com.team376.pulsemetry.dashboard.analytics.MembersService
+import com.team376.pulsemetry.dashboard.analytics.SeatLedgerReader
+import com.team376.pulsemetry.dashboard.analytics.SeatService
 import com.team376.pulsemetry.dashboard.analytics.OverviewService
 import com.team376.pulsemetry.dashboard.analytics.SettingsService
 import com.team376.pulsemetry.dashboard.analytics.SnapshotReferences
@@ -113,8 +115,21 @@ class AnalyticsConfig {
 		tokens: CurrentStateTokens,
 		clock: Clock,
 		source: JdbcClient,
+		seats: SeatService,
 	): MembersService = MembersService(frames, aggregator, references, snapshots, codec, tokens,
-		OrganizationPolicies(source, properties.members.idleDays), clock, managementEnabled)
+		OrganizationPolicies(source, properties.members.idleDays), clock, managementEnabled, seats)
+
+	/** 좌석 원장을 기준 시각으로 다시 세워 판정한다(ADR 0048 §7). 원천(원장·분석 행·설치·완전성 근거)은 읽기만 한다. */
+	@Bean
+	fun seatService(
+		properties: DashboardApiProperties,
+		source: JdbcClient,
+		reader: ClickHouseSourceReader,
+		mapper: ObjectMapper,
+		boundaries: RetentionBoundaryReader,
+		completeness: SnapshotCompleteness,
+	): SeatService = SeatService(SeatLedgerReader(source, reader, mapper, boundaries, completeness),
+		OrganizationPolicies(source, properties.members.idleDays), properties.seats.staleAfter)
 
 	/** 설정·벤더의 관측 지표(ADR 0044). 원천(분석 행·매핑·완전성 근거)은 읽기만 하고 고정은 자기 캐시에 쓴다. */
 	@Bean
