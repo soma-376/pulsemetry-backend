@@ -43,7 +43,7 @@
 | `/settings` | 없음 | SettingsResponse |
 | `/vendors` | limit=20(최대 100), cursor, snapshotId | VendorsResponse |
 | `/vendors/{vendorId}` | 없음 | VendorResponse |
-| `/installations` | policyStatus=outdated, limit=20(최대 100), cursor, snapshotId | InstallationsResponse |
+| `/installations` | policyStatus=applied·outdated·unknown, limit=20(최대 100), cursor, snapshotId | InstallationsResponse |
 | `/operations/{operationId}` | 없음 | OperationResponse |
 
 기간은 필수 `startDate`, `endDate` (`YYYY-MM-DD`, 종료일 포함, 1~366일)와 선택 `timeZone`이다.
@@ -91,7 +91,27 @@ type Usage = {
 - 환산 비용과 실제 청구액은 별개다. 인보이스 원천이 없으므로 실제 청구액은 null이다.
 - 최근 수신만으로 수집 정상·장애를 확정하지 않는다. unknown/empty를 정상으로 바꾸지 않는다.
 - 수동 계약의 좌석 수·월 단가는 저장·조회하지만 실제 벤더 좌석 사용/회수는 연결하지 않는다.
-- 알림·회수 실행·기존 설치로의 정책 배포·보존 설정 조작은 capability=false 또는 unavailable 상태다.
+- 알림·회수 실행·기존 설치로의 정책 배포·보존 설정 조작은 capability=false 또는 unavailable 상태다. 기존 설치는 새 정책을 서버가 밀어 넣지 않고
+  설치 보고의 응답으로 알고 스스로 받는다(enrollment 명세 §4.5). 관리자가 할 수 있는 것은 아래 "정책 적용 현황과 업데이트 안내"의 확인 요청 메일뿐이다.
+
+### 정책 적용 현황과 업데이트 안내 (ADR 0043)
+
+설치마다 **지금 집행하는 판**을 둔다. 설치 보고가 있으면 마지막 보고가 말한 판(`installation_heartbeats.applied_manifest_id`)이고,
+그 조직이 모르는 판을 보고했으면 없다. 보고가 없으면 적용 확인 기록(`installation_manifest_assignments.applied_at`) 중 가장 높은 판이다.
+적용 확인은 그 판을 적용한 **적이 있다**는 이력이라, 보고하는 설치에서 가장 높은 확인 판을 지금 판으로 쓰지 않는다(뒤로 돌아간 설치를 놓친다).
+
+| 값 | 규칙 |
+| --- | --- |
+| 적용 상태 | 지금 판이 활성 판 이상이면 `applied`, 낮으면 `outdated`, 없으면 `unknown`. 보고가 없는 설치를 적용 완료로 추정하지 않는다 |
+| `policyRollout` | 활성 설치 전체(`eligibleInstallations`)를 위 셋으로 나눈 수 |
+| `/installations?policyStatus=` | `applied`·`outdated`·`unknown` 중 하나로 거른다. 그 밖의 값은 400. 필터마다 cursor 의 범위가 다르다 |
+| `appliedPolicyVersion` | 지금 판. 없으면 null |
+| `lastHeartbeatAt` | 마지막 설치 보고를 받은 서버 시각. 보고가 없으면 null — 데이터 수신 시각을 넣지 않는다 |
+| `capabilities.notifyInstallations` | 안내 채널이 있는 배포(`pulsemetry.management.enabled`와 `pulsemetry.mail.enabled`가 모두 true)면 true |
+| `canNotify` | 채널이 있고, 구성원이 활성이고, 적용 상태가 `applied`가 아닌 설치만 true |
+
+안내 명령(`POST O/installation-update-notifications`)은 enrollment-api가 받는다(enrollment 명세 §12 "설치 업데이트 안내"). 202 응답의 `Location`이 이 앱의
+작업 상태 조회를 가리키고, 대상 결과는 **메일의 발송 결과**다 — 설치가 새 판을 적용했다는 뜻이 아니다. 적용 여부는 이 표의 적용 상태로 다시 확인한다.
 
 ### 기간 완전성과 비교 (ADR 0042)
 
@@ -160,7 +180,7 @@ type OperationResponse = {
 - `retention`은 `retention_cleanup` 작업이 가리키는 가장 최근 삭제 실행(`telemetry_ops.retention_operations`)이다. 아직 실행된 적이 없으면 null이다.
   `logically_deleted`는 논리 삭제 완료이며 물리 제거 완료가 아니다. 삭제한 행 수와 상세 문구는 싣지 않는다.
 - 그 조직에 없는 작업은 404 `not_found`다. 다른 조직의 작업, 없는 ID, UUID가 아닌 ID가 같은 응답이다. **실패한 작업은 404가 아니라 200과 `status=failed`다.**
-- 이 저장소에는 아직 작업을 만드는 명령이 없다. 첫 명령이 생기기 전까지 이 조회가 돌려줄 작업은 없다.
+- 작업을 만드는 명령은 설치 업데이트 안내(`installation_notification` — 대상 ID는 설치 ID, 결과는 메일 발송 결과) 하나다. 나머지 종류는 아직 만드는 명령이 없다.
 
 ## 3. 벤더와 플랜 카탈로그
 
@@ -261,6 +281,8 @@ Compose가 인증 키를 `build/dev-auth`에 준비하며 서버 설정은 앱�
 서버는 enrollment-api의 private key를 사용하지 않는다. issuer·audience·public key는 발급 서버와 일치해야 한다.
 `pulsemetry.user-auth.enabled` 기본 false, 허용 origin은 user-auth.allowed-origins에 지정한다.
 `pulsemetry.management.enabled`는 관리 가능한 UI capability를 나타내며 실제 쓰기는 enrollment-api에 보낸다.
+`pulsemetry.mail.enabled`(`PULSEMETRY_MAIL_ENABLED`, 기본 false)는 이 앱에서 메일을 보내지 않는다 — 설치 업데이트 안내를 보낼 수 있는지의 표시에만 쓴다.
+enrollment-api와 같은 값을 준다(local 프로필은 둘 다 true).
 
 일반 실행은 `:apps:dashboard-api:bootRun`이며 필요한 설정은 다음 그룹이다.
 

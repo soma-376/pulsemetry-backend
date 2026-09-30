@@ -3,6 +3,7 @@ package com.team376.pulsemetry.enrollment.mail
 import com.team376.pulsemetry.enrollment.auth.AuthClockConfig
 import com.team376.pulsemetry.enrollment.auth.AuthTestClock
 import com.team376.pulsemetry.enrollment.support.MailpitServer
+import com.team376.pulsemetry.persistence.enrollment.installation.InstallationNotifier
 import com.team376.pulsemetry.persistence.enrollment.mail.ClaimedMail
 import com.team376.pulsemetry.persistence.enrollment.mail.MailDelivery
 import com.team376.pulsemetry.persistence.enrollment.mail.MailDispatcher
@@ -339,7 +340,9 @@ class MailDispatchTest {
         val managerMock = mock(PlatformTransactionManager::class.java)
         fun outboxOf(change: MailProperties.() -> Unit) = MailConfig().mailOutbox(jdbcMock, managerMock, Clock.systemUTC(), properties().apply(change))
         fun transportOf(change: MailProperties.() -> Unit) = MailConfig().mailTransport(properties().apply(change))
-        fun jobOf(change: MailProperties.() -> Unit) = MailConfig().mailDispatchJob(dispatcher, properties().apply(change))
+        @Suppress("UNCHECKED_CAST")
+        val noNotifier = mock(ObjectProvider::class.java) as ObjectProvider<InstallationNotifier>
+        fun jobOf(change: MailProperties.() -> Unit) = MailConfig().mailDispatchJob(dispatcher, properties().apply(change), noNotifier)
         outboxOf {}; transportOf {}; jobOf {}
         assertThatThrownBy { outboxOf { encryptionKey = "" } }.hasMessageContaining("pulsemetry.mail.encryption-key")
         assertThatThrownBy { outboxOf { encryptionKey = "c2hvcnQ=" } }.hasMessageContaining("pulsemetry.mail.encryption-key")

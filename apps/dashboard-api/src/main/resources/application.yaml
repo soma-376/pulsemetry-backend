@@ -43,6 +43,9 @@ pulsemetry:
     allowed-origins: ${PULSEMETRY_USER_AUTH_ALLOWED_ORIGINS:}
   management:
     enabled: ${PULSEMETRY_MANAGEMENT_ENABLED:false}
+  # 메일 발송은 enrollment-api 가 한다. 이 값은 "설치 업데이트 안내를 보낼 수 있는가"의 표시에만 쓴다(ADR 0043) — enrollment-api 와 같은 값을 준다.
+  mail:
+    enabled: ${PULSEMETRY_MAIL_ENABLED:false}
   dashboard:
     # 503 응답의 Retry-After.
     retry-after: ${PULSEMETRY_DASHBOARD_RETRY_AFTER:}

@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.persistence.enrollment.management
 
+import com.team376.pulsemetry.persistence.enrollment.installation.AppliedPolicyVersion
+import com.team376.pulsemetry.persistence.enrollment.installation.InstallationNotifier
 import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
 import com.team376.pulsemetry.persistence.enrollment.mail.MailDeliveryView
 import org.springframework.jdbc.core.simple.JdbcClient
@@ -30,7 +32,9 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
     private val mapper: ObjectMapper, private val clock: Clock, encryptionKey: String,
     initialManifest: () -> JsonNode,
     /** 초대 메일. 메일 기능이 꺼진 배포에서는 null 이고 초대는 발송 없이 코드만 발급한다. */
-    private val invitationMail: InvitationMailer? = null) {
+    private val invitationMail: InvitationMailer? = null,
+    /** 설치 업데이트 안내(ADR 0043). 메일 기능이 꺼진 배포에서는 null 이고 안내 요청은 422 다 — 접수한 척하지 않는다. */
+    private val installationNotifier: InstallationNotifier? = null) {
     private val tx = TransactionTemplate(manager)
     private val onboarding = OnboardingStore(jdbc, mapper, initialManifest, invitationMail != null)
     private val catalog = VendorCatalog(jdbc)
@@ -79,6 +83,7 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                 operation.startsWith("PATCH /vendors/") -> renameVendor(tenant, actor, operation.split('/')[2], body, now)
                 operation.startsWith("PUT /vendors/") -> saveVendor(tenant, actor, operation.split('/')[2], body, now)
                 operation.startsWith("DELETE /vendors/") -> removeVendor(tenant, actor, operation.split('/')[2], operation.endsWith("/contract"), version, now)
+                operation == "POST /installation-update-notifications" -> notifyInstallations(tenant, actor, body)
                 else -> fail("not_found", 404)
             }
             if (operation.startsWith("POST ")) {
@@ -288,6 +293,51 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
         val email = jdbc.sql("SELECT email FROM enrollment.members WHERE id=:id").param("id", old.first).query(String::class.java).single()
         return node(mapOf("invitationId" to id, "replacesInvitationId" to raw, "code" to code, "expiresAt" to expires.toString(),
             "delivery" to mail(tenant, id, email, code, expires)))
+    }
+    /**
+     * 설치 업데이트 안내 (ADR 0043). 대상을 모두 확인한 뒤에만 작업을 만들고 메일을 적재한다 — 하나라도 안 되면 아무것도 보내지 않는다.
+     *
+     * - 기대 판이 지금 활성 판과 다르면 409 `version_conflict` — 관리자가 본 화면이 낡았다.
+     * - 이 조직의 설치가 아닌 ID(다른 조직·없는 설치)가 있으면 404.
+     * - 폐기된 설치, 활성이 아닌 구성원의 설치, 이미 기대 판을 집행하고 있는 설치([AppliedPolicyVersion])가 있으면 409 `installation_unavailable`.
+     *
+     * 응답은 작업의 상태(`GET O/operations/{operationId}` 와 같은 모양)이고, 대상의 결과는 메일의 발송 결과로 채워진다.
+     */
+    private fun notifyInstallations(tenant: UUID, actor: UUID, body: JsonNode): JsonNode {
+        val notifier = installationNotifier ?: fail("notification_channel_unavailable", 422)
+        val raw = array(body, "installationIds")
+        if (raw.size > 100 || raw.any { !it.isString }) fail("invalid_request", 400, "installationIds")
+        val ids = raw.map { uuid(it.asString()) }
+        if (ids.toSet().size != ids.size) fail("invalid_request", 400, "installationIds")
+        val expected = long(body, "expectedPolicyVersion")
+        if (expected < 1) fail("invalid_request", 400, "expectedPolicyVersion")
+        val active = jdbc.sql("SELECT version FROM enrollment.manifests WHERE tenant_id=:tenant AND is_active").param("tenant", tenant)
+            .query(Long::class.java).optional().orElse(null)
+        if (active != expected) fail("version_conflict", 409, "expectedPolicyVersion")
+        val rows = jdbc.sql("""SELECT i.id, i.status::text AS status, i.hostname, i.platform::text AS platform, m.email, m.status::text AS member_status,
+                ${AppliedPolicyVersion.SQL} AS applied_version
+            FROM enrollment.installations i JOIN enrollment.members m ON m.id = i.member_id
+            WHERE i.tenant_id = :tenant AND i.id = ANY(CAST(:ids AS uuid[]))""")
+            .param("tenant", tenant).param("ids", ids.joinToString(",", "{", "}"))
+            .query { rs, _ ->
+                val applied = rs.getLong("applied_version").takeUnless { rs.wasNull() }
+                val notifiable = rs.getString("status") == "active" && rs.getString("member_status") == "active" && (applied == null || applied < expected)
+                notifiable to InstallationNotifier.Notice(rs.getObject("id", UUID::class.java), rs.getString("email"), "", rs.getString("hostname"),
+                    rs.getString("platform"), expected, applied)
+            }
+            .list()
+        if (rows.size != ids.size) fail("not_found", 404, "installationIds")
+        if (rows.any { !it.first }) fail("installation_unavailable", 409, "installationIds")
+        val organization = jdbc.sql("SELECT name FROM enrollment.tenants WHERE id=:id").param("id", tenant).query(String::class.java).single()
+        val order = ids.withIndex().associate { it.value to it.index }
+        val notices = rows.map { it.second.copy(organization = organization) }.sortedBy { order.getValue(it.installationId) }
+        val operation = notifier.notify(tenant, actor, notices)
+        return node(mapOf(
+            "operationId" to operation.id, "kind" to operation.kind.wire, "status" to operation.status.wire,
+            "createdAt" to operation.createdAt.toString(), "completedAt" to operation.completedAt?.toString(),
+            "results" to operation.targets.map { mapOf("targetId" to it.targetId, "status" to it.status.wire, "reason" to it.reason, "action" to it.action) },
+            "canRestore" to false, "restoreUntil" to null, "retention" to null,
+        ))
     }
     private fun addMembership(member: UUID, team: UUID, now: Instant) {
         jdbc.sql("INSERT INTO enrollment.team_memberships(id,member_id,team_id,joined_at) VALUES (:id,:member,:team,:now)")

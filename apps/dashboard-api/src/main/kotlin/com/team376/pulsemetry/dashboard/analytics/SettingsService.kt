@@ -9,6 +9,7 @@ import com.team376.pulsemetry.dashboard.request.PageCursor
 import com.team376.pulsemetry.dashboard.request.PageCursorCodec
 import com.team376.pulsemetry.dashboard.request.PageRequest
 import com.team376.pulsemetry.dashboard.request.QueryReader
+import com.team376.pulsemetry.persistence.enrollment.installation.AppliedPolicyVersion
 import com.team376.pulsemetry.persistence.enrollment.management.VendorCatalog
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.simple.JdbcClient
@@ -30,9 +31,11 @@ import java.util.UUID
  * - **수집 정책** = 활성 manifest(설치에 내려가는 설정)다. 원문 수집 선택은 manifest의 프롬프트·응답 설정
  *   중 하나라도 켜져 있는지다. 회수 유휴 일수는 구성원 화면과 같은 설정 값이다. 보존 기간 설정 원천이 없어 집계·원문 보존은 null(무기한 — 지우는
  *   작업이 없다)이다. 활성 manifest 가 없으면 설정이 없는 조직이라 404 다.
- * - **정책 적용**: 적용이 확인된 설치(`installation_manifest_assignments.applied_at`)만 applied 이고, 알려진 적용 판이 목표보다 낮으면 outdated,
- *   나머지는 unknown 이다 — 적용 보고가 없으면 적용 완료로 추정하지 않는다. heartbeat 원천이 없어 `lastHeartbeatAt` 은 null 이다(ledger 수신
- *   시각을 넣지 않는다). 설치 버전은 등록 때의 `client_version` 이다(텔레메트리의 제품 버전과 다르다).
+ * - **정책 적용**: 설치가 지금 집행하는 판([AppliedPolicyVersion] — 마지막 설치 보고의 판, 보고가 없으면 적용 확인 기록, ADR 0040·0043)이
+ *   목표 이상이면 applied, 낮으면 outdated, 알 수 없으면 unknown 이다 — 적용 보고가 없으면 적용 완료로 추정하지 않는다.
+ *   `lastHeartbeatAt` 은 마지막 설치 보고를 받은 시각이다(ledger 수신 시각을 넣지 않는다). 설치 버전은 마지막으로 보고한(없으면 등록 때의) `client_version` 이다.
+ * - **업데이트 안내**(ADR 0043): 안내 채널(관리 기능 + 메일)이 켜진 배포에서만 보낼 수 있다. 적용이 확인되지 않은(outdated·unknown) 설치 중
+ *   구성원이 활성인 설치만 `canNotify` 다. 안내는 확인을 부탁하는 메일이지 원격 업데이트가 아니다.
  * - **알림 규칙**: 규칙 저장소·평가 엔진이 없어 모두 비활성·`unavailable` 이다. 임계값과 창은 요청서의 초기 제안 기준이다.
  */
 class SettingsService(
@@ -46,7 +49,18 @@ class SettingsService(
 	private val clock: Clock,
 	private val managementEnabled: Boolean = false,
 	private val catalog: VendorCatalog,
+	/** 설치 업데이트 안내를 보낼 채널이 있는가(관리 기능과 메일이 모두 켜진 배포 — ADR 0043). */
+	private val notificationsEnabled: Boolean = false,
 ) {
+
+	/** 설치 목록의 정책 적용 필터. 없으면 전부다. */
+	enum class PolicyStatus(val wire: String) {
+		APPLIED("applied"), OUTDATED("outdated"), UNKNOWN("unknown");
+
+		companion object {
+			val BY_WIRE = entries.associateBy { it.wire }
+		}
+	}
 
 	private val log = LoggerFactory.getLogger(SettingsService::class.java)
 
@@ -61,7 +75,7 @@ class SettingsService(
 		return SettingsResponse(
 			meta = meta(organization, now, token),
 			ingest = frames.ingest(organization, now),
-			capabilities = SettingsCapabilities(editContracts = managementEnabled, editCollectionPolicy = managementEnabled, editAlertRules = false, notifyInstallations = false),
+			capabilities = SettingsCapabilities(editContracts = managementEnabled, editCollectionPolicy = managementEnabled, editAlertRules = false, notifyInstallations = notificationsEnabled),
 			summary = SettingsSummary(
 				configuredVendors = vendors.count { it.state == CONFIGURED }.toLong(),
 				unconfiguredVendors = vendors.count { it.state != CONFIGURED }.toLong(),
@@ -106,16 +120,21 @@ class SettingsService(
 		return VendorResponse(meta(organization, now, token), vendor)
 	}
 
-	fun installations(organization: Organization, outdatedOnly: Boolean, page: PageRequest, snapshotId: String?): InstallationsResponse {
+	fun installations(organization: Organization, status: PolicyStatus?, page: PageRequest, snapshotId: String?): InstallationsResponse {
 		val now = clock.instant()
 		val token = tokens.resolve(INSTALLATIONS_KIND, organization.id, snapshotId ?: page.cursor?.snapshotId, now)
 		val manifest = activeManifest(organization.id) ?: throw DashboardException(ErrorCode.NOT_FOUND)
-		val scope = "installations:outdated=$outdatedOnly"
+		// 처음 둘은 필터가 outdated 뿐이던 때의 범위 이름이다 — 그 cursor 가 그대로 이어진다.
+		val scope = when (status) {
+			null -> "installations:outdated=false"
+			PolicyStatus.OUTDATED -> "installations:outdated=true"
+			else -> "installations:status=${status.wire}"
+		}
 		page.cursor?.let { if (it.snapshotId != token.value || it.scope != scope) throw DashboardException.invalid(CURSOR, FieldErrorCode.INVALID_CURSOR) }
 		val after = page.cursor?.after?.lastOrNull()?.let { runCatching { UUID.fromString(it) }.getOrNull() ?: throw DashboardException.invalid(CURSOR, FieldErrorCode.INVALID_CURSOR) }
 
 		val rows = installationRows(organization.id, token.asOf, manifest.version)
-			.filter { !outdatedOnly || (it.appliedVersion != null && it.appliedVersion < manifest.version) }
+			.filter { status == null || it.status(manifest.version) == status }
 			.sortedBy { it.id.toString() }
 		val start = after?.let { id -> rows.indexOfFirst { it.id == id }.takeIf { it >= 0 }?.plus(1) ?: throw DashboardException.invalid(CURSOR, FieldErrorCode.INVALID_CURSOR) } ?: 0
 		val items = rows.drop(start).take(page.limit)
@@ -132,8 +151,8 @@ class SettingsService(
 						team = it.team,
 						agentVersion = it.clientVersion,
 						appliedPolicyVersion = it.appliedVersion,
-						lastHeartbeatAt = null,
-						canNotify = false,
+						lastHeartbeatAt = it.lastHeartbeatAt?.toString(),
+						canNotify = notificationsEnabled && it.memberActive && it.status(manifest.version) != PolicyStatus.APPLIED,
 					)
 				},
 				rows.size,
@@ -194,10 +213,11 @@ class SettingsService(
 			.optional()
 			.orElse(null)
 
+	/** 설치 목록의 필터와 같은 분류로 센다 — 집계와 목록이 어긋나지 않는다. */
 	private fun rollout(tenantId: UUID, desired: Long): PolicyRollout {
 		val rows = installationRows(tenantId, clock.instant(), desired)
-		val applied = rows.count { it.appliedVersion != null && it.appliedVersion >= desired }.toLong()
-		val outdated = rows.count { it.appliedVersion != null && it.appliedVersion < desired }.toLong()
+		val applied = rows.count { it.status(desired) == PolicyStatus.APPLIED }.toLong()
+		val outdated = rows.count { it.status(desired) == PolicyStatus.OUTDATED }.toLong()
 		return PolicyRollout(desired, rows.size.toLong(), applied, outdated, rows.size - applied - outdated)
 	}
 
@@ -208,16 +228,24 @@ class SettingsService(
 		val clientVersion: String?,
 		val appliedVersion: Long?,
 		val team: TeamRef,
-	)
+		val lastHeartbeatAt: Instant?,
+		val memberActive: Boolean,
+	) {
+		/** 적용이 확인된 판이 없으면 unknown — 적용 완료나 미적용으로 추정하지 않는다. */
+		fun status(desired: Long): PolicyStatus = when {
+			appliedVersion == null -> PolicyStatus.UNKNOWN
+			appliedVersion >= desired -> PolicyStatus.APPLIED
+			else -> PolicyStatus.OUTDATED
+		}
+	}
 
-	/** 활성 설치와 확인된 적용 판(적용 기록이 있는 manifest 중 가장 높은 판), 구성원의 현재 팀. */
+	/** 활성 설치와 지금 집행하는 판([AppliedPolicyVersion]), 마지막 설치 보고 시각, 구성원의 상태와 현재 팀. */
 	private fun installationRows(tenantId: UUID, asOf: Instant, desired: Long): List<Installation> =
 		source.sql(
 			"""
-			SELECT i.id, i.member_id, m.email, i.client_version,
-			       (SELECT max(mf.version) FROM enrollment.installation_manifest_assignments a
-			          JOIN enrollment.manifests mf ON mf.id = a.manifest_id
-			         WHERE a.installation_id = i.id AND a.applied_at IS NOT NULL) AS applied_version,
+			SELECT i.id, i.member_id, m.email, i.client_version, (m.status = 'active') AS member_active,
+			       (SELECT h.received_at FROM enrollment.installation_heartbeats h WHERE h.installation_id = i.id) AS last_heartbeat_at,
+			       ${AppliedPolicyVersion.SQL} AS applied_version,
 			       ARRAY(SELECT DISTINCT t.name FROM enrollment.team_memberships tm JOIN enrollment.teams t ON t.id = tm.team_id
 			              WHERE tm.member_id = i.member_id AND tm.joined_at <= :as_of AND (tm.left_at IS NULL OR tm.left_at > :as_of)
 			              ORDER BY t.name) AS team_names,
@@ -238,6 +266,8 @@ class SettingsService(
 					account = rs.getString("email"),
 					clientVersion = rs.getString("client_version"),
 					appliedVersion = rs.getLong("applied_version").takeUnless { rs.wasNull() },
+					lastHeartbeatAt = rs.getTimestamp("last_heartbeat_at")?.toInstant(),
+					memberActive = rs.getBoolean("member_active"),
 					// 현재 소속이 여럿이면 하나를 고르지 않는다(구성원 화면과 같은 규칙).
 					team = when (ids.size) {
 						0 -> TeamRef(null, TeamsService.UNASSIGNED_NAME)

@@ -117,6 +117,7 @@ class AnalyticsConfig {
 	@Bean
 	fun settingsService(
 		@org.springframework.beans.factory.annotation.Value("\${pulsemetry.management.enabled:false}") managementEnabled: Boolean,
+		@org.springframework.beans.factory.annotation.Value("\${pulsemetry.mail.enabled:false}") mailEnabled: Boolean,
 		properties: DashboardApiProperties,
 		source: JdbcClient,
 		vendorUsage: VendorUsageReader,
@@ -126,7 +127,11 @@ class AnalyticsConfig {
 		mapper: ObjectMapper,
 		clock: Clock,
 		catalog: VendorCatalog,
-	): SettingsService = SettingsService(source, vendorUsage, frames, tokens, codec, mapper, properties.members.idleDays, clock, managementEnabled, catalog)
+	): SettingsService = SettingsService(
+		source, vendorUsage, frames, tokens, codec, mapper, properties.members.idleDays, clock, managementEnabled, catalog,
+		// 안내는 enrollment-api 가 메일로 보낸다(ADR 0043). 두 앱이 같은 설정 값을 받는다.
+		notificationsEnabled = managementEnabled && mailEnabled,
+	)
 
 	@Bean
 	fun overviewService(frames: AnalyticsFrames, aggregator: UsageAggregator, references: SnapshotReferences): OverviewService =

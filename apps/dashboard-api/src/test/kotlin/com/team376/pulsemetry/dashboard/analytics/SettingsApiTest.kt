@@ -2,6 +2,10 @@ package com.team376.pulsemetry.dashboard.analytics
 
 import com.team376.pulsemetry.dashboard.authentication.DashboardPrincipal
 import com.team376.pulsemetry.dashboard.authentication.Role
+import com.team376.pulsemetry.dashboard.config.AnalyticsConfig
+import com.team376.pulsemetry.dashboard.config.DashboardApiProperties
+import com.team376.pulsemetry.dashboard.request.PageCursorCodec
+import com.team376.pulsemetry.dashboard.request.PageRequest
 import com.team376.pulsemetry.dashboard.request.QueryReader
 import com.team376.pulsemetry.dashboard.support.AbstractDashboardApiTest
 import com.team376.pulsemetry.dashboard.support.DashboardHttp
@@ -10,12 +14,17 @@ import com.team376.pulsemetry.dashboard.support.JsonStructure
 import com.team376.pulsemetry.dashboard.support.SourceFixtures
 import com.team376.pulsemetry.dashboard.support.SourceFixtures.Event
 import com.team376.pulsemetry.dashboard.support.TestDashboardAuthenticator
+import com.team376.pulsemetry.persistence.enrollment.management.VendorCatalog
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.jdbc.core.simple.JdbcClient
 import tools.jackson.databind.JsonNode
+import tools.jackson.databind.ObjectMapper
 import java.net.http.HttpResponse
+import java.time.Clock
 import java.time.Instant
 import java.time.LocalDateTime
 import java.util.UUID
@@ -24,6 +33,17 @@ import java.util.UUID
  * 설정 화면의 현재 상태 조회를 HTTP 끝까지 (설정 명세). 기대값은 명세의 문장과 수용 사례에서 쓴다.
  */
 class SettingsApiTest : AbstractDashboardApiTest() {
+
+	// 안내 채널이 켜진 설정 서비스를 같은 컨텍스트의 부품으로 조립한다(컨텍스트를 새로 띄우지 않는다).
+	@Autowired private lateinit var properties: DashboardApiProperties
+	@Autowired private lateinit var source: JdbcClient
+	@Autowired private lateinit var vendorUsage: VendorUsageReader
+	@Autowired private lateinit var frames: AnalyticsFrames
+	@Autowired private lateinit var tokens: CurrentStateTokens
+	@Autowired private lateinit var codec: PageCursorCodec
+	@Autowired private lateinit var mapper: ObjectMapper
+	@Autowired private lateinit var clock: Clock
+	@Autowired private lateinit var catalog: VendorCatalog
 
 	@BeforeEach
 	fun backfillDone() {
@@ -45,7 +65,7 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 
 	private fun JsonNode.list(): List<JsonNode> = (0 until size()).map { get(it) }
 
-	private data class Org(val tenant: UUID, val applied: UUID, val outdated: UUID, val unknown: UUID, val registered: List<String>)
+	private data class Org(val tenant: UUID, val applied: UUID, val outdated: UUID, val unknown: UUID, val registered: List<String>, val v2: UUID, val v3: UUID)
 
 	/** 활성 manifest v3(원문 수집 꺼짐), 옛 v2. 설치 셋 — v3 적용 확인·v2 적용 확인·적용 보고 없음. anthropic 현재 계약, openai 만료 계약. */
 	private fun seed(privacy: String = """{"collect_user_prompts":false,"collect_user_email":true}"""): Org {
@@ -75,7 +95,7 @@ class SettingsApiTest : AbstractDashboardApiTest() {
                 .param("tenant", tenant).param("id", id).param("kind", kind).param("contract", contract, java.sql.Types.VARCHAR).param("admin", admin).update()
             id
         }
-        return Org(tenant, applied, outdated, unknown, registered)
+        return Org(tenant, applied, outdated, unknown, registered, v2, v3)
 	}
 
 	@Test
@@ -161,10 +181,12 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
-	@DisplayName("설치 — 등록 때의 버전, 확인된 적용 판, heartbeat 는 원천이 없어 null(수신 시각을 넣지 않는다), outdated 는 알려진 판이 낮은 설치만")
+	@DisplayName("설치 — 등록 때의 버전, 확인된 적용 판, 마지막 설치 보고 시각(수신 시각을 넣지 않는다), 적용 상태 필터")
 	fun installations() {
 		val org = seed()
 		SourceFixtures.insertLedger(org.tenant, org.unknown, Instant.now().minusSeconds(30))
+		val reported = kst("2026-09-28T10:00:00")
+		SourceFixtures.setHeartbeat(org.outdated, reported, appliedManifestId = org.v2)
 
 		val all = ok(org.tenant, "/installations")
 		val rows = all.at("/installations/items").list().associateBy { it.path("installationId").asString() }
@@ -173,14 +195,75 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		assertThat(rows.getValue(org.applied.toString()).path("appliedPolicyVersion").asLong()).isEqualTo(3)
 		assertThat(rows.getValue(org.outdated.toString()).path("appliedPolicyVersion").asLong()).isEqualTo(2)
 		assertThat(rows.getValue(org.unknown.toString()).path("appliedPolicyVersion").isNull).isTrue()
-		assertThat(rows.values.map { it.path("lastHeartbeatAt").isNull }).containsOnly(true)
+		// 마지막 설치 보고의 서버 수신 시각이다. 보고가 없는 설치는 데이터를 받았어도 null 이다.
+		assertThat(rows.getValue(org.outdated.toString()).path("lastHeartbeatAt").asString()).isEqualTo(reported.toString())
+		assertThat(listOf(org.applied, org.unknown).map { rows.getValue(it.toString()).path("lastHeartbeatAt").isNull }).containsOnly(true)
+		// 안내 채널이 없는 배포(이 컨텍스트)에서는 아무 설치에도 안내할 수 없다.
 		assertThat(rows.values.map { it.path("canNotify").asBoolean() }).containsOnly(false)
 		assertThat(rows.getValue(org.applied.toString()).at("/team/teamName").asString()).isEqualTo("플랫폼")
 		assertThat(all.at("/desiredPolicyVersion").asLong()).isEqualTo(3)
 
-		val outdated = ok(org.tenant, "/installations?policyStatus=outdated")
-		assertThat(outdated.at("/installations/items").list().map { it.path("installationId").asString() }).containsExactly(org.outdated.toString())
-		assertThat(get(org.tenant, "/installations?policyStatus=unknown").statusCode()).isEqualTo(400)
+		fun filtered(status: String) = ok(org.tenant, "/installations?policyStatus=$status").at("/installations/items").list().map { it.path("installationId").asString() }
+		assertThat(filtered("outdated")).containsExactly(org.outdated.toString())
+		assertThat(filtered("applied")).containsExactly(org.applied.toString())
+		assertThat(filtered("unknown")).containsExactly(org.unknown.toString())
+		assertThat(ok(org.tenant, "/installations?policyStatus=unknown").at("/installations/totalCount").asInt()).isEqualTo(1)
+		assertThat(get(org.tenant, "/installations?policyStatus=revoked").statusCode()).isEqualTo(400)
+		assertThat(get(org.tenant, "/installations?policyStatus=").statusCode()).isEqualTo(400)
+
+		// 필터마다 cursor 의 범위가 다르다 — 다른 필터의 cursor 는 400 이다.
+		val first = ok(org.tenant, "/installations?limit=1")
+		val cursor = first.at("/installations/nextCursor").asString()
+		val snapshotId = first.at("/meta/snapshotId").asString()
+		assertThat(get(org.tenant, "/installations?limit=1&snapshotId=$snapshotId&cursor=$cursor").statusCode()).isEqualTo(200)
+		assertThat(get(org.tenant, "/installations?limit=1&policyStatus=applied&snapshotId=$snapshotId&cursor=$cursor").statusCode()).isEqualTo(400)
+	}
+
+	@Test
+	@DisplayName("적용 판은 설치가 지금 집행하는 판이다 — 보고가 있으면 마지막 보고의 판, 적용한 적이 있는 가장 높은 판이 아니다")
+	fun appliedVersionIsTheReportedOne() {
+		val org = seed()
+		val admin = SourceFixtures.insertMember(org.tenant, "rollback@example.test")
+		// v3 을 적용했다고 확인받은 뒤 v2 로 돌아가 보고하는 설치, 서버가 모르는 판을 보고하는 설치.
+		val rolledBack = SourceFixtures.insertInstallation(org.tenant, admin)
+		val strange = SourceFixtures.insertInstallation(org.tenant, admin)
+		for (installation in listOf(rolledBack, strange)) SourceFixtures.insertAssignment(installation, org.v3, kst("2026-09-10T00:00:00"))
+		SourceFixtures.setHeartbeat(rolledBack, kst("2026-09-28T10:00:00"), appliedManifestId = org.v2)
+		SourceFixtures.setHeartbeat(strange, kst("2026-09-28T10:00:00"))
+		// 보고한 적 없는 설치는 적용 확인 기록을 쓴다.
+		SourceFixtures.setHeartbeat(org.applied, kst("2026-09-28T10:00:00"), appliedManifestId = org.v3)
+
+		val rows = ok(org.tenant, "/installations").at("/installations/items").list().associateBy { it.path("installationId").asString() }
+		assertThat(rows.getValue(rolledBack.toString()).path("appliedPolicyVersion").asLong()).isEqualTo(2)
+		assertThat(rows.getValue(strange.toString()).path("appliedPolicyVersion").isNull).isTrue()
+		assertThat(rows.getValue(org.applied.toString()).path("appliedPolicyVersion").asLong()).isEqualTo(3)
+		assertThat(rows.getValue(org.outdated.toString()).path("appliedPolicyVersion").asLong()).isEqualTo(2)
+		val rollout = ok(org.tenant, "/settings").at("/policyRollout")
+		assertThat(listOf("eligibleInstallations", "appliedInstallations", "outdatedInstallations", "unknownInstallations").map { rollout.path(it).asLong() })
+			.containsExactly(5L, 1L, 2L, 2L)
+	}
+
+	@Test
+	@DisplayName("안내 채널이 있는 배포 — 구성원이 활성이고 아직 적용이 확인되지 않은 설치만 안내할 수 있다")
+	fun notificationChannel() {
+		val org = seed()
+		val suspended = SourceFixtures.insertMember(org.tenant, "suspended@example.test", status = "suspended")
+		val parked = SourceFixtures.insertInstallation(org.tenant, suspended)
+		val organization = requireNotNull(organizations.find(org.tenant))
+		// 앱 조립과 같은 경로로 만든다 — 관리 기능과 메일이 모두 켜져야 채널이 있다.
+		fun service(management: Boolean, mail: Boolean) = AnalyticsConfig().settingsService(management, mail, properties, source, vendorUsage, frames, tokens, codec,
+			mapper, clock, catalog)
+		fun notifiable(service: SettingsService) = service.installations(organization, null, PageRequest(100, null), null).installations.items
+			.associate { it.installationId to it.canNotify }
+
+		val open = service(management = true, mail = true)
+		assertThat(open.settings(organization).capabilities.notifyInstallations).isTrue()
+		assertThat(notifiable(open)).isEqualTo(mapOf(org.applied.toString() to false, org.outdated.toString() to true, org.unknown.toString() to true,
+			parked.toString() to false))
+		for (closed in listOf(service(management = true, mail = false), service(management = false, mail = true))) {
+			assertThat(closed.settings(organization).capabilities.notifyInstallations).isFalse()
+			assertThat(notifiable(closed).values).containsOnly(false)
+		}
 	}
 
 	@Test

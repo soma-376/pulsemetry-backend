@@ -98,12 +98,22 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
         (3..11).filter { it != 9 }.forEach { membership(it, (it - 2) % 4) }
     } else if (name == "C") (2 until count).forEach { membership(it, 0) }
     val manifestId = id("$name/manifest")
-    val manifest = linkedMapOf("schema_version" to 1, "config_revision" to 1,
+    val privacy = listOf("user_prompts", "assistant_responses", "tool_details", "tool_content", "user_email", "raw_api_bodies").associate { "collect_$it" to false }
+    fun manifest(revision: Int, privacy: Map<String, Boolean>) = linkedMapOf("schema_version" to 1, "config_revision" to revision,
         "otlp" to mapOf("endpoint" to "http://localhost:4316", "protocol" to "http/protobuf"),
-        "signals" to mapOf("logs" to true, "metrics" to true, "traces" to true),
-        "privacy" to listOf("user_prompts", "assistant_responses", "tool_details", "tool_content", "user_email", "raw_api_bodies").associate { "collect_$it" to false })
-    add("enrollment.manifests", "id" to manifestId, "tenant_id" to tenant, "version" to 1, "manifest" to encode(manifest),
-        "is_active" to true, "created_by_member_id" to member(0), "created_at" to origin, "activated_at" to origin)
+        "signals" to mapOf("logs" to true, "metrics" to true, "traces" to true), "privacy" to privacy)
+    add("enrollment.manifests", "id" to manifestId, "tenant_id" to tenant, "version" to 1, "manifest" to encode(manifest(1, privacy)),
+        "is_active" to (name != "A"), "created_by_member_id" to member(0), "created_at" to origin, "activated_at" to origin)
+    // A는 일주일 전에 정책을 한 번 바꿨다(판 2 — 도구 세부 수집만 켬, 사용량 시그널과 원문 선택은 그대로). 설치 일부만 새 판을 적용했다고
+    // 보고해 적용·미적용·미확인이 모두 있다(ADR 0043). 적용 확인 행은 설치 보고가 만든 것처럼 적용한 판에만 있다.
+    val policyChangedAt = at(-7)
+    val activeManifestId = if (name == "A") id("$name/manifest/2") else manifestId
+    val adopters = 2..8
+    if (name == "A") {
+        add("enrollment.manifests", "id" to activeManifestId, "tenant_id" to tenant, "version" to 2,
+            "manifest" to encode(manifest(2, privacy + ("collect_tool_details" to true))),
+            "is_active" to true, "created_by_member_id" to member(1), "created_at" to policyChangedAt, "activated_at" to policyChangedAt)
+    }
     if (name == "A") {
         // 완료 조건인 명시적 정책 확인과 활성 벤더 선택도 함께 준비한다(ADR 0032).
         add("enrollment.organization_onboarding", "tenant_id" to tenant, "policy_confirmed_at" to origin,
@@ -166,6 +176,10 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
             "last_seen_at" to null, "created_at" to installedAt, "updated_at" to installedAt)
         add("enrollment.installation_manifest_assignments", "installation_id" to installation(index), "manifest_id" to manifestId,
             "assigned_at" to installedAt, "applied_at" to installedAt)
+        if (activeManifestId != manifestId && index in adopters) {
+            add("enrollment.installation_manifest_assignments", "installation_id" to installation(index), "manifest_id" to activeManifestId,
+                "assigned_at" to at(-7, index.toLong()), "applied_at" to at(-7, index.toLong()))
+        }
     }
     if (name == "A") {
         // 같은 사람의 두 설치를 사람 두 명으로 집계하지 않는지 확인할 기준이다.
@@ -179,7 +193,7 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
             "invitation_id" to invite, "hostname" to "seed-a-2-secondary", "platform" to "macos", "architecture" to "arm64",
             "client_version" to "seed-v1", "status" to "active", "last_seen_at" to null,
             "created_at" to at(-3), "updated_at" to at(-3))
-        add("enrollment.installation_manifest_assignments", "installation_id" to secondary, "manifest_id" to manifestId,
+        add("enrollment.installation_manifest_assignments", "installation_id" to secondary, "manifest_id" to activeManifestId,
             "assigned_at" to at(-3), "applied_at" to null)
     }
     fun receipt(index: Int, whenAt: String, product: String, recordCount: Int = 1) {
@@ -253,7 +267,8 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
             val run = hash("$name/daemon-run/$index").take(32)
             add("enrollment.installation_heartbeats", "installation_id" to installation(index), "received_at" to reportedAt, "run_id" to run,
                 "daemon_version" to "seed-v1", "architecture" to rows.getValue("enrollment.installations").single { it["id"] == installation(index) }["architecture"],
-                "applied_config_revision" to 1, "applied_manifest_id" to manifestId, "mode" to "local", "forwarding" to true,
+                "applied_config_revision" to if (index in adopters) 2 else 1, "applied_manifest_id" to if (index in adopters) activeManifestId else manifestId,
+                "mode" to "local", "forwarding" to true,
                 "receiving_since" to installedAt, "delivered" to receipts.size, "lost" to 0, "pending" to 0,
                 "last_delivered_at" to receipts.maxOrNull(), "pending_since" to null)
             add("enrollment.installation_collection_segments", "id" to id("$name/collection-segment/$index"), "installation_id" to installation(index),

@@ -384,6 +384,18 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         assertThat(again.path("delivery").isNull).isTrue()
     }
 
+    @Test fun `메일이 꺼진 배포는 설치 업데이트 안내를 접수하지 않는다`() {
+        val token = adminToken()
+        val owner = data.member(tenant, "notice@example.test", MemberRole.member, MemberStatus.active).id
+        val installation = data.installation(tenant, owner, data.invitation(tenant, owner, InvitationCode.generate()).id).id
+        val response = manage("POST", "/installation-update-notifications", mapOf("installationIds" to listOf(installation.toString()), "expectedPolicyVersion" to 3), token)
+        // 보낼 채널이 없다 — 접수한 척하지 않는다(ADR 0043).
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(422)
+        assertThat(mapper.readTree(response.body()).path("error").path("code").asString()).isEqualTo("notification_channel_unavailable")
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.operations").query(Int::class.java).single()).isEqualTo(0)
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.mail_outbox").query(Int::class.java).single()).isEqualTo(0)
+    }
+
     @Test fun `취소된 초대의 대기자는 같은 구성원으로 다시 초대하고 요청의 팀과 역할을 적용한다`() {
         val token = adminToken()
         val team = mapper.readTree(manage("POST", "/teams", mapOf("teamName" to "다시 초대 팀"), token).body()).path("teamId").asString()

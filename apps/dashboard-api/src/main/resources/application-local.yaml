@@ -12,6 +12,9 @@ pulsemetry:
     allowed-origins: http://localhost:3000,http://localhost:3107
   management:
     enabled: true
+  # 로컬 enrollment-api 도 메일을 켠다(설치 업데이트 안내 표시 — ADR 0043).
+  mail:
+    enabled: true
   dashboard:
     retry-after: 2s
     rds:

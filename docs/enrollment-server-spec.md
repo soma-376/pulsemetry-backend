@@ -750,6 +750,7 @@ POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`, 8~128자)를 보낸다.
 | `PUT /vendors/{vendorId}/contract` | `{expectedVersion,displayName,contract}` | 200 VendorResponse, ETag |
 | `DELETE /vendors/{vendorId}/contract` | `If-Match: "vendor-{version}"` | 204 |
 | `DELETE /vendors/{vendorId}` | `If-Match: "vendor-{version}"` | 204, 수동 벤더 보관 |
+| `POST /installation-update-notifications` | `{installationIds,expectedPolicyVersion}` | 202 OperationResponse, Location(작업 상태 조회) — 아래 "설치 업데이트 안내" |
 
 팀 배정은 최대 100명, 전체 검증 후 한 트랜잭션으로 적용한다. `teamId:null`은 배정 해제다.
 효력 시각은 서버 시각이며 과거 ClickHouse 팩트는 바꾸지 않는다.
@@ -844,6 +845,29 @@ PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계
 변경 이력 저장은 구현돼 있지만 이력 목록 조회 API·화면은 현재 범위에 없다.
 `enrollment.contracts`의 기존 기간 약정과 새 좌석 계약을 합산하지 않으며, 좌석 계약값으로 기간별 지출을 누적하는 테이블도 추가하지 않는다.
 
+### 설치 업데이트 안내 (ADR 0043)
+
+새 수집 정책을 아직 집행하지 않는 설치의 구성원에게 **확인을 부탁하는 메일**을 보낸다. 원격 업데이트가 아니다 — 서버는 설치에 정책을 밀어 넣지 않고,
+설치는 설치 보고(§4.5)의 응답으로 새 판을 알고 사용자 로그인 세션이 있는 데몬이 스스로 받아 적용한다. 메일은 그 확인 절차
+(`pulsemetry status`로 상태를 보고, 로그인이 필요하다고 나오면 `pulsemetry login`)를 안내한다. 기기 이름·플랫폼·기대 판·지금 판을 싣고 비밀은 싣지 않는다.
+
+```json
+{"installationIds":["…"],"expectedPolicyVersion":2}
+```
+
+- 채널은 메일이다. 메일 기능(`pulsemetry.mail.enabled`)이 꺼진 배포는 **422 `notification_channel_unavailable`**이다 — 접수한 척하지 않는다.
+- `installationIds`는 1~100개의 서로 다른 UUID(표준 하이픈 표기), `expectedPolicyVersion`은 1 이상의 정수다. 어기면 400 `invalid_request`.
+- `expectedPolicyVersion`이 지금 활성 판이 아니면 409 `version_conflict`(`fieldErrors`의 field `expectedPolicyVersion`) — 관리자가 본 화면이 낡았다.
+- 이 조직의 설치가 아닌 ID(다른 조직·없는 설치)가 하나라도 있으면 404 `not_found`.
+- 폐기된 설치, 구성원이 활성이 아닌 설치, 이미 기대 판을 집행하고 있는 설치가 하나라도 있으면 409 `installation_unavailable`. "집행하는 판"은
+  대시보드 명세의 "정책 적용 현황과 업데이트 안내"와 같은 규칙이다(마지막 설치 보고의 판, 보고가 없으면 적용 확인 기록).
+- 모두 통과해야 작업(`installation_notification`, ADR 0039)을 만들고 대상마다 메일 한 통을 적재한다. 하나라도 걸리면 아무것도 만들지 않는다.
+- 응답은 202이고 본문은 작업 상태 조회(dashboard-api `GET O/operations/{operationId}`)와 같은 모양이다. 접수 직후라 `status=running`, 대상은 모두 `pending`이다.
+  `Location`이 그 조회 경로다. 같은 멱등 키의 재시도는 같은 작업을 가리키고 메일을 다시 만들지 않는다. 새 키는 새 안내다.
+- **대상의 결과는 메일의 발송 결과다.** 발송 작업이 한 바퀴 돈 뒤 끝난 메일을 대상 결과로 옮긴다 — `sent` → 대상 `succeeded`,
+  `failed` → 대상 `failed`(메일의 실패 분류 코드, 위 초대 메일과 같은 목록), `cancelled` → 대상 `failed`(`cancelled`). 재시도 대기 중인 메일의 대상은 `pending`이다.
+  `succeeded`는 SMTP 서버가 받았다는 뜻이고 설치가 새 판을 적용했다는 뜻이 아니다. 적용 여부는 대시보드 설치 조회로 다시 확인한다.
+
 ### 조회·관리 오류
 
 ```json
@@ -856,8 +880,8 @@ PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계
 | 401 | unauthenticated, 로그인/토큰 갱신 |
 | 403 | forbidden, 해당 동작 비활성화 |
 | 404 | not_found, 타 조직/없는 자원 |
-| 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, member_suspended, snapshot_expired |
-| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change |
+| 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, member_suspended, installation_unavailable, snapshot_expired |
+| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change, notification_channel_unavailable |
 | 503 | unavailable, Retry-After 후 재시도 |
 
 쓰기 성공 후 관련 조직의 팀·구성원·설정·개요 Query 캐시를 무효화한다.
@@ -934,8 +958,10 @@ manifest와 정책 확인 기록을 저장하지 않는다. 로그인은 이 설
 새 manifest 판에서 `privacy.collect_user_prompts`와 `privacy.collect_assistant_responses`만 함께 변경한다.
 config_revision도 새 판에 맞춘다. endpoint·signals·나머지 privacy 설정 및 이전 판의 JSON은 보존한다.
 동일 조직의 변경·완료 명령은 조직 행 잠금과 한 트랜잭션으로 처리한다.
-정책 저장은 **이후 enroll의 기본값**이며 이미 설치된 클라이언트에 갱신 알림을 보내거나
-installation_manifest_assignments를 적용 완료로 변경하지 않는다. 적용 여부는 대시보드 설치 조회로 확인한다.
+정책 저장은 **이후 enroll의 기본값**이고, 서버가 이미 설치된 클라이언트에 정책을 밀어 넣거나
+installation_manifest_assignments를 적용 완료로 변경하지 않는다(`application`·`existingInstallationsUpdated`는 이 저장이 한 일이다).
+기존 설치는 설치 보고(§4.5)의 응답으로 새 판을 알고, 사용자 로그인 세션이 있는 데몬이 스스로 받아 적용한 뒤 보고한다 — 적용 확인은 그 보고가 기록한다.
+적용 현황은 대시보드 설치 조회로 확인하고, 아직 적용하지 않은 설치의 구성원에게는 §12의 설치 업데이트 안내로 확인을 부탁한다.
 
 ### 13.3 초대 목록·재발급
 

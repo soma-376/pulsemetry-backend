@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.enrollment.management
 
+import com.team376.pulsemetry.persistence.enrollment.installation.InstallationNotifier
 import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
 import org.springframework.beans.factory.ObjectProvider
@@ -46,15 +47,18 @@ class ManagementProperties {
 class ManagementConfig {
     @Bean
     fun managementStore(jdbc: JdbcClient, manager: PlatformTransactionManager, mapper: ObjectMapper, clock: Clock,
-        properties: ManagementProperties, invitationMail: ObjectProvider<InvitationMailer>): ManagementStore = ManagementStore(jdbc, manager, mapper, clock,
-            properties.responseEncryptionKey, { InitialOnboardingManifest.create(properties.onboardingOtlpEndpoint, mapper) }, invitationMail.ifAvailable)
+        properties: ManagementProperties, invitationMail: ObjectProvider<InvitationMailer>,
+        installationNotifier: ObjectProvider<InstallationNotifier>): ManagementStore = ManagementStore(jdbc, manager, mapper, clock,
+            properties.responseEncryptionKey, { InitialOnboardingManifest.create(properties.onboardingOtlpEndpoint, mapper) }, invitationMail.ifAvailable,
+            installationNotifier.ifAvailable)
 }
 
 @RestController
 @ConditionalOnProperty(prefix = "pulsemetry.management", name = ["enabled"], havingValue = "true")
 @RequestMapping("/api/v1/organizations/{organizationId}")
 class ManagementController(private val auth: UserAuthService, private val store: ManagementStore, private val mapper: ObjectMapper) {
-    @RequestMapping(path = ["/teams", "/member-team-assignments", "/invitations/batch", "/invitations/{invitationId}/revoke", "/invitations/{invitationId}/reissue", "/vendors", "/onboarding/complete"], method = [RequestMethod.POST])
+    @RequestMapping(path = ["/teams", "/member-team-assignments", "/invitations/batch", "/invitations/{invitationId}/revoke", "/invitations/{invitationId}/reissue", "/vendors", "/onboarding/complete",
+        "/installation-update-notifications"], method = [RequestMethod.POST])
     fun post(@PathVariable organizationId: UUID, @RequestBody(required = false) body: JsonNode?, request: HttpServletRequest) = handle(organizationId, body, request)
 
     @RequestMapping(path = ["/teams/{teamId}"], method = [RequestMethod.PATCH, RequestMethod.DELETE])
@@ -103,6 +107,11 @@ class ManagementController(private val auth: UserAuthService, private val store:
         }
         val result = store.command(tenant, actor, "${request.method} $path", body ?: mapper.createObjectNode(), request.getHeader("Idempotency-Key"), etag)
         if (request.method == "DELETE" || path.endsWith("/revoke")) return ResponseEntity.noContent().build<Void>()
+        // 안내는 접수만 했다 — 결과는 작업 상태 조회(dashboard-api)로 본다(ADR 0039·0043). 멱등 재시도도 같은 작업을 가리킨다.
+        if (path == "/installation-update-notifications") {
+            return ResponseEntity.accepted().header("Cache-Control", "no-store")
+                .location(URI("/api/v1/organizations/$tenant/operations/${result.path("operationId").asString()}")).body(result)
+        }
         val created = request.method == "POST" && path in listOf("/teams", "/vendors")
         val response = ResponseEntity.status(if (created) 201 else 200).header("Cache-Control", "no-store")
         if (created) response.location(URI(request.requestURI + "/" + if (path == "/teams") result.path("teamId").asString() else result.path("vendor").path("vendorId").asString()))

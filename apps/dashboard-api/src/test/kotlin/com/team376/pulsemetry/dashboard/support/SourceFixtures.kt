@@ -245,7 +245,8 @@ object SourceFixtures {
 
 	/**
 	 * 설치의 마지막 보고 한 행(ADR 0040). 운영에서는 enrollment-api 가 쓴다. 시각은 서버 시각이다.
-	 * [pendingSince] 를 주면 그때부터 전달 대기가 이어진 것이다(ADR 0041).
+	 * [pendingSince] 를 주면 그때부터 전달 대기가 이어진 것이다(ADR 0041). [appliedManifestId] 는 보고한 판이 그 조직의 manifest 일 때의 그 판이고,
+	 * 없으면 서버가 모르는 판을 보고한 것이다.
 	 */
 	fun setHeartbeat(
 		installationId: UUID,
@@ -255,14 +256,19 @@ object SourceFixtures {
 		receivingSince: Instant? = receivedAt.minusSeconds(3600),
 		lastDeliveredAt: Instant? = receivedAt.minusSeconds(30),
 		pendingSince: Instant? = null,
+		appliedManifestId: UUID? = null,
 	) {
 		DashboardTestStores.writer.sql(
 			"INSERT INTO enrollment.installation_heartbeats (installation_id, received_at, run_id, daemon_version, architecture, applied_config_revision, " +
-				"mode, forwarding, receiving_since, delivered, lost, pending, last_delivered_at, pending_since) " +
-				"VALUES (:id, :received, 'b3f1c2a49d5e4f60a1b2c3d4e5f60718', '0.2.0', 'arm64', 1, :mode, :forwarding, :since, 0, 0, :pending, :last, :pending_since) " +
+				"applied_manifest_id, mode, forwarding, receiving_since, delivered, lost, pending, last_delivered_at, pending_since) " +
+				"VALUES (:id, :received, 'b3f1c2a49d5e4f60a1b2c3d4e5f60718', '0.2.0', 'arm64', " +
+				"COALESCE((SELECT version FROM enrollment.manifests WHERE id = CAST(:manifest AS uuid)), 9999), CAST(:manifest AS uuid), " +
+				":mode, :forwarding, :since, 0, 0, :pending, :last, :pending_since) " +
 				"ON CONFLICT (installation_id) DO UPDATE SET received_at=EXCLUDED.received_at, mode=EXCLUDED.mode, forwarding=EXCLUDED.forwarding, " +
-				"receiving_since=EXCLUDED.receiving_since, pending=EXCLUDED.pending, last_delivered_at=EXCLUDED.last_delivered_at, pending_since=EXCLUDED.pending_since",
+				"receiving_since=EXCLUDED.receiving_since, pending=EXCLUDED.pending, last_delivered_at=EXCLUDED.last_delivered_at, pending_since=EXCLUDED.pending_since, " +
+				"applied_config_revision=EXCLUDED.applied_config_revision, applied_manifest_id=EXCLUDED.applied_manifest_id",
 		).param("id", installationId).param("received", java.sql.Timestamp.from(receivedAt)).param("mode", mode).param("forwarding", forwarding)
+			.param("manifest", appliedManifestId?.toString(), java.sql.Types.VARCHAR)
 			.param("since", receivingSince?.let(java.sql.Timestamp::from)).param("pending", if (pendingSince == null) 0L else 1L)
 			.param("last", lastDeliveredAt?.let(java.sql.Timestamp::from)).param("pending_since", pendingSince?.let(java.sql.Timestamp::from)).update()
 	}

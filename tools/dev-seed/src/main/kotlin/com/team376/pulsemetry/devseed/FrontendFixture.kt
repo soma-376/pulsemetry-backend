@@ -46,13 +46,21 @@ internal fun frontendFixture(data: SeedData): Row {
     ) }
     val manifestVersions = rows("manifests").associate { it["id"] to (it.getValue("version") as Number).toLong() }
     val desiredVersion = (rows("manifests").single { it["is_active"] == true }.getValue("version") as Number).toLong()
-    val installations = rows("installations").filter { it["status"] == "active" }.map { installation -> mapOf(
-        "installationId" to installation["id"], "memberId" to installation["member_id"],
-        "agentVersion" to installation["client_version"], "appliedPolicyVersion" to rows("installation_manifest_assignments")
+    val memberStatus = rows("members").associate { it["id"] to it["status"] }
+    val installations = rows("installations").filter { it["status"] == "active" }.map { installation ->
+        // 지금 집행하는 판 — 설치 보고가 있으면 그 판, 없으면 적용 확인 기록의 가장 높은 판(API 와 같은 규칙, ADR 0043).
+        val report = rows("installation_heartbeats").singleOrNull { it["installation_id"] == installation["id"] }
+        val applied = if (report != null) report["applied_manifest_id"]?.let(manifestVersions::getValue) else rows("installation_manifest_assignments")
             .filter { it["installation_id"] == installation["id"] && it["applied_at"] != null }
-            .maxOfOrNull { manifestVersions.getValue(it["manifest_id"]) },
-        "lastHeartbeatAt" to null, "canNotify" to false,
-    ) }
+            .maxOfOrNull { manifestVersions.getValue(it["manifest_id"]) }
+        mapOf(
+            "installationId" to installation["id"], "memberId" to installation["member_id"],
+            "agentVersion" to installation["client_version"], "appliedPolicyVersion" to applied,
+            "lastHeartbeatAt" to report?.get("received_at"),
+            // 로컬 프로필(관리 기능·메일 켬)의 응답과 같다 — 구성원이 활성이고 새 판 적용이 확인되지 않은 설치만 안내할 수 있다(ADR 0043).
+            "canNotify" to (memberStatus[installation["member_id"]] == "active" && (applied == null || applied < desiredVersion)),
+        )
+    }
     val applied = installations.count { (it["appliedPolicyVersion"] as? Long)?.let { version -> version >= desiredVersion } == true }
     val unknown = installations.count { it["appliedPolicyVersion"] == null }
     val start = data.asOf.minusDays(28).atStartOfDay(seoul).toInstant().toString()
@@ -64,7 +72,7 @@ internal fun frontendFixture(data: SeedData): Row {
         "teams" to rows("teams").map { mapOf("teamId" to it["id"], "teamName" to it["name"], "version" to 1) },
         "members" to members, "managedVendors" to vendors, "installations" to installations,
         "onboarding" to mapOf("organizationId" to data.tenantId, "completed" to true, "completedAt" to origin,
-            "policy" to mapOf("confirmed" to true, "confirmedAt" to origin, "version" to 1, "collectRawContent" to false),
+            "policy" to mapOf("confirmed" to true, "confirmedAt" to origin, "version" to desiredVersion, "collectRawContent" to false),
             "selectedVendorCount" to vendors.size, "canComplete" to true, "nextStep" to "complete"),
         "policyRollout" to mapOf("desiredVersion" to desiredVersion, "eligible" to installations.size, "applied" to applied,
             "outdated" to installations.size - applied - unknown, "unknown" to unknown),

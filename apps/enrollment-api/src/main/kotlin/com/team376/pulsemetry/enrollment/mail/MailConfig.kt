@@ -3,6 +3,7 @@ package com.team376.pulsemetry.enrollment.mail
 import com.team376.pulsemetry.enrollment.config.PulsemetryProperties
 import com.team376.pulsemetry.enrollment.inquiry.InquiryProperties
 import com.team376.pulsemetry.enrollment.management.ManagementProperties
+import com.team376.pulsemetry.persistence.enrollment.installation.InstallationNotifier
 import com.team376.pulsemetry.persistence.enrollment.mail.ClaimedMail
 import com.team376.pulsemetry.persistence.enrollment.mail.InquiryNotifier
 import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
@@ -11,6 +12,7 @@ import com.team376.pulsemetry.persistence.enrollment.mail.MailOutbox
 import com.team376.pulsemetry.persistence.enrollment.mail.MailPolicy
 import com.team376.pulsemetry.persistence.enrollment.mail.MailTransport
 import com.team376.pulsemetry.persistence.enrollment.mail.MailTransportFailure
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationStore
 import jakarta.mail.AuthenticationFailedException
 import jakarta.mail.MessagingException
 import jakarta.mail.internet.AddressException
@@ -19,6 +21,7 @@ import org.eclipse.angus.mail.smtp.SMTPAddressFailedException
 import org.eclipse.angus.mail.smtp.SMTPSendFailedException
 import org.eclipse.angus.mail.smtp.SMTPSenderFailedException
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.context.SmartLifecycle
@@ -125,8 +128,21 @@ class MailConfig {
         return InquiryNotifier(outbox, inquiries.notificationRecipient)
     }
 
+    /**
+     * 관리 기능과 메일을 함께 켠 배포에서만 설치 업데이트 안내를 보낸다(ADR 0043). 작업 기록(ADR 0039)의 첫 생산자다.
+     */
     @Bean
-    fun mailDispatchJob(dispatcher: MailDispatcher, properties: MailProperties) = MailDispatchJob(positive(properties.dispatchInterval, "dispatch-interval")) { dispatcher.runOnce() }
+    @ConditionalOnProperty(prefix = "pulsemetry.management", name = ["enabled"], havingValue = "true")
+    fun installationNotifier(outbox: MailOutbox, jdbc: JdbcClient, manager: PlatformTransactionManager, clock: Clock): InstallationNotifier =
+        InstallationNotifier(outbox, OperationStore(jdbc, manager, clock), jdbc)
+
+    /** 한 바퀴 보낸 뒤 끝난 안내 메일의 결과를 작업에 옮긴다 — 같은 주기다. */
+    @Bean
+    fun mailDispatchJob(dispatcher: MailDispatcher, properties: MailProperties, installationNotifier: ObjectProvider<InstallationNotifier>) =
+        MailDispatchJob(positive(properties.dispatchInterval, "dispatch-interval")) {
+            dispatcher.runOnce()
+            installationNotifier.ifAvailable?.reconcile()
+        }
 
     private fun missing(key: String) = "pulsemetry.mail.$key 가 비어 있다"
     private fun positive(value: Duration?, key: String): Duration {
