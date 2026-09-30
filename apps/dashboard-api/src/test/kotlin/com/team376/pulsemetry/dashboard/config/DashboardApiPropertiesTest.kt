@@ -116,7 +116,50 @@ class DashboardApiPropertiesTest {
 		"pulsemetry.dashboard.snapshot.max-copy-bytes=1000000000",
 		"pulsemetry.dashboard.snapshot.cleanup-interval=5m",
 		"pulsemetry.dashboard.members.idle-days=30",
+		"pulsemetry.dashboard.ingest.window=15m",
+		"pulsemetry.dashboard.ingest.delayed-after=5m",
+		"pulsemetry.dashboard.ingest.down-after=3h",
 	)
+
+	@ParameterizedTest
+	@ValueSource(strings = ["pulsemetry.dashboard.ingest.window", "pulsemetry.dashboard.ingest.delayed-after", "pulsemetry.dashboard.ingest.down-after"])
+	@DisplayName("수집 상태 판정의 임계값이 없거나 비면 기동이 실패한다 — 기본값이 없다 (ADR 0041)")
+	fun ingestThresholdsAreRequired(key: String) {
+		val withoutKey = complete.filterNot { it.startsWith("$key=") }.toTypedArray()
+		runner.withPropertyValues(*withoutKey).run { assertThat(it).hasFailed() }
+		runner.withPropertyValues(*withoutKey, "$key=").run { assertThat(it).hasFailed() }
+	}
+
+	@ParameterizedTest
+	@ValueSource(
+		strings = [
+			// 창은 응답에 분 단위로 나간다.
+			"pulsemetry.dashboard.ingest.window=30s",
+			"pulsemetry.dashboard.ingest.window=90s",
+			"pulsemetry.dashboard.ingest.window=0m",
+			"pulsemetry.dashboard.ingest.delayed-after=0s",
+			"pulsemetry.dashboard.ingest.delayed-after=-1m",
+			// 중단 기준은 지연 기준보다 길어야 두 상태가 갈린다.
+			"pulsemetry.dashboard.ingest.down-after=5m",
+			"pulsemetry.dashboard.ingest.down-after=1m",
+		],
+	)
+	@DisplayName("수집 상태 판정의 임계값이 서로 맞지 않으면 기동이 실패한다")
+	fun ingestThresholdsMustBeConsistent(override: String) {
+		runner.withPropertyValues(*complete, override).run { assertThat(it).hasFailed() }
+	}
+
+	@Test
+	@DisplayName("수집 상태 판정의 임계값은 준 값 그대로 뜬다")
+	fun ingestThresholdsBind() {
+		runner.withPropertyValues(*complete).run {
+			assertThat(it).hasNotFailed()
+			val ingest = it.getBean(DashboardApiProperties::class.java).ingest
+			assertThat(ingest.window).isEqualTo(Duration.ofMinutes(15))
+			assertThat(ingest.delayedAfter).isEqualTo(Duration.ofMinutes(5))
+			assertThat(ingest.downAfter).isEqualTo(Duration.ofHours(3))
+		}
+	}
 
 	@ParameterizedTest
 	@ValueSource(strings = ["0", "10", "90", ""])

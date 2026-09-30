@@ -243,6 +243,27 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
         event(5, -40); event(6, -20); receipt(7, at(-1, 23), "codex", 0)
     }
     rows["enrollment.installations"]?.replaceAll { row -> row + ("last_seen_at" to ledger.filter { it["installation_id"] == row["id"] }.maxOfOrNull { it["received_time"].toString() }) }
+    if (name == "A") {
+        // 설치 보고(ADR 0040·0041). A의 주 설치는 등록한 뒤로 끊김·손실 없이 수집하다가 기준 시각에 마지막으로 보고했다.
+        // 시드에는 살아 있는 데몬이 없으므로 조회 시점의 상태는 "보고가 끊긴 지 얼마나 됐는가"로 정해진다 — 정상이라고 꾸미지 않는다.
+        // 두 번째 설치와 C에는 보고를 넣지 않는다(보고한 적 없는 설치 · 근거가 없는 조직).
+        val reportedAt = at(0)
+        (2 until count).forEach { index ->
+            val receipts = ledger.filter { it["installation_id"] == installation(index) }.map { it["received_time"].toString() }
+            val run = hash("$name/daemon-run/$index").take(32)
+            add("enrollment.installation_heartbeats", "installation_id" to installation(index), "received_at" to reportedAt, "run_id" to run,
+                "daemon_version" to "seed-v1", "architecture" to rows.getValue("enrollment.installations").single { it["id"] == installation(index) }["architecture"],
+                "applied_config_revision" to 1, "applied_manifest_id" to manifestId, "mode" to "local", "forwarding" to true,
+                "receiving_since" to installedAt, "delivered" to receipts.size, "lost" to 0, "pending" to 0,
+                "last_delivered_at" to receipts.maxOrNull(), "pending_since" to null)
+            add("enrollment.installation_collection_segments", "id" to id("$name/collection-segment/$index"), "installation_id" to installation(index),
+                "run_id" to run, "from_at" to installedAt, "to_at" to reportedAt, "lost" to 0)
+        }
+        // 운영에서 설치의 생존 시각은 마지막 보고를 받은 시각이다.
+        rows.getValue("enrollment.installations").replaceAll { row ->
+            if (rows.getValue("enrollment.installation_heartbeats").any { it["installation_id"] == row["id"] }) row + ("last_seen_at" to reportedAt) else row
+        }
+    }
     add("telemetry_ops.tenant_ingest_summary", "tenant_id" to tenant, "first_received_at" to ledger.minOfOrNull { it["received_time"].toString() },
         "first_observed_at" to events.minOfOrNull { it["source_time"].toString() }, "last_received_at" to ledger.maxOfOrNull { it["received_time"].toString() },
         "has_pre_ledger_history" to false, "updated_at" to at(0))

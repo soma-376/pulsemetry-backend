@@ -4,6 +4,7 @@ import com.team376.pulsemetry.dashboard.analytics.AnalyticsFrames
 import com.team376.pulsemetry.dashboard.analytics.ComparisonPolicy
 import com.team376.pulsemetry.dashboard.analytics.CurrentStateTokens
 import com.team376.pulsemetry.dashboard.analytics.IngestStatusReader
+import com.team376.pulsemetry.dashboard.analytics.IngestThresholds
 import com.team376.pulsemetry.dashboard.analytics.MembersService
 import com.team376.pulsemetry.dashboard.analytics.OverviewService
 import com.team376.pulsemetry.dashboard.analytics.SettingsService
@@ -71,8 +72,13 @@ class AnalyticsConfig {
 		references: SnapshotReferences,
 		ingest: IngestStatusReader,
 		comparison: ComparisonPolicy,
+		properties: DashboardApiProperties,
 		clock: Clock,
-	): AnalyticsFrames = AnalyticsFrames(snapshots, references, ingest, comparison, clock)
+	): AnalyticsFrames = AnalyticsFrames(
+		snapshots, references, ingest, comparison,
+		IngestThresholds(properties.ingest.window, properties.ingest.delayedAfter, properties.ingest.downAfter),
+		clock,
+	)
 
 	@Bean
 	fun teamsService(

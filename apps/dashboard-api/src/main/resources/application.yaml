@@ -98,3 +98,10 @@ pulsemetry:
     # 구성원 화면의 정책 값 — 저장된 조직 정책이 없어 설정으로 받는다. 7·14·30·60 중 하나, 기본값 없음.
     members:
       idle-days: ${PULSEMETRY_DASHBOARD_MEMBERS_IDLE_DAYS:}
+
+    # 수집 상태 판정의 운영 수치 (ADR 0041). 기본값 없음.
+    # window 는 설치 보고 주기(enrollment-api 의 pulsemetry.heartbeat.report-interval)보다 길어야 한다 — 짧으면 살아 있는 설치가 보고 사이에 빠진다.
+    ingest:
+      window: ${PULSEMETRY_DASHBOARD_INGEST_WINDOW:}
+      delayed-after: ${PULSEMETRY_DASHBOARD_INGEST_DELAYED_AFTER:}
+      down-after: ${PULSEMETRY_DASHBOARD_INGEST_DOWN_AFTER:}

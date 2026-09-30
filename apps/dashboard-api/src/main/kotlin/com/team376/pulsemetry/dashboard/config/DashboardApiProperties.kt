@@ -22,6 +22,8 @@ data class DashboardApiProperties(
 	val snapshot: Snapshot,
 
 	val members: Members,
+
+	val ingest: Ingest,
 ) {
 	init {
 		require(retryAfter.toSeconds() >= 1) {
@@ -136,6 +138,27 @@ data class DashboardApiProperties(
 	) {
 		init {
 			require(idleDays in IDLE_DAYS) { "pulsemetry.dashboard.members.idle-days 는 $IDLE_DAYS 중 하나여야 한다: $idleDays" }
+		}
+	}
+
+	/**
+	 * 수집 상태 판정의 운영 수치 (ADR 0041). 기본값이 없다 — 설치 보고 주기(enrollment-api 의 `pulsemetry.heartbeat.report-interval`)와
+	 * 조직의 근무 형태에 맞춰 infra 가 정한다.
+	 */
+	data class Ingest(
+		/** "지금"으로 보는 창. 이 안에 받은 설치 보고·수신만 현재의 근거로 쓴다. 응답의 `windowMinutes` 다. 설치 보고 주기보다 길어야 한다. */
+		val window: Duration,
+		/** 대기 중인 전달이 있는데 마지막 전달 성공이 이보다 오래됐으면 지연이다. */
+		val delayedAfter: Duration,
+		/** 마지막 전달 성공(또는 마지막 설치 보고)이 이보다 오래됐으면 중단이다. */
+		val downAfter: Duration,
+	) {
+		init {
+			require(window.toMinutes() >= 1 && window == Duration.ofMinutes(window.toMinutes())) {
+				"pulsemetry.dashboard.ingest.window 는 1분 이상의 분 단위여야 한다: $window"
+			}
+			require(!delayedAfter.isNegative && !delayedAfter.isZero) { "pulsemetry.dashboard.ingest.delayed-after 는 0보다 커야 한다: $delayedAfter" }
+			require(downAfter > delayedAfter) { "pulsemetry.dashboard.ingest.down-after 는 delayed-after 보다 커야 한다: $downAfter" }
 		}
 	}
 

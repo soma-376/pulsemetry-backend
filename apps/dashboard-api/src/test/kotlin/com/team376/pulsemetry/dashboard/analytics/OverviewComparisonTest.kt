@@ -54,7 +54,8 @@ class OverviewComparisonTest {
 		val references = SnapshotReferences(assembly.clickHouse, DashboardTestStores.writer)
 		val ingest = IngestStatusReader(TenantIngestSummaryStore(dataSource), TenantSummaryBackfill(dataSource), ledger, DashboardTestStores.writer)
 		return OverviewService(
-			frames = AnalyticsFrames(assembly.service, references, ingest, policy, Clock.systemUTC()),
+			frames = AnalyticsFrames(assembly.service, references, ingest, policy,
+				IngestThresholds(Duration.ofMinutes(15), Duration.ofMinutes(5), Duration.ofHours(3)), Clock.systemUTC()),
 			aggregator = UsageAggregator(assembly.clickHouse),
 			references = references,
 		)

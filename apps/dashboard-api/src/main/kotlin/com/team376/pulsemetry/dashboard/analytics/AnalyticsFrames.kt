@@ -6,7 +6,6 @@ import com.team376.pulsemetry.dashboard.request.ComparedPeriod
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
 import java.time.Clock
-import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
@@ -19,12 +18,14 @@ import java.util.UUID
  *   v1 은 완전 관측의 근거가 없어 `ready` 를 내지 않는다. 수신 이력을 판정할 수 없으면 503 이다([IngestStatusReader.history]).
  * - 비교는 [ComparisonPolicy] 가 공개를 허락할 때만 계산한다. v1 은 공개하지 않는다.
  * - `dataThrough` 는 null — 공통 데이터 완료 경계를 보증할 근거가 없다.
+ * - 수집 운영 현황(`ingest`)은 설치 보고를 근거로 판정한다(ADR 0041). snapshot 밖의 현재 상태다.
  */
 class AnalyticsFrames(
 	private val snapshots: SnapshotService,
 	private val references: SnapshotReferences,
 	private val ingest: IngestStatusReader,
 	private val comparison: ComparisonPolicy,
+	private val thresholds: IngestThresholds,
 	private val clock: Clock,
 ) {
 
@@ -116,32 +117,44 @@ class AnalyticsFrames(
 	}
 
 	/** 수집 운영 현황 — snapshot 밖의 현재 상태. */
-	fun ingest(frame: Frame): OverviewResponse.Ingest = ingest(frame.organization, frame.history, frame.now)
+	fun ingest(frame: Frame): OverviewResponse.Ingest = status(frame.organization, frame.history, frame.now).ingest
 
 	/** 선택 기간이 없는 화면(설정)도 같은 규칙으로 수집 현황을 낸다. */
-	fun ingest(organization: Organization, now: Instant): OverviewResponse.Ingest = ingest(organization, ingest.history(organization.id), now)
+	fun ingest(organization: Organization, now: Instant): OverviewResponse.Ingest = status(organization, now).ingest
 
-	private fun ingest(organization: Organization, history: IngestStatusReader.History, now: Instant): OverviewResponse.Ingest {
-		val emptyHistory = !history.hasReceipts
-		return OverviewResponse.Ingest(
-			// 수신 이력이 없으면 empty. 있으면 heartbeat·수집기 상태의 근거가 없어 healthy·delayed·down 을 추정하지 않는다.
-			status = if (emptyHistory) INGEST_EMPTY else INGEST_UNKNOWN,
-			reason = if (emptyHistory) null else Availability.SOURCE_NOT_AVAILABLE,
-			asOf = now.toString(),
-			firstObservedAt = history.summary?.firstObservedAt?.toString(),
-			lastReceivedAt = history.summary?.lastReceivedAt?.toString(),
-			windowMinutes = WINDOW.toMinutes().toInt(),
-			activeInstallations = null,
-			observedMembers = ingest.observedMembers(organization.id, now - WINDOW),
-			eligibleMembers = ingest.eligibleMembers(organization.id),
-			coverageRatio = null,
+	/** 공통 헤더의 수집 현황 — 분석 응답의 `ingest` 조각과 같은 계산이다. 커버리지의 분자·분모를 함께 준다. */
+	fun status(organization: Organization, now: Instant): IngestStatus = status(organization, ingest.history(organization.id), now)
+
+	/** `ingest` 조각과 그 커버리지의 분자·분모. 조각은 화면 요청서의 모양 그대로라 분자·분모를 싣지 못한다. */
+	data class IngestStatus(val ingest: OverviewResponse.Ingest, val coverageTargetMembers: Long?, val coverageObservedMembers: Long?)
+
+	/**
+	 * 판정은 [IngestJudgement] 가 한다(ADR 0041). 여기서는 근거를 읽어 넘기고 응답 모양으로 옮긴다.
+	 * 설치 보고·수신 조회가 실패하면 그 값은 null 이고 상태는 `unknown` 이다 — 0 이나 정상으로 바꾸지 않는다.
+	 */
+	private fun status(organization: Organization, history: IngestStatusReader.History, now: Instant): IngestStatus {
+		val since = now.minus(thresholds.window)
+		val observed = ingest.observedInstallations(organization.id, since)
+		val judgement = IngestJudgement.judge(history.hasReceipts, ingest.installations(organization.id, since), observed, now, thresholds)
+		return IngestStatus(
+			OverviewResponse.Ingest(
+				status = judgement.status,
+				reason = judgement.reason,
+				asOf = now.toString(),
+				firstObservedAt = history.summary?.firstObservedAt?.toString(),
+				lastReceivedAt = history.summary?.lastReceivedAt?.toString(),
+				windowMinutes = thresholds.window.toMinutes().toInt(),
+				activeInstallations = judgement.activeInstallations,
+				observedMembers = ingest.observedMembers(organization.id, observed),
+				eligibleMembers = ingest.eligibleMembers(organization.id),
+				coverageRatio = judgement.coverageRatio,
+			),
+			judgement.coverageTargetMembers,
+			judgement.coverageObservedMembers,
 		)
 	}
 
 	companion object {
-		/** 화면 요청서가 제안한 운영 창. */
-		val WINDOW: Duration = Duration.ofMinutes(15)
-
 		const val USD = "USD"
 		const val PARTIAL = "partial"
 		const val NO_DATA = "no_data"
@@ -149,8 +162,6 @@ class AnalyticsFrames(
 		private const val DISABLED = "disabled"
 		private const val AVAILABLE = "available"
 		private const val UNAVAILABLE = "unavailable"
-		private const val INGEST_EMPTY = "empty"
-		private const val INGEST_UNKNOWN = "unknown"
 	}
 }
 

@@ -276,7 +276,7 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 |---|---|
 | `installations.last_seen_at` | **서버가 받은 시각.** 데몬 시계의 값이 아니다 |
 | `installations.client_version` | 데몬 버전(50자까지). `updated_at`은 바꾸지 않는다 |
-| `installation_heartbeats` | 설치당 한 행 — 마지막 보고의 값 전부(프로세스 식별자, 버전·아키텍처, 보고한 판과 그 manifest, 수집 경로, 누적 개수, 시각) |
+| `installation_heartbeats` | 설치당 한 행 — 마지막 보고의 값 전부(프로세스 식별자, 버전·아키텍처, 보고한 판과 그 manifest, 수집 경로, 누적 개수, 시각)와 전달 대기가 이어지기 시작한 시각(`pending_since`) |
 | `installation_collection_segments` | 수집 중이었다고 보고로 확인된 구간. 손실이 보고된 구간은 따로 남긴다(`lost` > 0) |
 | `installation_manifest_assignments.applied_at` | 보고한 판이 그 조직의 manifest일 때, 그 판을 **처음** 보고받은 시각. 배정 행이 없으면 만든다 |
 
@@ -287,6 +287,8 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
   적용 확인을 기록하지 않고 응답의 `acknowledged_config_revision`은 null이다. 그래도 생존은 기록한다.
 - 설치가 **지금 집행하는 판**은 `installation_heartbeats.applied_config_revision`이다. `applied_at`은 그 판을 적용한 적이 있다는 이력이다.
 - 구간은 끝 시각이 `history-retention`보다 오래되면 그 설치의 다음 보고 때 지운다.
+- `pending_since`는 전달 대기(`pending`)가 0이 아닌 보고가 **이어지기 시작한** 보고의 수신 시각이다(ADR 0041). 같은 프로세스가 다음 보고에서도 대기를 말하면 그대로 두고,
+  대기가 0이면 비우고, 프로세스가 바뀌면 그 보고부터 다시 센다. 조회 쪽이 "대기가 이어지는 중"과 "보고 순간에 마침 전송 중"을 가르는 데 쓴다.
 
 **응답**
 
@@ -1000,6 +1002,7 @@ Flyway가 enrollment 스키마의 진실원이다. 관련 추가 마이그레이
 | V14 | 메일 outbox(`mail_outbox`) — 적재·선점·결과와 암호화한 대기 본문 (ADR 0037) |
 | V15 | 공통 작업 기록(`operations`)과 대상별 결과(`operation_targets`) — 비동기 작업의 상태·사유·조치 대기·복원 기한 (ADR 0039) |
 | V16 | 설치 보고의 최신 상태(`installation_heartbeats`)와 수집 구간 이력(`installation_collection_segments`) (ADR 0040) |
+| V17 | 설치 보고의 최신 상태에 전달 대기가 이어지기 시작한 시각(`pending_since`) (ADR 0041) |
 
 V12는 이 표에 없다 — 사용자 로그인 방식 작업이 예약한 번호다. Flyway는 이미 적용한 판보다 낮은 번호를 뒤늦게 받지 않으므로,
 V13이 먼저 적용된 DB에는 V12를 넣을 수 없다. 머지 순서가 뒤집히면 그 작업이 번호를 다시 매긴다.

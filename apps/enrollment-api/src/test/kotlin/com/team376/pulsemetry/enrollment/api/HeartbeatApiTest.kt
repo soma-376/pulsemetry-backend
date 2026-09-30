@@ -269,6 +269,41 @@ class HeartbeatApiTest {
         assertThat(data.singleColumn("SELECT delivered::text FROM enrollment.installation_heartbeats")).isEqualTo("130")
     }
 
+    // 전달 대기가 이어진 시작점 (ADR 0041). 보고 순간에 마침 하나가 전송 중이던 것과, 대기가 여러 보고에 걸쳐 이어지는 것을 가른다.
+    @Test fun `전달 대기가 이어지기 시작한 시각은 대기를 처음 본 보고의 수신 시각이고 대기가 풀리면 비운다`() {
+        fun pendingSince(): Instant? = jdbc.sql("SELECT pending_since FROM enrollment.installation_heartbeats WHERE installation_id=:id")
+            .param("id", installation).query { rs, _ -> rs.getTimestamp(1)?.toInstant() }.list().single()
+
+        ok(post(report(pending = 0)))
+        assertThat(pendingSince()).isNull()
+
+        // 대기를 처음 봤다. 그 전부터 밀려 있었는지는 모른다 — 본 시각만 적는다(데몬 시계가 틀려도 서버 시각이다).
+        clock.now = start.plusSeconds(60)
+        ok(post(report(pending = 1, skew = Duration.ofHours(2))))
+        val firstSeen = clock.now
+        assertThat(pendingSince()).isEqualTo(firstSeen)
+
+        // 대기가 이어지는 동안에는 시작점이 그대로다. 개수가 바뀌어도 같다.
+        clock.now = start.plusSeconds(120)
+        ok(post(report(pending = 7)))
+        clock.now = start.plusSeconds(180)
+        ok(post(report(pending = 3)))
+        assertThat(pendingSince()).isEqualTo(firstSeen)
+
+        // 대기가 풀리면 비우고, 다시 생기면 그때부터 다시 센다.
+        clock.now = start.plusSeconds(240)
+        ok(post(report(pending = 0)))
+        assertThat(pendingSince()).isNull()
+        clock.now = start.plusSeconds(300)
+        ok(post(report(pending = 2)))
+        assertThat(pendingSince()).isEqualTo(clock.now)
+
+        // 프로세스가 바뀌면 앞 프로세스의 대기와 잇지 않는다.
+        clock.now = start.plusSeconds(360)
+        ok(post(report(run = "0f1e2d3c4b5a69788796a5b4c3d2e1f0", receivingFor = Duration.ofSeconds(20), delivered = 0, pending = 2, lastDeliveredAgo = null)))
+        assertThat(pendingSince()).isEqualTo(clock.now)
+    }
+
     @Test fun `50자를 넘는 데몬 버전은 최신 상태에 그대로 남고 설치 행에는 잘라 넣는다`() {
         val long = "1.2.3-" + "a".repeat(58)
         assertThat(long).hasSize(64)

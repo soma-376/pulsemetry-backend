@@ -230,6 +230,39 @@ object SourceFixtures {
 		return installation
 	}
 
+	/**
+	 * 설치의 마지막 보고 한 행(ADR 0040). 운영에서는 enrollment-api 가 쓴다. 시각은 서버 시각이다.
+	 * [pendingSince] 를 주면 그때부터 전달 대기가 이어진 것이다(ADR 0041).
+	 */
+	fun setHeartbeat(
+		installationId: UUID,
+		receivedAt: Instant,
+		mode: String = "local",
+		forwarding: Boolean = true,
+		receivingSince: Instant? = receivedAt.minusSeconds(3600),
+		lastDeliveredAt: Instant? = receivedAt.minusSeconds(30),
+		pendingSince: Instant? = null,
+	) {
+		DashboardTestStores.writer.sql(
+			"INSERT INTO enrollment.installation_heartbeats (installation_id, received_at, run_id, daemon_version, architecture, applied_config_revision, " +
+				"mode, forwarding, receiving_since, delivered, lost, pending, last_delivered_at, pending_since) " +
+				"VALUES (:id, :received, 'b3f1c2a49d5e4f60a1b2c3d4e5f60718', '0.2.0', 'arm64', 1, :mode, :forwarding, :since, 0, 0, :pending, :last, :pending_since) " +
+				"ON CONFLICT (installation_id) DO UPDATE SET received_at=EXCLUDED.received_at, mode=EXCLUDED.mode, forwarding=EXCLUDED.forwarding, " +
+				"receiving_since=EXCLUDED.receiving_since, pending=EXCLUDED.pending, last_delivered_at=EXCLUDED.last_delivered_at, pending_since=EXCLUDED.pending_since",
+		).param("id", installationId).param("received", java.sql.Timestamp.from(receivedAt)).param("mode", mode).param("forwarding", forwarding)
+			.param("since", receivingSince?.let(java.sql.Timestamp::from)).param("pending", if (pendingSince == null) 0L else 1L)
+			.param("last", lastDeliveredAt?.let(java.sql.Timestamp::from)).param("pending_since", pendingSince?.let(java.sql.Timestamp::from)).update()
+	}
+
+	/** 설치가 수집 중이었다고 보고로 확인된 구간 한 행(ADR 0040). [lost] 가 0 이 아니면 손실 구간이다. */
+	fun insertSegment(installationId: UUID, fromAt: Instant, toAt: Instant, lost: Long = 0) {
+		DashboardTestStores.writer.sql(
+			"INSERT INTO enrollment.installation_collection_segments (id, installation_id, run_id, from_at, to_at, lost) " +
+				"VALUES (:id, :installation, 'b3f1c2a49d5e4f60a1b2c3d4e5f60718', :from, :to, :lost)",
+		).param("id", UUID.randomUUID()).param("installation", installationId)
+			.param("from", java.sql.Timestamp.from(fromAt)).param("to", java.sql.Timestamp.from(toAt)).param("lost", lost).update()
+	}
+
 	private fun json(vararg fields: Pair<String, Any?>): String =
 		fields.joinToString(",", "{", "}") { (key, value) -> "\"$key\":${literal(value)}" }
 

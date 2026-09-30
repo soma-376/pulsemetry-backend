@@ -47,3 +47,9 @@ pulsemetry:
       cleanup-interval: 1m
     members:
       idle-days: 14
+    # 로컬 enrollment-api 의 설치 보고 주기는 1분이다. 시드 조직에는 살아 있는 데몬이 없어
+    # 기준일에서 하루가 지나면 "수집 중단"으로 보인다(그 전에는 확인 불가).
+    ingest:
+      window: 15m
+      delayed-after: 5m
+      down-after: 24h

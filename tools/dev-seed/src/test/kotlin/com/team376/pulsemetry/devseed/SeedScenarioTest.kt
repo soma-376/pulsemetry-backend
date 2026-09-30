@@ -192,6 +192,47 @@ class SeedScenarioTest {
             .path("appliedPolicyVersion").isNull)
     }
 
+    @Test fun `A의 주 설치는 기준 시각까지 손실 없이 수집했다고 보고했고 보고한 적 없는 설치와 C는 그대로 둔다`() {
+        val installations = a.rows.getValue("enrollment.installations").associateBy { it["id"] }
+        val heartbeats = a.rows.getValue("enrollment.installation_heartbeats")
+        val segments = a.rows.getValue("enrollment.installation_collection_segments")
+        val primaries = (2 until 12).map { id("A/installation/$it") }
+        assertEquals(primaries, heartbeats.map { it["installation_id"] })
+        assertEquals(primaries, segments.map { it["installation_id"] })
+        // 기준 시각은 기준일의 서울 자정이다.
+        val reportedAt = "2026-09-27T15:00:00Z"
+        for (report in heartbeats) {
+            val installation = installations.getValue(report["installation_id"])
+            assertEquals(reportedAt, report["received_at"])
+            // 수집 중(로컬 배선·전달·수신)이고 잃거나 밀린 것이 없다.
+            assertEquals(listOf("local", true, 0, 0, null), listOf(report["mode"], report["forwarding"], report["lost"], report["pending"], report["pending_since"]))
+            assertEquals(installation["created_at"], report["receiving_since"])
+            // 전달한 개수와 마지막 전달 시각은 그 설치의 수신 기록과 같다. 보고 시각보다 뒤가 아니다.
+            val receipts = a.ledger.filter { it["installation_id"] == report["installation_id"] }.map { it["received_time"].toString() }
+            assertTrue(receipts.isNotEmpty())
+            assertEquals(receipts.size, report["delivered"])
+            assertEquals(receipts.max(), report["last_delivered_at"])
+            assertTrue(Instant.parse(report["last_delivered_at"].toString()) <= Instant.parse(reportedAt))
+            // 적용한 판은 그 조직의 활성 manifest 다.
+            assertEquals(1, report["applied_config_revision"])
+            assertEquals(a.rows.getValue("enrollment.manifests").single()["id"], report["applied_manifest_id"])
+            assertEquals(installation["architecture"], report["architecture"])
+            // 설치의 생존 시각은 마지막 보고를 받은 시각이다.
+            assertEquals(reportedAt, installation["last_seen_at"])
+            // 구간은 그 프로세스가 등록 뒤로 끊김 없이 수집한 하나다.
+            val segment = segments.single { it["installation_id"] == report["installation_id"] }
+            assertEquals(listOf(report["run_id"], installation["created_at"], reportedAt, 0), listOf(segment["run_id"], segment["from_at"], segment["to_at"], segment["lost"]))
+        }
+        assertEquals(10, heartbeats.map { it["run_id"] }.distinct().size)
+        assertTrue(heartbeats.all { Regex("[0-9a-f]{32}").matches(it["run_id"].toString()) })
+        // 두 번째 설치는 보고한 적이 없다. C는 설치 보고라는 근거가 없는 조직으로 남긴다(수집 상태 확인 불가).
+        assertNull(installations.getValue(id("A/installation/2/secondary"))["last_seen_at"])
+        for (table in listOf("enrollment.installation_heartbeats", "enrollment.installation_collection_segments")) {
+            assertFalse(c.rows.containsKey(table))
+            assertFalse(b.rows.containsKey(table))
+        }
+    }
+
     @Test fun `A 계약 이력의 합계와 확인자가 일치하고 초기 미입력 버전을 보존한다`() {
         val versions = a.rows.getValue("enrollment.vendor_contract_versions")
         val registered = a.rows.getValue("enrollment.managed_vendors").map { it["vendor_id"] }.toSet()

@@ -32,6 +32,7 @@ data class InstallationReport(val sentAt: Instant, val daemonVersion: String, va
  * 설치 보고의 저장 (ADR 0040). 빈이 아니다 — 조립은 앱이 한다.
  *
  * 설치마다 마지막 보고 한 건(`installation_heartbeats`)과 수집 구간 이력(`installation_collection_segments`)을 쓴다.
+ * 마지막 보고에는 전달 대기가 이어지기 시작한 시각(`pending_since` — ADR 0041)을 함께 둔다.
  * 자기 트랜잭션을 열지 않는다 — 호출자가 설치 행을 잠근 트랜잭션 안에서 부른다. 같은 설치의 보고는 그 잠금으로 하나씩 처리된다.
  *
  * 구간은 "수집 중이었다고 보고로 확인된 시간"이다. 같은 프로세스가 손실 없이 이어 보고하면 구간을 늘리고,
@@ -54,19 +55,26 @@ class InstallationReportStore(private val jdbc: JdbcClient, private val retentio
         val lastDeliveredAt = report.lastDeliveredAt?.plus(offset)
         val previous = previous(installationId)
         if (report.collecting) segment(installationId, enrolledAt, report, previous, requireNotNull(receivingSince), receivedAt)
+        // 대기가 이어진 시작점 (ADR 0041). 같은 프로세스가 직전 보고에서도 대기를 말했을 때만 잇는다 — 아니면 이번 보고가 처음 본 것이다.
+        val pendingSince = when {
+            report.pending == 0L -> null
+            previous != null && previous.runId == report.runId && previous.pendingSince != null -> previous.pendingSince
+            else -> receivedAt
+        }
 
         jdbc.sql("""INSERT INTO enrollment.installation_heartbeats(installation_id,received_at,run_id,daemon_version,architecture,applied_config_revision,
-            applied_manifest_id,mode,forwarding,receiving_since,delivered,lost,pending,last_delivered_at)
+            applied_manifest_id,mode,forwarding,receiving_since,delivered,lost,pending,last_delivered_at,pending_since)
             VALUES (:id,:received,:run,:version,:architecture,:revision,CAST(:manifest AS uuid),:mode,:forwarding,
-                CAST(:since AS timestamptz),:delivered,:lost,:pending,CAST(:last AS timestamptz))
+                CAST(:since AS timestamptz),:delivered,:lost,:pending,CAST(:last AS timestamptz),CAST(:pending_since AS timestamptz))
             ON CONFLICT (installation_id) DO UPDATE SET received_at=EXCLUDED.received_at,run_id=EXCLUDED.run_id,daemon_version=EXCLUDED.daemon_version,
                 architecture=EXCLUDED.architecture,applied_config_revision=EXCLUDED.applied_config_revision,applied_manifest_id=EXCLUDED.applied_manifest_id,
                 mode=EXCLUDED.mode,forwarding=EXCLUDED.forwarding,receiving_since=EXCLUDED.receiving_since,delivered=EXCLUDED.delivered,lost=EXCLUDED.lost,
-                pending=EXCLUDED.pending,last_delivered_at=EXCLUDED.last_delivered_at""")
+                pending=EXCLUDED.pending,last_delivered_at=EXCLUDED.last_delivered_at,pending_since=EXCLUDED.pending_since""")
             .param("id", installationId).param("received", Timestamp.from(receivedAt)).param("run", report.runId).param("version", report.daemonVersion)
             .param("architecture", report.architecture).param("revision", report.appliedConfigRevision).param("manifest", appliedManifestId?.toString())
             .param("mode", report.mode.wire).param("forwarding", report.forwarding).param("since", receivingSince?.toString())
             .param("delivered", report.delivered).param("lost", report.lost).param("pending", report.pending).param("last", lastDeliveredAt?.toString())
+            .param("pending_since", pendingSince?.toString())
             .update()
 
         jdbc.sql("DELETE FROM enrollment.installation_collection_segments WHERE installation_id=:id AND to_at<:cutoff")
@@ -111,16 +119,18 @@ class InstallationReportStore(private val jdbc: JdbcClient, private val retentio
             .param("from", Timestamp.from(from)).param("to", Timestamp.from(to)).param("lost", lost).update()
     }
 
-    private fun previous(installationId: UUID): Previous? = jdbc.sql("""SELECT run_id,received_at,delivered,lost,
+    private fun previous(installationId: UUID): Previous? = jdbc.sql("""SELECT run_id,received_at,delivered,lost,pending_since,
         (mode='local' AND forwarding AND receiving_since IS NOT NULL) AS collecting FROM enrollment.installation_heartbeats WHERE installation_id=:id""")
         .param("id", installationId).query { rs, _ ->
-            Previous(rs.getString("run_id"), rs.getTimestamp("received_at").toInstant(), rs.getLong("delivered"), rs.getLong("lost"), rs.getBoolean("collecting"))
+            Previous(rs.getString("run_id"), rs.getTimestamp("received_at").toInstant(), rs.getLong("delivered"), rs.getLong("lost"), rs.getBoolean("collecting"),
+                rs.getTimestamp("pending_since")?.toInstant())
         }.optional().orElse(null)
 
     private fun lastSegment(installationId: UUID, runId: String): Segment? = jdbc.sql("""SELECT id,to_at,lost FROM enrollment.installation_collection_segments
         WHERE installation_id=:id AND run_id=:run ORDER BY to_at DESC, from_at DESC LIMIT 1""").param("id", installationId).param("run", runId)
         .query { rs, _ -> Segment(rs.getObject("id", UUID::class.java), rs.getTimestamp("to_at").toInstant(), rs.getLong("lost")) }.optional().orElse(null)
 
-    private class Previous(val runId: String, val receivedAt: Instant, val delivered: Long, val lost: Long, val collecting: Boolean)
+    private class Previous(val runId: String, val receivedAt: Instant, val delivered: Long, val lost: Long, val collecting: Boolean,
+        val pendingSince: Instant?)
     private class Segment(val id: UUID, val toAt: Instant, val lost: Long)
 }
