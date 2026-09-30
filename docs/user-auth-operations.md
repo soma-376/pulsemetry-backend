@@ -78,26 +78,26 @@ DELETE FROM enrollment.auth_attempts
 user-auth.enabled=false로 신규 API를 닫고 이전 앱으로 되돌릴 수 있다. V5는 추가형이며 삭제 마이그레이션은 하지 않는다.
 기존 enroll·pit_/ptt_는 유지된다. 가입으로 설정된 비밀번호/상태는 보존한다.
 
-## 재동기화와 stacked 병합
+## manifest 재동기화
 
-GET /v1/manifest는 사용자 RT를 회전한다. CDN/API Gateway에서 이 경로를 캐시하거나 재시도하지 않도록 한다.
+`GET /v1/manifest`는 사용자 RT를 회전한다. CDN/API Gateway에서 이 경로를 캐시하거나 재시도하지 않도록 한다.
 503/409로 트랜잭션이 실패하면 RT 소비는 롤백된다. 연결 종료 등 응답 유실은 성공 여부를 알 수 없으므로 재로그인한다.
-로컬 파일·키링의 적용 완료를 서버 성공과 동일시하지 않는다. OTLP ptt_ 갱신과 사용자 RT 회전은 별개다.
+로컬 파일·키링의 적용 완료를 서버 성공과 동일시하지 않는다. OTLP `ptt_` 갱신과 사용자 RT 회전은 별개다.
 
-107 기준 커밋은 7180f19040652a9d9e6a7fd740645bc5f5b06fa7이다.
-108은 feature/PROJ-107-auth-core 위에 쌓이며, 107 squash merge 후에는 다음 방식으로 고유 커밋만 옮긴다.
-107 브랜치를 수정했다면 먼저 당시 108의 부모 경계를 기록하고 새 107 위에 재배치한다.
+### 빌드에 필요한 계약
+
+enrollment-api 빌드는 telemetryctl의 `contracts/enrollment-manifest.schema.json`을 jar에 넣는다(ADR 0019).
+`PULSEMETRY_CONTRACTS_DIR`은 원본 `contracts` 디렉터리의 절대 경로이고, 생략하면 형제 `../telemetryctl/contracts`를 읽는다.
+파일이 없으면 `:apps:enrollment-api:processResources`가 실패한다.
+런타임에는 jar에 포함된 스키마를 쓰므로 telemetryctl 체크아웃이나 네트워크가 필요 없다.
+
+이미지 빌드는 `enrollment-api` target에만 named context를 전달한다.
+나머지 target은 그 빌드 스테이지를 거치지 않으므로 컨텍스트가 필요 없다.
 
 ```sh
-git fetch origin develop
-git rebase --onto origin/develop 7180f19040652a9d9e6a7fd740645bc5f5b06fa7 feature/PROJ-108-manifest-resync
+docker buildx build --target enrollment-api \
+  --build-context telemetry-contracts=../telemetryctl/contracts -t <repo>:<tag> --load .
 ```
 
-그 후 108 diff가 재동기화 변경만 포함하는지 확인하고 전체 빌드를 실행한 뒤 PR base를 develop으로 바꾼다.
-명령은 최초 107 분기점에 대한 예시이며 107 재작성 뒤에는 저장한 실제 부모 경계를 사용한다.
-
-빌드에는 telemetryctl 계약 체크아웃이 필요하다. PULSEMETRY_CONTRACTS_DIR은 원본 contracts 절대 경로다. 런타임에는 jar에 포함된 manifest 스키마를 쓰므로 telemetryctl 체크아웃/네트워크가 필요 없다.
-
-컨테이너 빌드도 `--build-context telemetry-contracts=../telemetryctl/contracts`를 전달한다.
-PR 검증·develop 배포 검증·Docker build가 같은 계약 SHA를 사용한다. 계약 커밋을 원격에 먼저 게시해야 한다.
-이번 작업은 워크플로 파일만 수정하며 실제 push·배포는 수행하지 않는다.
+CI의 PR 검증과 develop 배포는 telemetryctl 기본 브랜치를 체크아웃해 그 `contracts`를 쓴다(ref를 고정하지 않는다).
+계약 테스트가 `user-auth.schema.json`·`manifest-resync.schema.json`을 읽으므로, 두 스키마가 telemetryctl 기본 브랜치에 먼저 있어야 CI가 통과한다.
