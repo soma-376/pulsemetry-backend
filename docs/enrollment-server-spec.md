@@ -53,6 +53,7 @@
 | GET | `/windows?code=...` | 없음 | 200 `text/plain` |
 | GET | `/unix?code=...` | 없음 | 200 `text/plain` |
 | GET | `/bin/{filename}` | 없음 | 200 `application/octet-stream` |
+| GET | `/api/v1/check-updates` | 없음 | 200 |
 
 스크립트와 바이너리 경로에는 `/v1` 접두사가 없다. 사용자가 터미널에 붙여넣는 URL 이라 짧아야 한다.
 
@@ -391,6 +392,38 @@ pulsemetry_linux_amd64         pulsemetry_linux_arm64
 
 바이너리는 서버 로컬 디렉터리에서 서빙한다. S3·GitHub Releases 리다이렉트를 쓰지 않는다.
 
+### 6.3 `GET /api/v1/check-updates` — 데몬 업데이트 확인
+
+데몬이 기동 직후와 24시간마다 "내 버전보다 새 데몬이 있는가"를 묻는다. 계약은 허브 `contracts/daemon-updates.md`(허브 ADR 0011)이고
+기계 판독 원본은 telemetryctl `contracts/daemon-updates.schema.json`이다. 인증이 없다 — 데몬이 인증 정보를 보내지 않는다.
+알려 주기만 한다. 내려받기와 설치는 하지 않는다.
+
+쿼리는 셋 다 필수다: `current_version`(SemVer, `v` 없음) · `platform`(`darwin`·`linux`·`windows`) · `architecture`(`amd64`·`arm64`). 그 밖의 쿼리는 무시한다.
+
+```json
+{"latest_version": "0.2.0", "update_available": true}
+```
+
+- **최신 버전은 이 서버가 §6.2로 배포하는 바이너리의 판이다.** 외부 릴리스 목록을 보지 않는다.
+  판은 `pulsemetry.binaries.dir`의 `pulsemetry_release.json`이 말한다 — `{"version": "0.2.0", "sha256": {"<파일명>": "<소문자 hex 64자>", …}}`.
+  `sha256`의 키는 §6.2의 여섯 이름뿐이다. 모르는 최상위 키는 무시한다. 이 파일은 `/bin`으로 서빙하지 않는다.
+- 요청의 `platform`·`architecture`로 파일명(`pulsemetry_{platform}_{architecture}`, Windows만 `.exe`)을 정한다. 허용 목록과의 동등 비교뿐이다.
+  **그 파일이 있고 SHA-256이 메타데이터와 같을 때만** 그 버전을 답한다. 해시는 파일의 크기·수정 시각이 바뀔 때만 다시 계산한다.
+- `update_available`은 `current_version` < `latest_version`일 때만 true다. 순서는 SemVer 2.0.0의 우선순위 규칙이다 —
+  사전 릴리스는 같은 번호의 정식 판보다 낮고 빌드 메타데이터는 순서에 영향을 주지 않는다. 버전을 주입하지 않은 빌드(`0.1.0`)를 따로 취급하지 않는다.
+- 응답은 두 키의 JSON 문서 하나이고 `Cache-Control: no-store`다. 리다이렉트를 내지 않는다(데몬이 따라가지 않는다).
+
+| 상황 | HTTP | error |
+|---|---|---|
+| 쿼리가 빠졌거나 비었다, `current_version`이 SemVer가 아니다(`v0.2.0`·`dev` 등) | 400 | `invalid_request` |
+| 메타데이터가 없거나 형식이 틀렸다 | 404 | `not_found` |
+| `platform`·`architecture`가 여섯 파일명으로 이어지지 않는다 | 404 | `not_found` |
+| 그 대상의 바이너리가 없거나, 메타데이터에 없거나, 해시가 다르다 | 404 | `not_found` |
+
+404는 "업데이트 없음"이 아니라 "이 서버가 확인해 줄 수 없음"이다. 데몬은 미지원으로 표시한다.
+**확인할 수 없을 때 임의의 버전이나 `update_available=false`로 답하지 않는다.**
+별도 스위치는 없다 — 메타데이터 파일을 놓으면 켜지고 없으면 404다. 읽는 도중 파일이 교체되는 경합은 §6.2와 같이 없는 파일로 다룬다.
+
 ---
 
 ## 7. 에러 계약
@@ -438,7 +471,7 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.admin.api-token` | 없음 | 관리자 API 키. **비어 있으면 기동 실패** |
 | `pulsemetry.token-hash-secret` | 없음 | telemetry token 의 HMAC-SHA256 키. **비어 있으면 기동 실패.** auth-proxy(ai-telemetry-pipeline)와 같은 값을 써야 OTLP 인증이 성립한다. dev 인프라에서는 `DevEdgeStack` 의 `TokenHashSecretArn` 이 가리키는 Secrets Manager 값. 키 변경 = 발급된 전 토큰 무효 |
 | `pulsemetry.invitation.default-ttl-hours` | `72` | `expires_in_hours` 생략 시 만료 시간 |
-| `pulsemetry.binaries.dir` | `./binaries` | CLI 바이너리가 놓인 서버 로컬 디렉터리 |
+| `pulsemetry.binaries.dir` | `./binaries` | CLI 바이너리와 릴리스 메타데이터(`pulsemetry_release.json`, §6.3)가 놓인 서버 로컬 디렉터리 |
 | `pulsemetry.mail.enabled` | `false` | 메일 발송(ADR 0037)을 켠다. 켜면 아래 열한 값이 **모두 필요하다 — 하나라도 비면 기동 실패**. 꺼져 있으면 outbox에 적재하지도 보내지도 않는다 |
 | `pulsemetry.mail.smtp.host` · `.port` | 없음 | SMTP 서버 |
 | `pulsemetry.mail.smtp.username` · `.password` | 없음 | SMTP 계정. 로그·응답에 싣지 않는다 |
@@ -508,6 +541,9 @@ Compose 날짜 생략은 서울 기준 실행일이며, 완료된 시드는 재�
 
 `pulsemetry.binaries.dir` 에 §6.2 의 이름 그대로 파일을 놓는다.
 없는 아키텍처는 404 가 되며, 그 아키텍처의 사용자는 설치가 실패한다.
+
+같은 디렉터리에 릴리스 메타데이터 `pulsemetry_release.json`(§6.3)을 함께 놓는다. 바이너리를 교체할 때마다 같이 교체한다.
+메타데이터가 없거나 바이너리와 해시가 맞지 않으면 업데이트 확인이 404로 답하고, 설치된 데몬은 업데이트를 "미지원"으로 표시한다.
 
 ### 9.3 헬스체크
 

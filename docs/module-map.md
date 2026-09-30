@@ -49,6 +49,7 @@ pulsemetry-backend
 │   │                                ├ inquiry/        로그인 전 도입 문의 접수 HTTP·출처별 제한 필터
 │   │                                ├ installation/   설치 보고(heartbeat) 수신 — 본문 해석·적용 확인·기록 (ADR 0040)
 │   │                                ├ mail/           메일 설정 바인딩·SMTP 발송 구현·발송 작업의 주기 실행 (ADR 0037)
+│   │                                ├ update/         데몬 업데이트 확인 — 배포 바이너리의 판과 해시 확인·SemVer 비교 (허브 ADR 0011)
 │   │                                └ management/     온보딩·정책·팀·초대·제품·계약 관리 HTTP
 │   ├── telemetry-ingest/            com.team376.pulsemetry.telemetry
 │   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
