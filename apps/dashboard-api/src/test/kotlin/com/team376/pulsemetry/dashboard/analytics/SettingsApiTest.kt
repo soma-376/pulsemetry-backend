@@ -356,9 +356,7 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 	fun structureMatchesExample() {
 		val org = seed()
 
-		// 가산 키(ADR 0044): 관측됐지만 등록하지 않은 제품, 매핑 없는 관측.
-		JsonStructure.assertSameKeys("", JsonStructure.example("settings-response.example.json"), ok(org.tenant, "/settings"),
-			mapOf("/summary" to setOf("detectedProducts", "unmappedObservations")))
+		JsonStructure.assertMatches("settings-response.example.json", ok(org.tenant, "/settings"))
 	}
     @Test fun expiredContractPreservesDetailsAndHasZeroActiveSummary() {
         val org = seed()

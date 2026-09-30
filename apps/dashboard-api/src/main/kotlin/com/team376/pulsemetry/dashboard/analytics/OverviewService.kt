@@ -40,6 +40,7 @@ class OverviewService(
 		val frame = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId = null)
 		val snapshot = frame.snapshot
 		val pricingMixed = frame.pricingMixed
+		val products = references.products(snapshot)
 
 		val organizationTotals = aggregator.totals(snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList())
 		val previousTotals = if (frame.comparable) aggregator.totals(snapshot, Side.PREVIOUS, Axis.ORGANIZATION).getValue(emptyList()) else null
@@ -58,7 +59,8 @@ class OverviewService(
 			trend = trendOf(frame),
 			modelMix = modelMixOf(snapshot, pricingMixed, frame.empty),
 			waste = WASTE,
-			teamUsage = teamUsageOf(snapshot, pricingMixed, frame),
+			teamUsage = teamUsageOf(snapshot, pricingMixed, frame, products),
+			productUsage = productUsageOf(snapshot, pricingMixed, frame, products),
 		)
 	}
 
@@ -105,10 +107,27 @@ class OverviewService(
 		}
 	}
 
+	/** 카탈로그 제품별 사용(ADR 0045). 제품이 없으면 unavailable, 금액·토큰이 모두 있으면 available, 아니면 partial. */
+	private fun productUsageOf(
+		snapshot: SnapshotManifestStore.Manifest,
+		pricingMixed: Boolean,
+		frame: AnalyticsFrames.Frame,
+		mapping: List<SnapshotReferences.Product>,
+	): OverviewResponse.ProductUsageSection {
+		val totals = if (frame.empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.PRODUCT, products = mapping).mapKeys { it.key.single() ?: UsageAggregator.UNMAPPED_PRODUCT }
+		val products = Products.usages(totals, mapping, pricingMixed)
+		return when {
+			products.isEmpty() -> OverviewResponse.ProductUsageSection(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, emptyList())
+			products.all { it.equivalentCostUsd != null && it.totalTokens != null } -> OverviewResponse.ProductUsageSection(Availability.AVAILABLE, null, products)
+			else -> OverviewResponse.ProductUsageSection(Availability.PARTIAL, Availability.SOURCE_NOT_AVAILABLE, products)
+		}
+	}
+
 	private fun teamUsageOf(
 		snapshot: SnapshotManifestStore.Manifest,
 		pricingMixed: Boolean,
 		frame: AnalyticsFrames.Frame,
+		mapping: List<SnapshotReferences.Product>,
 	): OverviewResponse.TeamUsage {
 		val empty = frame.empty
 		val comparable = frame.comparable
@@ -116,6 +135,8 @@ class OverviewService(
 		val current = if (empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.TEAM)
 		val previous = if (comparable && !empty) aggregator.totals(snapshot, Side.PREVIOUS, Axis.TEAM) else emptyMap()
 		val teamModels = if (empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.TEAM_MODEL)
+		val teamProducts = if (empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.TEAM_PRODUCT, products = mapping)
+		fun productsOf(teamId: String?) = Products.refs(teamProducts.filter { it.key[0] == teamId && it.value.hasUsage }.map { it.key[1] ?: UsageAggregator.UNMAPPED_PRODUCT }, mapping)
 
 		val teams = current.filterKeys { it.single() != null }.map { (key, totals) -> key.single()!! to totals }
 		val ranked = teams.sortedWith(
@@ -132,6 +153,7 @@ class OverviewService(
 				current = TeamPeriod.of(totals, pricingMixed),
 				previous = if (comparable) TeamPeriod.of(previous[listOf(teamId)] ?: UsageTotals.EMPTY, pricingMixed, frame.previousComplete) else null,
 				topModel = topModelOf(teamId, totals, teamModels, pricingMixed),
+				products = productsOf(teamId),
 			)
 		}
 		val others = ranked.drop(TOP_TEAMS).map { it.second }
@@ -163,6 +185,7 @@ class OverviewService(
 			unassigned = OverviewResponse.Unassigned(
 				current = unassignedCurrent,
 				previous = if (comparable) TeamPeriod.of(previous[listOf(null)] ?: UsageTotals.EMPTY, pricingMixed, frame.previousComplete) else null,
+				products = productsOf(null),
 			),
 		)
 	}

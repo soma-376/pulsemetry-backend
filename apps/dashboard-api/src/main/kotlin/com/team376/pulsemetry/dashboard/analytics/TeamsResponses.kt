@@ -36,6 +36,8 @@ data class TeamAnalytics(
 	val previous: Usage?,
 	val modelMix: Section<TeamModelMix>,
 	val trend: List<TeamTrendPoint>,
+	/** 현재 기간의 카탈로그 제품별 사용(가산 — ADR 0045). 사용량 행이 있는 제품만. */
+	val products: List<ProductUsage>,
 )
 
 data class ScatterModel(

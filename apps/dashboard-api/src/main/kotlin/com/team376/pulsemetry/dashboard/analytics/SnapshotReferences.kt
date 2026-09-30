@@ -93,6 +93,16 @@ class SnapshotReferences(
 				.list()
 				.toMap()
 
+	/** build 때의 관측 제품 매핑 한 줄(ADR 0044). [kind] 는 카탈로그 제품 ID. */
+	data class Product(val observed: String, val kind: String, val displayName: String, val sortOrder: Int)
+
+	/** 관측 제품 매핑 — 카탈로그 순서. 제품 축(ADR 0045)은 이것으로만 관측을 카탈로그 제품에 잇는다. */
+	fun products(snapshot: SnapshotManifestStore.Manifest): List<Product> =
+		cache.sql("SELECT observed_product, product_id, display_name, sort_order FROM dashboard_cache.snapshot_products WHERE snapshot_id = :snapshot ORDER BY sort_order, product_id, observed_product")
+			.param("snapshot", snapshot.snapshotId)
+			.query { rs, _ -> Product(rs.getString("observed_product"), rs.getString("product_id"), rs.getString("display_name"), rs.getInt("sort_order")) }
+			.list()
+
 	fun teams(snapshot: SnapshotManifestStore.Manifest): List<Team> =
 		cache.sql("SELECT team_id, name, archived FROM dashboard_cache.snapshot_teams WHERE snapshot_id = :snapshot")
 			.param("snapshot", snapshot.snapshotId)

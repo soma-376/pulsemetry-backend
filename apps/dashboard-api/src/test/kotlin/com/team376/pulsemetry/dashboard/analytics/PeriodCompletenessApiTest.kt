@@ -121,7 +121,7 @@ class PeriodCompletenessApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/teamUsage/unassigned/previous/activeUsers").asLong()).isZero()
 
 		// 응답 키 구조는 화면 요청서의 예시와 같다.
-		JsonStructure.assertSameKeys("", JsonStructure.example("overview-response.example.json"), body)
+		JsonStructure.assertMatches("overview-response.example.json", body)
 	}
 
 	@Test
@@ -147,7 +147,7 @@ class PeriodCompletenessApiTest : AbstractDashboardApiTest() {
 		val users = ok(org.tenant, "/analytics/teams/${org.team}/users?$week&snapshotId=$snapshotId")
 		assertThat(users.at("/summary/usage/equivalentCostUsd").asString()).isEqualTo("30.000000")
 
-		JsonStructure.assertSameKeys("", JsonStructure.example("teams-response.example.json"), list)
+		JsonStructure.assertMatches("teams-response.example.json", list)
 	}
 
 	@Test

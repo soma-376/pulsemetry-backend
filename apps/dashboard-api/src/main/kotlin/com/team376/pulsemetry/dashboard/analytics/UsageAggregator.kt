@@ -30,18 +30,28 @@ class UsageAggregator(
 		TEAM_MODEL(listOf("team_id_as_of", "model_id")),
 		TEAM_DAY(listOf("team_id_as_of", "toString(toDate(source_time, {tz:String}))")),
 		MEMBER_MODEL(listOf("member_id", "model_id")),
+
+		/** 카탈로그 제품(ADR 0045). 키는 snapshot 에 복제한 매핑으로 잇고 매핑 없는 관측은 [UNMAPPED_PRODUCT] 다. */
+		PRODUCT(listOf(PRODUCT_KEY)),
+		TEAM_PRODUCT(listOf("team_id_as_of", PRODUCT_KEY)),
 	}
 
 	/** 한 팀으로 좁히는 조건. [teamId] 가 null 이면 미배분(`team_id_as_of IS NULL`)이다. */
 	data class TeamScope(val teamId: String?)
 
+	/**
+	 * [products] 는 제품 축의 매핑이다(snapshot 에 복제한 것 — [SnapshotReferences.products]). 제품 축이 아니면 쓰지 않는다.
+	 */
 	fun totals(
 		snapshot: SnapshotManifestStore.Manifest,
 		side: Side,
 		axis: Axis,
 		team: TeamScope? = null,
+		products: List<SnapshotReferences.Product> = emptyList(),
 	): Map<List<String?>, UsageTotals> {
-		val keys = axis.expressions.mapIndexed { index, expression -> "$expression AS k$index" }
+		// 매핑이 비면 모든 관측이 매핑 없는 관측이다.
+		val productKey = if (products.isEmpty()) "'$UNMAPPED_PRODUCT'" else "transform(product, {observed:Array(String)}, {catalog:Array(String)}, '$UNMAPPED_PRODUCT')"
+		val keys = axis.expressions.mapIndexed { index, expression -> "${expression.replace(PRODUCT_KEY, productKey)} AS k$index" }
 		val select = (keys + COUNTERS).joinToString(",\n    ")
 		val groupBy = if (axis.expressions.isEmpty()) "" else "GROUP BY " + axis.expressions.indices.joinToString(", ") { "k$it" }
 		val sql = """
@@ -57,6 +67,10 @@ class UsageAggregator(
 			put("build", ClickHouseParam.string(snapshot.buildId.toString()))
 			put("tz", ClickHouseParam.string(snapshot.current.zone.id))
 			team?.teamId?.let { put("team", ClickHouseParam.string(it)) }
+			if (PRODUCT_KEY in axis.expressions && products.isNotEmpty()) {
+				put("observed", ClickHouseParam.stringArray(products.map { it.observed }))
+				put("catalog", ClickHouseParam.stringArray(products.map { it.kind }))
+			}
 		}
 		return clickHouse.query(sql, params) { row -> axis.expressions.indices.map { text(row, "k$it") } to totals(row) }.toMap()
 	}
@@ -93,9 +107,13 @@ class UsageAggregator(
 
 	private fun text(row: JsonNode, name: String): String? = row.get(name)?.takeUnless { it.isNull }?.asString()
 
-	private companion object {
+	companion object {
+		/** 제품 축에서 매핑 없는 관측의 키. 카탈로그 제품 ID 와 겹치지 않는다. */
+		const val UNMAPPED_PRODUCT = ""
+		private const val PRODUCT_KEY = "{product}"
+
 		/** 조회 골격의 카운터. 합은 `sumOrNull` — 값이 전부 없으면 0 이 아니라 NULL 이다. */
-		val COUNTERS = listOf(
+		private val COUNTERS = listOf(
 			"count() AS usage_rows",
 			"uniqExact(member_id) AS identified_users",
 			"countIf(isNull(member_id)) AS unidentified_rows",

@@ -12,7 +12,11 @@ data class OverviewResponse(
 	val modelMix: ModelMix,
 	val waste: Waste,
 	val teamUsage: TeamUsage,
+	/** 카탈로그 제품별 사용(가산 — ADR 0045). */
+	val productUsage: ProductUsageSection,
 ) {
+	data class ProductUsageSection(val availability: String, val reason: String?, val products: List<ProductUsage>)
+
 	data class Meta(
 		val organizationId: String,
 		val generatedAt: String,
@@ -138,9 +142,16 @@ data class OverviewResponse(
 		val current: TeamPeriod,
 		val previous: TeamPeriod?,
 		val topModel: TopModel?,
+		/** 그 팀의 현재 기간에 관측된 제품(가산 — ADR 0045). */
+		val products: List<ProductRef>,
 	)
 
 	data class OtherTeams(val count: Int, val currentEquivalentCostUsd: String?, val previousEquivalentCostUsd: String?)
 
-	data class Unassigned(val current: TeamPeriod, val previous: TeamPeriod?)
+	data class Unassigned(
+		val current: TeamPeriod,
+		val previous: TeamPeriod?,
+		/** 미배정 사용에서 관측된 제품(가산 — ADR 0045). */
+		val products: List<ProductRef>,
+	)
 }

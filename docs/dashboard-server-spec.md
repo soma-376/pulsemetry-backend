@@ -84,6 +84,36 @@ type Usage = {
 - [구성원 DTO](../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/analytics/MembersResponses.kt)
 - [설정 DTO](../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/analytics/SettingsResponses.kt)
 
+### 제품별 사용 (ADR 0045)
+
+개요·팀 목록·팀 상세에 제품별 사용을 **가산**으로 더했다. 모두 현재 기간이고 같은 snapshot 의 같은 계산기에서 나온다.
+관측 제품은 snapshot build 때 복제한 명시 매핑(`dashboard_cache.snapshot_products`, ADR 0044)으로만 카탈로그 제품에 잇는다.
+
+```ts
+type ProductUsage = {
+  kind: string | null;        // 카탈로그 제품 ID. null = 어느 카탈로그 제품에도 매핑되지 않은 관측
+  displayName: string | null; // 카탈로그 표시 이름. 매핑 없는 관측은 null
+  activeUsers: number | null;
+  sessionCount: number | null;
+  totalTokens: number | null;
+  equivalentCostUsd: Money | null;
+};
+type ProductRef = { kind: string | null; displayName: string | null };
+// OverviewResponse 에 더한 키
+//   productUsage: { availability: Availability; reason: string | null; products: ProductUsage[] };
+//   teamUsage.topTeams[].products: ProductRef[];  teamUsage.unassigned.products: ProductRef[];
+// TeamsResponse.teams.items[]·unassigned, TeamDetailResponse.team 에 더한 키
+//   products: ProductUsage[];
+```
+
+- 순서는 카탈로그 순서이고 매핑 없는 관측(`kind = null`)은 끝이다. 사용량 행이 없는 제품은 넣지 않는다.
+- 값은 사용량 null 규칙 그대로다 — 세션 없는 행이 있으면 `sessionCount` null, 의미 프로파일이 섞이면 `totalTokens` null, 단가 없는 행이 있으면 금액 null.
+  토큰은 제품 안에서만 더하므로 팀 합계의 토큰이 없어도 제품별 토큰은 있을 수 있다.
+- 제품 금액이 모두 있으면 제품 금액의 합은 그 범위(조직·팀)의 금액과 같다.
+- `productUsage`: 제품이 없으면 `unavailable`, 금액·토큰이 모두 있으면 `available`, 아니면 `partial`.
+- 관측 인원은 좌석 수가 아니다. 좌석 값은 여기에 없다.
+- 판정 규칙 판은 `dashboard-v3`다(매핑 복제를 더했다) — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
+
 ### 현재 데이터의 해석
 
 - 완전성의 근거(설치 보고의 수집 구간)가 기간 전체를 덮지 않으면 사용량은 `partial`이고 비교는 `unavailable`이다. 비교 없음은 `disabled`다(아래 "기간 완전성과 비교").
@@ -126,7 +156,7 @@ type Usage = {
 6. 그날 효력이 있던 수집 정책 판이 모두 `signals.logs`를 수집한다(정책이 없던 날은 완전하지 않다).
 
 판정은 snapshot build 때 한 번 하고 `dashboard_cache.snapshot_complete_days`에 고정한다. 같은 snapshot 의 목록·상세·사용자는 같은 판정을 쓴다.
-판정 규칙 판은 `dashboard-v2`다 — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
+판정 규칙 판은 이 결정 때 `dashboard-v2`였고 지금은 `dashboard-v3`다("제품별 사용" 절) — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
 
 | 필드 | 규칙 |
 | --- | --- |

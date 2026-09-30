@@ -205,6 +205,8 @@ class TeamsService(
 		val teamModels: Map<List<String?>, UsageTotals>,
 		val teamDays: Map<List<String?>, UsageTotals>,
 		val models: Map<List<String?>, UsageTotals>,
+		val teamProducts: Map<List<String?>, UsageTotals>,
+		val products: List<SnapshotReferences.Product>,
 		val directory: Map<String, SnapshotReferences.Team>,
 	) {
 		val pricingMixed = frame.pricingMixed
@@ -245,6 +247,7 @@ class TeamsService(
 						cumulativeSessionCount = null,
 					)
 				},
+				products = Products.usages(teamProducts.filterKeys { it[0] == id }.mapKeys { it.key[1] ?: UsageAggregator.UNMAPPED_PRODUCT }, products, pricingMixed),
 			)
 		}
 
@@ -282,7 +285,8 @@ class TeamsService(
 			fun load(frame: AnalyticsFrames.Frame, aggregator: UsageAggregator, references: SnapshotReferences): TeamData {
 				val snapshot = frame.snapshot
 				val empty = frame.empty
-				fun totals(axis: Axis, side: Side = Side.CURRENT) = if (empty) emptyMap() else aggregator.totals(snapshot, side, axis)
+				val products = references.products(snapshot)
+				fun totals(axis: Axis, side: Side = Side.CURRENT) = if (empty) emptyMap() else aggregator.totals(snapshot, side, axis, products = products)
 				return TeamData(
 					frame = frame,
 					organization = aggregator.totals(snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()),
@@ -292,6 +296,8 @@ class TeamsService(
 					teamModels = totals(Axis.TEAM_MODEL),
 					teamDays = totals(Axis.TEAM_DAY),
 					models = totals(Axis.MODEL),
+					teamProducts = totals(Axis.TEAM_PRODUCT),
+					products = products,
 					directory = references.teams(snapshot).associateBy { it.id.toString() },
 				)
 			}

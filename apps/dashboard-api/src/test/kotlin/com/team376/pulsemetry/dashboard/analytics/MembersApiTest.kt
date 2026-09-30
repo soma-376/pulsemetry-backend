@@ -222,6 +222,6 @@ class MembersApiTest : AbstractDashboardApiTest() {
 	fun structureMatchesExample() {
 		val org = seed()
 
-		JsonStructure.assertSameKeys("", JsonStructure.example("members-response.example.json"), ok(org.tenant, "/members/dashboard?$week"))
+		JsonStructure.assertMatches("members-response.example.json", ok(org.tenant, "/members/dashboard?$week"))
 	}
 }

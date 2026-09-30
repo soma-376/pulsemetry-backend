@@ -290,6 +290,15 @@ class SeedScenarioTest {
         assertTrue(a.events.all { it["product"] in OBSERVED_PRODUCTS.keys })
     }
 
+    @Test fun `A는 제품이 섞인 팀과 한 제품만 쓰는 팀을 모두 갖는다`() {
+        // 팀별 제품 집계(대시보드 ADR 0045)가 섞인 팀·단일 제품 팀을 모두 보여 줄 수 있어야 한다. 최근 28일 기준.
+        val start = date.minusDays(28).atStartOfDay(seoul).toInstant().toString()
+        val byTeam = a.events.filter { it["source_time"].toString() >= start && it["team_id_as_of"] != null }
+            .groupBy { it["team_id_as_of"] }.mapValues { (_, rows) -> rows.map { it["product"] }.toSet() }
+        assertTrue(byTeam.values.any { it == setOf("claude_code", "codex") })
+        assertTrue(byTeam.values.any { it.size == 1 })
+    }
+
     @Test fun `A 계약 이력의 합계와 확인자가 일치하고 초기 미입력 버전을 보존한다`() {
         val versions = a.rows.getValue("enrollment.vendor_contract_versions")
         val registered = a.rows.getValue("enrollment.managed_vendors").map { it["vendor_id"] }.toSet()
