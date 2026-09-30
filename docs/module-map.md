@@ -28,6 +28,7 @@ V9의 활성 제품 유일 제약과 계약 정정 규칙은 Enrollment 명세 �
 [ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) ·
 [ADR 0023](adr/0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md) ·
 [ADR 0024](adr/0024-조직별-보존-삭제-경계는-RDS-가-진실원이고-분석-INSERT-는-ClickHouse-fence-를-서버에서-다시-검사한다.md) ·
+[ADR 0048](adr/0048-좌석-원장은-벤더-계정별-배정-이력이고-연결된-등록-제품에서는-커넥터-동기화가-권위를-갖는다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md) ·
 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)
@@ -76,6 +77,7 @@ pulsemetry-backend
 └── libs/
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
     │                                └ enrollment 엔티티·사용자 인증 저장소·관리 명령·문의 접수·메일 outbox·공통 작업 기록·설치 보고·설치 업데이트 안내(ADR 0043)·DB 카탈로그 · Flyway 마이그레이션
+    │                                  └ seat/  좌석 원장·벤더 연결(자격증명 암호화)·동기화 실행 기록 (ADR 0048)
     ├── security/                    com.team376.pulsemetry.security
     │                                └ 사용자 JWT·세션·암호 검증과 OTLP 경로의 ptt_ 검증 · telemetry token 해시
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
@@ -95,13 +97,19 @@ pulsemetry-backend
     │                                └ observation/ 관측 보강 (ADR 0020 §5)
     ├── telemetry-persistence/       com.team376.pulsemetry.persistence.telemetry
     │                                ClickHouse 스키마 · 분석 테이블 sink · 수신 ledger sink · 보존 fence·삭제 — 쓰기 소유 모듈
-    └── telemetry-ops-persistence/   com.team376.pulsemetry.persistence.telemetryops
-                                     RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필 · 삭제 경계 · 보존 작업 기록
+    ├── telemetry-ops-persistence/   com.team376.pulsemetry.persistence.telemetryops
+    │                                RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필 · 삭제 경계 · 보존 작업 기록
+    └── vendor-connector/            com.team376.pulsemetry.connector.vendor
+                                     벤더 좌석 커넥터 — 포트(인터페이스·값 타입)·커넥터 설명·조립 검사 (ADR 0048). Spring 없음
 ```
 
 `settings.gradle.kts`의 `include`는 위 모듈들이다. **5절이 예고한 모듈이 전부 섰다.**
 `:libs:telemetry-ops-persistence`는 5절 밖에서 더해졌다 — 수집 운영 기록의 RDS 쪽이 ClickHouse와 아웃바운드
 기술이 달라 나뉜다([ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md)).
+
+`:libs:vendor-connector`도 5절 밖이다. 아웃바운드 기술(벤더 HTTP)이 영속성(JDBC)과 다르고, 소비자가 처음부터 둘이다 — enrollment-api(연결 확인·동기화)와
+dashboard-api(커넥터 설명의 capability 표시). 역할 이름은 `connector`로 정했다(`<역할>.<컨텍스트>` = `connector.vendor`). Spring에 의존하지 않고
+구현의 조립은 앱이 한다(ADR 0011). `:libs:enrollment-persistence`가 이 모듈을 `api()`로 쓴다 — 좌석 원장의 공개 함수가 벤더 목록 타입(`VendorSeat`)을 받는다.
 
 `:apps:telemetry-ingest`는 조립 앱이다(PROJ-105). 도메인 로직을 담지 않는다 — 빈 등록·필터 체인
 배선·설정 바인딩과 단계 호출이 전부이고, 그것이 ADR 0011이 라이브러리에서 걷어낸 몫이다.
@@ -184,6 +192,7 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 | policy / onboarding | `manifests` · `organization_onboarding` · `organization_policy_settings` · tenants의 완료 시각 | `:libs:enrollment-persistence` — enrollment-api의 최초 정책·정책 수정·완료 명령. 조직 정책 설정(회수 기준·집계 보존)은 같은 수집 정책 저장이 manifest와 따로 쓰고, dashboard-api는 읽기 전용 계정으로 읽는다 (ADR 0046) |
 | legacy contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 기존 기간 약정. 좌석 계약 관리 API에서 수정·환산하지 않음 |
 | registered product / seat contract | `managed_vendors` · `vendor_contract_versions` · `management_commands` | `:libs:enrollment-persistence` — 등록·정정·이름 변경·보관·멱등 명령 저장 |
+| seat ledger / vendor connection | `vendor_connections` · `seat_sync_runs` · `seat_assignments` · `seat_assignment_events` | `:libs:enrollment-persistence`의 좌석 원장(`seat`) — enrollment-api의 연결 명령(추가·교체·삭제·확인)과 등록 제품 보관이 연결을, 원장 연산(수동·CSV 기록·동기화 반영)이 좌석과 이력을 쓴다. 구매 수량(`tiers[].seats`)으로 채우지 않고 구 `contracts`·`contract_memberships`와 무관하다. dashboard-api는 읽기 전용 계정으로 연결의 비밀 아닌 열만 읽는다 (ADR 0048) |
 | user authentication | `user_sessions` · `user_refresh_tokens` · `user_authorization_codes` · `auth_attempts` | `:libs:enrollment-persistence`의 인증 저장소. 정책·검증은 `:libs:security`, HTTP 조립은 enrollment-api |
 | vendor catalog | `vendor_catalog_vendors` · `vendor_catalog_products` · `vendor_catalog_plans` · `vendor_catalog_observed_products` | `:libs:enrollment-persistence`의 Flyway가 초기화. 관리자 편집 API는 없음. 관측 제품 매핑(`vendor_catalog_observed_products`)은 dashboard-api가 읽기 전용 계정으로 읽는다 (ADR 0044) |
 | mail | `mail_outbox` | `:libs:enrollment-persistence`의 메일 outbox(`mail`) — 업무 쓰기가 같은 트랜잭션에서 적재하고, enrollment-api의 발송 작업이 선점해 결과를 기록 (ADR 0037) |

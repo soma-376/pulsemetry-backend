@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.dashboard.analytics
 
 import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
+import com.team376.pulsemetry.persistence.enrollment.seat.SeatSourceView
 
 /** 설정 명세의 타입. 이름·타입·nullable 은 요청서의 TypeScript 타입과 같다. */
 data class VendorTier(val tierId: String, val label: String, val seats: Long, val monthlyFeePerSeatUsd: String)
@@ -37,6 +38,8 @@ data class Vendor(
 	val contractStatus: ContractStatus,
 	val meteredMonthToDate: Section<MeteredPeriod>,
 	val checks: List<VendorCheck>,
+	/** 좌석 원천(가산, ADR 0048) — 권위·커넥터 설명·활성 연결. 자격증명은 설정됨 여부와 갱신 시각만 낸다. 연결 상태는 기준 시각이 아니라 현재 값이다. */
+	val seatSource: SeatSourceView,
 )
 
 /**

@@ -90,14 +90,7 @@ class ManagementController(private val auth: UserAuthService, private val store:
         return ResponseEntity.ok().header("Cache-Control", "no-store").body(store.invitations(organizationId, limit, cursor, status, memberStatus))
     }
 
-    private fun authorize(tenant: UUID, request: HttpServletRequest): UUID {
-        val header = request.getHeader("Authorization")
-        if (header == null || !header.startsWith("Bearer ")) throw ManagementException("unauthenticated", 401)
-        val identity = try { auth.verify(header.removePrefix("Bearer ")) } catch (_: UserAuthException) { throw ManagementException("unauthenticated", 401) }
-        if (identity.tenantId != tenant) throw ManagementException("not_found", 404)
-        if (identity.role !in setOf("owner", "admin")) throw ManagementException("forbidden", 403)
-        return identity.memberId
-    }
+    private fun authorize(tenant: UUID, request: HttpServletRequest): UUID = managementActor(auth, tenant, request)
 
     private fun handle(tenant: UUID, body: JsonNode?, request: HttpServletRequest): ResponseEntity<*> {
         val actor = authorize(tenant, request)
@@ -120,7 +113,17 @@ class ManagementController(private val auth: UserAuthService, private val store:
     }
 }
 
-@RestControllerAdvice(assignableTypes = [ManagementController::class])
+/** 관리 요청의 행위자. 토큰의 조직이 경로와 다르면 404, owner/admin 이 아니면 403 이다 (ADR 0026). 저장 연산이 DB 에서 한 번 더 확인한다. */
+internal fun managementActor(auth: UserAuthService, tenant: UUID, request: HttpServletRequest): UUID {
+    val header = request.getHeader("Authorization")
+    if (header == null || !header.startsWith("Bearer ")) throw ManagementException("unauthenticated", 401)
+    val identity = try { auth.verify(header.removePrefix("Bearer ")) } catch (_: UserAuthException) { throw ManagementException("unauthenticated", 401) }
+    if (identity.tenantId != tenant) throw ManagementException("not_found", 404)
+    if (identity.role !in setOf("owner", "admin")) throw ManagementException("forbidden", 403)
+    return identity.memberId
+}
+
+@RestControllerAdvice(assignableTypes = [ManagementController::class, VendorConnectionController::class])
 @org.springframework.core.annotation.Order(-20)
 class ManagementErrors {
     @ExceptionHandler(ManagementException::class)

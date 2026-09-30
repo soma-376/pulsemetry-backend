@@ -29,6 +29,7 @@ libs/telemetry-adapter/      파이프라인 변환 단계 — 관측 모델 2�
 libs/telemetry-enricher/     파이프라인 보강 단계 — member_id · 대표 팀 as-of · provider 주석
 libs/telemetry-persistence/  파이프라인 적재 단계 — ClickHouse 스키마 소유 · 분석 테이블 · 수신 ledger sink
 libs/telemetry-ops-persistence/ 수집 운영 기록의 RDS 쪽 — telemetry_ops 스키마 · 생애 요약 · 백필
+libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설명 · 조립 검사 (ADR 0048). Spring 없음
 ```
 
 **소유하는 것**: `POST /v1/enroll`, `POST /v1/installations/telemetry-token`, `GET /v1/manifest`, `POST /v1/invitations`,
@@ -194,5 +195,9 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   AT·`pit_`·`ptt_`는 받지 않는다. 로컬 적용 완료를 보장하지 않으며 OTLP는 여전히 `ptt_`다. 상태를 바꾸는 GET이라
   캐시·프리페치·자동 재시도를 걸지 않는다. 저장된 정책은 빌드 때 jar에 넣은 telemetryctl 원본 스키마로 검증한다 —
   그래서 `:apps:enrollment-api`의 Gradle 빌드와 이미지 빌드(named context `telemetry-contracts`)에는 계약 디렉터리가 필요하다.
+- **벤더 자격증명은 암호문으로만 저장한다**(ADR 0048 §6). 키는 `pulsemetry.vendor-connections.credential-keys`(키 ID → Base64 32바이트)이고 관리 응답·메일 키와
+  따로다. 응답·로그·예외 메시지·테스트 fixture에 평문을 싣지 않는다 — 연결 명령이 PUT인 것도 멱등 기록(요청 해시·응답)을 남기지 않기 위해서다.
+  dashboard-api는 `VendorConnections`로 비밀 아닌 열만 읽는다. 옛 키는 `vendor_connections.credential_key_id`가 그 키를 쓰는 행이 없을 때만 뺀다.
+  좌석 원장의 우선순위(연결이 있으면 커넥터가 권위, 수동은 연결 전의 임시)는 ADR 0048 §3의 표이고 `SeatLedgerTest`가 그 표를 덮는다.
 - ADR 번호는 `docs/adr/README.md`의 다음 미사용 번호를 확인한다. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

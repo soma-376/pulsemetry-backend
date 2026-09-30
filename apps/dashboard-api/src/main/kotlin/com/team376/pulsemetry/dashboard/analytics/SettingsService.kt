@@ -12,6 +12,8 @@ import com.team376.pulsemetry.dashboard.request.PageRequest
 import com.team376.pulsemetry.dashboard.request.QueryReader
 import com.team376.pulsemetry.persistence.enrollment.installation.AppliedPolicyVersion
 import com.team376.pulsemetry.persistence.enrollment.management.VendorCatalog
+import com.team376.pulsemetry.persistence.enrollment.seat.SeatSourceView
+import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnections
 import org.springframework.jdbc.core.simple.JdbcClient
 import tools.jackson.databind.ObjectMapper
 import java.sql.Timestamp
@@ -218,8 +220,16 @@ class SettingsService(
 			observation = shown.observation)
 	}.sortedBy { it.vendorId }
 
-	/** 저장된 버전 이력을 기준 시각으로 읽는다. 공급사·모델로 추측해 사용량을 붙이지 않는다. */
-	private fun managedVendors(tenantId: UUID, asOf: Instant): List<Vendor> = source.sql("""
+	/**
+	 * 저장된 버전 이력을 기준 시각으로 읽는다. 공급사·모델로 추측해 사용량을 붙이지 않는다.
+	 * 좌석 원천(ADR 0048)은 계약의 플랜으로 고른 커넥터 설명과 활성 연결이다 — 연결은 암호문 열을 읽지 않는 [VendorConnections] 로 읽는다.
+	 */
+	private fun managedVendors(tenantId: UUID, asOf: Instant): List<Vendor> {
+		val connections = VendorConnections.active(source, mapper, tenantId).associateBy { it.vendorId }
+		return contractVendors(tenantId, asOf).map { it.copy(seatSource = SeatSourceView.of(it.kind, it.contract?.planId, connections[it.vendorId])) }
+	}
+
+	private fun contractVendors(tenantId: UUID, asOf: Instant): List<Vendor> = source.sql("""
 		SELECT v.vendor_id,v.kind,v.source,c.* FROM enrollment.managed_vendors v
 		JOIN LATERAL (SELECT version,display_name,contract::text,archived FROM enrollment.vendor_contract_versions
 		 WHERE tenant_id=v.tenant_id AND vendor_id=v.vendor_id AND recorded_at<=:as_of ORDER BY version DESC LIMIT 1) c ON true
@@ -229,7 +239,7 @@ class SettingsService(
 		val status = ContractStatus.at(contract?.effectiveFrom?.let(LocalDate::parse), contract?.effectiveTo?.let(LocalDate::parse), asOf)
 		Vendor(rs.getString("vendor_id"), rs.getString("display_name"), rs.getString("kind"), rs.getString("source"), rs.getLong("version"),
 			null, null, null, null, VendorObservations.UNOBSERVED, if (status == ContractStatus.active) CONFIGURED else NEEDS_REVIEW, contract, status,
-			Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null), emptyList())
+			Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null), emptyList(), SeatSourceView.of(rs.getString("kind"), contract?.planId, null))
 	}.list()
 
 	/** 가장 최근 보존 정리 작업(ADR 0047) — 화면이 새로고침 뒤에도 마지막 정리의 상태를 다시 보게 한다. */

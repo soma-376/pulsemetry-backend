@@ -6,6 +6,9 @@ import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
 import com.team376.pulsemetry.persistence.enrollment.mail.MailDeliveryView
 import com.team376.pulsemetry.persistence.enrollment.operation.OperationStore
 import com.team376.pulsemetry.persistence.enrollment.operation.RetentionCleanupRequests
+import com.team376.pulsemetry.persistence.enrollment.seat.SeatSourceView
+import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnectionStore
+import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnections
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
@@ -414,6 +417,8 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
         if (!contractOnly && previous.path("source").asString() == "detected") fail("detected_vendor", 422)
         if (!contractOnly) jdbc.sql("UPDATE enrollment.managed_vendors SET archived=true WHERE tenant_id=:tenant AND vendor_id=:id")
             .param("tenant", tenant).param("id", id).update()
+        // 보관한 제품의 벤더 연결은 자격증명과 함께 지운다(ADR 0048 §6).
+        if (!contractOnly) VendorConnectionStore.eraseForVendor(jdbc, tenant, id, actor, now)
         appendVendor(tenant, actor, id, maxOf(now.toEpochMilli(), version + 1), previous.path("displayName").asString(), null, !contractOnly, now)
         return node(emptyMap<String, String>())
     }
@@ -436,7 +441,10 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
             "version" to row.path("version"), "firstSeenAt" to null, "lastSeenAt" to null, "activeUsers7d" to null, "activeUsers30d" to null,
             "observation" to "unobserved", "state" to if (contractStatus(row.path("contract"), now) == ContractStatus.active) "configured" else "needs_review",
             "contractStatus" to contractStatus(row.path("contract"), now), "contract" to row.path("contract"),
-            "meteredMonthToDate" to mapOf("availability" to "unavailable", "reason" to "source_not_available", "data" to null), "checks" to emptyList<String>())))
+            "meteredMonthToDate" to mapOf("availability" to "unavailable", "reason" to "source_not_available", "data" to null), "checks" to emptyList<String>(),
+            // 좌석 원천(ADR 0048) — 설정 조회의 벤더와 같은 모양이다.
+            "seatSource" to SeatSourceView.of(row.path("kind").asString(), row.path("contract").path("planId").takeIf { it.isString }?.asString(),
+                VendorConnections.active(jdbc, mapper, tenant).find { it.vendorId == row.path("vendorId").asString() }))))
 
     private fun contractStatus(contract: JsonNode, now: Instant): ContractStatus = ContractStatus.at(
         contract.path("effectiveFrom").takeUnless { it.isNull || it.isMissingNode }?.asString()?.let(LocalDate::parse),

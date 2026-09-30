@@ -458,6 +458,17 @@ type UnmappedObservations = ObservedFields & { observedProducts: string[]; first
   고정이 없는 기준 시각(만료·정리·고정 도입 전에 발급된 토큰)은 409 `snapshot_expired`다. 고정은 snapshot 정리 작업이 같은 기한으로 지운다.
 - 관측은 원천 계정으로 읽는다: 분석 행, 매핑, 완전성 근거(설치·수집 구간·정책 판).
 
+### 7.4 좌석 원천 (ADR 0048)
+
+설정·벤더 목록·상세의 vendor마다 `seatSource`를 더했다(가산). 모양은 Enrollment 명세 §12 "벤더 연결"의 `SeatSource`와 같고, 등록·정정 응답의 vendor도 같은 필드를 낸다.
+
+- `authority`·`provisional`: ADR 0048 §3의 우선순위 표다 — 활성 연결이 있으면 `connector`, 현재 계약 플랜에 커넥터가 있는데 연결이 없으면 `manual`·`provisional=true`(연결 전의 임시 기록),
+  커넥터가 없는 플랜(계약 없음 포함)은 `manual`·`provisional=false`.
+- `connector`: 현재 계약 플랜의 커넥터 설명(계정 종류·필요한 설정 키·capability). 호출 없이 읽는 값이다. 이 배포에 그 구현이 있는지는 말하지 않는다 — 연결 저장이 422 `connector_unavailable`로 알린다.
+- `connection`: 활성 연결의 비밀 아닌 기록. 자격증명은 `{configured, updatedAt}`뿐이고, 이 앱은 `vendor_connections`의 암호문·키 열을 고르지 않는다(`VendorConnections`).
+  `sync.status`는 성공한 동기화가 없으면 `pending`, 마지막 시도가 실패면 `failing`(마지막 성공 값은 남는다), 아니면 `succeeded`다.
+- 연결 상태는 조회 기준 시각의 고정값이 아니라 **현재 값**이다 — 관측 지표(§7.3)처럼 snapshot에 고정하지 않는다. 좌석 원장의 값과 그 신선도는 좌석 조회가 따로 낸다.
+
 ### 계약 기간 상태 (`contractStatus`)
 
 설정·벤더 목록·상세와 등록/정정 응답의 vendor에 `contractStatus: missing | scheduled | active | expired`를 반환한다.

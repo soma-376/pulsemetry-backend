@@ -495,6 +495,9 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.heartbeat.report-interval` | 없음 | 응답으로 데몬에 주는 보고 주기(ISO-8601 기간). 계약의 범위인 60초 이상 3600초 이하 |
 | `pulsemetry.heartbeat.retry-after` | 없음 | 저장소 장애(503)의 `Retry-After`(1초 이상) |
 | `pulsemetry.heartbeat.history-retention` | 없음 | 수집 구간 이력을 남겨 두는 기간(하루 이상) |
+| `pulsemetry.vendor-connections.enabled` | `false` | 벤더 연결(§12 "벤더 연결", ADR 0048)을 켠다. 관리 기능도 켜야 하고 아래 두 값이 **모두 필요하다 — 없으면 기동 실패** |
+| `pulsemetry.vendor-connections.credential-keys.<키 ID>` | 없음 | 벤더 자격증명의 AES-256-GCM 키(Base64 32바이트). 키 ID는 `[A-Za-z0-9_-]{1,64}`. 옛 키는 그 키로 암호화된 연결(`vendor_connections.credential_key_id`)이 남아 있는 동안 둔다 |
+| `pulsemetry.vendor-connections.credential-key-id` | 없음 | 새 암호문을 만드는 키의 ID. 키 목록에 있어야 한다 |
 
 DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_PASSWORD` 로 덮어쓴다.
 메일의 키는 `PULSEMETRY_MAIL_ENABLED` · `_FROM` · `_ENCRYPTION_KEY` · `_DISPATCH_INTERVAL` · `_RETRY_INTERVAL` · `_MAX_ATTEMPTS` · `_SEND_TIMEOUT` ·
@@ -503,6 +506,8 @@ DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_P
 문의 접수의 다섯 키는 `PULSEMETRY_INQUIRIES_ENABLED` · `_DUPLICATE_WINDOW` · `_RATE_LIMIT_REQUESTS` · `_RATE_LIMIT_WINDOW` · `_ALLOWED_ORIGINS` 로 준다.
 local 프로필은 개발용 값(10분, 1분에 10회, 출처 3000·3107)으로 켠다. 운영 수치의 배포 기본값은 두지 않는다.
 설치 보고의 네 키는 `PULSEMETRY_HEARTBEAT_ENABLED` · `_REPORT_INTERVAL` · `_RETRY_AFTER` · `_HISTORY_RETENTION` 으로 준다. local 프로필은 1분 · 5초 · 400일로 켠다.
+벤더 연결은 `PULSEMETRY_VENDOR_CONNECTIONS_ENABLED` · `PULSEMETRY_VENDOR_CONNECTIONS_CREDENTIAL_KEY_ID`와 키마다 `PULSEMETRY_VENDORCONNECTIONS_CREDENTIALKEYS_<키 ID>`로 준다.
+관리 응답 암호화 키·메일 키와 다른 값을 쓴다 — 수명과 노출이 다르다(ADR 0048 §6).
 
 ---
 
@@ -791,6 +796,9 @@ POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`, 8~128자)를 보낸다.
 | `DELETE /vendors/{vendorId}/contract` | `If-Match: "vendor-{version}"` | 204 |
 | `DELETE /vendors/{vendorId}` | `If-Match: "vendor-{version}"` | 204, 수동 벤더 보관 |
 | `POST /installation-update-notifications` | `{installationIds,expectedPolicyVersion}` | 202 OperationResponse, Location(작업 상태 조회) — 아래 "설치 업데이트 안내" |
+| `PUT /vendors/{vendorId}/connection` | `{expectedVersion,settings,credential}` | 200 `{seatSource}`, ETag `"connection-{version}"` — 아래 "벤더 연결" |
+| `DELETE /vendors/{vendorId}/connection` | `If-Match: "connection-{version}"` | 204, 자격증명 삭제 |
+| `POST /vendors/{vendorId}/connection/verify` | 본문 없음 | 200 `{seatSource}`, 확인 결과를 연결에 남김 |
 
 팀 배정은 최대 100명, 전체 검증 후 한 트랜잭션으로 적용한다. `teamId:null`은 배정 해제다.
 효력 시각은 서버 시각이며 과거 ClickHouse 팩트는 바꾸지 않는다.
@@ -908,6 +916,54 @@ PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계
   `failed` → 대상 `failed`(메일의 실패 분류 코드, 위 초대 메일과 같은 목록), `cancelled` → 대상 `failed`(`cancelled`). 재시도 대기 중인 메일의 대상은 `pending`이다.
   `succeeded`는 SMTP 서버가 받았다는 뜻이고 설치가 새 판을 적용했다는 뜻이 아니다. 적용 여부는 대시보드 설치 조회로 다시 확인한다.
 
+### 벤더 연결 (ADR 0048)
+
+등록 제품 하나에 벤더 커넥터 하나를 잇는다. 연결이 있는 제품은 **좌석 원장의 권위가 커넥터 동기화**이고, 수동 입력은 그 전의 임시 기록이다(ADR 0048 §3의 우선순위 표).
+`pulsemetry.vendor-connections.enabled=true`(관리 기능과 함께)일 때만 경로가 있다. 꺼져 있으면 404다.
+
+```ts
+type ConnectionWrite = {
+  expectedVersion: number;          // 새 연결은 0, 교체는 현재 연결의 version
+  settings: Record<string, string>; // 비밀이 아닌 설정 — 커넥터 설명의 settingKeys 와 정확히 같은 키
+  credential: string;               // 벤더 관리자 자격증명. 응답·로그에 다시 나오지 않는다
+};
+type SeatSource = {
+  authority: "connector" | "manual";
+  provisional: boolean;             // 커넥터가 있는 플랜인데 연결이 없어 수동 기록이 임시로 권위다
+  connector: {                      // 현재 계약 플랜의 커넥터 설명. null 이면 그 플랜은 수동 원천이다
+    connectorId: string; accountKind: "email" | "github_login";
+    capabilities: ("seat_list" | "seat_release" | "seat_restore" | "billing")[]; settingKeys: string[];
+  } | null;
+  connection: {
+    connectionId: string; version: number; connectorId: string; settings: Record<string, string>;
+    credential: { configured: true; updatedAt: string };  // 비밀은 없다 — 설정됨 여부와 갱신 시각뿐
+    check: { status: "unverified" | "verified" | "invalid_credentials" | "insufficient_permission" | "unavailable"; checkedAt: string | null };
+    sync: { status: "pending" | "succeeded" | "failing"; lastSucceededAt: string | null; lastFailedAt: string | null; lastError: string | null };
+    createdAt: string; updatedAt: string;
+  } | null;
+};
+```
+
+| 커넥터 | 제품 · 플랜 | 계정 | settingKeys | capabilities |
+| --- | --- | --- | --- | --- |
+| `claude_enterprise` | `claude_team` · `enterprise` | 이메일 | 없음 | 조회·해제·복원·청구 |
+| `cursor_enterprise` | `cursor` · `cursor_enterprise` | 이메일 | 없음 | 조회·해제·청구 |
+| `copilot` | `copilot` · `copilot_business`·`copilot_enterprise` | GitHub 로그인 | `organization` | 조회·해제·복원 |
+| `gemini` | `gemini` · `gemini_standard`·`gemini_enterprise` | 이메일 | `billingAccount`·`order`·`project` | 조회·해제·복원 |
+
+표는 `docs/vendor-connector-evidence.md`의 결론을 옮긴 커넥터 설명이다. 그 밖의 제품·플랜(Claude Team, OpenAI, Cursor Teams, `other`)은 커넥터가 없고 수동 원천이다.
+
+- 커넥터는 등록 제품의 **현재 계약 플랜**으로 고른다. 계약이 없거나, 그 플랜에 커넥터가 없거나, 이 배포에 그 커넥터의 구현이 없으면 422 `connector_unavailable`이다.
+- `settings`는 커넥터의 `settingKeys`와 정확히 같은 키의 문자열(1~200자, 제어 문자 없음)이어야 하고, `credential`은 1~8192자의 비어 있지 않은 문자열이어야 한다. 아니면 400 `invalid_request`(field `settings`·`credential`·`expectedVersion`).
+- 활성 연결은 제품마다 하나다. 새 연결은 `expectedVersion: 0`, 교체는 현재 판이다. 어긋나면 409 `version_conflict`.
+- **교체**는 자격증명을 새로 암호화하고 확인 상태를 `unverified`로 되돌린다. 커넥터나 `settings`가 바뀌면 동기화 기록(`sync`)도 비운다 — 다른 대상의 기록이다.
+- **삭제**는 암호문을 즉시 지우고 연결 행은 이력으로 남긴다. 좌석 원장은 그대로이고 권위가 수동(커넥터 플랜이면 임시)으로 돌아간다. 등록 제품을 보관(`DELETE /vendors/{vendorId}`)하면 그 제품의 연결도 같은 트랜잭션에서 지운다.
+- **확인**(`verify`)은 커넥터의 읽기 호출 하나다. 결과를 `check`에 남기고 판은 올리지 않는다. `invalid_credentials`·`insufficient_permission`은 벤더가 거절한 것이고, 한도 초과·일시 장애·응답 해석 불가는 `unavailable`이다.
+  호출은 트랜잭션 밖에서 하며, 그 사이 연결이 바뀌었으면 결과를 쓰지 않고 409 `version_conflict`다. 상태만 남기는 확인이라 `Idempotency-Key`를 받지 않는다.
+- 자격증명은 AES-256-GCM 암호문(`pulsemetry.vendor-connections.credential-keys`, §8)으로만 저장한다. 요청은 PUT이라 멱등 응답 기록(요청 해시·응답)을 남기지 않는다.
+  행의 키 ID가 설정에 없으면(옛 키를 너무 일찍 뺀 경우) 확인은 503 `credential_key_unavailable`이다 — 평문으로 떨어지지 않는다.
+- 설정 조회(dashboard-api)의 벤더마다 같은 `seatSource`가 있다. 등록·정정 응답(`VendorResponse`)의 vendor에도 같은 필드가 있다.
+
 ### 조회·관리 오류
 
 ```json
@@ -921,8 +977,8 @@ PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계
 | 403 | forbidden, 해당 동작 비활성화 |
 | 404 | not_found, 타 조직/없는 자원 |
 | 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, member_suspended, installation_unavailable, snapshot_expired |
-| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change, notification_channel_unavailable |
-| 503 | unavailable, Retry-After 후 재시도 |
+| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change, notification_channel_unavailable, connector_unavailable |
+| 503 | unavailable, Retry-After 후 재시도. credential_key_unavailable(벤더 연결 — 운영이 암호화 키 설정을 고칠 때까지 재시도해도 같다) |
 
 쓰기 성공 후 관련 조직의 팀·구성원·설정·개요 Query 캐시를 무효화한다.
 버전 충돌 시 자동으로 새 버전을 덮어쓰지 않고 최신 값을 다시 보여 준다.
@@ -1106,6 +1162,10 @@ Flyway가 enrollment 스키마의 진실원이다. 관련 추가 마이그레이
 | V15 | 공통 작업 기록(`operations`)과 대상별 결과(`operation_targets`) — 비동기 작업의 상태·사유·조치 대기·복원 기한 (ADR 0039) |
 | V16 | 설치 보고의 최신 상태(`installation_heartbeats`)와 수집 구간 이력(`installation_collection_segments`) (ADR 0040) |
 | V17 | 설치 보고의 최신 상태에 전달 대기가 이어지기 시작한 시각(`pending_since`) (ADR 0041) |
+| V18 | 관측 제품 → 등록 제품의 명시 매핑(`vendor_catalog_observed_products`) (ADR 0044) |
+| V19 | 조직 정책 설정(`organization_policy_settings`) — 회수 기준·집계 보존과 그 판 (ADR 0046) |
+| V20 | 보존 정리 요청(`retention_cleanup_requests`) (ADR 0047) |
+| V21 | 벤더 연결(`vendor_connections` — 자격증명 암호문·확인·동기화 선점과 결과)·동기화 실행(`seat_sync_runs`)·좌석 원장(`seat_assignments`)과 판별 이력(`seat_assignment_events`) (ADR 0048) |
 
 V12는 이 표에 없다 — 사용자 로그인 방식 작업이 예약한 번호다. Flyway는 이미 적용한 판보다 낮은 번호를 뒤늦게 받지 않으므로,
 V13이 먼저 적용된 DB에는 V12를 넣을 수 없다. 머지 순서가 뒤집히면 그 작업이 번호를 다시 매긴다.

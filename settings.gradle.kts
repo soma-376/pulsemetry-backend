@@ -31,3 +31,6 @@ include(":libs:telemetry-persistence")
 
 // RDS telemetry_ops 스키마(수집 운영 기록)의 쓰기 소유 모듈. ClickHouse 와 아웃바운드 기술이 달라 나눈다 (ADR 0021)
 include(":libs:telemetry-ops-persistence")
+
+// 벤더 좌석 커넥터 — 포트와 벤더별 구현. 아웃바운드 기술(벤더 HTTP)이 영속성과 달라 나눈다 (ADR 0048)
+include(":libs:vendor-connector")
