@@ -112,7 +112,7 @@ type ProductRef = { kind: string | null; displayName: string | null };
 - 제품 금액이 모두 있으면 제품 금액의 합은 그 범위(조직·팀)의 금액과 같다.
 - `productUsage`: 제품이 없으면 `unavailable`, 금액·토큰이 모두 있으면 `available`, 아니면 `partial`.
 - 관측 인원은 좌석 수가 아니다. 좌석 값은 여기에 없다.
-- 판정 규칙 판은 `dashboard-v3`다(매핑 복제를 더했다) — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
+- 판정 규칙 판은 이 결정 때 `dashboard-v3`였고(매핑 복제를 더했다) 지금은 `dashboard-v4`다("팀 누적 세션" 절) — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
 
 ### 현재 데이터의 해석
 
@@ -156,7 +156,7 @@ type ProductRef = { kind: string | null; displayName: string | null };
 6. 그날 효력이 있던 수집 정책 판이 모두 `signals.logs`를 수집한다(정책이 없던 날은 완전하지 않다).
 
 판정은 snapshot build 때 한 번 하고 `dashboard_cache.snapshot_complete_days`에 고정한다. 같은 snapshot 의 목록·상세·사용자는 같은 판정을 쓴다.
-판정 규칙 판은 이 결정 때 `dashboard-v2`였고 지금은 `dashboard-v3`다("제품별 사용" 절) — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
+판정 규칙 판은 이 결정 때 `dashboard-v2`였고 지금은 `dashboard-v4`다("팀 누적 세션" 절) — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
 
 | 필드 | 규칙 |
 | --- | --- |
@@ -172,6 +172,17 @@ type ProductRef = { kind: string | null; displayName: string | null };
   완전한 기간에 팀 사용이 전혀 없으면 `teamUsage`는 `unavailable`이 아니라 0을 낸다.
 - 비교 기간이 완전하고 그 기간에 팀·미배정의 사용이 없었으면 이전 값은 0이다(증감은 "신규").
 - 구성원 화면은 이 규칙을 쓰지 않는다(비교가 없다).
+
+### 팀 누적 세션 (ADR 0042)
+
+팀 목록·팀 상세·미배정의 `trend[].cumulativeSessionCount`는 **기간 시작일부터 그날까지 그 팀에서 관측된 고유 세션 수**다.
+
+- 세션 키는 기간 `sessionCount`와 같은 `(product, session_id_namespace, session_id)`다. 여러 날에 걸친 세션은 **처음 관측된 날**에 한 번만 더한다.
+  같은 세션의 이벤트가 두 팀에 귀속되면(이벤트 시점 소속) 팀마다 따로 센다. 날짜는 조회 시간대의 자정 경계다.
+- 값은 시작일부터 그날까지 **모든 날이 완전**(위 판정)하고 그 팀의 **세션 없는 사용 행이 없을 때만** 있다. 한 번 끊기면 그 뒤의 완전한 날도 null이다 —
+  끊긴 뒤의 값을 앞의 누적에 이어 붙이지 않는다. 사용이 없는 완전한 날은 앞날의 값 그대로다(첫날이면 0).
+- 마지막 날의 값이 있으면 그 기간의 팀 `current.sessionCount`와 같다. 기간 세션 수를 날짜로 나누거나 보간해 만들지 않는다.
+- 같은 snapshot 의 사용량 행에서 계산하므로 목록과 상세가 같다. 이 규칙을 더하면서 판정 규칙 판을 `dashboard-v4`로 올렸다 — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
 
 ### 작업 상태 조회
 

@@ -293,7 +293,7 @@ class SnapshotBuilderTest {
 
 		assertThat(row.take(11)).containsExactly(
 			"building", "prev_period", "2026-09-07", "2026-09-13", "2026-08-31", "2026-09-06",
-			"Asia/Seoul", "dashboard-v3", "organization", "model-id-v1", "60",
+			"Asia/Seoul", "dashboard-v4", "organization", "model-id-v1", "60",
 		)
 		assertThat(Instant.parse(row[11])).isBetween(before.minusSeconds(1), Instant.now())
 		assertThat(SnapshotIds.isWellFormed(row[12])).isTrue()

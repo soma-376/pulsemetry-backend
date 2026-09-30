@@ -75,6 +75,31 @@ class UsageAggregator(
 		return clickHouse.query(sql, params) { row -> axis.expressions.indices.map { text(row, "k$it") } to totals(row) }.toMap()
 	}
 
+	/**
+	 * 팀별로 세션이 **처음 관측된 날**마다 새 세션 수를 센다 — `(팀, 날짜) → 그날 처음 본 세션 수`. 세션 키는 [UsageTotals.sessionCount] 와 같은
+	 * `(product, session_id_namespace, session_id)` 다. 여러 날에 걸친 세션은 처음 본 날에 한 번만 더하고, 두 팀의 이벤트로 나뉜 세션은 팀마다 따로 센다.
+	 * 세션이 없는 행은 세지 않는다 — 그런 행이 있는 날부터 누적을 내지 않는 것은 호출자의 규칙이다. 날짜는 snapshot 의 조회 시간대다.
+	 */
+	fun firstSessionDays(snapshot: SnapshotManifestStore.Manifest, side: Side): Map<Pair<String?, String>, Long> {
+		val sql = """
+			SELECT team AS k0, toString(first_day) AS k1, count() AS sessions
+			FROM (
+			    SELECT team_id_as_of AS team, min(toDate(source_time, {tz:String})) AS first_day
+			    FROM snapshot_usage
+			    WHERE tenant_id = {tenant:String} AND snapshot_id = {snapshot:String} AND build_id = {build:String} AND ${side.column} AND isNotNull(session_id)
+			    GROUP BY team, product, session_id_namespace, session_id
+			)
+			GROUP BY k0, k1
+		""".trimIndent()
+		val params = mapOf(
+			"tenant" to ClickHouseParam.string(snapshot.tenantId.toString()),
+			"snapshot" to ClickHouseParam.string(snapshot.snapshotId),
+			"build" to ClickHouseParam.string(snapshot.buildId.toString()),
+			"tz" to ClickHouseParam.string(snapshot.current.zone.id),
+		)
+		return clickHouse.query(sql, params) { row -> (text(row, "k0") to text(row, "k1")!!) to long(row, "sessions") }.toMap()
+	}
+
 	private fun teamCondition(team: TeamScope?): String = when {
 		team == null -> ""
 		team.teamId == null -> " AND isNull(team_id_as_of)"

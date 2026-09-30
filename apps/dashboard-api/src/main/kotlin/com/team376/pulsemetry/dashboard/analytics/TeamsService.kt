@@ -206,6 +206,8 @@ class TeamsService(
 		val teamDays: Map<List<String?>, UsageTotals>,
 		val models: Map<List<String?>, UsageTotals>,
 		val teamProducts: Map<List<String?>, UsageTotals>,
+		/** 팀별로 세션을 처음 본 날의 새 세션 수 — 누적 세션(대시보드 명세 "팀 누적 세션")의 재료. */
+		val firstSessions: Map<Pair<String?, String>, Long>,
 		val products: List<SnapshotReferences.Product>,
 		val directory: Map<String, SnapshotReferences.Team>,
 	) {
@@ -226,6 +228,9 @@ class TeamsService(
 			val models = teamModels.filterKeys { it[0] == id }
 				.map { (k, v) -> modelUsage(k[1]!!, v, pricingMixed) }
 				.sortedWith(COST_THEN_ID)
+			// 누적 세션(대시보드 명세 "팀 누적 세션"): 시작일부터 그날까지 모든 날이 완전하고 세션 없는 행이 없을 때만 값이다 — 한 번 끊기면 그 뒤로는 없다.
+			var sessions = 0L
+			var cumulative = true
 			return TeamAnalytics(
 				teamId = ref.teamId,
 				teamName = ref.teamName,
@@ -239,12 +244,14 @@ class TeamsService(
 					val observation = frame.observation(date)
 					// 완전한 날에 사용이 없으면 0, 미관측이면 값이 없다.
 					val usage = if (observation == AnalyticsFrames.UNOBSERVED) null else Usage.of(day, pricingMixed, observation == Coverage.COMPLETE)
+					cumulative = cumulative && observation == Coverage.COMPLETE && day.sessionlessRows == 0L
+					sessions += firstSessions[id to date.toString()] ?: 0
 					TeamTrendPoint(
 						date = date.toString(),
 						observation = observation,
 						equivalentCostUsd = usage?.equivalentCostUsd,
 						totalTokens = usage?.tokens?.total,
-						cumulativeSessionCount = null,
+						cumulativeSessionCount = if (cumulative) sessions else null,
 					)
 				},
 				products = Products.usages(teamProducts.filterKeys { it[0] == id }.mapKeys { it.key[1] ?: UsageAggregator.UNMAPPED_PRODUCT }, products, pricingMixed),
@@ -297,6 +304,7 @@ class TeamsService(
 					teamDays = totals(Axis.TEAM_DAY),
 					models = totals(Axis.MODEL),
 					teamProducts = totals(Axis.TEAM_PRODUCT),
+					firstSessions = if (empty) emptyMap() else aggregator.firstSessionDays(snapshot, Side.CURRENT),
 					products = products,
 					directory = references.teams(snapshot).associateBy { it.id.toString() },
 				)
