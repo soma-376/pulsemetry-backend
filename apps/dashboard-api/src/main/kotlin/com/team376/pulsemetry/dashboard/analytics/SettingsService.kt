@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.dashboard.analytics
 
 import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
+import com.team376.pulsemetry.persistence.enrollment.management.OrganizationPolicySettings
 import com.team376.pulsemetry.dashboard.error.DashboardException
 import com.team376.pulsemetry.dashboard.error.ErrorCode
 import com.team376.pulsemetry.dashboard.error.FieldErrorCode
@@ -46,7 +47,7 @@ class SettingsService(
 	private val tokens: CurrentStateTokens,
 	private val codec: PageCursorCodec,
 	private val mapper: ObjectMapper,
-	private val idleDays: Int,
+	private val policies: OrganizationPolicies,
 	private val clock: Clock,
 	private val managementEnabled: Boolean = false,
 	private val catalog: VendorCatalog,
@@ -72,6 +73,7 @@ class SettingsService(
 		val activeVendors = vendors.filter { it.contractStatus == ContractStatus.active }
 		val rollout = rollout(organization.id, manifest.version)
 		val products = if (managementEnabled) catalog.snapshot().products else emptyList()
+		val policy = policies.of(organization.id)
 		return SettingsResponse(
 			meta = meta(organization, now, token),
 			ingest = frames.ingest(organization, now),
@@ -101,11 +103,17 @@ class SettingsService(
 			collectionPolicy = CollectionPolicy(
 				version = manifest.version,
 				collectRawContent = manifest.collectsRawContent,
-				reclaimIdleDays = idleDays,
-				aggregateRetentionMonths = null,
+				reclaimIdleDays = policy.reclaimIdleDays,
+				aggregateRetentionMonths = policy.aggregateRetentionMonths,
+				// 원문 보존 기간의 원천(원본 아카이브의 수명)이 이 저장소에 없다.
 				rawContentRetentionDays = null,
 				effectiveAt = manifest.effectiveAt.toString(),
 				updatedBy = manifest.createdBy.toString(),
+				settingsVersion = policy.version,
+				settingsUpdatedAt = policy.updatedAt?.toString(),
+				settingsUpdatedBy = policy.updatedBy?.toString(),
+				reclaimIdleDaysSource = policy.reclaimIdleDaysSource,
+				options = POLICY_OPTIONS,
 			),
 			policyRollout = rollout,
 			alertRules = ALERT_RULES,
@@ -317,6 +325,9 @@ class SettingsService(
 		private const val CONFIGURED = "configured"
 		private const val NEEDS_REVIEW = "needs_review"
 		private const val DETECTED_UNCONFIGURED = "detected_unconfigured"
+
+		/** 저장할 수 있는 회수 기준·집계 보존(ADR 0046). 집계 보존의 null 은 무기한이다. */
+		private val POLICY_OPTIONS = PolicyOptions(OrganizationPolicySettings.RECLAIM_IDLE_DAYS, OrganizationPolicySettings.AGGREGATE_RETENTION_MONTHS + null)
 
 		/** 온보딩의 원문 선택은 프롬프트·응답만 제어한다(ADR 0029). 다른 privacy 설정은 그대로 둔다. */
 		private val RAW_CONTENT_FLAGS = listOf(

@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.dashboard.config
 
+import com.team376.pulsemetry.persistence.enrollment.management.OrganizationPolicySettings
 import org.springframework.boot.context.properties.ConfigurationProperties
 import java.time.Duration
 
@@ -133,9 +134,9 @@ data class DashboardApiProperties(
 		}
 	}
 
-	/** 구성원 화면의 정책 값. 저장된 조직 정책이 아직 없어 설정으로 받는다 — 기본값이 없다. */
+	/** 구성원 화면의 정책 값. 기본값이 없다. */
 	data class Members(
-		/** 회수 후보의 유휴 기준 일수. 요청서가 정한 값(7·14·30·60) 중 하나. */
+		/** 조직이 회수 기준을 저장하지 않았을 때 쓰는 유휴 기준 일수(ADR 0046). 요청서가 정한 값(7·14·30·60) 중 하나. */
 		val idleDays: Int,
 	) {
 		init {
@@ -178,7 +179,8 @@ data class DashboardApiProperties(
 	}
 
 	private companion object {
-		val IDLE_DAYS = setOf(7, 14, 30, 60)
+		/** 조직이 저장할 수 있는 값과 같다(ADR 0046). */
+		val IDLE_DAYS = OrganizationPolicySettings.RECLAIM_IDLE_DAYS.toSet()
 
 		/** DB 이름은 snapshot 복사 SQL 에 식별자로 들어간다. */
 		val IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")

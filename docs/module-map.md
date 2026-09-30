@@ -179,7 +179,7 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 |---|---|---|
 | directory | `tenants` · `members` · `teams` · `team_memberships` | `enrollment-api`가 진입, `:libs:enrollment-persistence`에 사용자·팀 관리 저장 구현 |
 | enrollment | `invitations` · `installations` · `installation_credentials` · `telemetry_tokens` · `installation_manifest_assignments` | `enrollment-api` |
-| policy / onboarding | `manifests` · `organization_onboarding` · tenants의 완료 시각 | `:libs:enrollment-persistence` — enrollment-api의 최초 정책·정책 수정·완료 명령 |
+| policy / onboarding | `manifests` · `organization_onboarding` · `organization_policy_settings` · tenants의 완료 시각 | `:libs:enrollment-persistence` — enrollment-api의 최초 정책·정책 수정·완료 명령. 조직 정책 설정(회수 기준·집계 보존)은 같은 수집 정책 저장이 manifest와 따로 쓰고, dashboard-api는 읽기 전용 계정으로 읽는다 (ADR 0046) |
 | legacy contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 기존 기간 약정. 좌석 계약 관리 API에서 수정·환산하지 않음 |
 | registered product / seat contract | `managed_vendors` · `vendor_contract_versions` · `management_commands` | `:libs:enrollment-persistence` — 등록·정정·이름 변경·보관·멱등 명령 저장 |
 | user authentication | `user_sessions` · `user_refresh_tokens` · `user_authorization_codes` · `auth_attempts` | `:libs:enrollment-persistence`의 인증 저장소. 정책·검증은 `:libs:security`, HTTP 조립은 enrollment-api |

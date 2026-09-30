@@ -38,7 +38,7 @@ class MembersService(
 	private val snapshots: SnapshotService,
 	private val codec: PageCursorCodec,
 	private val tokens: CurrentStateTokens,
-	private val idleDays: Int,
+	private val policies: OrganizationPolicies,
 	private val clock: Clock,
 	private val managementEnabled: Boolean = false,
 ) {
@@ -61,7 +61,7 @@ class MembersService(
 				periodTotalEquivalentCostUsd = if (frame.empty) null else view.organization.equivalentCost(frame.pricingMixed)?.let(Money::format),
 				seats = Section(Availability.UNAVAILABLE, Availability.NOT_APPLICABLE, null),
 			),
-			policy = IdlePolicy(idleDays, POLICY_VERSION),
+			policy = policy(organization),
 			capabilities = MemberCapabilities(invite = managementEnabled, assignTeam = managementEnabled, reclaimSeats = false, restoreSeats = false),
 			members = page(view, view.roster, first, scope(null)),
 			unassigned = page(view, view.roster.filter { it.currentTeamIds.isEmpty() }, first, UNASSIGNED_SCOPE),
@@ -96,12 +96,17 @@ class MembersService(
 		val now = clock.instant()
 		val token = tokens.resolve(RECLAIM_KIND, organization.id, snapshotId ?: page.cursor?.snapshotId, now)
 		if (page.cursor != null) throw DashboardException.invalid(CURSOR, FieldErrorCode.INVALID_CURSOR)
+		val policy = policy(organization)
 		return ReclaimCandidatesResponse(
 			meta = CurrentMeta(organization.id.toString(), now.toString(), token.asOf.toString(), token.value, AnalyticsFrames.USD, QueryReader.SEOUL_ID),
-			idleDays = idleDays,
+			idleDays = policy.idleDays,
 			candidates = Section(Availability.UNAVAILABLE, Availability.NOT_APPLICABLE, null),
+			policy = policy,
 		)
 	}
+
+	/** 조직의 회수 기준과 그 판(ADR 0046). 저장하지 않은 조직은 서버 기본 설정과 판 0 이다. */
+	private fun policy(organization: Organization): IdlePolicy = policies.of(organization.id).let { IdlePolicy(it.reclaimIdleDays, it.version) }
 
 	private fun page(view: RosterView, candidates: List<SnapshotReferences.RosterMember>, page: PageRequest, scope: String): Page<Member> {
 		val ranked = candidates.sortedWith(
@@ -180,8 +185,6 @@ class MembersService(
 
 	companion object {
 		const val DASHBOARD_LIMIT = 20
-		/** 저장된 유휴 정책이 없다 — 판 0 은 "정책 저장소에서 온 값이 아님"이다. 유휴 일수는 설정이다. */
-		const val POLICY_VERSION = 0L
 		const val RECLAIM_KIND = "seat-reclaim-candidates"
 		private const val UNASSIGNED_SCOPE = "members-unassigned"
 		private const val CURSOR = "cursor"

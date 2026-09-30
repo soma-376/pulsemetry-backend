@@ -71,4 +71,6 @@ data class ReclaimCandidatesResponse(
 	val meta: CurrentMeta,
 	val idleDays: Int,
 	val candidates: Section<Page<ReclaimCandidate>>,
+	/** 이 목록이 쓴 조직의 회수 기준과 그 판(가산 — ADR 0046). 구성원 화면의 `policy` 와 같다. */
+	val policy: IdlePolicy,
 )

@@ -39,6 +39,10 @@ data class Vendor(
 	val checks: List<VendorCheck>,
 )
 
+/**
+ * `version`·`effectiveAt`·`updatedBy` 는 원문 선택이 실린 manifest 의 것이다. 회수 기준·집계 보존은 manifest 와 따로 저장하고
+ * 판도 따로 센다(ADR 0046) — 그 판·저장 시각·저장한 사람은 가산 필드 `settings*` 다. `rawContentRetentionDays` 는 원천이 없어 null 이다.
+ */
 data class CollectionPolicy(
 	val version: Long,
 	val collectRawContent: Boolean,
@@ -47,7 +51,17 @@ data class CollectionPolicy(
 	val rawContentRetentionDays: Int?,
 	val effectiveAt: String,
 	val updatedBy: String,
+	/** 조직 정책 설정의 판(가산). 저장한 적 없으면 0 이다. 회수 기준·집계 보존을 저장할 때 `expectedSettingsVersion` 으로 보낸다. */
+	val settingsVersion: Long,
+	val settingsUpdatedAt: String?,
+	val settingsUpdatedBy: String?,
+	/** `organization` 이면 조직이 저장한 회수 기준, `default` 면 서버 기본 설정이다(가산). */
+	val reclaimIdleDaysSource: String,
+	/** 저장할 수 있는 값(가산). 집계 보존의 null 은 무기한이다. */
+	val options: PolicyOptions,
 )
+
+data class PolicyOptions(val reclaimIdleDays: List<Int>, val aggregateRetentionMonths: List<Int?>)
 
 data class AlertThreshold(val value: Double, val unit: String)
 

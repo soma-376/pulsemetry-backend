@@ -118,6 +118,9 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
         // 완료 조건인 명시적 정책 확인과 활성 벤더 선택도 함께 준비한다(ADR 0032).
         add("enrollment.organization_onboarding", "tenant_id" to tenant, "policy_confirmed_at" to origin,
             "policy_confirmed_by" to member(0), "completed_by" to member(0))
+        // 관리자가 정책을 바꾼 날 회수 기준과 집계 보존도 저장했다(ADR 0046 — manifest 판과 따로, 설정의 판 1).
+        add("enrollment.organization_policy_settings", "tenant_id" to tenant, "reclaim_idle_days" to 30, "aggregate_retention_months" to 24,
+            "version" to 1, "updated_at" to policyChangedAt, "updated_by" to member(1))
         listOf("claude_team" to "Claude (Anthropic)", "openai_biz" to "ChatGPT / Codex (OpenAI)",
             "copilot" to "GitHub Copilot", "cursor" to "Cursor").forEach { (kind, displayName) ->
             val vendorId = id("$name/vendor/$kind")

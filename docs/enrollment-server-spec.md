@@ -938,7 +938,7 @@ PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계
 | 메서드·경로 | 요청 | 성공 |
 | --- | --- | --- |
 | `GET /onboarding` | 없음 | 200 OnboardingState |
-| `PUT /collection-policy` | `{expectedVersion,collectRawContent}` | 200 PolicySaved |
+| `PUT /collection-policy` | `{expectedVersion,collectRawContent?,reclaimIdleDays?,aggregateRetentionMonths?,expectedSettingsVersion?}` | 200 PolicySaved |
 | `POST /onboarding/complete` | `{}`, Idempotency-Key | 200 OnboardingState |
 | `GET /invitations` | limit=20(1~100), cursor, status?, memberStatus? | 200 InvitationPage |
 | `POST /invitations/{invitationId}/reissue` | `{}`, Idempotency-Key | 200 ReissuedInvitation |
@@ -984,11 +984,21 @@ confirmed는 저장 완료 여부이며 수집 허용 여부가 아니다. false
 
 ```ts
 type PolicySaved = {
-  version: number; collectRawContent: boolean; confirmedAt: string;
+  version: number; collectRawContent: boolean | null; confirmedAt: string | null;
   application: "future_enrollments";
   existingInstallationsUpdated: false;
+  // 가산 — 조직 정책 설정(ADR 0046)
+  reclaimIdleDays: 7 | 14 | 30 | 60 | null;    // 조직이 저장한 값. null이면 조회 서버의 기본 설정을 쓴다
+  aggregateRetentionMonths: 12 | 24 | 36 | null; // null = 무기한
+  settingsVersion: number;                      // 저장 전 0
+  settingsUpdatedAt: string | null;
+  cleanupOperationId: string | null;            // 보존 기간을 줄였을 때의 정리 작업. 아직 만들지 않아 늘 null
 };
 ```
+
+`collectRawContent`는 이제 선택이다. 보내면 아래 규칙대로 새 manifest 판을 만들고, 보내지 않으면 manifest를 바꾸지 않는다.
+그때 `version`·`collectRawContent`·`confirmedAt`은 지금의 활성 manifest·정책 확인 기록을 그대로 알려 준다(없으면 0·null·null).
+기존 `{expectedVersion, collectRawContent}` 본문의 동작과 응답은 그대로다.
 
 서버는 현재 활성 manifest의 version을 비교한다. 충돌은 409 `version_conflict`다.
 활성 manifest가 없으면 `expectedVersion=0`으로 최초 생성한다. 새 판번호는 기존 판번호의 최댓값 다음이다.
@@ -1002,6 +1012,21 @@ config_revision도 새 판에 맞춘다. endpoint·signals·나머지 privacy �
 installation_manifest_assignments를 적용 완료로 변경하지 않는다(`application`·`existingInstallationsUpdated`는 이 저장이 한 일이다).
 기존 설치는 설치 보고(§4.5)의 응답으로 새 판을 알고, 사용자 로그인 세션이 있는 데몬이 스스로 받아 적용한 뒤 보고한다 — 적용 확인은 그 보고가 기록한다.
 적용 현황은 대시보드 설치 조회로 확인하고, 아직 적용하지 않은 설치의 구성원에게는 §12의 설치 업데이트 안내로 확인을 부탁한다.
+
+**회수 기준·집계 보존**(ADR 0046). 좌석 회수 기준(`reclaimIdleDays` — 7·14·30·60)과 집계 보존(`aggregateRetentionMonths` — 12·24·36, null은 무기한)은
+설치에 배포하는 정책이 아니라서 manifest와 따로 `enrollment.organization_policy_settings`에 저장하고 판도 따로 센다. manifest 판을 올리지 않으므로 설치의 적용 상태는 그대로다.
+
+```json
+{"expectedVersion":3,"expectedSettingsVersion":0,"reclaimIdleDays":30}
+```
+
+- 보낸 필드만 바꾼다. 보내지 않은 값은 저장된 값 그대로다. 바꿀 것(원문 선택·회수 기준·집계 보존)이 하나도 없으면 400 `invalid_request`다.
+- 두 값 중 하나라도 보내면 `expectedSettingsVersion`(설정의 판, 저장 전 0)이 필수다. 허용 밖의 값·문자열·판 누락은 400 `invalid_request`이고 `fieldErrors`에 그 필드가 있다.
+- `expectedVersion`은 언제나 활성 manifest 판과 맞아야 한다. 설정의 판이 어긋나면 409 `version_conflict`(`fieldErrors`의 `expectedSettingsVersion`)이고 아무것도 저장하지 않는다.
+  원문 선택과 설정을 함께 보내면 한 트랜잭션이다.
+- 설정의 판은 값이 실제로 바뀔 때만 1 오른다. 같은 값을 다시 보내면 같은 판·같은 저장 시각이다.
+- 저장하지 않은 조직의 유효값은 조회 서버가 정한다 — 회수 기준은 dashboard-api의 `pulsemetry.dashboard.members.idle-days`, 집계 보존은 무기한이다(대시보드 명세 "조직 정책 설정").
+- 집계 보존을 저장해도 지금은 아무것도 지우지 않는다(`cleanupOperationId`=null). 원문 보존 일수는 저장하지 않는다 — 원천(원본 아카이브의 수명)이 이 저장소에 없다.
 
 ### 13.3 초대 목록·재발급
 

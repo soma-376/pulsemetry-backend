@@ -274,6 +274,14 @@ class SeedScenarioTest {
         assertEquals(listOf(1 to true), c.rows.getValue("enrollment.manifests").map { it["version"] to it["is_active"] })
     }
 
+    @Test fun `A만 회수 기준과 집계 보존을 저장했고 그 판은 manifest 판과 따로다`() {
+        // ADR 0046: 저장값은 허용 목록 안이고 판 1, 저장한 사람은 정책을 바꾼 관리자, 저장 시각은 정책을 바꾼 날이다.
+        val stored = a.rows.getValue("enrollment.organization_policy_settings").single()
+        assertEquals(listOf<Any?>(id("A"), 30, 24, 1, "2026-09-20T15:00:00Z", id("A/member/1")),
+            listOf("tenant_id", "reclaim_idle_days", "aggregate_retention_months", "version", "updated_at", "updated_by").map { stored[it] })
+        assertTrue(listOf(b, c).none { it.rows.containsKey("enrollment.organization_policy_settings") })
+    }
+
     @Test fun `fixture 의 관측 매핑은 enrollment 마이그레이션의 매핑과 같다`() {
         val sql = requireNotNull(javaClass.getResourceAsStream("/db/migration/V18__vendor_catalog_observed_products.sql")).use { it.readBytes().decodeToString() }
         val pairs = Regex("""\('([a-z_]+)', '([a-z_]+)'\)""").findAll(sql).associate { it.groupValues[1] to it.groupValues[2] }
@@ -333,5 +341,8 @@ class SeedScenarioTest {
         // 설치 보고는 설치를 가리킨다. 설치보다 먼저 지운다.
         val reports = resetStatements("A", tables + setOf("installation_heartbeats", "installation_collection_segments")).map { it.substringAfter("enrollment.").substringBefore(" ") }
         assertTrue(listOf("installation_heartbeats", "installation_collection_segments").all { it in reports && reports.indexOf(it) < reports.indexOf("installations") })
+        // 조직 정책 설정은 조직과 저장한 구성원을 가리킨다. 구성원보다 먼저 지운다.
+        val policies = resetStatements("A", tables + "organization_policy_settings")
+        assertTrue(policies.single { "organization_policy_settings" in it }.let { policies.indexOf(it) < policies.indexOfFirst { s -> "enrollment.members " in s } })
     }
 }

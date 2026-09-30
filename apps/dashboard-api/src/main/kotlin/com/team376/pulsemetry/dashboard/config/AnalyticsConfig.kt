@@ -2,6 +2,7 @@ package com.team376.pulsemetry.dashboard.config
 
 import com.team376.pulsemetry.dashboard.analytics.AnalyticsFrames
 import com.team376.pulsemetry.dashboard.analytics.ComparisonPolicy
+import com.team376.pulsemetry.dashboard.analytics.OrganizationPolicies
 import com.team376.pulsemetry.dashboard.analytics.CurrentStateTokens
 import com.team376.pulsemetry.dashboard.analytics.IngestStatusReader
 import com.team376.pulsemetry.dashboard.analytics.IngestThresholds
@@ -111,7 +112,9 @@ class AnalyticsConfig {
 		codec: PageCursorCodec,
 		tokens: CurrentStateTokens,
 		clock: Clock,
-	): MembersService = MembersService(frames, aggregator, references, snapshots, codec, tokens, properties.members.idleDays, clock, managementEnabled)
+		source: JdbcClient,
+	): MembersService = MembersService(frames, aggregator, references, snapshots, codec, tokens,
+		OrganizationPolicies(source, properties.members.idleDays), clock, managementEnabled)
 
 	/** 설정·벤더의 관측 지표(ADR 0044). 원천(분석 행·매핑·완전성 근거)은 읽기만 하고 고정은 자기 캐시에 쓴다. */
 	@Bean
@@ -138,7 +141,7 @@ class AnalyticsConfig {
 		clock: Clock,
 		catalog: VendorCatalog,
 	): SettingsService = SettingsService(
-		source, observations, frames, tokens, codec, mapper, properties.members.idleDays, clock, managementEnabled, catalog,
+		source, observations, frames, tokens, codec, mapper, OrganizationPolicies(source, properties.members.idleDays), clock, managementEnabled, catalog,
 		// 안내는 enrollment-api 가 메일로 보낸다(ADR 0043). 두 앱이 같은 설정 값을 받는다.
 		notificationsEnabled = managementEnabled && mailEnabled,
 	)

@@ -143,6 +143,32 @@ type ProductRef = { kind: string | null; displayName: string | null };
 안내 명령(`POST O/installation-update-notifications`)은 enrollment-api가 받는다(enrollment 명세 §12 "설치 업데이트 안내"). 202 응답의 `Location`이 이 앱의
 작업 상태 조회를 가리키고, 대상 결과는 **메일의 발송 결과**다 — 설치가 새 판을 적용했다는 뜻이 아니다. 적용 여부는 이 표의 적용 상태로 다시 확인한다.
 
+### 조직 정책 설정 (ADR 0046)
+
+좌석 회수 기준과 집계 보존은 enrollment-api의 수집 정책 저장(`PUT O/collection-policy`, enrollment 명세 §13.2)이 조직마다 저장한다.
+이 앱은 `enrollment.organization_policy_settings`를 읽기 전용 계정으로 요청마다 읽는다. 설정·구성원·회수 후보가 한 곳(`OrganizationPolicies`)에서 같은 값과 같은 판을 쓴다.
+
+| 값 | 규칙 |
+| --- | --- |
+| 유효 회수 기준 | 조직이 저장한 값. 없으면 이 앱의 `pulsemetry.dashboard.members.idle-days` |
+| 집계 보존 | 조직이 저장한 값. 없으면 null(무기한) |
+| 설정의 판 | 값이 바뀔 때마다 1 오르는 판. 저장한 적 없으면 0. manifest 판(`collectionPolicy.version`)과 별개다 |
+
+```ts
+// GET O/settings 의 collectionPolicy 에 더한 키(가산)
+//   settingsVersion: number;                          저장 때 expectedSettingsVersion 으로 보낸다
+//   settingsUpdatedAt: string | null; settingsUpdatedBy: string | null;
+//   reclaimIdleDaysSource: "organization" | "default";   default = 서버 기본 설정
+//   options: { reclaimIdleDays: number[]; aggregateRetentionMonths: (number | null)[] };   저장할 수 있는 값(null = 무기한)
+// GET O/seat-reclaim-candidates 에 더한 키(가산)
+//   policy: { idleDays: number; version: number };     구성원 화면의 policy 와 같다
+```
+
+- 설정의 `collectionPolicy.reclaimIdleDays`·`aggregateRetentionMonths`는 유효값이다. `version`·`effectiveAt`·`updatedBy`는 여전히 원문 선택이 실린 manifest의 것이다.
+- 구성원 화면의 `policy`(`idleDays`·`version`)와 회수 후보의 `idleDays`·`policy`는 유효 회수 기준과 **설정의 판**이다(고정 0이 아니다).
+- `rawContentRetentionDays`는 null이다. 원문 보존 기간의 원천(원본 아카이브의 수명)이 이 저장소에 없다.
+- 집계 보존 값은 표시·저장만 한다. 보존 기간 단축의 삭제는 아직 이어져 있지 않다.
+
 ### 기간 완전성과 비교 (ADR 0042)
 
 하루(조회 시간대의 자정~다음 자정)는 다음을 모두 만족할 때만 **완전**하다. 확정 시각 = 그날의 끝 + `pulsemetry.dashboard.completeness.settle-after`.
@@ -335,7 +361,7 @@ enrollment-api와 같은 값을 준다(local 프로필은 둘 다 true).
 | `pulsemetry.dashboard.clickhouse.source` | 원천 URL·database·계정·query-timeout·max-result-rows/bytes |
 | `pulsemetry.dashboard.clickhouse.cache` | 캐시 URL·database·계정·query-timeout |
 | `pulsemetry.dashboard.snapshot` | build-timeout·purge-grace·max-concurrent-builds·max-copy-rows/bytes·cleanup-interval |
-| `pulsemetry.dashboard.members.idle-days` | 회수 후보 기준 기간 |
+| `pulsemetry.dashboard.members.idle-days` | 조직이 회수 기준을 저장하지 않았을 때의 회수 후보 기준 기간(ADR 0046) |
 | `pulsemetry.dashboard.ingest` | 수집 상태 판정의 임계값 — window·delayed-after·down-after. 셋 다 기본값이 없다(아래 "공통 헤더 수집 현황") |
 | `pulsemetry.dashboard.completeness.settle-after` | 기간 완전성의 확정 대기(`PULSEMETRY_DASHBOARD_COMPLETENESS_SETTLE_AFTER`). 기본값 없음, 0보다 크다. 데몬의 재시도 전체와 적재가 끝나는 시간보다 길게. local 1시간 |
 | `pulsemetry.dashboard.retry-after` | 일시 장애 재시도 간격 |
