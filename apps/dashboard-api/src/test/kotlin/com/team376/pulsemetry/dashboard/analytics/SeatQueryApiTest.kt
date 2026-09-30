@@ -263,6 +263,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		val org = organization()
 		val settings = ok(org.tenant, "/settings")
 		assertThat(settings.at("/summary/assignedSeats").asLong()).isEqualTo(7)
+		assertThat(ok(org.tenant, "/members/dashboard?$period").at("/summary/seats/data/assigned").asLong()).describedAs("구성원 화면과 같은 원장").isEqualTo(7)
 		assertThat(settings.at("/summary/activeSeats7d").isNull).describedAs("미연결·관측 불가 좌석이 있다").isTrue()
 		val vendors = settings.at("/vendors/items").toList().associateBy { it.path("vendorId").asString() }
 		assertThat(vendors.getValue(org.claude).path("seats").let { listOf(it.path("availability").asString(), it.at("/data/assigned").asLong(), it.at("/data/contracted").asLong(), it.at("/data/unallocated").asLong()) })
@@ -333,6 +334,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		assertThat(seats.at("/previous/equivalentCostUsd").asString().toBigDecimal()).isEqualByComparingTo("2")
 		assertThat(seats.path("reclaimEstimate").isNull).describedAs("회수 가능 조건이 없다").isTrue()
 		assertThat(seats.path("reclaimCandidates").asLong()).isEqualTo(2)
+		assertThat(ok(org.tenant, "/members/dashboard?$period").at("/summary/seats/data/reclaimCandidates").asLong()).describedAs("구성원 화면과 같은 후보").isEqualTo(2)
 		JsonStructure.assertMatches("overview-response.example.json", ok(org.tenant, "/analytics/overview?$period"))
 
 		// 사용이 없는 완전한 기간의 환산가치는 0(효율 0)이고, 수집 근거가 없는 기간은 좌석 값을 만들지 않는다 — 환산가치를 모르면 비교할 수 없다.
