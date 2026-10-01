@@ -33,16 +33,21 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 ```
 
 **소유하는 것**: `POST /v1/enroll`, `POST /v1/installations/telemetry-token`, `GET /v1/manifest`, `POST /v1/invitations`,
-부트스트랩 스크립트·바이너리 서빙(`GET /windows|/unix|/bin/{f}`), manifest 저장,
-그리고 **enrollment 스키마의 진실원(Flyway)**.
+설치 보고 `POST /v1/installations/{installationId}/heartbeat`, 데몬 업데이트 확인 `GET /api/v1/check-updates`, 도입 문의 `POST /v1/inquiries`,
+부트스트랩 스크립트·바이너리 서빙(`GET /windows|/unix|/bin/{f}`), manifest 저장, 조직 관리 명령(`/api/v1/organizations/{id}/…` — 명세 §12·§13),
+그리고 **enrollment 스키마의 진실원(Flyway)**. 조회(분석·설정·좌석·알림·작업 상태)는 `:apps:dashboard-api`가 맡는다.
 
 **현재 구현과 남은 범위** — 작업 트리의 코드 기준이며, 운영 배포나 실제 DB 적용 완료를 뜻하지 않는다.
 
 | 항목 | 상태 | 근거 |
 |---|---|---|
-| 사람 계정·로그인 | 구현됨. 설정으로 활성화 | enrollment-api가 로그인·갱신·로그아웃·현재 사용자 조회를 제공하고 dashboard-api가 JWT와 현재 세션을 검증한다. ADR 0018·0026, `docs/user-auth-operations.md` 참고. OIDC/SAML SSO는 미구현 |
-| 수집 정책·온보딩 | 최초 생성·수정·완료 상태 구현 | `PUT /collection-policy`가 최초 manifest를 만들거나 새 판을 저장한다. 기존 설치에 원격 배포하는 기능은 없다. ADR 0029·0032·0033 |
-| 대시보드 API | 개요·팀·구성원·설정·카탈로그 조회 구현 | `docs/dashboard-server-spec.md` 참고. 관리 쓰기는 enrollment-api가 맡는다. API 구현과 프론트 전체 배선·E2E 완료는 별개 |
+| 사람 계정·로그인 | 구현됨. 설정으로 활성화 | enrollment-api가 로그인·갱신·로그아웃·현재 사용자 조회를 제공하고 dashboard-api가 JWT와 현재 세션을 검증한다. ADR 0018·0026, `docs/user-auth-operations.md` 참고. OIDC/SAML SSO는 미구현(별도 작업 PROJ-186 — 이 저장소에 아직 없다) |
+| 수집 정책·온보딩 | 최초 생성·수정·완료 상태 구현 | `PUT /collection-policy`가 최초 manifest를 만들거나 새 판을 저장하고, 회수 기준·집계 보존을 manifest 와 따로 저장한다. 서버가 기존 설치에 밀어 넣지 않는다 — 설치 보고의 응답이 기대 판을 알리고 로그인한 데몬이 스스로 받아 적용한다. ADR 0029·0032·0033·0046 |
+| 설치 보고·업데이트 확인 | 구현됨 | 데몬의 설치 보고(수집 구간·적용 판)와 업데이트 확인, 정책 적용 현황·업데이트 안내 메일. ADR 0040·0043, 허브 `contracts/daemon-updates.md` |
+| 메일 | 구현됨. 설정으로 활성화 | 초대 메일·문의 통지·설치 업데이트 안내를 outbox 로 적재하고 enrollment-api 의 발송 작업이 SMTP로 보낸다. ADR 0037·0038·0043 |
+| 좌석·벤더 연결·청구 | 구현됨. 벤더 연결은 설정으로 활성화 | 좌석 원장·수동 기록·CSV, 커넥터 동기화(Claude Enterprise·Cursor Enterprise·Copilot·Gemini)·회수·복원, 벤더 청구 누계. 실계정 검증은 남았다(`docs/vendor-connector-verification.md`). ADR 0048·0049·0050 |
+| 알림 | 구현됨 | 규칙 켜기·모델·도구 목록(enrollment-api), 주기 평가·개요 미확인 수·확인(dashboard-api 평가 + enrollment-api 확인). 한도 초과는 근거가 없어 켤 수 없다. ADR 0051 |
+| 대시보드 API | 개요·팀·구성원·설정·카탈로그·수집 상태·좌석·알림·작업 상태 조회 구현 | `docs/dashboard-server-spec.md` 참고. 관리 쓰기는 enrollment-api가 맡는다. 기간 완전성·비교(ADR 0042), 수집 상태 판정(ADR 0041). API 구현과 프론트 전체 배선·E2E 완료는 별개 |
 | 텔레메트리 파이프라인 이관 | **코드는 끝났다. 배포만 남았다** | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다 — 남은 것은 infra 가 이 앱을 배포하고 collector 컨테이너를 내리는 일이다(PROJ-106) |
 
 **파이프라인은 이 레포의 단일 앱이다**(허브 ADR 0004·0005 — 배포 단위 하나, OTel Collector 바이너리 없음).
@@ -78,8 +83,10 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 
 | 문서 | 담는 것 |
 |---|---|
-| `docs/enrollment-server-spec.md` | 설치·사용자 인증·온보딩·조직 관리 명세 |
-| `docs/dashboard-server-spec.md` | 분석·설정·카탈로그 조회 명세 |
+| `docs/enrollment-server-spec.md` | 설치·설치 보고·업데이트 확인·사용자 인증·온보딩·조직 관리(좌석·벤더 연결·알림 규칙 포함)·문의·메일 명세 |
+| `docs/dashboard-server-spec.md` | 분석·설정·카탈로그·수집 상태·좌석·알림·작업 상태 조회 명세 |
+| `docs/vendor-connector-evidence.md` · `docs/vendor-connector-verification.md` | 벤더 커넥터의 공식 문서 근거와 실계정 검증 절차 |
+| `tools/mock-vendor/README.md` | 로컬 모의 벤더 서버(벤더 연결·회수·복원 E2E) |
 | `docs/user-auth-operations.md` | 사용자 인증 활성화·키·세션 운영 |
 | `tools/dev-seed/README.md` | Docker 전용 시드 생성·적재·검증 |
 | `docs/frontend-e2e-scenarios.md` | 실제 API E2E 목표 시나리오. 통과 보고서가 아님 |
@@ -116,7 +123,8 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   폐기될 때까지 크로스레포 계약의 앵커다.
 - **enroll 응답은 정확히 4키다.** 클라이언트가 `DisallowUnknownFields`로 파싱하므로
   **필드를 추가하면 배포된 전 클라이언트가 깨진다.** 이 제약은 중첩 manifest까지 적용된다.
-- **스키마 enum은 native enum**이다(ADR-0009가 ADR-0004의 varchar+CHECK를 대체). 진실원은 여전히 Flyway.
+- **dbml 의 enum 10종은 native enum**이다(ADR-0009가 ADR-0004의 varchar+CHECK를 대체). 진실원은 여전히 Flyway.
+  그 뒤에 더한 서버 전용 상태 값은 `varchar + CHECK` 다 — `EnrollmentSchemaMigrationTest`가 enum 집합을 정확히 고정한다.
 - 모듈 경계·네임스페이스 규칙은 ADR-0008(파이프라인 단계는 ADR-0010이 개정)이 정하고,
   현재 구성과 이름은 `docs/module-map.md`가 담는다.
   모듈을 추가하기 전에 둘 다 본다.
@@ -198,6 +206,15 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
 - **벤더 자격증명은 암호문으로만 저장한다**(ADR 0048 §6). 키는 `pulsemetry.vendor-connections.credential-keys`(키 ID → Base64 32바이트)이고 관리 응답·메일 키와
   따로다. 응답·로그·예외 메시지·테스트 fixture에 평문을 싣지 않는다 — 연결 명령이 PUT인 것도 멱등 기록(요청 해시·응답)을 남기지 않기 위해서다.
   dashboard-api는 `VendorConnections`로 비밀 아닌 열만 읽는다. 옛 키는 `vendor_connections.credential_key_id`가 그 키를 쓰는 행이 없을 때만 뺀다.
+- **메일은 outbox 다**(ADR 0037). 업무 쓰기와 같은 트랜잭션에서 적재하고 enrollment-api 의 발송 작업이 선점해 보낸다 — 명령 안에서 SMTP를 부르지 않는다.
+  초대 코드는 메일 본문과 수락 링크의 fragment 에만 싣는다(ADR 0038). 발급은 발송이 아니다 — `delivery` 상태를 따로 낸다.
+- **비동기 명령은 공통 작업 기록이다**(ADR 0039). 접수(202)는 완료가 아니다 — 결과는 dashboard-api 의 작업 상태 조회로 본다. 조치 대기(`awaiting_admin_action`)는 관리자의 확인으로만 끝난다.
+- **설치 보고는 `installation_token`(무염 SHA-256)으로 인증하고 경로의 설치 ID와 대조한다**(ADR 0040). 수집 구간이 기간 완전성(ADR 0042)과 수집 상태 판정(ADR 0041)의 근거다 —
+  최신 수신 시각만으로 정상·완전을 주장하지 않는다.
+- **좌석 원장의 원천 우선순위**(ADR 0048): 연결된 등록 제품은 커넥터 동기화가 권위이고, 수동 기록은 커넥터 없는 플랜·연결 전에만 쓴다. 구매 수량으로 좌석을 만들지 않는다.
+  원장은 벤더가 받아들였거나 관리자가 조치를 확인했을 때만 바뀐다(ADR 0049). 실제 청구액은 벤더 비용·지출 API 의 누계뿐이다 — 환산 비용·계약액을 복사하지 않는다(ADR 0050).
+- **알림은 근거가 있는 규칙만 켠다**(ADR 0051). 평가 전제가 깨진 회차는 0건이 아니라 "평가하지 않음"과 사유다. 평가 기록은 dashboard-api 가 RDS `dashboard_cache` 에 쓴다 —
+  snapshot 정리 작업이 지우지 않게 한다(ADR 0022 §2 를 ADR 0051 이 개정). 확인 기록은 enrollment 스키마이고 확인을 되돌리는 명령은 없다.
   좌석 원장의 우선순위(연결이 있으면 커넥터가 권위, 수동은 연결 전의 임시)는 ADR 0048 §3의 표이고 `SeatLedgerTest`가 그 표를 덮는다.
 - ADR 번호는 `docs/adr/README.md`의 다음 미사용 번호를 확인한다. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

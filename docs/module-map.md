@@ -51,12 +51,12 @@ pulsemetry-backend
 │   │                                ├ installation/   설치 보고(heartbeat) 수신 — 본문 해석·적용 확인·기록 (ADR 0040)
 │   │                                ├ mail/           메일 설정 바인딩·SMTP 발송 구현·발송 작업의 주기 실행 (ADR 0037)
 │   │                                ├ update/         데몬 업데이트 확인 — 배포 바이너리의 판과 해시 확인·SemVer 비교 (허브 ADR 0011)
-│   │                                ├ seat/           벤더 연결 설정·커넥터 조립·좌석 동기화의 주기 실행 (ADR 0048)
-│   │                                └ management/     온보딩·정책·팀·초대·제품·계약 관리 HTTP
+│   │                                ├ seat/           벤더 연결 설정·커넥터 조립·좌석 동기화와 회수·복원 벤더 제어의 주기 실행 (ADR 0048·0049·0050)
+│   │                                └ management/     온보딩·정책·팀·초대·제품·계약·좌석·벤더 연결·알림 규칙·알림 확인 관리 HTTP
 │   ├── telemetry-ingest/            com.team376.pulsemetry.telemetry
 │   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
 │   ├── dashboard-api/               com.team376.pulsemetry.dashboard
-│   │                                분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐 (ADR 0022)
+│   │                                분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시와 알림 평가 기록뿐 (ADR 0022·0051)
 │   │                                ├ api/            HTTP 표현 계층 — 화면별 컨트롤러
 │   │                                ├ analytics/      공통 계산기(축별 합계·null 규칙) · 화면별 응답 조립
 │   │                                ├ authentication/ 인증 포트 · 기본 거부 구현 · 필터 · 역할 대응
@@ -129,6 +129,18 @@ dashboard-api(커넥터 설명의 capability 표시). 역할 이름은 `connecto
 `dashboard_cache`의 쓰는 주체는 이 앱 하나라 쓰기 소유가 앱에 있고, DDL도 이 앱이 기동 때 캐시 계정으로 적용한다 — ClickHouse는
 `clickhouse/dashboard-cache/`의 멱등 파일 전량(ADR 0015 규약), RDS는 `db/dashboard-cache/`의 별도 Flyway 인스턴스(이력
 `dashboard_cache.flyway_schema_history`)다([ADR 0023](adr/0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md)).
+같은 RDS 스키마에 알림 평가 기록(`alerts`·`alert_evaluations`·`alert_evaluation_leases`)도 이 앱이 쓴다([ADR 0051](adr/0051-알림-규칙은-근거가-있을-때만-켜고-평가는-dashboard-api-의-주기-작업이-자기-스키마에-남긴다.md) — ADR 0022 §2 개정).
+snapshot 이 아니라서 snapshot 정리 작업은 지우지 않는다.
+
+**백그라운드 작업의 위치** — 새 배포 단위를 만들지 않는다. 여러 인스턴스는 DB 선점으로 나눈다.
+
+| 작업 | 앱·패키지 | 근거 |
+| --- | --- | --- |
+| 메일 발송(초대·문의 통지·설치 업데이트 안내) | enrollment-api `mail/` | ADR 0037·0043 |
+| 좌석 동기화·청구 누계 읽기·회수·복원의 벤더 제어 | enrollment-api `seat/`(한 주기 작업, 제어가 먼저) | ADR 0048·0049·0050 |
+| snapshot 정리 | dashboard-api `snapshot/` | ADR 0023 |
+| 알림 평가 | dashboard-api `alert/` | ADR 0051 |
+| 보존 정리 요청 실행 | retention-worker `--requests`(일회성 실행 — 스케줄은 infra) | ADR 0047 |
 
 `:apps:retention-worker`는 조직별 보존 삭제 작업이다([ADR 0024](adr/0024-조직별-보존-삭제-경계는-RDS-가-진실원이고-분석-INSERT-는-ClickHouse-fence-를-서버에서-다시-검사한다.md), Proposed).
 서버가 아니라 명령 하나(`--tenant --retention-months --as-of`)를 실행하고 종료 코드로 끝난다. 쓰는 대상 — 경계·작업 기록(RDS `telemetry_ops`),
@@ -142,9 +154,9 @@ JPA·Flyway 자동설정을 끈다 — 켜 두면 대상 DB 의 `public`에 Flyw
 ClickHouse는 `source/`의 읽기 전용 클라이언트다. 적재 모듈의 `ClickHouseHttpClient`와 따로 두는 것은 요구가 반대라서다(계정 인증·요청마다의
 `readonly`·결과 상한·행 해석이 필요하고 쓰기가 없다).
 
-`:libs:security`에는 아직 **OTLP 경로의 `ptt_` 검증만** 있다(PROJ-102). 관리자 API 경로의 AT 검증은
-PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 — 지금은 내용물 묶음이 하나뿐이라
-3절의 판정 기준이 나눌 근거를 주지 않는다.
+`:libs:security`는 두 묶음이다 — OTLP 경로의 `ptt_` 검증·telemetry token 해시(PROJ-102)와 사용자 인증(JWT 발급·검증,
+세션·RT 회전, 암호 검증 — `user/`, ADR 0018·0026). enrollment-api 가 사용자 인증 경로를, dashboard-api 가 인증 어댑터(AT·현재 세션 검증)를,
+telemetry-ingest 가 `ptt_` 필터를 조립한다.
 
 `:libs:telemetry-collector`는 5절이 예고한 단계 모듈 중 첫 번째다(PROJ-114). 하위 패키지는 5절이
 정한 대로 `masking/`·`archive/` 둘이고, 수신 관련 타입은 모듈 루트 패키지에 둔다.
@@ -310,7 +322,7 @@ apps/
                                      앱은 조립만 한다 — 필터 체인 배선 · 단계 호출
 libs/
 ├── security/                        com.team376.pulsemetry.security          ← 있다 (1절)
-│                                    OTLP 경로의 ptt_ 검증 · 관리자 API 경로의 AT 검증 (ADR 0007)
+│                                    OTLP 경로의 ptt_ 검증 · 사용자 JWT·세션 검증 (ADR 0018·0026)
 ├── telemetry-collector/             com.team376.pulsemetry.telemetry.collector   ← 있다 (1절)
 │                                    OTLP 수신
 │                                    ├ masking/    서버 마스킹 — 허브 Masker 노드의 소재

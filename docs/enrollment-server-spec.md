@@ -230,7 +230,7 @@ enroll 완료의 증명이기 때문이다. 전환은 `invited` 에서만 일어
 이 서술은 로컬 배선이 성립할 때다 — grpc manifest·키링 불가 등으로 회사 직결로 강등된 설치에서는
 벤더 설정의 `Authorization` 에 `ptt_` 가 실린다(허브 `contracts/telemetry-ingest.md` §6).
 그래도 `ptt_` 는 전송 경로에 실리는 값이라 유출을 전제로 언제든 교체할 수 있어야 한다.
-`installation_token` 은 그 교체를 요청할 근거이며, 재발급 요청 외에는 키링 밖으로 나가지 않는다.
+`installation_token` 은 그 교체를 요청할 근거이며, 재발급 요청과 설치 보고(§4.5) 외에는 키링 밖으로 나가지 않는다.
 
 **봉투 분리**: `installation_id` 와 두 토큰은 "설정" 이 아니라 이 설치의 자격이므로
 manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 이유는 두 가지다.

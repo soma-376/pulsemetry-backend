@@ -10,7 +10,8 @@
 - 조직 조회와 카탈로그에 `Authorization: Bearer <access_token>`을 사용한다. owner/admin만 접근한다.
 - 인증은 enrollment-api가 발급한 JWT의 공개키 검증과 현재 사용자·세션 조회를 결합한다.
   로그아웃·폐기된 세션은 기존 AT로도 다음 요청부터 401이다.
-- 조직 경로는 인증 주체의 조직과 일치해야 한다. 타 조직 접근은 404, 일반 구성원은 403이다.
+- 조직 경로는 인증 주체의 조직과 일치해야 한다. 타 조직 경로와 일반 구성원은 403 `forbidden`이다(`OrganizationAccess`). 인증 주체의 조직이 삭제됐으면 404다.
+  조직 안의 자원(알림·작업·구성원·제품)은 다른 조직의 것이면 없는 것과 같은 404다. 관리 명령(enrollment-api)은 타 조직 경로를 404로 거부한다(enrollment 명세 §12).
 - 인증 기본값은 비활성이며 이때 보호 경로를 모두 거부한다. 공개키·issuer·audience를 설정해 활성화한다.
 - PostgreSQL enrollment/telemetry_ops와 ClickHouse 분석 원천은 읽기 전용이다.
   snapshot 및 조회용 캐시만 dashboard_cache에 쓴다. 관리 명령은 enrollment-api가 담당한다.
@@ -494,8 +495,8 @@ items에 플랜 전체나 단가를 포함하지 않는다. totalCount는 검색
 | --- | --- |
 | 400 | invalid_request — 날짜·검색·커서·limit 확인 |
 | 401 | unauthenticated — 로그인/세션 갱신 |
-| 403 | forbidden — 관리자 권한 필요 |
-| 404 | not_found — 타 조직·없는 자원·계약 밖 경로 |
+| 403 | forbidden — 관리자 권한 필요·타 조직 경로 |
+| 404 | not_found — 없는 조직·없는(다른 조직의) 자원·계약 밖 경로 |
 | 405 | method_not_allowed |
 | 409 | snapshot_expired — 동일 조건 첫 페이지부터 재조회 |
 | 500 | internal_error |
