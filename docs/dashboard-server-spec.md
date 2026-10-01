@@ -47,6 +47,8 @@
 | `/vendors/{vendorId}` | snapshotId(선택 — 목록의 기준 시각을 쓴다) | VendorResponse |
 | `/installations` | policyStatus=applied·outdated·unknown, limit=20(최대 100), cursor, snapshotId | InstallationsResponse |
 | `/operations/{operationId}` | 없음 | OperationResponse |
+| `/alerts` | status=unacknowledged·acknowledged·all, category=security·cost, limit=20(최대 100), cursor, snapshotId(현재 상태 토큰) | AlertsResponse — 아래 "알림" |
+| `/alerts/{alertId}` | 없음 | AlertResponse |
 
 기간은 필수 `startDate`, `endDate` (`YYYY-MM-DD`, 종료일 포함, 1~366일)와 선택 `timeZone`이다.
 시간대는 `Asia/Seoul`만 지원하며 생략 시에도 같은 값이다.
@@ -123,7 +125,7 @@ type ProductRef = { kind: string | null; displayName: string | null };
 - 환산 비용과 실제 청구액은 별개다. 개요·팀의 실제 청구액은 인보이스 원천이 없어 null이다. 설정의 종량 지출은 벤더 청구 누계(ADR 0050, §7.2)다.
 - 최근 수신만으로 수집 정상·장애를 확정하지 않는다. unknown/empty를 정상으로 바꾸지 않는다.
 - 좌석은 좌석 원장(ADR 0048)의 값이다 — 계약의 구매 수량이 아니다. 원장은 기준 시각으로 다시 세우고 제품 단위로 가용성을 낸다(아래 "좌석 원장 조회"). 회수·복원은 enrollment-api의 명령이다(ADR 0049).
-- 기존 설치로의 정책 배포는 capability=false 다. 알림 규칙은 저장·켜기만 되고 평가 결과는 아직 없다(아래 "알림 규칙"). 기존 설치는 새 정책을 서버가 밀어 넣지 않고
+- 기존 설치로의 정책 배포는 capability=false 다. 알림은 켜진 규칙을 이 앱의 주기 작업이 평가한 결과다(아래 "알림"). 기존 설치는 새 정책을 서버가 밀어 넣지 않고
   설치 보고의 응답으로 알고 스스로 받는다(enrollment 명세 §4.5). 관리자가 할 수 있는 것은 아래 "정책 적용 현황과 업데이트 안내"의 확인 요청 메일뿐이다.
 
 ### 정책 적용 현황과 업데이트 안내 (ADR 0043)
@@ -192,7 +194,59 @@ type ProductRef = { kind: string | null; displayName: string | null };
 ```
 
 - 켜진 규칙은 언제나 켤 수 있는 규칙이다 — 목록을 비우는 저장은 그 목록에 기대는 규칙이 켜져 있으면 거절된다.
-- 평가·알림은 아직 없다. 개요 `alerts` 는 `unavailable`·`evaluation_not_configured` 그대로다. 평가는 이 앱의 주기 작업이 자기 스키마에 남기기로 정했다(ADR 0051 §5).
+- 평가와 알림은 아래 "알림"이다.
+
+### 알림 (ADR 0051 §5·§6)
+
+켜진 규칙을 이 앱의 주기 작업(`pulsemetry.dashboard.alerts.evaluation-interval`)이 조직 단위로 선점해 평가하고, 결과를 RDS `dashboard_cache.alerts`·`alert_evaluations`에
+캐시 계정으로 쓴다(snapshot 정리 대상이 아니다). 분석 원본·enrollment 는 읽기만 한다. 확인은 enrollment-api 의 명령이고 기록은 `enrollment.alert_acknowledgements` 다.
+
+| 규칙 | 평가 | 평가하지 않는 사유 |
+| --- | --- | --- |
+| `spend_spike` | 확정 대기가 지난 날 D 마다 D 로 끝나는 7일 대 그 앞 7일. 개요와 같은 snapshot·같은 환산 비용. 증가율 ≥ 0.4 면 (급증, D) 알림 하나 | `period_incomplete`(두 기간 중 하나가 완전하지 않음), `cost_not_available`, `no_previous_spend`, `period_not_settled` |
+| `model_not_allowed` | 사용량 대표 행의 `model` 이 허용 목록(정확 일치·끝의 `*` 접두사) 밖이면 위반 | 목록이 비면 그 사유(켜진 규칙의 목록은 비울 수 없다) |
+| `tool_unapproved` | `tool.result` 의 `tool_name` 이 승인 목록 밖이면 위반 | 같다 |
+| `quota_exceeded` | 켤 수 없다(근거 없음) | — |
+
+- 24시간 규칙은 대상(모델·도구 이름)마다 위반을 시간순으로 묶는다. 마지막 위반에서 24시간 안의 위반은 같은 묶음이고, 24시간 조용하면 묶음이 닫힌다(`status` `open`→`closed`).
+  묶음의 위반 수가 임계값(1) 이상이면 알림이다. 묶음이 늘면 알림의 `version` 이 오른다. 같은 사건은 다시 평가해도 하나다.
+- 평가는 지난 평가가 끝난 시각부터 확정 대기(`completeness.settle-after`) 전까지를 이어서 읽는다. 켠 뒤 처음은 급증은 켠 날의 전날, 24시간 규칙은 켠 시각의 24시간 전부터다.
+- 알림에는 무엇(모델·도구 이름, 급증의 두 기간 비용)·언제·누가(구성원 ID·계정)·몇 건만 싣는다. 본문·마스킹된 값은 싣지 않는다.
+
+**개요 `alerts`** — 조회 기간과 무관한 지금의 미확인 수. 미확인 = 임계값에 이른 알림 중 확인 기록이 없는 것.
+
+| 값 | 규칙 |
+| --- | --- |
+| `availability`·`reason` | 평가 기록이 있으면 `available`·null. 없으면 `unavailable` 과 `evaluation_not_configured`(켠 규칙 없음) 또는 `evaluation_pending`(켰지만 평가 전) |
+| `asOf` | 마지막 평가 시각. 평가 기록이 없으면 응답 시각 |
+| `unacknowledgedTotal`·`security`·`cost` | 미확인 수. `security` = 모델·도구, `cost` = 급증·한도. `total = security + cost`. unavailable 이면 null |
+
+**목록·단건** (가산 — 조직 분석 권한):
+
+```ts
+// GET O/alerts?status=unacknowledged(기본)|acknowledged|all&category=security|cost&limit=20(최대 100)&cursor&snapshotId
+type AlertsResponse = {
+  meta: CurrentMeta;                       // snapshotId 는 현재 상태 토큰
+  evaluation: { availability: "available" | "unavailable"; reason: string | null; asOf: string | null;
+    rules: { ruleId: string; enabled: boolean; evaluatedAt: string | null; status: "evaluated" | "not_evaluated" | "failed" | null;
+      reason: string | null; windowStart: string | null; windowEnd: string | null }[] };
+  alerts: Page<Alert>;                     // 최근 발생 순(occurredAt 내림차순)
+};
+type Alert = {
+  alertId: string; version: number;        // 확인 명령의 expectedVersion
+  ruleId: string; category: "security" | "cost"; status: "open" | "closed";
+  occurredAt: string; lastSeenAt: string; windowStart: string; windowEnd: string;
+  subject: string | null; eventCount: number | null; memberCount: number | null;   // 급증은 null
+  members: { memberId: string; account: string | null }[];
+  summary: Record<string, unknown>;        // 급증: currentStartDate·currentEndDate·previousStartDate·previousEndDate·currentCostUsd·previousCostUsd·increaseRatio·threshold
+                                           // 모델·도구: model|tool·events·threshold
+  acknowledgement: { acknowledgedAt: string; acknowledgedBy: string } | null;
+};
+// GET O/alerts/{alertId} → { meta, alert: Alert }. 없거나 다른 조직의 알림은 404
+```
+
+- `status`·`category` 가 허용 밖이면 400. cursor 는 같은 토큰·같은 필터의 것이어야 한다.
+- 규칙마다의 `not_evaluated` 는 "0건"이 아니다 — 화면은 사유를 보여 준다.
 
 ### 기간 완전성과 비교 (ADR 0042)
 
@@ -484,6 +538,7 @@ enrollment-api와 같은 값을 준다(local 프로필은 둘 다 true).
 | `pulsemetry.dashboard.ingest` | 수집 상태 판정의 임계값 — window·delayed-after·down-after. 셋 다 기본값이 없다(아래 "공통 헤더 수집 현황") |
 | `pulsemetry.dashboard.completeness.settle-after` | 기간 완전성의 확정 대기(`PULSEMETRY_DASHBOARD_COMPLETENESS_SETTLE_AFTER`). 기본값 없음, 0보다 크다. 데몬의 재시도 전체와 적재가 끝나는 시간보다 길게. local 1시간 |
 | `pulsemetry.dashboard.seats.stale-after` | 연결의 마지막 성공 동기화가 이보다 오래되면 그 제품의 좌석을 낡았다고 표시(`PULSEMETRY_DASHBOARD_SEATS_STALE_AFTER`, ADR 0048). 기본값 없음, 0보다 크다. enrollment-api 의 동기화 간격보다 길게. local 26시간 |
+| `pulsemetry.dashboard.alerts.evaluation-interval` · `.lease` | 알림 평가 주기와 한 조직의 평가 선점 기한(`PULSEMETRY_DASHBOARD_ALERTS_EVALUATION_INTERVAL`·`_LEASE`, ADR 0051). 기본값 없음, 0보다 크다. 선점 기한은 한 회차(급증의 snapshot 들)보다 길게. local 1분·10분 |
 | `pulsemetry.dashboard.retry-after` | 일시 장애 재시도 간격 |
 
 정확한 환경변수 이름은 [application.yaml](../apps/dashboard-api/src/main/resources/application.yaml)에 매핑돼 있다.
@@ -501,7 +556,7 @@ enrollment Flyway는 이 앱에서 실행하지 않는다. 새 원천 테이블�
 collectionPolicy.collectRawContent는 프롬프트·응답 중 하나라도 허용됐는지다. 도구 내용·API 원문은 이 선택과 별개다.
 두 플래그가 다를 때 온보딩 조회는 null로 표현해 명시적 재선택을 받는다.
 설정의 계약 좌석·월 요금은 계약의 값이고, 보유·활성 좌석과 개요의 좌석 집계는 좌석 원장의 값이다(위 "좌석 원장 조회").
-알림 평가(규칙 저장·켜기는 위 "알림 규칙")·원격 정책 갱신 완료·좌석 구독료의 실제 청구액은 구현하지 않는다(종량 지출은 §7.2 — ADR 0050). 좌석 회수·복원은 enrollment-api 명령이고 이 앱은 가능 여부와 작업 결과를 읽는다(ADR 0049).
+알림 발송(메일 등 — 알림은 저장·조회·확인뿐, 위 "알림")·원격 정책 갱신 완료·좌석 구독료의 실제 청구액은 구현하지 않는다(종량 지출은 §7.2 — ADR 0050). 좌석 회수·복원은 enrollment-api 명령이고 이 앱은 가능 여부와 작업 결과를 읽는다(ADR 0049).
 
 ## 7. 등록 제품과 계약 정정
 

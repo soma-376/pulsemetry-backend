@@ -320,6 +320,26 @@ class SeedScenarioTest {
         assertTrue(listOf(b, c).none { it.rows.containsKey("enrollment.organization_policy_settings") })
     }
 
+    @Test fun `A만 알림 규칙 셋을 켰고 사용 기록에는 허용 목록 밖 모델의 호출이 있다`() {
+        // ADR 0051: 켠 규칙은 근거가 있어야 한다 — 급증은 수집 구간 보고(A 에 있다), 모델·도구는 비지 않은 목록. 한도 초과는 켜지 않는다.
+        val rules = a.rows.getValue("enrollment.organization_alert_rules")
+        assertEquals(setOf("spend_spike", "model_not_allowed", "tool_unapproved"), rules.map { it["rule_id"] }.toSet())
+        assertTrue(rules.all { it["enabled"] == true && it["updated_at"] == "2026-09-20T15:00:00Z" })
+        assertTrue(a.rows.getValue("enrollment.installation_collection_segments").isNotEmpty())
+        val allowed = a.rows.getValue("enrollment.organization_alert_list_entries").filter { it["list_id"] == "allowed_models" }.map { it["entry"].toString() }
+        fun allowedModel(model: String) = allowed.any { if (it.endsWith("*")) model.startsWith(it.dropLast(1)) else model == it }
+        // 켠 시각 24시간 전부터의 사용 대표 행 중 허용 목록 밖 모델이 있어야 평가가 알림을 만든다.
+        val since = "2026-09-19T15:00:00Z"
+        val violating = a.events.filter { it["event_type"] == "model.response.usage" && it["source_time"].toString() >= since && !allowedModel(it["model"].toString()) }
+            .map { it["model"] }.toSet()
+        assertEquals(setOf("claude-opus-4", "o3"), violating)
+        assertTrue(listOf(b, c).none { it.rows.containsKey("enrollment.organization_alert_rules") })
+        // 프론트 fixture 도 같은 규칙·목록을 싣는다.
+        val fixture = json.readTree(encode(frontendFixture(a)))
+        assertEquals(setOf("spend_spike", "model_not_allowed", "tool_unapproved"), fixture.path("alertRules").toList().map { it.path("ruleId").asString() }.toSet())
+        assertEquals(allowed.sorted(), fixture.path("alertLists").path("allowed_models").toList().map { it.asString() })
+    }
+
     @Test fun `fixture 의 관측 매핑은 enrollment 마이그레이션의 매핑과 같다`() {
         val sql = requireNotNull(javaClass.getResourceAsStream("/db/migration/V18__vendor_catalog_observed_products.sql")).use { it.readBytes().decodeToString() }
         val pairs = Regex("""\('([a-z_]+)', '([a-z_]+)'\)""").findAll(sql).associate { it.groupValues[1] to it.groupValues[2] }
@@ -384,6 +404,12 @@ class SeedScenarioTest {
         // 조직 정책 설정은 조직과 저장한 구성원을 가리킨다. 구성원보다 먼저 지운다.
         val policies = resetStatements("A", tables + "organization_policy_settings")
         assertTrue(policies.single { "organization_policy_settings" in it }.let { policies.indexOf(it) < policies.indexOfFirst { s -> "enrollment.members " in s } })
+        // 알림 규칙·목록·확인(ADR 0051)은 구성원을 가리킨다. 항목은 목록보다, 모두 구성원보다 먼저 지운다.
+        val alerts = resetStatements("A", tables + setOf("alert_acknowledgements", "organization_alert_list_entries", "organization_alert_lists", "organization_alert_rules"))
+            .map { it.substringAfter("enrollment.").substringBefore(" ") }
+        assertTrue(alerts.indexOf("organization_alert_list_entries") < alerts.indexOf("organization_alert_lists"))
+        assertTrue(listOf("alert_acknowledgements", "organization_alert_list_entries", "organization_alert_lists", "organization_alert_rules")
+            .all { alerts.indexOf(it) in 0 until alerts.indexOf("members") })
         // 회수·복원 기록(ADR 0049)은 작업·좌석을 가리킨다. 좌석·작업보다 먼저 지운다.
         val controls = resetStatements("A", tables + setOf("seat_controls", "seat_reclaim_previews", "seat_assignments", "operations"))
             .map { it.substringAfter("enrollment.").substringBefore(" ") }

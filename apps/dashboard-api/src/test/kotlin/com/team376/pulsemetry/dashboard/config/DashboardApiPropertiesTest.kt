@@ -121,7 +121,20 @@ class DashboardApiPropertiesTest {
 		"pulsemetry.dashboard.ingest.down-after=3h",
 		"pulsemetry.dashboard.completeness.settle-after=1h",
 		"pulsemetry.dashboard.seats.stale-after=26h",
+		"pulsemetry.dashboard.alerts.evaluation-interval=1m",
+		"pulsemetry.dashboard.alerts.lease=10m",
 	)
+
+	@ParameterizedTest
+	@ValueSource(strings = ["", "0s", "-1m"])
+	@DisplayName("알림 평가 주기·선점 기한이 없거나 0 이하면 기동이 실패한다 — 기본값이 없다 (ADR 0051)")
+	fun alertSettingsAreRequired(value: String) {
+		for (key in listOf("pulsemetry.dashboard.alerts.evaluation-interval", "pulsemetry.dashboard.alerts.lease")) {
+			runner.withPropertyValues(*complete.filterNot { it.startsWith("$key=") }.toTypedArray()).run { assertThat(it).hasFailed() }
+			runner.withPropertyValues(*complete, "$key=$value").run { assertThat(it).hasFailed() }
+		}
+		runner.withPropertyValues(*complete).run { assertThat(it).hasNotFailed() }
+	}
 
 	@ParameterizedTest
 	@ValueSource(strings = ["", "0s", "-1h"])

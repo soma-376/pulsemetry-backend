@@ -121,6 +121,17 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
         // 관리자가 정책을 바꾼 날 회수 기준과 집계 보존도 저장했다(ADR 0046 — manifest 판과 따로, 설정의 판 1).
         add("enrollment.organization_policy_settings", "tenant_id" to tenant, "reclaim_idle_days" to 30, "aggregate_retention_months" to 24,
             "version" to 1, "updated_at" to policyChangedAt, "updated_by" to member(1))
+        // 같은 날 알림 규칙도 켰다(ADR 0051): 비싼 모델(Opus·o3)을 모델 허용 목록에서 빼고 비허용 모델·급증·미승인 도구 규칙을 켰다.
+        // 시드의 사용 기록에는 Opus·o3 호출이 있어 평가가 돌면 비허용 모델 알림이 생긴다. 도구 결과 행은 없어 미승인 도구는 평가만 되고 알림이 없다.
+        listOf("allowed_models" to listOf("claude-sonnet-*", "claude-haiku-*", "gpt-5", "gpt-5-mini"), "approved_tools" to listOf("Bash", "Read", "Edit", "Write"))
+            .forEach { (list, entries) ->
+                add("enrollment.organization_alert_lists", "tenant_id" to tenant, "list_id" to list, "version" to 1, "updated_at" to policyChangedAt, "updated_by" to member(1))
+                entries.forEach { add("enrollment.organization_alert_list_entries", "tenant_id" to tenant, "list_id" to list, "entry" to it) }
+            }
+        listOf("spend_spike", "model_not_allowed", "tool_unapproved").forEach { rule ->
+            add("enrollment.organization_alert_rules", "tenant_id" to tenant, "rule_id" to rule, "enabled" to true, "version" to 1,
+                "updated_at" to policyChangedAt, "updated_by" to member(1))
+        }
         listOf("claude_team" to "Claude (Anthropic)", "openai_biz" to "ChatGPT / Codex (OpenAI)",
             "copilot" to "GitHub Copilot", "cursor" to "Cursor").forEach { (kind, displayName) ->
             val vendorId = id("$name/vendor/$kind")

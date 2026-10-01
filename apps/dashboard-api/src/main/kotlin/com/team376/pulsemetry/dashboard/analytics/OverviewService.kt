@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.dashboard.analytics
 
+import com.team376.pulsemetry.dashboard.alert.AlertService
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.Axis
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.Side
 import com.team376.pulsemetry.dashboard.organization.Organization
@@ -37,6 +38,8 @@ class OverviewService(
 	private val aggregator: UsageAggregator,
 	private val references: SnapshotReferences,
 	private val seats: SeatService,
+	/** 알림 — 평가 기록의 미확인 수(ADR 0051). 조회 기간과 무관하다. */
+	private val alerts: AlertService,
 ) {
 
 	private val log = LoggerFactory.getLogger(OverviewService::class.java)
@@ -61,7 +64,7 @@ class OverviewService(
 				previous = previousTotals?.let { Usage.of(it, pricingMixed, frame.previousComplete) },
 			),
 			seats = seatsOf(frame, products),
-			alerts = OverviewResponse.Alerts(Availability.UNAVAILABLE, Availability.EVALUATION_NOT_CONFIGURED, frame.now.toString(), null, null, null),
+			alerts = alerts.overview(organization.id, frame.now),
 			trend = trendOf(frame),
 			modelMix = modelMixOf(snapshot, pricingMixed, frame.empty),
 			waste = WASTE,

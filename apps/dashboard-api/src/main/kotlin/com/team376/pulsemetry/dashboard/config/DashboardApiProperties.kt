@@ -29,6 +29,8 @@ data class DashboardApiProperties(
 	val completeness: Completeness,
 
 	val seats: Seats,
+
+	val alerts: Alerts,
 ) {
 	init {
 		require(retryAfter.toSeconds() >= 1) {
@@ -190,6 +192,19 @@ data class DashboardApiProperties(
 	) {
 		init {
 			require(!staleAfter.isNegative && !staleAfter.isZero) { "pulsemetry.dashboard.seats.stale-after 는 0보다 커야 한다: $staleAfter" }
+		}
+	}
+
+	/** 알림 평가의 운영 수치 (ADR 0051 §5). 기본값이 없다. */
+	data class Alerts(
+		/** 켜진 규칙을 평가하는 주기. 24시간 규칙의 알림이 늦게 열리는 최대 시간이다(확정 대기와 함께). */
+		val evaluationInterval: Duration,
+		/** 한 조직의 평가를 선점하는 기한. 한 회차(급증의 snapshot 들 포함)보다 길게. */
+		val lease: Duration,
+	) {
+		init {
+			require(!evaluationInterval.isNegative && !evaluationInterval.isZero) { "pulsemetry.dashboard.alerts.evaluation-interval 은 0보다 커야 한다: $evaluationInterval" }
+			require(!lease.isNegative && !lease.isZero) { "pulsemetry.dashboard.alerts.lease 는 0보다 커야 한다: $lease" }
 		}
 	}
 

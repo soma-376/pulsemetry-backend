@@ -815,6 +815,7 @@ POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`, 8~128자)를 보낸다.
 | `POST /vendors/{vendorId}/seats/import` | `{mode:"preview"|"apply",csv}` | 200 `{import,provisional}` — 적용에 행 오류가 있으면 422 `seat_import_invalid` |
 | `PATCH /settings/alert-rules/{ruleId}` | `{expectedVersion,enabled}` | 200 AlertRule — 아래 "알림 규칙과 목록" |
 | `PUT /settings/alert-lists/{listId}` | `{expectedVersion,entries}` | 200 `{list,alertRules}` — 전체 교체 |
+| `POST /alerts/{alertId}/acknowledge` | `{expectedVersion}` | 200 `{alertId,version,acknowledgedAt,acknowledgedBy}` — 알림 확인 |
 
 팀 배정은 최대 100명, 전체 검증 후 한 트랜잭션으로 적용한다. `teamId:null`은 배정 해제다.
 효력 시각은 서버 시각이며 과거 ClickHouse 팩트는 바꾸지 않는다.
@@ -1125,7 +1126,7 @@ type ReclaimPreview = {
 
 ### 알림 규칙과 목록 (ADR 0051)
 
-알림 규칙 네 개의 켜기·끄기와, 규칙이 기대는 두 목록의 전체 교체다. 평가·알림·확인은 이 절에 없다.
+알림 규칙 네 개의 켜기·끄기와, 규칙이 기대는 두 목록의 전체 교체, 알림 확인이다. 평가와 알림 조회는 dashboard-api(대시보드 명세 "알림")다.
 두 명령은 PATCH·PUT 이라 `Idempotency-Key` 를 받지 않는다(판이 재시도를 막는다). 같은 조직 행을 잠가 직렬화한다.
 
 ```ts
@@ -1154,6 +1155,9 @@ type AlertList = { listId: "allowed_models" | "approved_tools"; version: number;
   그 밖의 자리의 `*`·`*` 하나뿐인 항목은 거부한다. 어기면 400 `invalid_request`(필드 `entries`). 응답의 `entries` 는 코드 포인트 순서다.
 - 내용이 같은 교체는 판을 올리지 않는다. 켜진 규칙이 기대는 목록을 비우면 422 `alert_list_in_use`(필드 `entries`) — 규칙을 먼저 끈다.
 - producer 가 가린 도구 이름(`mcp_tool`)은 그 이름 그대로 대조된다. 개별 MCP 도구는 승인할 수 없다.
+- **알림 확인**(`POST /alerts/{alertId}/acknowledge`): 알림은 dashboard-api 의 평가 기록(`dashboard_cache.alerts`)이고, 이 명령이 그 표를 읽어 그 조직의 임계값에 이른 알림인지 본다
+  (아니면 404 `not_found` — UUID 가 아닌 ID 도 같다). `expectedVersion` 은 알림의 지금 판이다(다르면 409 `version_conflict` — 그 사이 묶음이 늘었다).
+  이미 확인한 알림은 처음 확인한 기록을 그대로 돌려준다(멱등). 확인을 되돌리는 명령은 없다. 기록은 `enrollment.alert_acknowledgements` 다.
 
 ### 조회·관리 오류
 

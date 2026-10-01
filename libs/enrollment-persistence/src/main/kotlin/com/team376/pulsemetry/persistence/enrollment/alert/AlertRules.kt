@@ -33,6 +33,9 @@ data class AlertRuleState(
 /** 모델 허용 목록·승인 도구 목록 (ADR 0051 §2). 저장한 적 없는 목록은 비어 있고 판 0 이다. 항목은 코드 포인트 순서다. */
 data class AlertList(val listId: String, val version: Long, val entries: List<String>, val updatedAt: Instant?)
 
+/** 확인한 알림 (ADR 0051 §6). [version] 은 확인할 때 본 알림의 판이다. */
+data class AlertAcknowledgement(val alertId: UUID, val version: Long, val acknowledgedBy: UUID, val acknowledgedAt: Instant)
+
 /** 알림 규칙·목록 읽기와 켜기 판정 (ADR 0051). 명령(enrollment-api)과 설정 조회(dashboard-api)가 같은 판정을 쓴다. */
 object AlertRules {
 	const val SPEND_SPIKE = "spend_spike"
@@ -162,6 +165,29 @@ class AlertRuleStore(private val jdbc: JdbcClient, manager: PlatformTransactionM
 		}
 		AlertRules.lists(jdbc, tenant).getValue(listId) to AlertRules.rules(jdbc, tenant)
 	}
+
+	/**
+	 * 알림을 확인한다 (ADR 0051 §6). 알림은 dashboard-api 의 평가 기록(`dashboard_cache.alerts`)을 읽어 그 조직의 것인지 본다 — 없거나 다른 조직이면 404.
+	 * 이미 확인했으면 그 기록을 그대로 돌려준다(멱등). 아니면 [expectedVersion] 이 지금 알림의 판이어야 한다(409 — 그 사이 묶음이 늘었다).
+	 */
+	fun acknowledge(tenant: UUID, actor: UUID, alertId: UUID, expectedVersion: Long): AlertAcknowledgement = write {
+		lockOrganization(tenant, actor)
+		val version = jdbc.sql("SELECT version FROM dashboard_cache.alerts WHERE alert_id = :id AND tenant_id = :tenant AND qualified")
+			.param("id", alertId).param("tenant", tenant).query(Long::class.java).optional().orElse(null) ?: fail("not_found", 404)
+		val existing = acknowledgement(tenant, alertId)
+		if (existing != null) return@write existing
+		if (expectedVersion != version) fail("version_conflict", 409, "expectedVersion")
+		jdbc.sql("""INSERT INTO enrollment.alert_acknowledgements (tenant_id, alert_id, alert_version, acknowledged_by, acknowledged_at)
+				VALUES (:tenant, :id, :version, :actor, :now)""")
+			.param("tenant", tenant).param("id", alertId).param("version", version).param("actor", actor).param("now", Timestamp.from(now())).update()
+		acknowledgement(tenant, alertId)!!
+	}
+
+	private fun acknowledgement(tenant: UUID, alertId: UUID): AlertAcknowledgement? =
+		jdbc.sql("SELECT alert_version, acknowledged_by, acknowledged_at FROM enrollment.alert_acknowledgements WHERE tenant_id = :tenant AND alert_id = :id")
+			.param("tenant", tenant).param("id", alertId)
+			.query { rs, _ -> AlertAcknowledgement(alertId, rs.getLong("alert_version"), rs.getObject("acknowledged_by", UUID::class.java), rs.getTimestamp("acknowledged_at").toInstant()) }
+			.optional().orElse(null)
 
 	/** 활성 조직의 owner·admin 인지 DB 에서 다시 확인하고 조직 행을 잠근다. */
 	private fun lockOrganization(tenant: UUID, actor: UUID) {

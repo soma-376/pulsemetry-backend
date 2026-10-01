@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.dashboard.config
 
+import com.team376.pulsemetry.dashboard.alert.AlertService
 import com.team376.pulsemetry.dashboard.analytics.AnalyticsFrames
 import com.team376.pulsemetry.dashboard.analytics.ComparisonPolicy
 import com.team376.pulsemetry.dashboard.analytics.OrganizationPolicies
@@ -167,6 +168,6 @@ class AnalyticsConfig {
 	)
 
 	@Bean
-	fun overviewService(frames: AnalyticsFrames, aggregator: UsageAggregator, references: SnapshotReferences, seats: SeatService): OverviewService =
-		OverviewService(frames, aggregator, references, seats)
+	fun overviewService(frames: AnalyticsFrames, aggregator: UsageAggregator, references: SnapshotReferences, seats: SeatService, alerts: AlertService): OverviewService =
+		OverviewService(frames, aggregator, references, seats, alerts)
 }

@@ -45,6 +45,8 @@ object SourceFixtures {
 		val pricingVersion: String? = null,
 		val receivedTime: Instant = sourceTime,
 		val qualityFlags: List<String> = emptyList(),
+		/** `usage = false` 인 도구 결과 행의 도구 이름(ADR 0051 미승인 도구). */
+		val toolName: String? = null,
 	)
 
 	fun insertEvents(tenantId: UUID, vararg events: Event) {
@@ -82,6 +84,7 @@ object SourceFixtures {
 				"cost_estimated_usd" to event.costEstimatedUsd,
 				"pricing_version" to event.pricingVersion,
 				"quality_flags" to event.qualityFlags,
+				"tool_name" to event.toolName,
 			)
 		}
 		DashboardTestStores.clickHouseAdmin("INSERT INTO default.telemetry_events FORMAT JSONEachRow\n$lines")

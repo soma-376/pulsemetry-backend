@@ -10,6 +10,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -18,7 +19,7 @@ import tools.jackson.databind.JsonNode
 import java.util.UUID
 
 /**
- * 알림 규칙의 켜기·끄기와 모델·도구 목록의 교체 (ADR 0051 §3). 평가·알림은 여기 없다.
+ * 알림 규칙의 켜기·끄기와 모델·도구 목록의 교체 (ADR 0051 §3), 알림 확인(§6). 평가는 dashboard-api 의 주기 작업이 한다.
  *
  * - 규칙 응답은 설정 조회의 `alertRules` 항목과 같은 모양이다. 근거가 없는 규칙을 켜면 422 `alert_rule_unavailable` 이고 `details.reason` 이 사유다.
  * - 목록 응답은 `{list, alertRules}` — 목록을 채우면 기대는 규칙이 켤 수 있게 되므로 네 규칙의 현재 상태를 같이 준다.
@@ -26,10 +27,10 @@ import java.util.UUID
  */
 @RestController
 @ConditionalOnProperty(prefix = "pulsemetry.management", name = ["enabled"], havingValue = "true")
-@RequestMapping("/api/v1/organizations/{organizationId}/settings")
+@RequestMapping("/api/v1/organizations/{organizationId}")
 class AlertRuleController(private val auth: UserAuthService, private val store: AlertRuleStore) {
 
-    @PatchMapping("/alert-rules/{ruleId}")
+    @PatchMapping("/settings/alert-rules/{ruleId}")
     fun rule(@PathVariable organizationId: UUID, @PathVariable ruleId: String, @RequestBody body: JsonNode, request: HttpServletRequest): ResponseEntity<*> {
         val actor = managementActor(auth, organizationId, request)
         val expected = expectedVersion(body)
@@ -38,13 +39,23 @@ class AlertRuleController(private val auth: UserAuthService, private val store: 
         return ResponseEntity.ok().header("Cache-Control", "no-store").body(wire(rule))
     }
 
-    @PutMapping("/alert-lists/{listId}")
+    @PutMapping("/settings/alert-lists/{listId}")
     fun list(@PathVariable organizationId: UUID, @PathVariable listId: String, @RequestBody body: JsonNode, request: HttpServletRequest): ResponseEntity<*> {
         val actor = managementActor(auth, organizationId, request)
         val expected = expectedVersion(body)
         val entries = body.path("entries").takeIf { it.isArray && it.toList().all { entry -> entry.isString } }?.toList()?.map { it.asString() } ?: invalid("entries")
         val (list, rules) = store.replaceList(organizationId, actor, listId, expected, entries)
         return ResponseEntity.ok().header("Cache-Control", "no-store").body(mapOf("list" to wire(list), "alertRules" to rules.map(::wire)))
+    }
+
+    /** 알림 확인 (ADR 0051 §6). 이미 확인한 알림은 그 기록을 그대로 돌려준다 — 다시 보내도 같다. */
+    @PostMapping("/alerts/{alertId}/acknowledge")
+    fun acknowledge(@PathVariable organizationId: UUID, @PathVariable alertId: String, @RequestBody body: JsonNode, request: HttpServletRequest): ResponseEntity<*> {
+        val actor = managementActor(auth, organizationId, request)
+        val id = runCatching { UUID.fromString(alertId) }.getOrNull() ?: throw ManagementException("not_found", 404)
+        val ack = store.acknowledge(organizationId, actor, id, expectedVersion(body))
+        return ResponseEntity.ok().header("Cache-Control", "no-store").body(linkedMapOf("alertId" to ack.alertId.toString(), "version" to ack.version,
+            "acknowledgedAt" to ack.acknowledgedAt.toString(), "acknowledgedBy" to ack.acknowledgedBy.toString()))
     }
 
     private fun expectedVersion(body: JsonNode): Long =

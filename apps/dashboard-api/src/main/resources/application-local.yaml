@@ -61,3 +61,7 @@ pulsemetry:
     # 로컬에는 벤더 연결이 없다(수동 기록만) — 연결을 켜 볼 때 동기화 간격보다 길게 둔다.
     seats:
       stale-after: 26h
+    # 알림 평가(ADR 0051). 로컬은 짧게 돌린다.
+    alerts:
+      evaluation-interval: 1m
+      lease: 10m

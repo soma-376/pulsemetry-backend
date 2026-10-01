@@ -211,7 +211,10 @@ internal fun resetStatements(scenario: String, present: Set<String>): List<Strin
         .map { it to "tenant_id=$tenant" } +
         listOf("operation_targets" to "operation_id IN (SELECT id FROM enrollment.operations WHERE tenant_id=$tenant)",
         "retention_cleanup_requests" to "tenant_id=$tenant", "operations" to "tenant_id=$tenant",
-        "organization_onboarding" to "tenant_id=$tenant", "organization_policy_settings" to "tenant_id=$tenant", "management_commands" to "tenant_id=$tenant", "vendor_contract_versions" to "tenant_id=$tenant", "managed_vendors" to "tenant_id=$tenant") + listOf(
+        "organization_onboarding" to "tenant_id=$tenant", "organization_policy_settings" to "tenant_id=$tenant",
+        // 알림 확인·규칙·목록(ADR 0051)은 조직과 구성원을 가리킨다. 항목 → 목록 순서다.
+        "alert_acknowledgements" to "tenant_id=$tenant", "organization_alert_list_entries" to "tenant_id=$tenant",
+        "organization_alert_lists" to "tenant_id=$tenant", "organization_alert_rules" to "tenant_id=$tenant", "management_commands" to "tenant_id=$tenant", "vendor_contract_versions" to "tenant_id=$tenant", "managed_vendors" to "tenant_id=$tenant") + listOf(
         "user_refresh_tokens" to "session_id IN (SELECT id FROM enrollment.user_sessions WHERE member_id IN ($members))",
         "user_sessions" to "member_id IN ($members)", "user_authorization_codes" to "member_id IN ($members)",
     ) + listOf("installation_collection_segments", "installation_heartbeats", "telemetry_tokens", "installation_credentials", "installation_manifest_assignments").map { it to "installation_id IN ($installations)" } +

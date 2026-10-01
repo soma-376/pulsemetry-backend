@@ -114,6 +114,9 @@ object DashboardTestStores {
 		registry.add("pulsemetry.dashboard.ingest.down-after") { "3h" }
 		registry.add("pulsemetry.dashboard.completeness.settle-after") { "1h" }
 		registry.add("pulsemetry.dashboard.seats.stale-after") { "26h" }
+		// 주기 평가는 테스트 안에서 돌지 않게 길게 둔다 — 평가는 테스트가 직접 부른다.
+		registry.add("pulsemetry.dashboard.alerts.evaluation-interval") { "1h" }
+		registry.add("pulsemetry.dashboard.alerts.lease") { "10m" }
 
 		// 운영의 앱은 Flyway 를 끈다(enrollment-api 가 소유). 테스트는 격리된 컨테이너라 스키마를 만들 주체가 없으므로
 		// 여기서만 켠다 — 앱 연결이 읽기 전용이므로 Flyway 에는 자기 연결(spring.flyway.url)을 준다.
