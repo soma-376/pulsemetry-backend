@@ -80,7 +80,16 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
             "added_at":"2026-06-12T09:14:03Z"}],"has_more":false,"first_id":"user_01","last_id":"user_01"}"""))
         vendors.on("GET", "/v1/organizations/invites", reply(200, """{"data":[{"type":"invite","id":"invite_01","email":"newhire@example.test","role":"user",
             "invited_at":"2026-07-06T16:20:11Z","expires_at":"2026-07-27T16:20:11Z","accepted_at":null,"status":"pending"}],"has_more":false,"first_id":"invite_01","last_id":"invite_01"}"""))
+        // Claude Enterprise 비용 보고서(ADR 0050) — 이번 달 사용 비용 41280 센트.
+        vendors.on("GET", costReport, reply(200, """{"data":[{"starting_at":"2026-08-31T15:00:00Z","ending_at":"2026-08-31T16:00:00Z",
+            "results":[{"amount":"41280.000000","currency":"USD","cost_type":"tokens","product":"claude_code"}]}],"has_more":false,"next_page":null}"""))
     }
+
+    private val costReport = "/v1/organizations/analytics/cost_report"
+    private fun billing(vendorId: String) = jdbc.sql("""SELECT period_start, period_end, amount_usd, kind, finalized, source, fetched_at FROM enrollment.vendor_billing_periods
+            WHERE vendor_id = :v ORDER BY period_start""").param("v", vendorId)
+        .query { rs, _ -> listOf(rs.getTimestamp(1).toInstant(), rs.getTimestamp(2).toInstant(), rs.getBigDecimal(3).stripTrailingZeros().toPlainString(), rs.getString(4),
+            rs.getBoolean(5), rs.getString(6), rs.getTimestamp(7).toInstant()) }.list()
 
     private fun json(response: HttpResponse<String>): JsonNode = mapper.readTree(response.body())
 
@@ -205,4 +214,44 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
 
     private fun currentVersion(vendorId: String): Long = jdbc.sql("SELECT max(version) FROM enrollment.vendor_contract_versions WHERE vendor_id = :id")
         .param("id", vendorId).query(Long::class.java).single()
+
+    @Test fun `청구 누계 — 같은 실행이 좌석 목록 뒤에 이번 달(서울) 사용 비용을 읽어 저장하고, 청구 API 가 없는 커넥터는 읽지 않는다`() {
+        val setup = connectTwo()
+        assertThat(synchronizer.runOnce()).isEqualTo(SeatSynchronizer.Round(applied = 2, failed = 0))
+        // 시계 2026-09-09T12:00Z = 서울 9월 9일 → 기간은 서울 9월 1일 0시(= 8월 31일 15시 UTC)부터 지금까지.
+        val monthStart = Instant.parse("2026-08-31T15:00:00Z")
+        assertThat(billing(setup.claude)).containsExactly(listOf(monthStart, clock.now, "412.8", "usage_cost", false, "connector", clock.now))
+        assertThat(billing(setup.copilot)).describedAs("Copilot 은 청구 API 가 없다").isEmpty()
+        with(vendors.requests(costReport).single()) {
+            assertThat(listOf(param("starting_at"), param("ending_at"), param("bucket_width"), header("x-api-key"))).containsExactly("2026-08-31T15:00:00Z", clock.now.toString(), "1h", secret)
+        }
+        val claude = connections.view(tenant, setup.claude).connection!!
+        assertThat(claude.billing!!.let { it.status to it.lastSucceededAt }).isEqualTo("succeeded" to clock.now.toString())
+        assertThat(connections.view(tenant, setup.copilot).connection!!.billing).describedAs("청구를 구현하지 않은 커넥터에는 칸이 없다").isNull()
+
+        // 같은 기간을 다시 읽으면 덮는다(벤더가 고칠 수 있는 값).
+        vendors.on("GET", costReport, reply(200, """{"data":[{"results":[{"amount":"50000","currency":"USD"}]}],"has_more":false}"""))
+        clock.now = clock.now.plus(Duration.ofHours(7))
+        synchronizer.runOnce()
+        assertThat(billing(setup.claude).map { it[0] to it[2] }).containsExactly(monthStart to "500")
+    }
+
+    @Test fun `청구 읽기의 실패는 좌석 동기화를 실패로 만들지 않고 마지막 누계를 남기며, 좌석 목록이 실패해도 청구는 읽는다`() {
+        val setup = connectTwo()
+        synchronizer.runOnce()
+        vendors.on("GET", costReport, reply(403, """{"type":"error","error":{"type":"permission_error","message":"missing read:analytics"}}"""))
+        clock.now = clock.now.plus(Duration.ofHours(7))
+        assertThat(synchronizer.runOnce()).describedAs("좌석은 둘 다 반영됐다").isEqualTo(SeatSynchronizer.Round(applied = 2, failed = 0))
+        assertThat(billing(setup.claude).map { it[2] }).containsExactly("412.8")
+        val failing = connections.view(tenant, setup.claude).connection!!
+        assertThat(listOf(failing.billing!!.status, failing.billing!!.lastError, failing.sync.status)).containsExactly("failing", "insufficient_permission", "succeeded")
+
+        // 좌석 목록이 일시 장애여도 같은 실행이 청구를 읽는다.
+        vendors.on("GET", "/v1/organizations/users", reply(503, "{}"))
+        vendors.on("GET", costReport, reply(200, """{"data":[],"has_more":false}"""))
+        clock.now = clock.now.plus(Duration.ofHours(7))
+        assertThat(synchronizer.runOnce()).isEqualTo(SeatSynchronizer.Round(applied = 1, failed = 1))
+        assertThat(billing(setup.claude).map { it[2] }).describedAs("이번 달 사용이 없으면 0 이다(벤더가 0 을 줬다)").containsExactly("0")
+        assertThat(connections.view(tenant, setup.claude).connection!!.let { it.billing!!.status to it.sync.status }).isEqualTo("succeeded" to "failing")
+    }
 }

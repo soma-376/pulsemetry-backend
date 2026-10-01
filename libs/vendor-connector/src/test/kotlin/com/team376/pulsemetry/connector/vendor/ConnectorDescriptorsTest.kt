@@ -34,9 +34,9 @@ class ConnectorDescriptorsTest {
 		val actual = catalog.associateWith { (product, plan) -> ConnectorDescriptors.forPlan(product, plan)?.supported }.filterValues { it != null }
 		assertThat(actual).isEqualTo(expected)
 		assertThat(ConnectorDescriptors.forPlan("copilot", null)).isNull()
-		// 이 저장소가 구현한 기능(ADR 0049): 해제는 넷, 복원은 Copilot·Gemini 뿐이고 청구는 아직이다.
+		// 이 저장소가 구현한 기능(ADR 0049·0050): 해제는 넷, 복원은 Copilot·Gemini, 청구는 Claude Enterprise·Cursor Enterprise.
 		assertThat(ConnectorDescriptors.ALL.associate { it.id to it.capabilities }).isEqualTo(mapOf(
-			"claude_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE), "cursor_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE),
+			"claude_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, BILLING), "cursor_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, BILLING),
 			"copilot" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE), "gemini" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE)))
 		assertThatThrownBy { ConnectorDescriptor("x", "copilot", setOf("copilot_business"), AccountKind.GITHUB_LOGIN, emptyList(), setOf(SEAT_LIST), setOf(SEAT_LIST, BILLING)) }
 			.describedAs("문서 근거가 없는 기능은 구현으로 선언하지 못한다").isInstanceOf(IllegalArgumentException::class.java)
@@ -65,7 +65,7 @@ class ConnectorDescriptorsTest {
 		override fun listSeats(target: ConnectionTarget): List<VendorSeat> = emptyList()
 		override val release: SeatRelease? = if (withRelease) SeatRelease { _, _ -> ControlResult(ControlStatus.COMPLETED) } else null
 		override val restore: SeatRestore? = if (withRestore) SeatRestore { _, _ -> ControlResult(ControlStatus.AWAITING_ACCEPTANCE) } else null
-		override val billing: BillingReader? = if (withBilling) BillingReader { _, _, _ -> emptyList() } else null
+		override val billing: BillingReader? = if (withBilling) BillingReader { _, now, start -> BilledAmount(start, now, java.math.BigDecimal.ZERO, "USD", BilledKind.USAGE_SPEND, false) } else null
 	}
 
 	@Test
@@ -101,6 +101,10 @@ class ConnectorDescriptorsTest {
 		// 벤더가 날짜를 주지 않는 예정(Copilot 취소 응답)은 효력일을 모른다 — 다음 동기화가 채운다(ADR 0049).
 		assertThat(ControlResult(ControlStatus.SCHEDULED).effectiveOn).isNull()
 		assertThatThrownBy { ControlResult(ControlStatus.AWAITING_ACCEPTANCE, java.time.LocalDate.parse("2026-10-31")) }.isInstanceOf(IllegalArgumentException::class.java)
+		// 청구 누계는 USD 만, 비어 있지 않은 구간만(ADR 0050 — 환율 원천이 없다).
+		val start = java.time.Instant.parse("2026-09-30T15:00:00Z")
+		assertThatThrownBy { BilledAmount(start, start.plusSeconds(60), java.math.BigDecimal.ONE, "EUR", BilledKind.USAGE_COST, false) }.isInstanceOf(IllegalArgumentException::class.java)
+		assertThatThrownBy { BilledAmount(start, start, java.math.BigDecimal.ONE, "USD", BilledKind.USAGE_COST, false) }.isInstanceOf(IllegalArgumentException::class.java)
 		assertThatThrownBy { ControlResult(ControlStatus.COMPLETED, java.time.LocalDate.parse("2026-10-31")) }.isInstanceOf(IllegalArgumentException::class.java)
 		assertThatThrownBy { VendorSeat("octocat", releaseEffectiveOn = java.time.LocalDate.parse("2026-10-31")) }.isInstanceOf(IllegalArgumentException::class.java)
 		assertThat(VendorSeat("octocat", state = VendorSeatState.PENDING_RELEASE, releaseEffectiveOn = java.time.LocalDate.parse("2026-10-31")).lastActivityAt).isNull()

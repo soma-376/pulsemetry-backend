@@ -219,6 +219,8 @@ fixture의 설치 행은 API와 같은 규칙이다 — 적용 판은 설치가 
 `canNotify`는 local 프로필(관리 기능·메일 켬) 기준으로 구성원이 활성이고 적용이 확인되지 않은 설치(시드 A는 미적용 3대와 미확인 1대)다(ADR 0043).
 기존 Anthropic $1,200 / OpenAI $0 기간 약정은 호환성·0/null 회귀 검증용으로 남긴다.
 기간 약정과 좌석 계약을 연결·합산하지 않는다. 관리 벤더의 관측 지표는 카탈로그의 명시 매핑(`claude_code` → `claude_team`, `codex` → `openai_biz`)으로 잇는 관측만 쓴다(ADR 0044).
+C의 Cursor(Enterprise 계약 3석 × $40)는 벤더 연결이 있지만 기준일 0시 실행에서 좌석 목록이 일시 장애로 실패했고(좌석 없음 — `seat_sync_failing`),
+같은 실행의 청구 누계(이번 청구 주기 on-demand 지출 $137.42, 주기 시작 기준일 −12일)만 있다. 이 청구 행의 원천은 `seed`다 — **실제 청구의 증거가 아니다**(ADR 0050).
 fixture의 `seats`는 위 좌석 원장의 행이다(계정은 합성 이메일·로그인뿐). 기준일이 지나면 Copilot 동기화가 `seats.stale-after`(local 26시간)보다 오래되어
 그 제품 원장은 `seat_sync_outdated`이고, 설치 보고가 기준일 0시에 끝나므로 회수 후보는 관측 부족(`observation_incomplete`)으로 빠진다 — 정상으로 꾸미지 않는다.
 A의 Claude·OpenAI 등록 제품은 관측이 있고, Cursor·Copilot은 매핑이 없어 `unobserved`·null이다. fixture는 기준일 0시를 기준 시각으로 쓰고 최근 7·30일은 기준일 전날까지다.

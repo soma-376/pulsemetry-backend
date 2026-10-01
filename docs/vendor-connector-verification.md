@@ -9,7 +9,7 @@
 
 | 커넥터 ID | 제품·플랜 | 자격증명 | 필요한 권한 | 비밀 아닌 설정 |
 | --- | --- | --- | --- | --- |
-| `claude_enterprise` | Claude Enterprise | claude.ai 조직 설정의 Admin API 키(primary owner가 만든다) | `read:members` | 없음 |
+| `claude_enterprise` | Claude Enterprise | claude.ai 조직 설정의 Admin API 키(primary owner가 만든다) | `read:members`, 청구 누계는 `read:analytics` | 없음 |
 | `cursor_enterprise` | Cursor Enterprise | 대시보드 API Keys의 Admin API 키(`crsr_…`) | 팀 관리자 | 없음 |
 | `copilot` | Copilot Business·Enterprise | 조직 소유자의 토큰(personal access token classic 또는 OAuth 앱 토큰) | `manage_billing:copilot` 또는 `read:org` | `organization`(GitHub 조직 이름) |
 | `gemini` | Gemini Code Assist Standard·Enterprise | 서비스 계정 키(JSON 파일 전체) | `roles/billing.admin` 또는 `roles/consumerprocurement.orderAdmin`(`consumerprocurement.licensePools.enumerateLicensedUsers`) | `billingAccount`·`order`·`project`(`X-Goog-User-Project`) |
@@ -36,7 +36,8 @@ PULSEMETRY_VERIFY_CREDENTIAL_FILE=/secure/path/key.json PULSEMETRY_VERIFY_SETTIN
   ./gradlew :libs:vendor-connector:verifyVendorAccount -Pvendor=gemini
 ```
 
-출력은 좌석 수와 필드가 채워진 수뿐이다(자격증명·이메일·로그인을 찍지 않는다). 종료 코드 0 통과, 1 벤더 거절·실패(실패 코드가 찍힌다), 2 입력 오류.
+출력은 좌석 수와 필드가 채워진 수, 청구를 구현한 커넥터(Claude Enterprise·Cursor Enterprise)는 이번 기간 청구 누계(금액·종류·기간·확정 여부)뿐이다
+(자격증명·이메일·로그인을 찍지 않는다). 종료 코드 0 통과, 1 벤더 거절·실패(실패 코드가 찍힌다), 2 입력 오류.
 
 ### 기대 결과
 
@@ -46,6 +47,13 @@ PULSEMETRY_VERIFY_CREDENTIAL_FILE=/secure/path/key.json PULSEMETRY_VERIFY_SETTIN
 | `cursor_enterprise` | Cursor 대시보드의 구성원 수(제거된 구성원 제외) | `assigned` = 제거되지 않은 구성원 수, 등급·활동은 0 |
 | `copilot` | 조직 Copilot 설정의 좌석 수, `GET /orgs/{org}/copilot/billing`의 `seat_breakdown.total`·`pending_cancellation` | 좌석 수 = `total` − 담당자 없는 좌석, `pending_release` = 취소 예정 수, 이메일 0 |
 | `gemini` | Cloud 콘솔 라이선스 풀의 배정 사용자 수 | `assigned` = 배정 수, 이메일 = 배정 수 |
+
+청구 누계(ADR 0050) — 읽기만 한다.
+
+| 커넥터 | 대조할 값 | 확인할 것 |
+| --- | --- | --- |
+| `claude_enterprise` | claude.ai 조직의 사용량·비용 화면(이번 달), 인보이스(지난달 — 30일 지난 날짜) | 금액 = 이번 달(서울 1일 0시부터) 할인 뒤·크레딧 전 사용 비용. 사용량 기반 계약이 아니면 사용 크레딧만이라는 점을 evidence 문서에 적는다 |
+| `cursor_enterprise` | Cursor 대시보드의 이번 청구 주기 지출 | 금액 = 구성원 on-demand 지출(`spendCents`) 합, 기간 시작 = 대시보드의 주기 시작. 구독에 든 사용분은 빠져 있다 |
 
 값이 다르면 커넥터를 고치기 전에 evidence 문서의 해당 절을 다시 확인하고 확인일을 갱신한다.
 
@@ -58,7 +66,9 @@ PULSEMETRY_VERIFY_CREDENTIAL_FILE=/secure/path/key.json PULSEMETRY_VERIFY_SETTIN
 3. `POST O/vendors/{vendorId}/connection/verify` → `seatSource.connection.check.status = verified`.
 4. `POST O/vendors/{vendorId}/connection/sync` → 202와 작업 ID. 확인 주기가 지난 뒤 `GET O/operations/{operationId}`(dashboard-api)가 `succeeded`.
 5. 설정 조회의 그 벤더 `seatSource.connection.sync.status = succeeded`, DB `enrollment.seat_assignments`의 좌석 수가 2절의 출력과 같다.
-6. 연결을 지우고(`DELETE …/connection`, `If-Match`) 암호문 열이 비었는지 본다.
+6. 청구를 구현한 커넥터면 같은 실행 뒤 설정 조회의 그 벤더 `meteredMonthToDate`가 `available`이고 `actualBilledUsd`가 2절의 청구 누계와 같다(`source: connector`),
+   `seatSource.connection.billing.status = succeeded`. 자격증명에 청구 권한이 없으면 `billing_sync_failing`이고 좌석 동기화는 그대로 성공한다.
+7. 연결을 지우고(`DELETE …/connection`, `If-Match`) 암호문 열이 비었는지 본다.
 
 ## 4. 상태를 바꾸는 검증 — 테스트 조직 전용
 

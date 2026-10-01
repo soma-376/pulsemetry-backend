@@ -8,6 +8,7 @@ import com.team376.pulsemetry.connector.vendor.CopilotConnector
 import com.team376.pulsemetry.connector.vendor.CursorEnterpriseConnector
 import com.team376.pulsemetry.connector.vendor.GeminiConnector
 import com.team376.pulsemetry.connector.vendor.HttpPolicy
+import com.team376.pulsemetry.connector.vendor.SeatConnector
 import com.team376.pulsemetry.connector.vendor.SeatConnectors
 import com.team376.pulsemetry.connector.vendor.VendorHttp
 import com.team376.pulsemetry.enrollment.management.ManagementProperties
@@ -15,6 +16,7 @@ import com.team376.pulsemetry.persistence.enrollment.seat.CredentialCipher
 import com.team376.pulsemetry.persistence.enrollment.seat.CredentialKeyUnavailable
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatControl
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger
+import com.team376.pulsemetry.persistence.enrollment.seat.VendorBillingStore
 import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnectionStore
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
@@ -108,11 +110,12 @@ class SeatSyncConfig {
     }
 
     @Bean
-    fun seatSynchronizer(ledger: SeatLedger, connections: VendorConnectionStore, connectors: SeatConnectors, properties: VendorConnectionProperties): SeatSynchronizer {
+    fun seatSynchronizer(ledger: SeatLedger, connections: VendorConnectionStore, connectors: SeatConnectors, properties: VendorConnectionProperties,
+        jdbc: JdbcClient, manager: PlatformTransactionManager, clock: Clock): SeatSynchronizer {
         val interval = positive(properties.sync.interval, "sync.interval")
         val lease = positive(properties.sync.lease, "sync.lease")
         val worker = "enrollment-api-${ProcessHandle.current().pid()}-${UUID.randomUUID().toString().take(8)}"
-        return SeatSynchronizer(ledger, connections, connectors, interval, lease, worker)
+        return SeatSynchronizer(ledger, connections, connectors, interval, lease, worker, VendorBillingStore(jdbc, manager, clock), clock)
     }
 
     /** 회수·복원의 벤더 제어 대상을 실행한다(ADR 0049). 선점 기한은 동기화와 같은 값이다 — 호출 하나의 재시도 전체보다 길다. */
@@ -148,6 +151,9 @@ class SeatSyncConfig {
  * | 행의 암호화 키가 설정에 없음 | `credential_key_unavailable` |
  * | 목록을 원장에 넣을 수 없음(계정 키 형식·중복) | `invalid_listing` |
  * | 그 밖의 예외 | `sync_error` |
+ *
+ * 커넥터가 청구를 구현했으면 같은 실행이 좌석 목록 뒤에 청구 누계를 읽는다(ADR 0050). 결과는 연결의 청구 칸에 따로 남는다 — 청구 실패가 좌석 동기화를 실패로 만들지 않고,
+ * 좌석 목록이 실패해도 청구는 읽는다. 청구 실패 코드는 커넥터 실패 종류 또는 `billing_error`(그 밖의 예외)다.
  */
 class SeatSynchronizer(
     private val ledger: SeatLedger,
@@ -156,6 +162,8 @@ class SeatSynchronizer(
     private val interval: Duration,
     private val lease: Duration,
     private val worker: String,
+    private val billing: VendorBillingStore? = null,
+    private val clock: Clock = Clock.systemUTC(),
 ) {
     /** 한 바퀴의 결과 — 반영한 연결 수와 실패한 연결 수. 선점하지 못한 연결은 세지 않는다. */
     data class Round(val applied: Int, val failed: Int)
@@ -180,6 +188,7 @@ class SeatSynchronizer(
             log.warn("좌석 동기화를 선점하지 못했다 connection={} error={}", connectionId, error.javaClass.simpleName)
             return null
         } ?: return null
+        var billed: Pair<SeatConnector, ConnectionTarget>? = null
         val error = try {
             val (record, credential) = connections.credential(tenant, connectionId) ?: return ledger.failRun(run, "claim_lost").let { SeatLedger.SyncResult.Lost }
             val expected = try { connections.view(tenant, record.vendorId).connector?.connectorId } catch (_: Exception) { null }
@@ -187,7 +196,13 @@ class SeatSynchronizer(
             when {
                 expected != record.connector -> "plan_mismatch"
                 connector == null -> "connector_unavailable"
-                else -> return ledger.applyListing(run, connector.listSeats(ConnectionTarget(record.settings, credential)))
+                else -> {
+                    val target = ConnectionTarget(record.settings, credential)
+                    billed = connector to target
+                    val result = ledger.applyListing(run, connector.listSeats(target))
+                    readBilling(tenant, connectionId, connector, target)
+                    return result
+                }
             }
         } catch (failure: ConnectorFailure) {
             failure.kind.wire
@@ -199,11 +214,31 @@ class SeatSynchronizer(
             "sync_error"
         }
         log.info("좌석 동기화 실패 connection={} error={}", connectionId, error)
-        return if (ledger.failRun(run, error)) SeatLedger.SyncResult.Rejected(error) else SeatLedger.SyncResult.Lost
+        val result = if (ledger.failRun(run, error)) SeatLedger.SyncResult.Rejected(error) else SeatLedger.SyncResult.Lost
+        billed?.let { (connector, target) -> readBilling(tenant, connectionId, connector, target) }
+        return result
+    }
+
+    /** 청구 누계 — 기간은 조직 달력(서울)의 이번 달 시작부터(벤더가 주기를 정하면 그 주기). 실패는 연결의 청구 칸에만 남는다. */
+    private fun readBilling(tenant: UUID, connectionId: UUID, connector: SeatConnector, target: ConnectionTarget) {
+        val reader = connector.billing ?: return
+        val store = billing ?: return
+        val now = clock.instant()
+        val monthStart = now.atZone(SEOUL).toLocalDate().withDayOfMonth(1).atStartOfDay(SEOUL).toInstant()
+        try {
+            store.record(tenant, connectionId, reader.currentPeriod(target, now, monthStart))
+        } catch (failure: ConnectorFailure) {
+            log.info("청구 누계 읽기 실패 connection={} error={}", connectionId, failure.kind.wire)
+            store.fail(tenant, connectionId, failure.kind.wire)
+        } catch (error: Exception) {
+            log.warn("청구 누계 읽기가 예외로 끝났다 connection={} error={}", connectionId, error.javaClass.simpleName)
+            store.fail(tenant, connectionId, "billing_error")
+        }
     }
 
     private companion object {
         val log = LoggerFactory.getLogger(SeatSynchronizer::class.java)
+        val SEOUL: java.time.ZoneId = java.time.ZoneId.of("Asia/Seoul")
     }
 }
 

@@ -18,7 +18,12 @@ data class VendorContract(
 	val confirmedBy: String,
 )
 
-data class MeteredPeriod(val startDate: String, val endDate: String, val equivalentCostUsd: String, val actualBilledUsd: String?)
+/**
+ * 종량 지출 한 기간 (ADR 0050). [actualBilledUsd] 는 벤더 청구 누계, [equivalentCostUsd] 는 이 절에서 내지 않는다(null — 환산 비용은 개요·팀의 제품별 사용이 낸다).
+ * 가산: [billingKind](`usage_cost`·`usage_spend`), [finalized](false 면 벤더가 고칠 수 있다), [source](`connector`·`seed`), [fetchedAt](벤더에서 읽은 시각).
+ */
+data class MeteredPeriod(val startDate: String, val endDate: String, val equivalentCostUsd: String?, val actualBilledUsd: String?,
+	val billingKind: String? = null, val finalized: Boolean? = null, val source: String? = null, val fetchedAt: String? = null)
 
 data class VendorCheck(val code: String, val severity: String)
 

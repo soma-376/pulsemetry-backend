@@ -12,14 +12,16 @@ import java.net.URI
 import java.security.KeyFactory
 import java.security.Signature
 import java.security.spec.PKCS8EncodedKeySpec
+import java.math.BigDecimal
 import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
 import java.util.Base64
 
 /*
  * 벤더 좌석 커넥터 넷 (ADR 0048 §8). 요청·응답은 `docs/vendor-connector-evidence.md` 의 문서 근거를 따른다 — 근거 없는 엔드포인트·필드를 쓰지 않는다.
- * 좌석 목록·연결 확인(읽기)과, 문서가 요청·응답을 준 해제·복원(ADR 0049)을 한다. 청구는 구현하지 않았다.
+ * 좌석 목록·연결 확인(읽기)과, 문서가 요청·응답을 준 해제·복원(ADR 0049)·청구 누계(ADR 0050 — Claude Enterprise·Cursor Enterprise)를 한다.
  * 제어 결과는 벤더가 돌려준 상태 그대로다 — 요청을 받아들였다는 것을 완료로 올리지 않는다([ControlStatus]).
  * 기준 주소는 생성자로 받는다 — 모의 서버와 실서버가 같은 코드를 쓴다.
  */
@@ -63,6 +65,35 @@ class ClaudeEnterpriseConnector(private val http: VendorHttp, baseUrl: URI = URI
 		val body = http.sendJson("DELETE", URI("$base/v1/organizations/users/${segment(id)}"), headers(target), null)
 		if (text(body, "type") != "user_deleted") throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
 		ControlResult(ControlStatus.COMPLETED)
+	}
+
+	/**
+	 * 사용 비용 누계(`GET /v1/organizations/analytics/cost_report`, `read:analytics`) — 금액은 "Amount (post-discount, pre-credit) in fractional cents"
+	 * (`"41280.000000"` = $412.80), 통화는 "Currently always USD"(USD 가 아니면 응답 해석 불가). 사용량 기반 Enterprise 의 사용 비용이고 좌석 기반 Enterprise 에서는
+	 * 사용 크레딧만이다 — 좌석 구독료는 없다. 기간은 [monthStart](조직 달력의 이번 달 시작)부터 [now]까지, 한 시간 칸(`bucket_width=1h` — 서울 자정이 시 경계라
+	 * 칸이 달의 경계와 맞는다)이고 `next_page` 가 없을 때까지 읽는다. 값은 30일까지 고쳐질 수 있어 확정이 아니다.
+	 */
+	override val billing = BillingReader { target, now, monthStart ->
+		var total = BigDecimal.ZERO
+		var page: String? = null
+		repeat(VendorHttp.MAX_PAGES) {
+			val query = "starting_at=" + VendorHttp.encode(monthStart.toString()) + "&ending_at=" + VendorHttp.encode(now.toString()) + "&bucket_width=1h" +
+				(page?.let { "&page=" + VendorHttp.encode(it) } ?: "")
+			val body = http.getJson(URI("$base/v1/organizations/analytics/cost_report?$query"), headers(target))
+			array(body, "data").forEach { bucket ->
+				array(bucket, "results").forEach { result ->
+					if (text(result, "currency") != "USD") throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+					val cents = text(result, "amount").toBigDecimalOrNull() ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+					total += cents
+				}
+			}
+			val more = body.path("has_more").takeIf { it.isBoolean }?.asBoolean() ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+			if (!more) return@BillingReader BilledAmount(monthStart, now, total.movePointLeft(2), "USD", BilledKind.USAGE_COST, finalized = false)
+			val next = text(body, "next_page")
+			if (next == page) throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+			page = next
+		}
+		throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
 	}
 
 	private fun pages(target: ConnectionTarget, resource: String): List<JsonNode> {
@@ -125,7 +156,41 @@ class CursorEnterpriseConnector(private val http: VendorHttp, baseUrl: URI = URI
 		}
 	}
 
+	/**
+	 * 이번 청구 주기의 사용 지출(`POST /teams/spend`) — 기간은 벤더가 정한 주기(`subscriptionCycleStart`, epoch 밀리초)부터 [now]까지다. 지난 주기를 고르는 매개변수는 없다.
+	 * 금액은 구성원마다의 `spendCents`("On-demand spend in cents for the current billing cycle (excludes included usage)") 합이다 — 구독에 든 사용분(`overallSpendCents`)은
+	 * 좌석 구독료로 이미 내는 몫이라 더하지 않는다. 단위는 센트(필드 이름의 `Cents`·`Dollars`로 USD). 페이지는 `totalPages` 까지다.
+	 */
+	override val billing = BillingReader { target, now, _ ->
+		var total = BigDecimal.ZERO
+		var cycleStart: Long? = null
+		var page = 1
+		while (page <= VendorHttp.MAX_PAGES) {
+			val body = http.sendJson("POST", URI("$base/teams/spend"), headers(target), mapOf("page" to page, "pageSize" to SPEND_PAGE_SIZE))
+			val start = body.path("subscriptionCycleStart").takeIf { it.isIntegralNumber }?.asLong() ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+			if (cycleStart != null && cycleStart != start) throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+			cycleStart = start
+			array(body, "teamMemberSpend").forEach { member ->
+				val cents = member.path("spendCents").takeIf { it.isNumber }?.decimalValue() ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+				total += cents
+			}
+			val pages = body.path("totalPages").takeIf { it.isIntegralNumber }?.asInt() ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+			if (page >= pages) {
+				val from = Instant.ofEpochMilli(start)
+				if (!from.isBefore(now)) throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+				return@BillingReader BilledAmount(from, now, total.movePointLeft(2), "USD", BilledKind.USAGE_SPEND, finalized = false)
+			}
+			page++
+		}
+		throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+	}
+
 	private fun members(target: ConnectionTarget) = array(http.getJson(URI("$base/teams/members"), headers(target)), "teamMembers")
+
+	private companion object {
+		/** 문서에 최대값이 없다. */
+		const val SPEND_PAGE_SIZE = 100
+	}
 }
 
 /**

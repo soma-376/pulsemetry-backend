@@ -110,6 +110,20 @@ class SeedScenarioTest {
         assertNull(c.rows["enrollment.seat_assignments"])
     }
 
+    @Test fun `C의 청구 누계는 시드 원천이고 계약액과 다르며, 같은 실행의 좌석 목록은 실패해 좌석이 없다`() {
+        val billing = c.rows.getValue("enrollment.vendor_billing_periods").single()
+        val connection = c.rows.getValue("enrollment.vendor_connections").single()
+        val contract = c.rows.getValue("enrollment.vendor_contract_versions").single()["contract"].toString()
+        assertEquals(listOf("seed", null, "usage_spend", false), listOf(billing["source"], billing["connection_id"], billing["kind"], billing["finalized"]))
+        assertTrue(billing["period_start"].toString() < billing["period_end"].toString())
+        assertEquals(connection["last_billing_succeeded_at"], billing["fetched_at"])
+        // 청구 누계는 계약의 월 요금(120)과 다른 값이다 — 계약액을 복사하지 않는다.
+        assertTrue("\"monthlySeatFeeUsd\":\"120\"" in contract && billing["amount_usd"] != "120")
+        assertEquals(listOf("cursor_enterprise", null, "vendor_unavailable"), listOf(connection["connector"], connection["last_sync_succeeded_at"], connection["last_sync_error"]))
+        assertNull(c.rows["enrollment.seat_assignments"])
+        assertNull(a.rows["enrollment.vendor_billing_periods"])
+    }
+
     @Test fun `같은 기준일은 동일하고 조직과 다른 기준일은 구분된다`() {
         assertEquals(a.fingerprint, scenario("A", date).fingerprint)
         assertEquals(3, listOf(a, b, c).map { it.tenantId }.distinct().size)

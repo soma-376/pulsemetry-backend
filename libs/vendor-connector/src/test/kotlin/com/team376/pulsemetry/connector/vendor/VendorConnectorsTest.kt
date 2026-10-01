@@ -237,10 +237,11 @@ class VendorConnectorsTest {
 	@Test
 	fun `구현한 커넥터는 설명과 맞아 조립되고, 설명의 기능은 벤더 문서 근거 안이다`() {
 		val connectors = SeatConnectors(listOf(ClaudeEnterpriseConnector(http), CursorEnterpriseConnector(http), CopilotConnector(http), GeminiConnector(http)))
-		// ADR 0049: 해제는 넷 모두, 복원은 요청·응답이 문서에 다 있는 Copilot·Gemini 만(Claude 재초대는 역할을 정해야 하고 Cursor 는 API 가 없다). 청구는 아직이다.
+		// ADR 0049: 해제는 넷 모두, 복원은 요청·응답이 문서에 다 있는 Copilot·Gemini 만(Claude 재초대는 역할을 정해야 하고 Cursor 는 API 가 없다).
+		// ADR 0050: 청구는 문서가 비용·지출 API 를 준 Claude Enterprise·Cursor Enterprise 만.
 		assertThat(ConnectorDescriptors.ALL.associate { it.id to connectors.byId(it.id)?.implemented() }).isEqualTo(mapOf(
-			"claude_enterprise" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE),
-			"cursor_enterprise" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE),
+			"claude_enterprise" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.BILLING),
+			"cursor_enterprise" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.BILLING),
 			"copilot" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE),
 			"gemini" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE),
 		))
@@ -320,5 +321,53 @@ class VendorConnectorsTest {
 		assertThat((server.requests(unassign) + server.requests(assign)).map { Triple(it.path, mapper.readTree(it.body).path("usernames").toList().map { n -> n.asString() }, it.header("Authorization")) })
 			.containsExactly(Triple(unassign, listOf("dana@example.test"), "Bearer ya29.fake-access"), Triple(assign, listOf("dana@example.test"), "Bearer ya29.fake-access"))
 		assertThat(failure { connector.release!!.release(settings, VendorAccount("dana@example.test", null)) }.kind).isEqualTo(ConnectorFailure.Kind.INSUFFICIENT_PERMISSION)
+	}
+
+	// ---- 청구 누계 (ADR 0050 — 좌석 구독료가 아니다) ----
+
+	@Test
+	fun `Claude — 비용 보고서를 이번 달 시작부터 한 시간 칸으로 끝까지 읽고 센트 금액을 달러로 더한다, USD 가 아니면 해석 불가다`() {
+		val start = Instant.parse("2026-09-30T15:00:00Z")
+		val now = Instant.parse("2026-10-01T03:20:00Z")
+		val report = "/v1/organizations/analytics/cost_report"
+		server.on("GET", report,
+			reply(200, """{"data":[{"starting_at":"2026-09-30T15:00:00Z","ending_at":"2026-09-30T16:00:00Z","results":[
+				{"amount":"41280.000000","cost_type":"tokens","currency":"USD","list_amount":"50000","model":"claude-opus-5","product":"chat","requests":3},
+				{"amount":"12.5","cost_type":"code_execution","currency":"USD","list_amount":"12.5","model":null,"product":"claude_code","requests":1}]}],
+				"data_refreshed_at":"2026-10-01T03:00:00Z","has_more":true,"next_page":"p2","organization_id":"org_1"}"""),
+			reply(200, """{"data":[{"starting_at":"2026-10-01T00:00:00Z","ending_at":"2026-10-01T01:00:00Z","results":[{"amount":"100","currency":"USD"}]},
+				{"starting_at":"2026-10-01T01:00:00Z","ending_at":"2026-10-01T02:00:00Z","results":[]}],"has_more":false,"next_page":null}"""))
+		val billed = ClaudeEnterpriseConnector(http, server.base).billing.currentPeriod(target(), now, start)
+		// (41280 + 12.5 + 100) 센트 = $413.925 — 할인 뒤·크레딧 전 사용 비용, 30일까지 고쳐질 수 있다.
+		assertThat(billed.amount).isEqualByComparingTo("413.925")
+		assertThat(billed.copy(amount = java.math.BigDecimal.ZERO)).isEqualTo(BilledAmount(start, now, java.math.BigDecimal.ZERO, "USD", BilledKind.USAGE_COST, finalized = false))
+		val requests = server.requests(report)
+		assertThat(requests.map { Triple(it.param("starting_at"), it.param("bucket_width"), it.param("page")) })
+			.containsExactly(Triple("2026-09-30T15:00:00Z", "1h", null), Triple("2026-09-30T15:00:00Z", "1h", "p2"))
+		assertThat(requests.map { it.param("ending_at") }).containsOnly("2026-10-01T03:20:00Z")
+		server.on("GET", report, reply(200, """{"data":[{"results":[{"amount":"1","currency":"EUR"}]}],"has_more":false}"""))
+		assertThat(failure { ClaudeEnterpriseConnector(http, server.base).billing.currentPeriod(target(), now, start) }.kind).isEqualTo(ConnectorFailure.Kind.INVALID_RESPONSE)
+		server.on("GET", report, reply(403, """{"type":"error","error":{"type":"permission_error","message":"missing read:analytics"}}"""))
+		assertThat(failure { ClaudeEnterpriseConnector(http, server.base).billing.currentPeriod(target(), now, start) }.kind).isEqualTo(ConnectorFailure.Kind.INSUFFICIENT_PERMISSION)
+	}
+
+	@Test
+	fun `Cursor — 이번 청구 주기의 on-demand 지출(spendCents)만 모든 페이지에서 더하고 기간은 벤더의 주기 시작부터다`() {
+		val now = Instant.parse("2026-10-01T03:20:00Z")
+		server.on("POST", "/teams/spend",
+			reply(200, """{"teamMemberSpend":[{"userId":"user_1","spendCents":2450.125487,"overallSpendCents":9000.5,"fastPremiumRequests":1250,"name":"Alex","email":"dev@example.test","role":"member"}],
+				"subscriptionCycleStart":1758931200000,"totalMembers":2,"totalPages":2}"""),
+			reply(200, """{"teamMemberSpend":[{"userId":"user_2","spendCents":0,"overallSpendCents":1200,"email":"kim@example.test","role":"member"}],
+				"subscriptionCycleStart":1758931200000,"totalMembers":2,"totalPages":2}"""))
+		val billed = CursorEnterpriseConnector(http, server.base).billing.currentPeriod(target(), now, Instant.parse("2026-09-30T15:00:00Z"))
+		// 구독에 든 사용분(overallSpendCents)은 더하지 않는다 — 2450.125487 센트.
+		assertThat(billed.amount).isEqualByComparingTo("24.50125487")
+		assertThat(billed.copy(amount = java.math.BigDecimal.ZERO))
+			.isEqualTo(BilledAmount(Instant.ofEpochMilli(1758931200000), now, java.math.BigDecimal.ZERO, "USD", BilledKind.USAGE_SPEND, finalized = false))
+		val mapper = JsonMapper.builder().build()
+		assertThat(server.requests("/teams/spend").map { mapper.readTree(it.body).let { b -> b.path("page").asInt() to b.path("pageSize").asInt() } }).containsExactly(1 to 100, 2 to 100)
+		assertThat(server.requests("/teams/spend").map { it.header("Authorization") }).containsOnly("Basic " + Base64.getEncoder().encodeToString("$secret:".toByteArray()))
+		server.on("POST", "/teams/spend", reply(200, """{"teamMemberSpend":[{"userId":"user_1","overallSpendCents":1}],"subscriptionCycleStart":1758931200000,"totalPages":1}"""))
+		assertThat(failure { CursorEnterpriseConnector(http, server.base).billing.currentPeriod(target(), now, now) }.kind).isEqualTo(ConnectorFailure.Kind.INVALID_RESPONSE)
 	}
 }

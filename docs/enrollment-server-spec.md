@@ -956,6 +956,7 @@ type SeatSource = {
     check: { status: "unverified" | "verified" | "invalid_credentials" | "insufficient_permission" | "unavailable"; checkedAt: string | null };
     sync: { status: "pending" | "succeeded" | "failing"; lastSucceededAt: string | null; lastFailedAt: string | null; lastError: string | null };
     createdAt: string; updatedAt: string;
+    billing: { status: "pending" | "succeeded" | "failing"; lastSucceededAt: string | null; lastFailedAt: string | null; lastError: string | null } | null;  // 가산(ADR 0050). 청구를 구현하지 않은 커넥터는 null
   } | null;
 };
 type Capability = "seat_list" | "seat_release" | "seat_restore" | "billing";
@@ -963,13 +964,13 @@ type Capability = "seat_list" | "seat_release" | "seat_restore" | "billing";
 
 | 커넥터 | 제품 · 플랜 | 계정 | settingKeys | 자격증명 | supported | capabilities(구현) |
 | --- | --- | --- | --- | --- | --- | --- |
-| `claude_enterprise` | `claude_team` · `enterprise` | 이메일 | 없음 | Admin API 키(`read:members`, 해제는 `write:members`) | 조회·해제·복원·청구 | 조회·해제 |
-| `cursor_enterprise` | `cursor` · `cursor_enterprise` | 이메일 | 없음 | Admin API 키 | 조회·해제·청구 | 조회·해제 |
+| `claude_enterprise` | `claude_team` · `enterprise` | 이메일 | 없음 | Admin API 키(`read:members`, 해제는 `write:members`, 청구는 `read:analytics`) | 조회·해제·복원·청구 | 조회·해제·청구 |
+| `cursor_enterprise` | `cursor` · `cursor_enterprise` | 이메일 | 없음 | Admin API 키 | 조회·해제·청구 | 조회·해제·청구 |
 | `copilot` | `copilot` · `copilot_business`·`copilot_enterprise` | GitHub 로그인 | `organization` | 토큰(`manage_billing:copilot` 또는 `read:org`) | 조회·해제·복원 | 조회·해제·복원 |
 | `gemini` | `gemini` · `gemini_standard`·`gemini_enterprise` | 이메일 | `billingAccount`·`order`·`project` | 서비스 계정 키 JSON 전체 | 조회·해제·복원 | 조회·해제·복원 |
 
-`supported`는 `docs/vendor-connector-evidence.md`의 결론을 옮긴 것이다. 구현은 좌석 목록(과 연결 확인), 해제(넷), 복원(Copilot·Gemini)이다 — Claude Enterprise 재초대는
-역할을 정해야 해 관리자 조치로 남기고(ADR 0049 §2), 청구는 아직이다. 그 밖의 제품·플랜(Claude Team, OpenAI, Cursor Teams, `other`)은 커넥터가 없고 수동 원천이다.
+`supported`는 `docs/vendor-connector-evidence.md`의 결론을 옮긴 것이다. 구현은 좌석 목록(과 연결 확인), 해제(넷), 복원(Copilot·Gemini), 청구 누계(Claude Enterprise·Cursor Enterprise, ADR 0050)다 —
+Claude Enterprise 재초대는 역할을 정해야 해 관리자 조치로 남긴다(ADR 0049 §2). 그 밖의 제품·플랜(Claude Team, OpenAI, Cursor Teams, `other`)은 커넥터가 없고 수동 원천이다.
 
 - 커넥터는 등록 제품의 **현재 계약 플랜**으로 고른다. 계약이 없거나, 그 플랜에 커넥터가 없거나, 이 배포에 그 커넥터의 구현이 없으면 422 `connector_unavailable`이다.
 - `settings`는 커넥터의 `settingKeys`와 정확히 같은 키의 문자열(1~200자, 제어 문자 없음)이어야 하고, `credential`은 1~8192자의 비어 있지 않은 문자열이어야 한다. 아니면 400 `invalid_request`(field `settings`·`credential`·`expectedVersion`).
@@ -1005,6 +1006,10 @@ type Capability = "seat_list" | "seat_release" | "seat_restore" | "billing";
   결과를 대상 결과로 옮긴다(성공, 또는 위 실패 코드로 실패). 끝나지 않은 요청이 걸려 있으면 새 요청을 만들지 않고 그 작업을 돌려준다.
   선점을 잃은 실행의 요청은 다음 실행이 이어받는다. 연결을 지우면 걸린 요청은 `connection_removed`로 실패한다. 연결이 없으면 404, 벤더 연결이 꺼진 배포도 404다.
 - 실행 기록은 `seat_sync_runs`(시작·끝·결과·오류 코드·목록의 좌석 수·바뀐 좌석 수, 계기 `schedule`·`request`)다.
+- **청구 누계**(ADR 0050): 커넥터가 청구를 구현했으면 같은 실행이 좌석 목록 뒤에 지금 정산 기간의 누계를 읽어 `vendor_billing_periods`에 남긴다(기간마다 한 행, 다시 읽으면 덮는다).
+  Claude Enterprise는 이번 달(서울) 1일 0시부터의 사용 비용(`cost_report`, 한 시간 칸, 센트 → 달러), Cursor Enterprise는 벤더의 이번 청구 주기 on-demand 지출(`/teams/spend`의 `spendCents` 합)이다.
+  USD만 받는다. 결과는 연결의 `billing` 칸에 따로 남는다 — 청구 실패(커넥터 실패 종류 또는 `billing_error`)가 좌석 동기화를 실패로 만들지 않고, 좌석 목록이 실패해도 청구는 읽는다.
+  연결의 대상(커넥터·설정)을 바꾸면 그 연결이 읽은 누계를 지운다.
 
 ### 좌석 수동 기록 (ADR 0048 §3의 1·2행)
 
@@ -1321,6 +1326,7 @@ Flyway가 enrollment 스키마의 진실원이다. 관련 추가 마이그레이
 | V22 | 좌석 동기화 요청 — 작업 종류 `seat_sync`, 연결의 요청 칸(`sync_requested_operation_id`), 실행이 끝내는 요청(`seat_sync_runs.operation_id`) (ADR 0048 §7) |
 | V23 | 좌석 이력에 보유 구간의 시작(`seat_assignment_events.assigned_at`) — 조회가 기준 시각의 좌석을 이력으로 다시 세운다 (ADR 0048 §7) |
 | V24 | 좌석 회수 미리보기(`seat_reclaim_previews`)와 회수·복원 대상별 실행 방식·벤더 제어 선점(`seat_controls`) (ADR 0049) |
+| V25 | 벤더 청구 누계(`vendor_billing_periods` — 정산 기간별 금액·종류·확정 여부·원천)와 연결의 청구 읽기 결과(`last_billing_*`) (ADR 0050) |
 
 V12는 이 표에 없다 — 사용자 로그인 방식 작업이 예약한 번호다. Flyway는 이미 적용한 판보다 낮은 번호를 뒤늦게 받지 않으므로,
 V13이 먼저 적용된 DB에는 V12를 넣을 수 없다. 머지 순서가 뒤집히면 그 작업이 번호를 다시 매긴다.

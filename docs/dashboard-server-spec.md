@@ -119,7 +119,7 @@ type ProductRef = { kind: string | null; displayName: string | null };
 
 - 완전성의 근거(설치 보고의 수집 구간)가 기간 전체를 덮지 않으면 사용량은 `partial`이고 비교는 `unavailable`이다. 비교 없음은 `disabled`다(아래 "기간 완전성과 비교").
 - 서로 다른 토큰 의미 프로파일을 섞거나 필수 토큰 값이 누락되면 합계가 null일 수 있다.
-- 환산 비용과 실제 청구액은 별개다. 인보이스 원천이 없으므로 실제 청구액은 null이다.
+- 환산 비용과 실제 청구액은 별개다. 개요·팀의 실제 청구액은 인보이스 원천이 없어 null이다. 설정의 종량 지출은 벤더 청구 누계(ADR 0050, §7.2)다.
 - 최근 수신만으로 수집 정상·장애를 확정하지 않는다. unknown/empty를 정상으로 바꾸지 않는다.
 - 좌석은 좌석 원장(ADR 0048)의 값이다 — 계약의 구매 수량이 아니다. 원장은 기준 시각으로 다시 세우고 제품 단위로 가용성을 낸다(아래 "좌석 원장 조회"). 회수·복원은 enrollment-api의 명령이다(ADR 0049).
 - 알림·기존 설치로의 정책 배포·보존 설정 조작은 capability=false 또는 unavailable 상태다. 기존 설치는 새 정책을 서버가 밀어 넣지 않고
@@ -464,7 +464,7 @@ enrollment Flyway는 이 앱에서 실행하지 않는다. 새 원천 테이블�
 collectionPolicy.collectRawContent는 프롬프트·응답 중 하나라도 허용됐는지다. 도구 내용·API 원문은 이 선택과 별개다.
 두 플래그가 다를 때 온보딩 조회는 null로 표현해 명시적 재선택을 받는다.
 설정의 계약 좌석·월 요금은 계약의 값이고, 보유·활성 좌석과 개요의 좌석 집계는 좌석 원장의 값이다(위 "좌석 원장 조회").
-알림 평가·원격 정책 갱신 완료·실제 청구액은 구현하지 않는다. 좌석 회수·복원은 enrollment-api 명령이고 이 앱은 가능 여부와 작업 결과를 읽는다(ADR 0049).
+알림 평가·원격 정책 갱신 완료·좌석 구독료의 실제 청구액은 구현하지 않는다(종량 지출은 §7.2 — ADR 0050). 좌석 회수·복원은 enrollment-api 명령이고 이 앱은 가능 여부와 작업 결과를 읽는다(ADR 0049).
 
 ## 7. 등록 제품과 계약 정정
 
@@ -493,6 +493,14 @@ ID는 관리 API와 같은 vendorId UUID다. 공급자 관측·기존 기간 약
 - 오늘(서울)이 계약 시작일~종료일 안이면 configured다. 종료일 null은 상한 없음이며 기간 밖은 needs_review다.
 - `summary.monthlySeatFeeUsd`와 `contractedSeats`: 합계는 contractStatus=active인 계약만 포함한다. 만료·시작 예정·미입력은 제외하며 UI에 제외 건수를 표시한다. 유효 계약이 없으면 월 계약액과 좌석 수는 0이다. 유효 계약 자체의 필요한 값이 누락되면 해당 합계는 null이다. 이는 유효 계약 기준 합계이며 실제 전체 지출이나 자동 해지·갱신을 의미하지 않는다.
 - 단가 0의 유효 계약은 무료로 입력된 값이며 미입력과 다르다. 표시할 때 null은 `-`, 숫자 0은 0으로 구분한다.
+- **종량 지출**(`meteredMonthToDate`, ADR 0050): 벤더 청구 누계 — 커넥터가 벤더 비용·지출 API에서 읽어 저장한 값만이다. 환산 비용·계약액·좌석 단가로 채우지 않는다.
+  지금은 Claude Enterprise(`usage_cost` — 이번 달(서울) 사용 비용, 할인 뒤·크레딧 전)와 Cursor Enterprise(`usage_spend` — 벤더의 이번 청구 주기 on-demand 지출)뿐이다.
+  vendor마다 `Section<{startDate, endDate, equivalentCostUsd, actualBilledUsd, billingKind, finalized, source, fetchedAt}>`(뒤의 넷은 가산)이고 `equivalentCostUsd`는 null이다(환산 비용은 개요·팀의 제품별 사용).
+  가용성: 청구를 구현하지 않은 플랜 `billing_not_supported`, 연결 없음 `billing_source_not_connected`, 지금 기간의 누계 없음 `billing_sync_pending`·`billing_sync_failing`(unavailable),
+  마지막 읽기 실패 `billing_sync_failing`·읽은 지 `seats.stale-after` 넘음 `billing_sync_outdated`(partial). 달력 달 기간은 이번 달 시작에서 시작한 누계만 지금 값이다. 현재 값이다(snapshot에 고정하지 않는다).
+  `source`가 `seed`면 개발 시드다(실제 청구의 증거가 아니다). `finalized=false`면 벤더가 고칠 수 있는 진행 중 기간이다.
+  **조직 합계**(`summary.meteredMonthToDate`)는 모든 등록 제품이 값을 갖고 기간(`startDate`·`endDate`)이 같을 때만 더한다 — 한 제품이라도 없으면 그 사유로 partial·금액 null,
+  기간이 다르면 `billing_periods_differ`, 등록 제품이 없으면 unavailable `not_applicable`. `equivalentCostUsd`는 null이다.
 - 등록 제품의 firstSeenAt/lastSeenAt·activeUsers7d/30d·observation은 아래 §7.3의 관측 지표다. 좌석 배정·청구의 근거가 아니다.
   활성 좌석 합계(`summary.activeSeats7d`)와 제품별 좌석(`seats`)은 좌석 원장에서 센다("좌석 원장 조회"). 계약 좌석에서 관측 사용자 수를 빼서 미사용 좌석이나 절감액을 만들지 않는다.
 - 계약 없는 제품도 표시 이름을 바꿀 수 있다. 계약 비우기·제품 삭제·정정의 저장 규칙은 Enrollment 명세 §12를 따른다.

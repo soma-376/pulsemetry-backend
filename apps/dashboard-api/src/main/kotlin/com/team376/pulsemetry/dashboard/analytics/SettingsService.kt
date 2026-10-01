@@ -57,6 +57,8 @@ class SettingsService(
 	private val notificationsEnabled: Boolean = false,
 	/** 좌석 원장(ADR 0048) — 벤더별 좌석 수와 활성·보유 좌석 합계. */
 	private val seats: SeatService,
+	/** 벤더 청구 누계(ADR 0050) — 벤더별·조직 종량 지출. */
+	private val billing: VendorBilling,
 ) {
 
 	/** 설치 목록의 정책 적용 필터. 없으면 전부다. */
@@ -92,7 +94,7 @@ class SettingsService(
 					?.sumOf { it.contract!!.tiers.sumOf { tier -> tier.seats } },
 				activeSeats7d = seats.activeSeats(organization.id, assessment, 7),
 				assignedSeats = assessment.held.size.toLong().takeIf { assessment.products.any { it.availability != Availability.UNAVAILABLE } },
-				meteredMonthToDate = Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null),
+				meteredMonthToDate = billing.summary(vendors.map { it.meteredMonthToDate }),
 				detectedProducts = detected(observed, vendors.map { it.kind }.toSet()),
 				unmappedObservations = observed.observed[VendorObservations.UNMAPPED]?.let { row ->
 					val shown = observed.present(VendorObservations.UNMAPPED)
@@ -233,14 +235,17 @@ class SettingsService(
 		val assessment = seats.assess(tenantId, asOf, emptySet(), withReviews = false)
 		val states = assessment.products.associateBy { it.product.vendorId }
 		val heldBy = assessment.held.groupingBy { it.vendorId }.eachCount()
-		return contractVendors(tenantId, asOf).map { vendor ->
+		val listed = contractVendors(tenantId, asOf)
+		val metered = billing.sections(tenantId, listed.map { VendorBilling.Product(it.vendorId, it.kind, it.contract?.planId) }, connections, asOf)
+		return listed.map { vendor ->
 			val state = states[vendor.vendorId]
 			val seatSection: Section<VendorSeats> = if (state == null || state.availability == Availability.UNAVAILABLE) Section(Availability.UNAVAILABLE, state?.reason, null) else {
 				val held = (heldBy[vendor.vendorId] ?: 0).toLong()
 				val contracted = vendor.contract?.takeIf { vendor.contractStatus == ContractStatus.active }?.tiers?.sumOf { it.seats }
 				Section(state.availability, state.reason, VendorSeats(held, contracted, contracted?.let { maxOf(it - held, 0L) }))
 			}
-			vendor.copy(seatSource = SeatSourceView.of(vendor.kind, vendor.contract?.planId, connections[vendor.vendorId]), seats = seatSection)
+			vendor.copy(seatSource = SeatSourceView.of(vendor.kind, vendor.contract?.planId, connections[vendor.vendorId]), seats = seatSection,
+				meteredMonthToDate = metered.getValue(vendor.vendorId))
 		}
 	}
 

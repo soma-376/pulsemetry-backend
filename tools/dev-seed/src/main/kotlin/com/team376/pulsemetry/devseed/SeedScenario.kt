@@ -162,6 +162,7 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
         }
     }
     if (name == "A") seats(name, tenant, origin, at(0), ::add, ::member)
+    if (name == "C") meteredBilling(name, tenant, origin, at(0), at(-12), asOf, ::add, ::member)
     fun invitation(index: Int, state: String): Pair<String, String> {
         val code = hash("seed-$name-$index-$state").take(12).uppercase().chunked(4).joinToString("-")
         val invitationId = id("$name/invitation/$index/$state")
@@ -354,6 +355,33 @@ private fun seats(name: String, tenant: String, origin: String, syncedAt: String
     seat("copilot/seed-dev-7", "copilot", "seed-dev-7", "github_login", 7, "admin", null, "connector", run)
     seat("copilot/seed-dev-11", "copilot", "seed-dev-11", "github_login", 11, "admin", null, "connector", run)
     seat("copilot/seed-bot", "copilot", "seed-bot", "github_login", null, null, null, "connector", run)
+}
+
+/**
+ * C 의 벤더 청구 누계(ADR 0050) — 예외 데이터다. Cursor Enterprise 를 연결했는데 기준일 0시 실행에서 좌석 목록은 일시 장애로 실패하고(좌석 원장 없음 —
+ * `seat_sync_failing`), 같은 실행의 청구 누계(이번 청구 주기의 on-demand 지출)는 읽었다. 청구 행의 원천은 `seed` 다 — **실제 청구의 증거가 아니다.**
+ * 주기 시작은 벤더가 정한다(기준일 12일 전). 금액은 계약액(3석 × $40 = $120)과 다르다.
+ */
+private fun meteredBilling(name: String, tenant: String, origin: String, readAt: String, cycleStart: String, asOf: LocalDate,
+    add: (String, Array<out Pair<String, Any?>>) -> Unit, member: (Int) -> String) {
+    fun row(table: String, vararg fields: Pair<String, Any?>) = add(table, fields)
+    val vendorId = id("$name/vendor/cursor")
+    row("enrollment.managed_vendors", "tenant_id" to tenant, "vendor_id" to vendorId, "kind" to "cursor", "source" to "manual", "created_at" to origin)
+    row("enrollment.vendor_contract_versions", "tenant_id" to tenant, "vendor_id" to vendorId, "version" to 1, "display_name" to "Cursor",
+        "contract" to encode(mapOf("version" to 1, "planId" to "cursor_enterprise", "effectiveFrom" to asOf.minusDays(60).toString(),
+            "effectiveTo" to asOf.plusDays(305).toString(), "termNote" to "합성 테스트 계약 · 청구 누계",
+            "tiers" to listOf(mapOf("tierId" to id("$name/vendor/cursor/tier/enterprise"), "label" to "Enterprise", "seats" to 3, "monthlyFeePerSeatUsd" to "40")),
+            "monthlySeatFeeUsd" to "120", "confirmedAt" to origin, "confirmedBy" to member(0))),
+        "archived" to false, "recorded_at" to origin, "recorded_by" to member(0))
+    row("enrollment.vendor_connections", "id" to id("$name/vendor-connection/cursor"), "tenant_id" to tenant, "vendor_id" to vendorId, "connector" to "cursor_enterprise",
+        "settings" to encode(emptyMap<String, String>()), "credential_ciphertext" to "c2VlZC1wbGFjZWhvbGRlci1ub3QtYS1zZWNyZXQ=",
+        "credential_key_id" to "seed-placeholder", "credential_updated_at" to origin, "check_status" to "unverified", "checked_at" to null,
+        "sync_claimed_by" to null, "sync_claimed_until" to null, "last_sync_succeeded_at" to null, "last_sync_failed_at" to readAt, "last_sync_error" to "vendor_unavailable",
+        "last_billing_succeeded_at" to readAt, "last_billing_failed_at" to null, "last_billing_error" to null,
+        "version" to 1, "created_at" to origin, "created_by" to member(0), "updated_at" to origin, "updated_by" to member(0), "deleted_at" to null, "deleted_by" to null,
+        "sync_requested_operation_id" to null)
+    row("enrollment.vendor_billing_periods", "tenant_id" to tenant, "vendor_id" to vendorId, "period_start" to cycleStart, "period_end" to readAt,
+        "amount_usd" to "137.42", "kind" to "usage_spend", "finalized" to false, "source" to "seed", "connection_id" to null, "fetched_at" to readAt)
 }
 
 /** B는 조직과 오너만 만든다. A/C의 팀·설정·수집 데이터 생성 경로를 공유하지 않는다. */

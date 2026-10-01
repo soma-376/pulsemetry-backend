@@ -37,6 +37,18 @@ class VendorAccountCheckTest {
 	}
 
 	@Test
+	fun `Cursor — 청구를 구현한 커넥터는 이번 주기 청구 누계도 찍는다(구성원 이메일은 찍지 않는다)`() {
+		server.on("GET", "/teams/members", reply(200, """{"teamMembers":[{"id":"user_1","email":"dev@example.test","isRemoved":false}]}"""))
+		server.on("POST", "/teams/spend", reply(200, """{"teamMemberSpend":[{"userId":"user_1","spendCents":1234.5,"email":"dev@example.test"}],"subscriptionCycleStart":1758931200000,"totalPages":1}"""))
+		val clock = java.time.Clock.fixed(java.time.Instant.parse("2026-10-01T00:00:00Z"), java.time.ZoneOffset.UTC)
+		val code = VendorAccountCheck(mapOf("PULSEMETRY_VERIFY_CREDENTIAL" to secret, "PULSEMETRY_VERIFY_BASE_URL" to server.base.toString()), PrintStream(output, true), http, clock)
+			.run("cursor_enterprise")
+		assertThat(code).withFailMessage(printed).isZero()
+		assertThat(printed).contains("[cursor_enterprise] 청구 누계 12.345 USD — usage_spend, 2025-09-27T00:00:00Z ~ 2026-10-01T00:00:00Z, 확정 false")
+			.doesNotContain(secret, "dev@example.test")
+	}
+
+	@Test
 	fun `입력이 없으면 건너뛰지 않고 2, 벤더가 거절하면 1 이다`() {
 		assertThat(check("copilot", emptyMap())).isEqualTo(2)
 		assertThat(check("copilot", mapOf("PULSEMETRY_VERIFY_CREDENTIAL" to secret))).isEqualTo(2)

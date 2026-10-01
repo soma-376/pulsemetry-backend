@@ -40,14 +40,19 @@ data class ConnectionRecord(
 	val version: Long,
 	val createdAt: Instant,
 	val updatedAt: Instant,
+	/** 청구 누계 읽기의 결과(ADR 0050) — 좌석 동기화 결과와 따로 남는다. */
+	val lastBillingSucceededAt: Instant? = null,
+	val lastBillingFailedAt: Instant? = null,
+	val lastBillingError: String? = null,
 ) {
 	val syncStatus: SyncStatus get() = SyncStatus.of(lastSyncSucceededAt, lastSyncFailedAt)
+	val billingStatus: SyncStatus get() = SyncStatus.of(lastBillingSucceededAt, lastBillingFailedAt)
 }
 
 /** 활성 연결 읽기 — 암호문 열을 고르지 않는다. 조회 앱(dashboard-api)도 이것을 쓴다. */
 object VendorConnections {
 	private const val COLUMNS = """id, tenant_id, vendor_id, connector, settings::text AS settings, credential_updated_at, check_status, checked_at,
-		last_sync_succeeded_at, last_sync_failed_at, last_sync_error, version, created_at, updated_at"""
+		last_sync_succeeded_at, last_sync_failed_at, last_sync_error, version, created_at, updated_at, last_billing_succeeded_at, last_billing_failed_at, last_billing_error"""
 
 	fun active(jdbc: JdbcClient, mapper: ObjectMapper, tenant: UUID): List<ConnectionRecord> =
 		jdbc.sql("SELECT $COLUMNS FROM enrollment.vendor_connections WHERE tenant_id = :tenant AND deleted_at IS NULL ORDER BY vendor_id")
@@ -69,6 +74,9 @@ object VendorConnections {
 		lastSyncSucceededAt = rs.getTimestamp("last_sync_succeeded_at")?.toInstant(),
 		lastSyncFailedAt = rs.getTimestamp("last_sync_failed_at")?.toInstant(),
 		lastSyncError = rs.getString("last_sync_error"),
+		lastBillingSucceededAt = rs.getTimestamp("last_billing_succeeded_at")?.toInstant(),
+		lastBillingFailedAt = rs.getTimestamp("last_billing_failed_at")?.toInstant(),
+		lastBillingError = rs.getString("last_billing_error"),
 		version = rs.getLong("version"),
 		createdAt = rs.getTimestamp("created_at").toInstant(),
 		updatedAt = rs.getTimestamp("updated_at").toInstant(),
@@ -117,10 +125,12 @@ class VendorConnectionStore(
 			val sealed = cipher.seal(credential, aad(tenant, vendorId, current.id))
 			jdbc.sql("""UPDATE enrollment.vendor_connections SET connector = :connector, settings = CAST(:settings AS jsonb), credential_ciphertext = :ciphertext,
 					credential_key_id = :key, credential_updated_at = :now, check_status = 'unverified', checked_at = NULL, version = version + 1, updated_at = :now, updated_by = :actor
-					${if (retarget) ", last_sync_succeeded_at = NULL, last_sync_failed_at = NULL, last_sync_error = NULL" else ""}
+					${if (retarget) ", last_sync_succeeded_at = NULL, last_sync_failed_at = NULL, last_sync_error = NULL, last_billing_succeeded_at = NULL, last_billing_failed_at = NULL, last_billing_error = NULL" else ""}
 				WHERE id = :id""")
 				.param("connector", descriptor.id).param("settings", settingsJson).param("ciphertext", sealed.ciphertext).param("key", sealed.keyId)
 				.param("now", Timestamp.from(now)).param("actor", actor).param("id", current.id).update()
+			// 다른 대상(커넥터·설정)을 가리키게 되면 그 연결이 읽은 청구 누계는 다른 계정의 것이다(ADR 0050).
+			if (retarget) jdbc.sql("DELETE FROM enrollment.vendor_billing_periods WHERE connection_id = :id").param("id", current.id).update()
 		}
 		VendorConnections.active(jdbc, mapper, tenant, vendorId, lock = false)!!
 	}

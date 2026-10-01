@@ -15,6 +15,7 @@ import com.team376.pulsemetry.dashboard.analytics.SnapshotReferences
 import com.team376.pulsemetry.dashboard.analytics.TeamDirectoryService
 import com.team376.pulsemetry.dashboard.analytics.TeamsService
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator
+import com.team376.pulsemetry.dashboard.analytics.VendorBilling
 import com.team376.pulsemetry.dashboard.analytics.VendorObservations
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotCompleteness
 import com.team376.pulsemetry.dashboard.snapshot.ModelResolution
@@ -161,6 +162,8 @@ class AnalyticsConfig {
 		// 안내는 enrollment-api 가 메일로 보낸다(ADR 0043). 두 앱이 같은 설정 값을 받는다.
 		notificationsEnabled = managementEnabled && mailEnabled,
 		seats = seats,
+		// 청구 누계의 신선도 기준은 좌석 원장과 같다 — 같은 동기화 실행이 읽는다(ADR 0050).
+		billing = VendorBilling(source, properties.seats.staleAfter),
 	)
 
 	@Bean

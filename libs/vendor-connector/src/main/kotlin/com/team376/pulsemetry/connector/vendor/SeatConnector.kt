@@ -44,9 +44,12 @@ fun interface SeatRestore {
 	fun restore(target: ConnectionTarget, account: VendorAccount): ControlResult
 }
 
-/** 벤더가 주는 청구 금액. 좌석 구독료가 아니다 — 사용 비용·사용 지출만 있다(벤더 문서). */
+/**
+ * 벤더가 주는 지금 정산 기간의 청구 누계 (ADR 0050). 좌석 구독료가 아니다 — 사용 비용·사용 지출만 있다(벤더 문서).
+ * 기간은 벤더가 정하거나(청구 주기) 벤더가 기간을 고르게 해 주면 [monthStart](조직 달력의 이번 달 시작)부터다. 끝은 [now] 이전이다.
+ */
 fun interface BillingReader {
-	fun read(target: ConnectionTarget, from: Instant, to: Instant): List<BilledAmount>
+	fun currentPeriod(target: ConnectionTarget, now: Instant, monthStart: Instant): BilledAmount
 }
 
 /** 연결 하나로 부르는 대상 — 비밀이 아닌 설정과 자격증명. */
@@ -111,8 +114,13 @@ data class ControlResult(val status: ControlStatus, val effectiveOn: LocalDate? 
 /** 벤더가 요청을 받아들인 뒤의 상태. [SCHEDULED] 는 해제 예정(주기 말 효력), [AWAITING_ACCEPTANCE] 는 초대 수락 대기다 — 둘 다 끝난 것이 아니다. */
 enum class ControlStatus { COMPLETED, SCHEDULED, AWAITING_ACCEPTANCE }
 
-/** 청구 금액 한 구간. [finalized] 가 false 면 벤더가 뒤에 고칠 수 있는 값이다. */
-data class BilledAmount(val from: Instant, val to: Instant, val amount: BigDecimal, val currency: String, val kind: BilledKind, val finalized: Boolean)
+/** 청구 금액 한 구간 [from, to). [finalized] 가 false 면 벤더가 뒤에 고칠 수 있는 값이다. 통화는 USD 만 받는다(ADR 0050 — 환율 원천이 없다). */
+data class BilledAmount(val from: Instant, val to: Instant, val amount: BigDecimal, val currency: String, val kind: BilledKind, val finalized: Boolean) {
+	init {
+		require(from < to) { "청구 구간은 비어 있지 않다" }
+		require(currency == "USD") { "USD 가 아닌 청구액은 받지 않는다" }
+	}
+}
 
 enum class BilledKind(val wire: String) { USAGE_COST("usage_cost"), USAGE_SPEND("usage_spend") }
 

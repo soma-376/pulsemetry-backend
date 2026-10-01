@@ -207,7 +207,7 @@ internal fun resetStatements(scenario: String, present: Set<String>): List<Strin
     val installations = "SELECT id FROM enrollment.installations WHERE tenant_id=$tenant"
     val contracts = "SELECT id FROM enrollment.contracts WHERE tenant_id=$tenant"
     // 좌석 원장(ADR 0048)과 회수·복원 기록(ADR 0049)은 작업·등록 제품을 가리키므로 먼저 지운다.
-    val clauses = listOf("seat_controls", "seat_reclaim_previews", "seat_assignment_events", "seat_assignments", "seat_sync_runs", "vendor_connections")
+    val clauses = listOf("seat_controls", "seat_reclaim_previews", "seat_assignment_events", "seat_assignments", "seat_sync_runs", "vendor_billing_periods", "vendor_connections")
         .map { it to "tenant_id=$tenant" } +
         listOf("operation_targets" to "operation_id IN (SELECT id FROM enrollment.operations WHERE tenant_id=$tenant)",
         "retention_cleanup_requests" to "tenant_id=$tenant", "operations" to "tenant_id=$tenant",

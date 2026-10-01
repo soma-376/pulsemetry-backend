@@ -69,14 +69,15 @@ object ConnectorDescriptors {
 
 	/**
 	 * Claude Enterprise: 구성원 조회·제거·재초대(수락 대기), 사용량 기반 계약의 사용 비용. 등급·활동 시각은 주지 않는다.
-	 * 제거는 구성원 ID 로 부른다. 복원(재초대)은 구현하지 않는다 — 초대에 역할을 정해야 하는데 원장은 옛 역할을 모른다(ADR 0049). 청구는 아직이다.
+	 * 제거는 구성원 ID 로 부른다. 복원(재초대)은 구현하지 않는다 — 초대에 역할을 정해야 하는데 원장은 옛 역할을 모른다(ADR 0049). 청구는 비용 보고서(ADR 0050).
 	 */
 	val CLAUDE_ENTERPRISE = ConnectorDescriptor("claude_enterprise", "claude_team", setOf("enterprise"), AccountKind.EMAIL, emptyList(),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE, Capability.BILLING), LIST_RELEASE, accountRefRequired = setOf(Capability.SEAT_RELEASE))
+		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE, Capability.BILLING), LIST_RELEASE + Capability.BILLING,
+		accountRefRequired = setOf(Capability.SEAT_RELEASE))
 
-	/** Cursor Enterprise: 구성원 조회·제거, 현재 주기의 사용 지출. 복원 API 는 없다. 청구는 아직이다. */
+	/** Cursor Enterprise: 구성원 조회·제거, 현재 주기의 사용 지출(ADR 0050). 복원 API 는 없다. */
 	val CURSOR_ENTERPRISE = ConnectorDescriptor("cursor_enterprise", "cursor", setOf("cursor_enterprise"), AccountKind.EMAIL, emptyList(),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.BILLING), LIST_RELEASE)
+		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.BILLING), LIST_RELEASE + Capability.BILLING)
 
 	/** GitHub Copilot: 좌석 조회·취소(주기 말 효력)·재배정. 계정은 GitHub 로그인이고 조직 이름이 설정이다. */
 	val COPILOT = ConnectorDescriptor("copilot", "copilot", setOf("copilot_business", "copilot_enterprise"), AccountKind.GITHUB_LOGIN, listOf("organization"),

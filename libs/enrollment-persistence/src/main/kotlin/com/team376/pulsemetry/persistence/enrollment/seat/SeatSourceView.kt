@@ -24,6 +24,8 @@ data class SeatSourceView(val authority: String, val provisional: Boolean, val c
 		val sync: Sync,
 		val createdAt: String,
 		val updatedAt: String,
+		/** 청구 누계 읽기의 상태(가산, ADR 0050). 그 커넥터가 청구를 구현하지 않았으면 null. 모양은 [sync] 와 같다. */
+		val billing: Sync? = null,
 	)
 
 	data class Credential(val configured: Boolean, val updatedAt: String)
@@ -41,10 +43,12 @@ data class SeatSourceView(val authority: String, val provisional: Boolean, val c
 					Connector(d.id, d.accountKind.wire, d.capabilities.sortedBy { it.ordinal }.map { it.wire }, d.settingKeys, d.supported.sortedBy { it.ordinal }.map { it.wire })
 				},
 				connection = connection?.let {
+					val billing = ConnectorDescriptors.byId(it.connector)?.capabilities?.contains(com.team376.pulsemetry.connector.vendor.Capability.BILLING) == true
 					Connection(it.id.toString(), it.version, it.connector, it.settings.toSortedMap(), Credential(true, it.credentialUpdatedAt.toString()),
 						Check(it.check.wire, it.checkedAt?.toString()),
 						Sync(it.syncStatus.wire, it.lastSyncSucceededAt?.toString(), it.lastSyncFailedAt?.toString(), it.lastSyncError),
-						it.createdAt.toString(), it.updatedAt.toString())
+						it.createdAt.toString(), it.updatedAt.toString(),
+						Sync(it.billingStatus.wire, it.lastBillingSucceededAt?.toString(), it.lastBillingFailedAt?.toString(), it.lastBillingError).takeIf { billing })
 				},
 			)
 		}
