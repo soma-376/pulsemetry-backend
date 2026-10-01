@@ -123,7 +123,7 @@ type ProductRef = { kind: string | null; displayName: string | null };
 - 환산 비용과 실제 청구액은 별개다. 개요·팀의 실제 청구액은 인보이스 원천이 없어 null이다. 설정의 종량 지출은 벤더 청구 누계(ADR 0050, §7.2)다.
 - 최근 수신만으로 수집 정상·장애를 확정하지 않는다. unknown/empty를 정상으로 바꾸지 않는다.
 - 좌석은 좌석 원장(ADR 0048)의 값이다 — 계약의 구매 수량이 아니다. 원장은 기준 시각으로 다시 세우고 제품 단위로 가용성을 낸다(아래 "좌석 원장 조회"). 회수·복원은 enrollment-api의 명령이다(ADR 0049).
-- 알림·기존 설치로의 정책 배포·보존 설정 조작은 capability=false 또는 unavailable 상태다. 기존 설치는 새 정책을 서버가 밀어 넣지 않고
+- 기존 설치로의 정책 배포는 capability=false 다. 알림 규칙은 저장·켜기만 되고 평가 결과는 아직 없다(아래 "알림 규칙"). 기존 설치는 새 정책을 서버가 밀어 넣지 않고
   설치 보고의 응답으로 알고 스스로 받는다(enrollment 명세 §4.5). 관리자가 할 수 있는 것은 아래 "정책 적용 현황과 업데이트 안내"의 확인 요청 메일뿐이다.
 
 ### 정책 적용 현황과 업데이트 안내 (ADR 0043)
@@ -171,6 +171,28 @@ type ProductRef = { kind: string | null; displayName: string | null };
 - 구성원 화면의 `policy`(`idleDays`·`version`)와 회수 후보의 `idleDays`·`policy`는 유효 회수 기준과 **설정의 판**이다(고정 0이 아니다).
 - `rawContentRetentionDays`는 null이다. 원문 보존 기간의 원천(원본 아카이브의 수명)이 이 저장소에 없다.
 - 집계 보존을 줄인 저장은 보존 정리 작업을 만든다(enrollment 명세 §13.2, ADR 0047). 진행은 아래 "작업 상태 조회"로 본다.
+
+### 알림 규칙 (ADR 0051)
+
+규칙의 켜짐과 두 목록은 enrollment-api가 저장한다(enrollment 명세 §12 "알림 규칙과 목록"). 이 앱은 `enrollment.organization_alert_rules`·`organization_alert_lists`·
+`organization_alert_list_entries`·`alert_rule_definitions`와 설치의 수집 구간을 읽기 전용 계정으로 요청마다 읽고, 명령과 같은 판정(`AlertRules`)으로 가용성을 낸다.
+
+| 값 | 규칙 |
+| --- | --- |
+| `alertRules[].enabled`·`version` | 저장된 값. 저장한 적 없으면 false·0 |
+| `alertRules[].availability`·`reason` | 켤 수 있는 근거가 있으면 `available`·null. 아니면 `unavailable`과 사유 — `completeness_not_available`(설치의 수집 구간 보고가 없음), `source_not_available`(한도 초과 — 검증된 관측 없음), `allowed_models_not_configured`, `approved_tools_not_configured` |
+| `alertRules[].threshold`·`evaluationWindow`·`comparisonWindow` | 정의 표의 기준 데이터(급증 0.4 ratio, 한도 5 users, 모델·도구 1 events) |
+| `capabilities.editAlertRules` | 관리 기능이 켜진 배포(`pulsemetry.management.enabled`)면 true. 규칙마다 켤 수 있는지는 그 규칙의 가용성이 말한다 |
+
+```ts
+// GET O/settings 에 더한 키(가산)
+//   alertLists: { allowedModels: AlertList; approvedTools: AlertList };
+//   type AlertList = { listId: "allowed_models" | "approved_tools"; version: number; entries: string[]; updatedAt: string | null };
+//   저장한 적 없는 목록은 entries [] · version 0. entries 는 코드 포인트 순서다
+```
+
+- 켜진 규칙은 언제나 켤 수 있는 규칙이다 — 목록을 비우는 저장은 그 목록에 기대는 규칙이 켜져 있으면 거절된다.
+- 평가·알림은 아직 없다. 개요 `alerts` 는 `unavailable`·`evaluation_not_configured` 그대로다. 평가는 이 앱의 주기 작업이 자기 스키마에 남기기로 정했다(ADR 0051 §5).
 
 ### 기간 완전성과 비교 (ADR 0042)
 
@@ -475,11 +497,11 @@ enrollment Flyway는 이 앱에서 실행하지 않는다. 새 원천 테이블�
 `:apps:dashboard-api:test`가 카탈로그 검색·페이지·인증, 개요·팀·구성원·설정·snapshot을 검증한다.
 카탈로그는 DB 기준 데이터이며 V10이 기존 목록을 한 번 초기화한다. 관리자 편집 API는 없으며 권한 있는 DB 작업으로 관리한다.
 계약 없는 수동 벤더는 조회에 남으며 state=needs_review, contract=null이다.
-관리 기능이 켜져 있으면 editContracts·editCollectionPolicy는 true이고 저장은 enrollment-api에 요청한다.
+관리 기능이 켜져 있으면 editContracts·editCollectionPolicy·editAlertRules는 true이고 저장은 enrollment-api에 요청한다.
 collectionPolicy.collectRawContent는 프롬프트·응답 중 하나라도 허용됐는지다. 도구 내용·API 원문은 이 선택과 별개다.
 두 플래그가 다를 때 온보딩 조회는 null로 표현해 명시적 재선택을 받는다.
 설정의 계약 좌석·월 요금은 계약의 값이고, 보유·활성 좌석과 개요의 좌석 집계는 좌석 원장의 값이다(위 "좌석 원장 조회").
-알림 평가·원격 정책 갱신 완료·좌석 구독료의 실제 청구액은 구현하지 않는다(종량 지출은 §7.2 — ADR 0050). 좌석 회수·복원은 enrollment-api 명령이고 이 앱은 가능 여부와 작업 결과를 읽는다(ADR 0049).
+알림 평가(규칙 저장·켜기는 위 "알림 규칙")·원격 정책 갱신 완료·좌석 구독료의 실제 청구액은 구현하지 않는다(종량 지출은 §7.2 — ADR 0050). 좌석 회수·복원은 enrollment-api 명령이고 이 앱은 가능 여부와 작업 결과를 읽는다(ADR 0049).
 
 ## 7. 등록 제품과 계약 정정
 

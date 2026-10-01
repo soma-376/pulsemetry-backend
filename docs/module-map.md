@@ -78,7 +78,8 @@ pulsemetry-backend
 └── libs/
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
     │                                └ enrollment 엔티티·사용자 인증 저장소·관리 명령·문의 접수·메일 outbox·공통 작업 기록·설치 보고·설치 업데이트 안내(ADR 0043)·DB 카탈로그 · Flyway 마이그레이션
-    │                                  └ seat/  좌석 원장·벤더 연결(자격증명 암호화)·동기화 실행 기록 (ADR 0048)
+    │                                  ├ seat/  좌석 원장·벤더 연결(자격증명 암호화)·동기화 실행 기록 (ADR 0048)
+    │                                  └ alert/ 알림 규칙의 켜짐·모델·도구 목록과 켜기 판정 (ADR 0051)
     ├── security/                    com.team376.pulsemetry.security
     │                                └ 사용자 JWT·세션·암호 검증과 OTLP 경로의 ptt_ 검증 · telemetry token 해시
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
@@ -196,6 +197,7 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 | seat ledger / vendor connection | `vendor_connections` · `seat_sync_runs` · `seat_assignments` · `seat_assignment_events` · `seat_reclaim_previews` · `seat_controls` · `vendor_billing_periods` | `:libs:enrollment-persistence`의 좌석 원장(`seat`) — enrollment-api의 연결 명령(추가·교체·삭제·확인)과 등록 제품 보관이 연결을, 원장 연산(수동·CSV 기록, enrollment-api `seat/`의 주기 동기화가 선점·반영·실패 기록)이 좌석·실행·이력을 쓴다. "지금 동기화"는 공통 작업(`seat_sync`)으로 접수한다. 회수·복원(`SeatControl`, ADR 0049)이 미리보기와 대상별 실행 방식을 쓰고, 같은 주기 작업이 벤더 제어 대상을 선점해 커넥터를 부른다. 청구 누계(`VendorBillingStore`, ADR 0050)는 같은 동기화 실행이 쓴다. 구매 수량(`tiers[].seats`)으로 채우지 않고 구 `contracts`·`contract_memberships`와 무관하다. dashboard-api는 읽기 전용 계정으로 연결의 비밀 아닌 열만 읽는다 (ADR 0048) |
 | user authentication | `user_sessions` · `user_refresh_tokens` · `user_authorization_codes` · `auth_attempts` | `:libs:enrollment-persistence`의 인증 저장소. 정책·검증은 `:libs:security`, HTTP 조립은 enrollment-api |
 | vendor catalog | `vendor_catalog_vendors` · `vendor_catalog_products` · `vendor_catalog_plans` · `vendor_catalog_observed_products` | `:libs:enrollment-persistence`의 Flyway가 초기화. 관리자 편집 API는 없음. 관측 제품 매핑(`vendor_catalog_observed_products`)은 dashboard-api가 읽기 전용 계정으로 읽는다 (ADR 0044) |
+| alert rule | `alert_rule_definitions` · `organization_alert_rules` · `organization_alert_lists` · `organization_alert_list_entries` | `:libs:enrollment-persistence`의 알림 규칙 저장(`alert`) — enrollment-api의 규칙 켜기·끄기와 목록 교체 명령. 규칙 정의는 Flyway가 넣는 기준 데이터다. 켜기 판정(`AlertRules`)은 dashboard-api 설정 조회가 읽기 전용 계정으로 같이 쓴다. 평가 기록은 이 도메인이 아니다 — dashboard-api가 자기 스키마에 쓴다 (ADR 0051) |
 | mail | `mail_outbox` | `:libs:enrollment-persistence`의 메일 outbox(`mail`) — 업무 쓰기가 같은 트랜잭션에서 적재하고, enrollment-api의 발송 작업이 선점해 결과를 기록 (ADR 0037) |
 | inquiry | `inquiries` · `inquiry_attempts` | `:libs:enrollment-persistence`의 문의 저장소(`inquiry`) — enrollment-api의 공개 접수 명령. 조직에 속하지 않으며 조직·계정·초대를 만들지 않음 |
 | installation report | `installation_heartbeats` · `installation_collection_segments` | `:libs:enrollment-persistence`의 설치 보고 저장소(`installation`) — enrollment-api가 데몬 heartbeat를 받아 기록. `installations.last_seen_at`·`installation_manifest_assignments.applied_at`은 enrollment 도메인 그대로 enrollment-api가 씀 (ADR 0040). dashboard-api는 읽기 전용 계정으로 읽어 수집 상태를 판정함 (ADR 0041) |

@@ -813,6 +813,8 @@ POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`, 8~128자)를 보낸다.
 | `PATCH /vendors/{vendorId}/seats/{seatAssignmentId}` | `{expectedVersion,memberId?,memberLink?,tierId?,note?}` | 200 SeatSaved(보정) |
 | `POST /vendors/{vendorId}/seats/{seatAssignmentId}/release` | `{expectedVersion}` | 200 SeatSaved(해제) |
 | `POST /vendors/{vendorId}/seats/import` | `{mode:"preview"|"apply",csv}` | 200 `{import,provisional}` — 적용에 행 오류가 있으면 422 `seat_import_invalid` |
+| `PATCH /settings/alert-rules/{ruleId}` | `{expectedVersion,enabled}` | 200 AlertRule — 아래 "알림 규칙과 목록" |
+| `PUT /settings/alert-lists/{listId}` | `{expectedVersion,entries}` | 200 `{list,alertRules}` — 전체 교체 |
 
 팀 배정은 최대 100명, 전체 검증 후 한 트랜잭션으로 적용한다. `teamId:null`은 배정 해제다.
 효력 시각은 서버 시각이며 과거 ClickHouse 팩트는 바꾸지 않는다.
@@ -1121,6 +1123,38 @@ type ReclaimPreview = {
   대상마다 방식을 다시 정한다. 되돌릴 수 없는 대상은 그 사유로 실패로 남고, 모든 대상이 불가면 작업을 만들지 않고 422(`details`에 대상별 사유)다.
 - 원장 이력의 행위자는 작업이다(`seat_assignment_events.operation_id`). 대상 ID는 `seatAssignmentId`다.
 
+### 알림 규칙과 목록 (ADR 0051)
+
+알림 규칙 네 개의 켜기·끄기와, 규칙이 기대는 두 목록의 전체 교체다. 평가·알림·확인은 이 절에 없다.
+두 명령은 PATCH·PUT 이라 `Idempotency-Key` 를 받지 않는다(판이 재시도를 막는다). 같은 조직 행을 잠가 직렬화한다.
+
+```ts
+type AlertRule = {                                               // 설정 조회(dashboard-api)의 alertRules 항목과 같다
+  ruleId: "spend_spike" | "quota_exceeded" | "model_not_allowed" | "tool_unapproved";
+  version: number;                                               // 켜짐이 바뀔 때만 1 오른다. 저장한 적 없으면 0
+  enabled: boolean;
+  availability: "available" | "unavailable";                    // 켤 수 있는 근거가 있는가
+  reason: string | null;                                         // unavailable 의 사유
+  threshold: { value: number; unit: "ratio" | "users" | "events" };
+  evaluationWindow: string; comparisonWindow: string | null;     // 기준 데이터 — 바꾸는 명령이 없다
+};
+type AlertList = { listId: "allowed_models" | "approved_tools"; version: number; entries: string[]; updatedAt: string | null };
+```
+
+| 규칙 | 켤 수 있는 조건 | 아니면 `reason` |
+| --- | --- | --- |
+| `spend_spike` | 조직의 설치가 수집 구간을 보고한 적이 있다(완전한 날의 근거 — ADR 0040·0042) | `completeness_not_available` |
+| `quota_exceeded` | 없음 — 한도 초과를 가리키는 검증된 관측이 없다 | `source_not_available` |
+| `model_not_allowed` | `allowed_models` 가 비어 있지 않다 | `allowed_models_not_configured` |
+| `tool_unapproved` | `approved_tools` 가 비어 있지 않다 | `approved_tools_not_configured` |
+
+- 켤 수 없는 규칙을 켜면 422 `alert_rule_unavailable`(필드 `enabled`, `details.reason`). 끄기는 언제나 된다. 같은 값이면 판 그대로 200 이다.
+- 없는 규칙·목록 404 `not_found`, 판 불일치 409 `version_conflict`, `enabled` 가 불리언이 아니면 400 `invalid_request`(필드 `enabled`).
+- 목록 항목: 앞뒤 공백 없는 1–200자, 제어 문자 없음, 목록당 200개 이하, 중복 없음. 대소문자를 구분하는 정확 일치이고 끝의 `*` 하나는 접두사 일치다.
+  그 밖의 자리의 `*`·`*` 하나뿐인 항목은 거부한다. 어기면 400 `invalid_request`(필드 `entries`). 응답의 `entries` 는 코드 포인트 순서다.
+- 내용이 같은 교체는 판을 올리지 않는다. 켜진 규칙이 기대는 목록을 비우면 422 `alert_list_in_use`(필드 `entries`) — 규칙을 먼저 끈다.
+- producer 가 가린 도구 이름(`mcp_tool`)은 그 이름 그대로 대조된다. 개별 MCP 도구는 승인할 수 없다.
+
 ### 조회·관리 오류
 
 ```json
@@ -1134,7 +1168,7 @@ type ReclaimPreview = {
 | 403 | forbidden, 해당 동작 비활성화 |
 | 404 | not_found, 타 조직/없는 자원 |
 | 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, member_suspended, installation_unavailable, snapshot_expired, connector_managed, seat_already_held, seat_not_releasable, preview_stale, preview_expired, preview_used, not_awaiting_admin_action, seat_changed |
-| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change, notification_channel_unavailable, connector_unavailable, invalid_tier, seat_import_invalid(`details`에 행별 오류), no_eligible_seats, restore_not_available(`details`에 대상별 사유가 있을 수 있다) |
+| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change, notification_channel_unavailable, connector_unavailable, invalid_tier, seat_import_invalid(`details`에 행별 오류), no_eligible_seats, restore_not_available(`details`에 대상별 사유가 있을 수 있다), alert_rule_unavailable(`details.reason`), alert_list_in_use |
 | 503 | unavailable, Retry-After 후 재시도. credential_key_unavailable(벤더 연결 — 운영이 암호화 키 설정을 고칠 때까지 재시도해도 같다) |
 
 쓰기 성공 후 관련 조직의 팀·구성원·설정·개요 Query 캐시를 무효화한다.

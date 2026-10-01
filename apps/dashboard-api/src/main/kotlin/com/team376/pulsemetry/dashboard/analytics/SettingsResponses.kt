@@ -161,7 +161,14 @@ data class SettingsResponse(
 	val collectionPolicy: CollectionPolicy,
 	val policyRollout: PolicyRollout,
 	val alertRules: List<AlertRule>,
+	/** 모델 허용 목록·승인 도구 목록 — ADR 0051 (가산). */
+	val alertLists: AlertLists,
 )
+
+/** 알림 규칙이 기대는 두 목록 (ADR 0051 §4). 저장한 적 없는 목록은 비어 있고 판 0 이다. */
+data class AlertLists(val allowedModels: AlertListView, val approvedTools: AlertListView)
+
+data class AlertListView(val listId: String, val version: Long, val entries: List<String>, val updatedAt: String?)
 
 data class VendorsResponse(val meta: CurrentMeta, val vendors: Page<Vendor>)
 

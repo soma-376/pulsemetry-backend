@@ -3,6 +3,7 @@ package com.team376.pulsemetry.enrollment.management
 import com.team376.pulsemetry.connector.vendor.SeatConnectors
 import com.team376.pulsemetry.persistence.enrollment.installation.InstallationNotifier
 import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
+import com.team376.pulsemetry.persistence.enrollment.alert.AlertRuleStore
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
 import org.springframework.beans.factory.ObjectProvider
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementStore
@@ -46,6 +47,10 @@ class ManagementProperties {
 @ConditionalOnProperty(prefix = "pulsemetry.management", name = ["enabled"], havingValue = "true")
 @EnableConfigurationProperties(ManagementProperties::class)
 class ManagementConfig {
+    /** 알림 규칙·목록 (ADR 0051). */
+    @Bean
+    fun alertRuleStore(jdbc: JdbcClient, manager: PlatformTransactionManager, clock: Clock) = AlertRuleStore(jdbc, manager, clock)
+
     @Bean
     fun managementStore(jdbc: JdbcClient, manager: PlatformTransactionManager, mapper: ObjectMapper, clock: Clock,
         properties: ManagementProperties, invitationMail: ObjectProvider<InvitationMailer>,
@@ -138,7 +143,7 @@ internal fun managementActor(auth: UserAuthService, tenant: UUID, request: HttpS
     return identity.memberId
 }
 
-@RestControllerAdvice(assignableTypes = [ManagementController::class, VendorConnectionController::class])
+@RestControllerAdvice(assignableTypes = [ManagementController::class, VendorConnectionController::class, AlertRuleController::class])
 @org.springframework.core.annotation.Order(-20)
 class ManagementErrors {
     @ExceptionHandler(ManagementException::class)

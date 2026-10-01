@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.dashboard.analytics
 
+import com.team376.pulsemetry.persistence.enrollment.alert.AlertRules
 import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
 import com.team376.pulsemetry.persistence.enrollment.management.OrganizationPolicySettings
 import com.team376.pulsemetry.dashboard.error.DashboardException
@@ -40,7 +41,8 @@ import java.util.UUID
  *   `lastHeartbeatAt` 은 마지막 설치 보고를 받은 시각이다(ledger 수신 시각을 넣지 않는다). 설치 버전은 마지막으로 보고한(없으면 등록 때의) `client_version` 이다.
  * - **업데이트 안내**(ADR 0043): 안내 채널(관리 기능 + 메일)이 켜진 배포에서만 보낼 수 있다. 적용이 확인되지 않은(outdated·unknown) 설치 중
  *   구성원이 활성인 설치만 `canNotify` 다. 안내는 확인을 부탁하는 메일이지 원격 업데이트가 아니다.
- * - **알림 규칙**: 규칙 저장소·평가 엔진이 없어 모두 비활성·`unavailable` 이다. 임계값과 창은 요청서의 초기 제안 기준이다.
+ * - **알림 규칙**(ADR 0051): 조직이 저장한 켜짐·판과, 켤 수 있는 근거가 있는가(가용성·사유)를 명령과 같은 판정([AlertRules])으로 낸다.
+ *   임계값과 창은 정의 표의 기준 데이터다. 평가 결과는 이 응답에 없다.
  */
 class SettingsService(
 	private val source: JdbcClient,
@@ -84,7 +86,7 @@ class SettingsService(
 		return SettingsResponse(
 			meta = meta(organization, now, token),
 			ingest = frames.ingest(organization, now),
-			capabilities = SettingsCapabilities(editContracts = managementEnabled, editCollectionPolicy = managementEnabled, editAlertRules = false, notifyInstallations = notificationsEnabled),
+			capabilities = SettingsCapabilities(editContracts = managementEnabled, editCollectionPolicy = managementEnabled, editAlertRules = managementEnabled, notifyInstallations = notificationsEnabled),
 			summary = SettingsSummary(
 				configuredVendors = vendors.count { it.state == CONFIGURED }.toLong(),
 				unconfiguredVendors = vendors.count { it.state != CONFIGURED }.toLong(),
@@ -125,7 +127,14 @@ class SettingsService(
 				cleanupOperationId = latestCleanup(organization.id)?.toString(),
 			),
 			policyRollout = rollout,
-			alertRules = ALERT_RULES,
+			alertRules = AlertRules.rules(source, organization.id).map { rule ->
+				AlertRule(rule.ruleId, rule.version, rule.enabled, if (rule.available) Availability.AVAILABLE else Availability.UNAVAILABLE, rule.reason,
+					AlertThreshold(rule.thresholdValue.toDouble(), rule.thresholdUnit), rule.evaluationWindow, rule.comparisonWindow)
+			},
+			alertLists = AlertRules.lists(source, organization.id).let { lists ->
+				fun view(id: String) = lists.getValue(id).let { AlertListView(it.listId, it.version, it.entries, it.updatedAt?.toString()) }
+				AlertLists(view(AlertRules.ALLOWED_MODELS), view(AlertRules.APPROVED_TOOLS))
+			},
 		)
 	}
 
@@ -371,16 +380,5 @@ class SettingsService(
 			"collect_user_prompts", "collect_assistant_responses",
 		)
 
-		/** 요청서의 초기 제안 기준. 규칙 저장소·평가 엔진이 없어 모두 비활성이다. */
-		val ALERT_RULES = listOf(
-			AlertRule("spend_spike", 0, false, Availability.UNAVAILABLE, Availability.EVALUATION_NOT_CONFIGURED, AlertThreshold(0.4, "ratio"),
-				"last_complete_7_calendar_days", "preceding_7_calendar_days"),
-			AlertRule("quota_exceeded", 0, false, Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, AlertThreshold(5.0, "users"),
-				"rolling_24_hours", null),
-			AlertRule("model_not_allowed", 0, false, Availability.UNAVAILABLE, Availability.EVALUATION_NOT_CONFIGURED, AlertThreshold(1.0, "events"),
-				"rolling_24_hours", null),
-			AlertRule("tool_unapproved", 0, false, Availability.UNAVAILABLE, Availability.EVALUATION_NOT_CONFIGURED, AlertThreshold(1.0, "events"),
-				"rolling_24_hours", null),
-		)
 	}
 }

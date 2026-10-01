@@ -34,6 +34,8 @@ object JsonStructure {
 		),
 		// 관측됐지만 등록하지 않은 제품·매핑 없는 관측 — ADR 0044.
 		"settings-response.example.json" to mapOf(
+			// 알림 규칙이 기대는 모델·도구 목록 — ADR 0051.
+			"" to setOf("alertLists"),
 			"/summary" to setOf("detectedProducts", "unmappedObservations", "assignedSeats"),
 			// 조직 정책 설정의 판·저장 시각·출처·저장할 수 있는 값 — ADR 0046. 마지막 보존 정리 작업 — ADR 0047.
 			"/collectionPolicy" to setOf("settingsVersion", "settingsUpdatedAt", "settingsUpdatedBy", "reclaimIdleDaysSource", "options", "cleanupOperationId"),

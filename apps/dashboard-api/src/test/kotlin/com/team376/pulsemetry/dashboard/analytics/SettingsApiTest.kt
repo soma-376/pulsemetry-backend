@@ -101,7 +101,7 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
-	@DisplayName("설정 — 수집 정책은 활성 manifest, 적용 확인이 없는 설치는 unknown, 알림 규칙은 초기 제안 기준으로 비활성")
+	@DisplayName("설정 — 수집 정책은 활성 manifest, 적용 확인이 없는 설치는 unknown, 저장한 적 없는 알림 규칙은 꺼짐·판 0 이고 근거가 없어 켤 수 없다")
 	fun settings() {
 		val org = seed()
 
@@ -116,13 +116,17 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/policyRollout/appliedInstallations").asLong()).isEqualTo(1)
 		assertThat(body.at("/policyRollout/outdatedInstallations").asLong()).isEqualTo(1)
 		assertThat(body.at("/policyRollout/unknownInstallations").asLong()).isEqualTo(1)
+		// ADR 0051 §1 — 수집 구간 보고가 없고(급증), 한도 초과는 근거가 없으며, 두 목록이 비어 있다.
 		assertThat(body.at("/alertRules").list().map { Triple(it.path("ruleId").asString(), it.path("enabled").asBoolean(), it.path("reason").asString()) })
 			.containsExactly(
-				Triple("spend_spike", false, "evaluation_not_configured"),
+				Triple("spend_spike", false, "completeness_not_available"),
 				Triple("quota_exceeded", false, "source_not_available"),
-				Triple("model_not_allowed", false, "evaluation_not_configured"),
-				Triple("tool_unapproved", false, "evaluation_not_configured"),
+				Triple("model_not_allowed", false, "allowed_models_not_configured"),
+				Triple("tool_unapproved", false, "approved_tools_not_configured"),
 			)
+		assertThat(body.at("/alertRules").list().map { it.path("version").asLong() to it.path("availability").asString() }).containsOnly(0L to "unavailable")
+		assertThat(listOf("/alertLists/allowedModels", "/alertLists/approvedTools").map { body.at("$it/version").asLong() to body.at("$it/entries").size() })
+			.containsOnly(0L to 0)
 		assertThat(body.at("/alertRules/0/threshold/value").asDouble()).isEqualTo(0.4)
 		assertThat(body.at("/alertRules/0/comparisonWindow").asString()).isEqualTo("preceding_7_calendar_days")
 		assertThat(listOf("editContracts", "editCollectionPolicy", "editAlertRules", "notifyInstallations").map { body.at("/capabilities/$it").asBoolean() })
@@ -307,6 +311,55 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		val rollout = ok(org.tenant, "/settings").at("/policyRollout")
 		assertThat(listOf("eligibleInstallations", "appliedInstallations", "outdatedInstallations", "unknownInstallations").map { rollout.path(it).asLong() })
 			.containsExactly(5L, 1L, 2L, 2L)
+	}
+
+	@Test
+	@DisplayName("알림 규칙 — 저장된 켜짐·판과 목록을 내고, 근거가 생긴 규칙만 켤 수 있다고 말한다(ADR 0051)")
+	fun storedAlertRules() {
+		val org = seed()
+		val other = seed()
+		val admin = DashboardTestStores.writer.sql("SELECT id FROM enrollment.members WHERE tenant_id = :t LIMIT 1").param("t", org.tenant).query(UUID::class.java).single()
+		fun list(tenant: UUID, listId: String, version: Long, vararg entries: String) {
+			DashboardTestStores.writer.sql("INSERT INTO enrollment.organization_alert_lists (tenant_id,list_id,version,updated_at,updated_by) VALUES (:t,:l,:v,'2026-09-20T01:00:00Z',(SELECT id FROM enrollment.members WHERE tenant_id = :t LIMIT 1))")
+				.param("t", tenant).param("l", listId).param("v", version).update()
+			entries.forEach { DashboardTestStores.writer.sql("INSERT INTO enrollment.organization_alert_list_entries (tenant_id,list_id,entry) VALUES (:t,:l,:e)").param("t", tenant).param("l", listId).param("e", it).update() }
+		}
+		list(org.tenant, "allowed_models", 2, "gpt-6-astra", "claude-opus-*")
+		DashboardTestStores.writer.sql("INSERT INTO enrollment.organization_alert_rules (tenant_id,rule_id,enabled,version,updated_at,updated_by) VALUES (:t,'model_not_allowed',true,3,'2026-09-20T02:00:00Z',:a)")
+			.param("t", org.tenant).param("a", admin).update()
+		// 다른 조직의 목록·수집 구간은 이 조직의 근거가 아니다.
+		list(other.tenant, "approved_tools", 1, "Bash")
+		SourceFixtures.insertSegment(other.applied, kst("2026-09-20T00:00:00"), kst("2026-09-20T01:00:00"))
+
+		val before = ok(org.tenant, "/settings")
+		val rules = before.at("/alertRules").list().associateBy { it.path("ruleId").asString() }
+		assertThat(rules.getValue("model_not_allowed").let { listOf(it.path("enabled").asBoolean(), it.path("version").asLong(), it.path("availability").asString(), it.path("reason").isNull) })
+			.containsExactly(true, 3L, "available", true)
+		assertThat(rules.getValue("tool_unapproved").path("reason").asString()).isEqualTo("approved_tools_not_configured")
+		assertThat(rules.getValue("spend_spike").path("reason").asString()).isEqualTo("completeness_not_available")
+		assertThat(before.at("/alertLists/allowedModels/entries").list().map { it.asString() }).containsExactly("claude-opus-*", "gpt-6-astra")
+		assertThat(listOf(before.at("/alertLists/allowedModels/listId").asString(), before.at("/alertLists/allowedModels/version").asLong(),
+			before.at("/alertLists/allowedModels/updatedAt").asString())).containsExactly("allowed_models", 2L, "2026-09-20T01:00:00Z")
+		assertThat(before.at("/alertLists/approvedTools/entries").size()).isZero()
+
+		// 이 조직의 설치가 수집 구간을 보고하면 급증 규칙을 켤 수 있다(완전한 날이 생길 근거).
+		SourceFixtures.insertSegment(org.applied, kst("2026-09-20T00:00:00"), kst("2026-09-20T01:00:00"))
+		val after = ok(org.tenant, "/settings").at("/alertRules").list().associateBy { it.path("ruleId").asString() }
+		assertThat(after.getValue("spend_spike").let { it.path("availability").asString() to it.path("reason").isNull }).isEqualTo("available" to true)
+		assertThat(after.getValue("spend_spike").path("enabled").asBoolean()).isFalse()
+		// 한도 초과는 근거가 없다.
+		assertThat(after.getValue("quota_exceeded").path("reason").asString()).isEqualTo("source_not_available")
+	}
+
+	@Test
+	@DisplayName("알림 규칙 편집 — 관리 기능이 켜진 배포에서만 할 수 있다")
+	fun alertRuleCapability() {
+		val org = seed()
+		val organization = requireNotNull(organizations.find(org.tenant))
+		fun service(management: Boolean) = AnalyticsConfig().settingsService(management, false, properties, source, observations, frames, tokens, codec,
+			mapper, clock, catalog, seats)
+		assertThat(service(management = true).settings(organization).capabilities.editAlertRules).isTrue()
+		assertThat(service(management = false).settings(organization).capabilities.editAlertRules).isFalse()
 	}
 
 	@Test
