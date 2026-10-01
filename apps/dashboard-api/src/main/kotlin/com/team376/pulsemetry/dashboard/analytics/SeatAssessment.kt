@@ -10,6 +10,7 @@ import com.team376.pulsemetry.dashboard.store.ClickHouseParam
 import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
 import com.team376.pulsemetry.persistence.enrollment.seat.ConnectionRecord
 import com.team376.pulsemetry.persistence.enrollment.seat.MemberLink
+import com.team376.pulsemetry.persistence.enrollment.seat.SeatControl
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatSource
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatState
 import com.team376.pulsemetry.persistence.enrollment.seat.SyncStatus
@@ -59,6 +60,8 @@ class SeatLedgerReader(
 		val vendorLastActivityAt: Instant?,
 		val note: String?,
 		val version: Long,
+		/** 벤더 내부 ID(현재 값 — 판이 없다). 벤더 제어에 필요한 커넥터가 있다(ADR 0049). */
+		val vendorAccountRef: String? = null,
 	)
 
 	data class Ledger(
@@ -68,6 +71,8 @@ class SeatLedgerReader(
 		val connections: Map<String, ConnectionRecord>,
 		/** 관측 제품 → 카탈로그 제품(ADR 0044). */
 		val mapping: Map<String, String>,
+		/** 끝나지 않은 회수·복원 대상이 있는 좌석(현재 값, ADR 0049). */
+		val openControls: Set<UUID> = emptySet(),
 	) {
 		val observableKinds: Set<String> get() = mapping.values.toSet()
 		fun product(vendorId: String): Product? = products.firstOrNull { it.vendorId == vendorId }
@@ -88,7 +93,7 @@ class SeatLedgerReader(
 				ContractStatus.at(contract?.effectiveFrom?.let(LocalDate::parse), contract?.effectiveTo?.let(LocalDate::parse), asOf))
 		}.list()
 		val seats = source.sql("""
-			SELECT s.id, s.vendor_id, s.account, s.account_kind, s.vendor_last_activity_at, e.version, e.state, e.source, e.member_id, e.member_link,
+			SELECT s.id, s.vendor_id, s.account, s.account_kind, s.vendor_last_activity_at, s.vendor_account_ref, e.version, e.state, e.source, e.member_id, e.member_link,
 			       e.tier_id, e.vendor_tier, e.release_effective_on, e.note, e.assigned_at, e.recorded_at
 			FROM enrollment.seat_assignments s
 			JOIN LATERAL (SELECT * FROM enrollment.seat_assignment_events e WHERE e.tenant_id = s.tenant_id AND e.seat_assignment_id = s.id AND e.recorded_at <= :as_of
@@ -101,11 +106,15 @@ class SeatLedgerReader(
 				rs.getObject("member_id", UUID::class.java), MemberLink.of(rs.getString("member_link")), rs.getString("tier_id"), rs.getString("vendor_tier"),
 				rs.getTimestamp("assigned_at").toInstant(), rs.getObject("release_effective_on", LocalDate::class.java),
 				rs.getTimestamp("recorded_at").toInstant().takeIf { state == SeatState.RELEASED },
-				rs.getTimestamp("vendor_last_activity_at")?.toInstant(), rs.getString("note"), rs.getLong("version"))
+				rs.getTimestamp("vendor_last_activity_at")?.toInstant(), rs.getString("note"), rs.getLong("version"), rs.getString("vendor_account_ref"))
 		}.list()
 		val mapping = source.sql("SELECT observed_product, product_id FROM enrollment.vendor_catalog_observed_products ORDER BY observed_product")
 			.query { rs, _ -> rs.getString(1) to rs.getString(2) }.list().toMap()
-		return Ledger(asOf, products, seats, VendorConnections.active(source, mapper, tenant).associateBy { it.vendorId }, mapping)
+		val open = source.sql("""SELECT DISTINCT c.seat_assignment_id FROM enrollment.seat_controls c
+			JOIN enrollment.operation_targets t ON t.operation_id = c.operation_id AND t.target_id = c.seat_assignment_id::text
+			WHERE c.tenant_id = :tenant AND t.status IN ('pending', 'awaiting_admin_action')""").param("tenant", tenant)
+			.query { rs, _ -> rs.getObject(1, UUID::class.java) }.list().toSet()
+		return Ledger(asOf, products, seats, VendorConnections.active(source, mapper, tenant).associateBy { it.vendorId }, mapping, open)
 	}
 
 	/** 현재 로스터(활성·정지)와 기준 시각의 소속 팀. 구성원 화면이 아닌 현재 상태 목록이 쓴다. */
@@ -310,6 +319,25 @@ class SeatAssessment(
 		return if (undecided || availability == Availability.PARTIAL) Availability.PARTIAL to (if (undecided) OBSERVATION_INCOMPLETE else reason) else Availability.AVAILABLE to null
 	}
 
+	/** 좌석 하나의 회수 가능 여부(ADR 0049). [method] 는 가능할 때의 실행 방식(`vendor_control`·`admin_action`), 불가면 [reason]. */
+	data class Reclaim(val canReclaim: Boolean, val reason: String?, val method: String?)
+
+	/**
+	 * 회수 가능 여부 — 실행 방식의 규칙은 enrollment 의 명령과 같은 함수(`SeatControl.choose`)다. 관리 기능이 꺼진 배포는 `management_disabled`,
+	 * 끝나지 않은 회수·복원이 있는 좌석은 `control_in_progress`. 연결·진행 중인 작업은 현재 값이다. 이 배포에 커넥터가 조립됐는지는 모른다 — 명령이 확인한다.
+	 */
+	fun reclaim(seat: SeatLedgerReader.SeatAt, managementEnabled: Boolean): Reclaim {
+		if (!managementEnabled) return Reclaim(false, MANAGEMENT_DISABLED, null)
+		val product = ledger.product(seat.vendorId) ?: return Reclaim(false, "not_found", null)
+		val choice = SeatControl.choose(SeatControl.Action.RELEASE, seat.state, product.kind, product.plan, ledger.connections[seat.vendorId], seat.vendorAccountRef,
+			vendorControl = true)
+		return when {
+			choice.reason != null -> Reclaim(false, choice.reason, null)
+			seat.id in ledger.openControls -> Reclaim(false, CONTROL_IN_PROGRESS, null)
+			else -> Reclaim(true, null, choice.method!!.wire)
+		}
+	}
+
 	companion object {
 		const val PENDING = "seat_sync_pending"
 		const val FAILING = "seat_sync_failing"
@@ -317,8 +345,8 @@ class SeatAssessment(
 		const val NOT_RECORDED = "seat_source_not_recorded"
 		const val PROVISIONAL = "seat_source_provisional"
 		const val OBSERVATION_INCOMPLETE = "observation_incomplete"
-		/** 좌석 회수 실행은 아직 없다 — 후보는 검토용이다. */
-		const val CONTROL_UNAVAILABLE = "vendor_control_unavailable"
+		const val MANAGEMENT_DISABLED = "management_disabled"
+		const val CONTROL_IN_PROGRESS = "control_in_progress"
 		private val UNDECIDED = setOf("seat_unlinked", "seat_source_unavailable", "product_unobservable", "observation_incomplete")
 	}
 }

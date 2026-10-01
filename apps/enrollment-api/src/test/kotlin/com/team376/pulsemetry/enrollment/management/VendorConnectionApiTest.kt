@@ -102,8 +102,8 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
         with(copilot.path("seatSource")) {
             assertThat(listOf(path("authority").asString(), path("provisional").asBoolean(), path("connector").path("connectorId").asString()))
                 .containsExactly("manual", true, "copilot")
-            // 구현한 기능은 좌석 목록뿐이고, 벤더가 지원하는 기능은 문서의 결론이다.
-            assertThat(path("connector").path("capabilities").toList().map { it.asString() }).containsExactly("seat_list")
+            // 구현한 기능은 ADR 0049 의 표(Copilot 은 목록·해제·복원)이고, 벤더가 지원하는 기능은 문서의 결론이다.
+            assertThat(path("connector").path("capabilities").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "seat_restore")
             assertThat(path("connector").path("supported").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "seat_restore")
             assertThat(path("connector").path("accountKind").asString()).isEqualTo("github_login")
             assertThat(path("connection").isNull).isTrue()

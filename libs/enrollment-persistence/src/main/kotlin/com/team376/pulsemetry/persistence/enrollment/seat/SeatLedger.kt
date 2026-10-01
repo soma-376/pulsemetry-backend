@@ -2,6 +2,8 @@ package com.team376.pulsemetry.persistence.enrollment.seat
 
 import com.team376.pulsemetry.connector.vendor.AccountKind
 import com.team376.pulsemetry.connector.vendor.ConnectorDescriptors
+import com.team376.pulsemetry.connector.vendor.ControlResult
+import com.team376.pulsemetry.connector.vendor.ControlStatus
 import com.team376.pulsemetry.connector.vendor.VendorSeat
 import com.team376.pulsemetry.connector.vendor.VendorSeatState
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
@@ -87,6 +89,8 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 		val actorId: UUID?,
 		val syncRunId: UUID?,
 		val recordedAt: Instant,
+		/** 벤더 제어·관리자 조치 확인을 남긴 작업(ADR 0049). */
+		val operationId: UUID? = null,
 	)
 
 	/** 선점한 동기화 실행 하나. [operationId] 는 이 실행이 끝내는 동기화 요청 작업이다(없으면 주기 실행). */
@@ -480,6 +484,58 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 		else operations.fail(run.tenantId, operation.id, run.connectionId.toString(), error)
 	}
 
+	// ---- 벤더 제어·관리자 조치 (ADR 0049 — 전이는 ADR 0048 §2의 표) ----
+
+	/**
+	 * 벤더가 받아들인 제어 결과를 원장에 옮긴다(원천 `vendor_control`, 이력의 행위자 = 작업). 해제: 끝남 → `released`, 예정 → `pending_release`(예정일은 모르면 null).
+	 * 복원: 끝남 → `assigned`, 초대 수락 대기 → `pending_assignment`. 지금 상태에서 그 전이가 표에 없으면(동기화가 먼저 바꿨다) 바꾸지 않고 false 다.
+	 */
+	internal fun applyControl(tenant: UUID, seatId: UUID, operationId: UUID, restore: Boolean, result: ControlResult): Boolean = write {
+		val existing = lockedSeat(tenant, seatId) ?: return@write false
+		val to = when {
+			!restore && result.status == ControlStatus.COMPLETED -> SeatState.RELEASED
+			!restore && result.status == ControlStatus.SCHEDULED -> SeatState.PENDING_RELEASE
+			restore && result.status == ControlStatus.COMPLETED -> SeatState.ASSIGNED
+			restore && result.status == ControlStatus.AWAITING_ACCEPTANCE -> SeatState.PENDING_ASSIGNMENT
+			else -> throw IllegalArgumentException("${if (restore) "복원" else "해제"}에 없는 결과다: ${result.status}")
+		}
+		if (!SeatTransitions.allowed(SeatSource.VENDOR_CONTROL, existing.state, to)) return@write false
+		transition(existing, to, SeatSource.VENDOR_CONTROL, operationId, result.effectiveOn)
+		true
+	}
+
+	/**
+	 * 관리자가 벤더 콘솔에서 한 조치의 확인을 원장에 옮긴다(원천 `admin_action`). 해제면 `released`, 복원이면 `assigned`.
+	 * 이력의 행위자는 작업이다 — 확인한 구성원은 작업 대상의 확인자(`operation_targets.confirmed_by`)에 남는다(이력의 행위자는 하나다).
+	 * 이미 그 상태면 바꾸지 않고 false. 표에 없는 전이면 `409 seat_changed` — 확인 사이에 좌석이 다른 상태가 됐다.
+	 */
+	internal fun applyAdminAction(tenant: UUID, seatId: UUID, operationId: UUID, restore: Boolean): Boolean = write {
+		val existing = lockedSeat(tenant, seatId) ?: fail("not_found", 404, "seatAssignmentId")
+		val to = if (restore) SeatState.ASSIGNED else SeatState.RELEASED
+		if (existing.state == to) return@write false
+		if (!SeatTransitions.allowed(SeatSource.ADMIN_ACTION, existing.state, to)) fail("seat_changed", 409)
+		transition(existing, to, SeatSource.ADMIN_ACTION, operationId, null)
+		true
+	}
+
+	/** 등록 제품을 잠근 뒤 좌석을 잠근다(제품 단위 직렬화). 보관한 제품이면 null. */
+	private fun lockedSeat(tenant: UUID, seatId: UUID): Seat? {
+		val vendorId = vendorOf(tenant, seatId)
+		try { RegisteredProducts.lock(jdbc, tenant, vendorId) } catch (_: ManagementException) { return null }
+		return seat(tenant, seatId, lock = true)
+	}
+
+	private fun transition(existing: Seat, to: SeatState, source: SeatSource, operationId: UUID, effectiveOn: LocalDate?) {
+		val now = now()
+		val seat = existing.copy(state = to, source = source, version = existing.version + 1, updatedAt = now,
+			releasedAt = if (to == SeatState.RELEASED) now else null,
+			releaseEffectiveOn = if (to == SeatState.PENDING_RELEASE) effectiveOn else null,
+			// 해제된 좌석이 다시 보유되면 그때부터 배정이다. 해제 예정에서 되살린 좌석은 계속 보유했다.
+			assignedAt = if (!existing.state.holds && to.holds) now else existing.assignedAt)
+		update(seat)
+		event(seat, operation = operationId)
+	}
+
 	// ---- 읽기 ----
 
 	fun seat(tenant: UUID, seatId: UUID): Seat? = seat(tenant, seatId, lock = false)
@@ -493,7 +549,8 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 		.param("tenant", tenant).param("id", seatId).query { rs, _ ->
 			Event(rs.getLong("version"), SeatState.of(rs.getString("state")), SeatSource.of(rs.getString("source")), rs.getObject("member_id", UUID::class.java),
 				MemberLink.of(rs.getString("member_link")), rs.getString("tier_id"), rs.getString("vendor_tier"), rs.getObject("release_effective_on", LocalDate::class.java),
-				rs.getString("note"), rs.getObject("actor_id", UUID::class.java), rs.getObject("sync_run_id", UUID::class.java), rs.getTimestamp("recorded_at").toInstant())
+				rs.getString("note"), rs.getObject("actor_id", UUID::class.java), rs.getObject("sync_run_id", UUID::class.java), rs.getTimestamp("recorded_at").toInstant(),
+				rs.getObject("operation_id", UUID::class.java))
 		}.list()
 
 	// ---- 내부 ----
@@ -598,17 +655,18 @@ class SeatLedger(private val jdbc: JdbcClient, manager: PlatformTransactionManag
 		.param("activity", seat.vendorLastActivityAt?.let(Timestamp::from), Types.TIMESTAMP)
 		.param("note", seat.note, Types.VARCHAR).param("version", seat.version).param("updatedAt", Timestamp.from(seat.updatedAt))
 
-	/** 판마다 한 행 — 바뀐 뒤의 값과 행위자 하나. */
-	private fun event(seat: Seat, actor: UUID? = null, syncRun: UUID? = null): Seat {
+	/** 판마다 한 행 — 바뀐 뒤의 값과 행위자 하나(구성원·동기화 실행·작업 중 하나 — 표의 CHECK). */
+	private fun event(seat: Seat, actor: UUID? = null, syncRun: UUID? = null, operation: UUID? = null): Seat {
 		jdbc.sql("""INSERT INTO enrollment.seat_assignment_events (seat_assignment_id, version, tenant_id, state, source, member_id, member_link, tier_id, vendor_tier,
-				release_effective_on, note, actor_id, sync_run_id, recorded_at, assigned_at)
+				release_effective_on, note, actor_id, sync_run_id, recorded_at, assigned_at, operation_id)
 			VALUES (:id, :version, :tenant, :state, :source, :member, :link,
-				:tier, :vendorTier, :effective, :note, :actor, :run, :at, :assignedAt)""")
+				:tier, :vendorTier, :effective, :note, :actor, :run, :at, :assignedAt, :operation)""")
 			.param("assignedAt", Timestamp.from(seat.assignedAt))
 			.param("id", seat.id).param("version", seat.version).param("tenant", seat.tenantId).param("state", seat.state.wire).param("source", seat.source.wire)
 			.param("member", seat.memberId, Types.OTHER).param("link", seat.memberLink?.wire, Types.VARCHAR).param("tier", seat.tierId, Types.VARCHAR)
 			.param("vendorTier", seat.vendorTier, Types.VARCHAR).param("effective", seat.releaseEffectiveOn, Types.DATE).param("note", seat.note, Types.VARCHAR)
-			.param("actor", actor, Types.OTHER).param("run", syncRun, Types.OTHER).param("at", Timestamp.from(seat.updatedAt)).update()
+			.param("actor", actor, Types.OTHER).param("run", syncRun, Types.OTHER).param("at", Timestamp.from(seat.updatedAt))
+			.param("operation", operation, Types.OTHER).update()
 		return seat
 	}
 

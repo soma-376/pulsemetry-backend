@@ -7,6 +7,7 @@ import com.team376.pulsemetry.persistence.enrollment.mail.MailDeliveryView
 import com.team376.pulsemetry.persistence.enrollment.operation.OperationStore
 import com.team376.pulsemetry.persistence.enrollment.operation.RetentionCleanupRequests
 import com.team376.pulsemetry.persistence.enrollment.operation.Operation
+import com.team376.pulsemetry.persistence.enrollment.seat.SeatControl
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatSource
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatView
@@ -44,13 +45,17 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
     /** 초대 메일. 메일 기능이 꺼진 배포에서는 null 이고 초대는 발송 없이 코드만 발급한다. */
     private val invitationMail: InvitationMailer? = null,
     /** 설치 업데이트 안내(ADR 0043). 메일 기능이 꺼진 배포에서는 null 이고 안내 요청은 422 다 — 접수한 척하지 않는다. */
-    private val installationNotifier: InstallationNotifier? = null) {
+    private val installationNotifier: InstallationNotifier? = null,
+    /** 이 배포가 좌석 벤더 제어(커넥터 호출)를 조립했는가(ADR 0049). 아니면 연결된 제품의 회수는 `connector_unavailable` 로 거절한다. */
+    vendorControl: Boolean = false) {
     private val tx = TransactionTemplate(manager)
     private val onboarding = OnboardingStore(jdbc, mapper, initialManifest,
         RetentionCleanupRequests(jdbc, manager, OperationStore(jdbc, manager, clock)), invitationMail != null)
     private val catalog = VendorCatalog(jdbc)
     /** 좌석 원장(ADR 0048) — 수동 기록은 벤더 연결 기능과 무관하게 된다. 동기화 요청은 연결이 있어야 한다(없으면 404). */
     private val seats = SeatLedger(jdbc, manager, clock)
+    /** 좌석 회수·복원(ADR 0049) — 관리자 조치 흐름은 벤더 연결 기능과 무관하게 된다. */
+    private val seatControl = SeatControl(jdbc, manager, clock, mapper, vendorControl)
     private val random = SecureRandom()
     private val key = SecretKeySpec(Base64.getDecoder().decode(encryptionKey).also { require(it.size == 32) }, "AES")
 
@@ -87,6 +92,12 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                 SEAT_CREATE.matches(operation) -> assignSeat(tenant, actor, operation.split('/')[2], body)
                 SEAT_RELEASE.matches(operation) -> releaseSeat(tenant, actor, operation.split('/')[2], operation.split('/')[4], body)
                 SEAT_EDIT.matches(operation) -> correctSeat(tenant, actor, operation.split('/')[2], operation.split('/')[4], body)
+                // 좌석 회수·복원(ADR 0049) — 실행·복원은 작업으로 접수하고, 관리자 조치 대기 대상은 확인·취소로 끝낸다.
+                operation == "POST /seat-reclaims/preview" -> previewReclaim(tenant, actor, body)
+                operation == "POST /seat-reclaims" -> operationNode(seatControl.execute(tenant, actor, uuid(text(body, "previewId", 36))))
+                RECLAIM_RESTORE.matches(operation) -> operationNode(seatControl.restore(tenant, actor, uuid(operation.split('/')[2])))
+                TARGET_CONFIRM.matches(operation) -> operationNode(seatControl.confirm(tenant, actor, uuid(operation.split('/')[2]), operation.split('/')[4]))
+                TARGET_CANCEL.matches(operation) -> operationNode(seatControl.cancel(tenant, actor, uuid(operation.split('/')[2]), operation.split('/')[4]))
                 operation == "PUT /collection-policy" -> onboarding.savePolicy(tenant, actor, body, now)
                 operation == "POST /onboarding/complete" -> onboarding.complete(tenant, actor, now)
                 operation == "POST /teams" -> createTeam(tenant, body, now)
@@ -404,12 +415,34 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
         return value.takeIf { it.isString }?.asString()?.trim()?.takeIf { it.length in 1..max } ?: fail("invalid_request", 400, field)
     }
 
+    /**
+     * 좌석 회수 미리보기 (ADR 0049). 요청서의 `ReclaimPreviewResponse` 키에 대상별 실행 방식(`targets`)과 절감 추정의 근거(`savingsBasis`)를 더했다.
+     * 절감 추정의 효력 시점은 모른다(`savingsEffectiveAt` null) — 구매 수량을 줄여야 실현된다.
+     */
+    private fun previewReclaim(tenant: UUID, actor: UUID, body: JsonNode): JsonNode {
+        val seats = body.path("seats").takeIf { it.isArray && it.size() in 1..SeatControl.MAX_SEATS }?.toList() ?: fail("invalid_request", 400, "seats")
+        val requested = seats.map { seat ->
+            if (!seat.isObject) fail("invalid_request", 400, "seats")
+            text(seat, "seatAssignmentId", 36) to long(seat, "expectedVersion")
+        }
+        val preview = seatControl.preview(tenant, actor, requested)
+        return node(mapOf(
+            "previewId" to preview.id, "expiresAt" to preview.expiresAt.toString(),
+            "eligibleSeatAssignmentIds" to preview.targets.map { it.seatAssignmentId.toString() },
+            "rejected" to preview.rejected.map { mapOf("seatAssignmentId" to it.seatAssignmentId, "reason" to it.reason) },
+            "estimatedMonthlySavingsUsd" to preview.estimatedMonthlySavingsUsd?.stripTrailingZeros()?.toPlainString(),
+            "savingsEffectiveAt" to null, "resultingUnallocatedSeats" to preview.resultingUnallocatedSeats,
+            "savingsBasis" to if (preview.estimatedMonthlySavingsUsd != null) "contract_unit_price" else null,
+            "targets" to preview.targets.map { mapOf("seatAssignmentId" to it.seatAssignmentId.toString(), "vendorId" to it.vendorId, "method" to it.method.wire) },
+        ))
+    }
+
     /** 접수한 작업 — 작업 상태 조회(`GET O/operations/{operationId}`)와 같은 모양. */
     private fun operationNode(operation: Operation): JsonNode = node(mapOf(
         "operationId" to operation.id, "kind" to operation.kind.wire, "status" to operation.status.wire,
         "createdAt" to operation.createdAt.toString(), "completedAt" to operation.completedAt?.toString(),
         "results" to operation.targets.map { mapOf("targetId" to it.targetId, "status" to it.status.wire, "reason" to it.reason, "action" to it.action) },
-        "canRestore" to false, "restoreUntil" to null, "retention" to null,
+        "canRestore" to operation.canRestore(clock.instant()), "restoreUntil" to operation.restoreUntil?.toString(), "retention" to null,
     ))
     private fun addMembership(member: UUID, team: UUID, now: Instant) {
         jdbc.sql("INSERT INTO enrollment.team_memberships(id,member_id,team_id,joined_at) VALUES (:id,:member,:team,:now)")
@@ -546,5 +579,8 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
         val SEAT_IMPORT = Regex("POST /vendors/[^/]+/seats/import")
         val SEAT_RELEASE = Regex("POST /vendors/[^/]+/seats/[^/]+/release")
         val SEAT_EDIT = Regex("PATCH /vendors/[^/]+/seats/[^/]+")
+        val RECLAIM_RESTORE = Regex("POST /seat-reclaims/[^/]+/restore")
+        val TARGET_CONFIRM = Regex("POST /operations/[^/]+/targets/[^/]+/confirm")
+        val TARGET_CANCEL = Regex("POST /operations/[^/]+/targets/[^/]+/cancel")
     }
 }

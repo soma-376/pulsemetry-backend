@@ -237,6 +237,88 @@ class VendorConnectorsTest {
 	@Test
 	fun `구현한 커넥터는 설명과 맞아 조립되고, 설명의 기능은 벤더 문서 근거 안이다`() {
 		val connectors = SeatConnectors(listOf(ClaudeEnterpriseConnector(http), CursorEnterpriseConnector(http), CopilotConnector(http), GeminiConnector(http)))
-		assertThat(ConnectorDescriptors.ALL.map { connectors.byId(it.id)?.implemented() }).containsOnly(setOf(Capability.SEAT_LIST))
+		// ADR 0049: 해제는 넷 모두, 복원은 요청·응답이 문서에 다 있는 Copilot·Gemini 만(Claude 재초대는 역할을 정해야 하고 Cursor 는 API 가 없다). 청구는 아직이다.
+		assertThat(ConnectorDescriptors.ALL.associate { it.id to connectors.byId(it.id)?.implemented() }).isEqualTo(mapOf(
+			"claude_enterprise" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE),
+			"cursor_enterprise" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE),
+			"copilot" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE),
+			"gemini" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE),
+		))
+		assertThat(ConnectorDescriptors.CLAUDE_ENTERPRISE.accountRefRequired).containsExactly(Capability.SEAT_RELEASE)
+	}
+
+	// ---- 해제·복원 (ADR 0049 — 요청 성공은 완료가 아니다) ----
+
+	@Test
+	fun `Claude — 제거는 구성원 ID 로 DELETE 하고 user_deleted 면 끝났다, 구성원 ID 가 없거나 SCIM 조직의 400 은 벤더 거절이다`() {
+		server.on("DELETE", "/v1/organizations/users/user_01AbCdEfGhIjKlMnOpQrSt", reply(200, """{"type":"user_deleted","id":"user_01AbCdEfGhIjKlMnOpQrSt"}"""))
+		val claude = ClaudeEnterpriseConnector(http, server.base)
+		assertThat(claude.release.release(target(), VendorAccount("jane@example.test", "user_01AbCdEfGhIjKlMnOpQrSt"))).isEqualTo(ControlResult(ControlStatus.COMPLETED))
+		with(server.received.single()) {
+			assertThat(listOf(method, header("x-api-key"), header("anthropic-version"), body)).containsExactly("DELETE", secret, "2023-06-01", "")
+		}
+		val before = server.received.size
+		assertThat(failure { claude.release.release(target(), VendorAccount("jane@example.test", null)) }.kind).isEqualTo(ConnectorFailure.Kind.VENDOR_REJECTED)
+		assertThat(server.received).describedAs("구성원 ID 없이 벤더를 부르지 않는다").hasSize(before)
+		server.on("DELETE", "/v1/organizations/users/user_scim", reply(400, """{"type":"error","error":{"type":"invalid_request_error","message":"managed by SCIM"}}"""))
+		assertThat(failure { claude.release.release(target(), VendorAccount("scim@example.test", "user_scim")) }.kind).isEqualTo(ConnectorFailure.Kind.VENDOR_REJECTED)
+		server.on("DELETE", "/v1/organizations/users/user_odd", reply(200, """{"type":"something_else"}"""))
+		assertThat(failure { claude.release.release(target(), VendorAccount("odd@example.test", "user_odd")) }.kind).isEqualTo(ConnectorFailure.Kind.INVALID_RESPONSE)
+		assertThat(claude.restore).describedAs("재초대는 구현하지 않는다 — 관리자 조치").isNull()
+	}
+
+	@Test
+	fun `Cursor — 제거는 userId 가 있으면 그것만, 없으면 email 만 보내고 success 가 false 면 벤더 거절이다`() {
+		server.on("POST", "/teams/remove-member",
+			reply(200, """{"success":true,"userId":"user_PDSPmvukpYgZEDXsoNirw3CFhy","hasBillingCycleUsage":true}"""),
+			reply(200, """{"success":true,"userId":"user_2","hasBillingCycleUsage":false}"""),
+			reply(200, """{"success":false}"""))
+		val cursor = CursorEnterpriseConnector(http, server.base)
+		assertThat(cursor.release.release(target(), VendorAccount("developer@example.test", "user_PDSPmvukpYgZEDXsoNirw3CFhy")).status).isEqualTo(ControlStatus.COMPLETED)
+		assertThat(cursor.release.release(target(), VendorAccount("other@example.test", null)).status).isEqualTo(ControlStatus.COMPLETED)
+		assertThat(failure { cursor.release.release(target(), VendorAccount("last@example.test", null)) }.kind).isEqualTo(ConnectorFailure.Kind.VENDOR_REJECTED)
+		val mapper = JsonMapper.builder().build()
+		assertThat(server.requests("/teams/remove-member").map { mapper.readTree(it.body) }.map { it.propertyNames().toList() to it.path("userId").asString(it.path("email").asString()) })
+			.containsExactly(listOf("userId") to "user_PDSPmvukpYgZEDXsoNirw3CFhy", listOf("email") to "other@example.test", listOf("email") to "last@example.test")
+		assertThat(server.received.map { it.header("Content-Type") }).containsOnly("application/json")
+		assertThat(cursor.restore).isNull()
+	}
+
+	@Test
+	fun `Copilot — 취소는 주기 말 효력의 예정이고 재배정은 끝났다, 0 석이면 벤더 거절이고 일시 장애는 다시 시도한다`() {
+		val users = "/orgs/octo-org/copilot/billing/selected_users"
+		server.on("DELETE", users, reply(503, "{}"), reply(200, """{"seats_cancelled":1}"""))
+		val copilot = CopilotConnector(http, server.base)
+		val settings = target(mapOf("organization" to "octo-org"))
+		// 응답에 날짜가 없다 — 예정일은 다음 동기화가 목록의 pending_cancellation_date 로 채운다.
+		assertThat(copilot.release!!.release(settings, VendorAccount("octocat", null))).isEqualTo(ControlResult(ControlStatus.SCHEDULED, null))
+		assertThat(waits).containsExactly(Duration.ofSeconds(2))
+		server.on("POST", users, reply(201, """{"seats_created":1}"""))
+		assertThat(copilot.restore!!.restore(settings, VendorAccount("octocat", null))).isEqualTo(ControlResult(ControlStatus.COMPLETED))
+		val mapper = JsonMapper.builder().build()
+		assertThat(server.requests(users).map { it.method to mapper.readTree(it.body).path("selected_usernames").toList().map { n -> n.asString() } })
+			.containsExactly("DELETE" to listOf("octocat"), "DELETE" to listOf("octocat"), "POST" to listOf("octocat"))
+		assertThat(server.requests(users).map { it.header("X-GitHub-Api-Version") }).containsOnly("2022-11-28")
+		server.on("DELETE", users, reply(200, """{"seats_cancelled":0}"""))
+		assertThat(failure { copilot.release!!.release(settings, VendorAccount("team-seat", null)) }.kind).describedAs("팀으로 배정된 좌석").isEqualTo(ConnectorFailure.Kind.VENDOR_REJECTED)
+		server.on("POST", users, reply(201, """{"seats_created":"1"}"""))
+		assertThat(failure { copilot.restore!!.restore(settings, VendorAccount("octocat", null)) }.kind).isEqualTo(ConnectorFailure.Kind.INVALID_RESPONSE)
+	}
+
+	@Test
+	fun `Gemini — 해제와 배정은 라이선스 풀에 usernames 를 보내고 빈 응답이면 끝났다, 권한이 없으면 권한 부족이다`() {
+		server.on("POST", "/token", tokenEndpoint())
+		val unassign = "/v1/billingAccounts/0123-ABCD/orders/order-9/licensePool:unassign"
+		val assign = "/v1/billingAccounts/0123-ABCD/orders/order-9/licensePool:assign"
+		server.on("POST", unassign, reply(200, ""), reply(403, """{"error":{"code":403,"status":"PERMISSION_DENIED"}}"""))
+		server.on("POST", assign, reply(200, "{}"))
+		val connector = gemini()
+		val settings = target(geminiSettings, serviceAccount)
+		assertThat(connector.release!!.release(settings, VendorAccount("dana@example.test", null))).isEqualTo(ControlResult(ControlStatus.COMPLETED))
+		assertThat(connector.restore!!.restore(settings, VendorAccount("dana@example.test", null))).isEqualTo(ControlResult(ControlStatus.COMPLETED))
+		val mapper = JsonMapper.builder().build()
+		assertThat((server.requests(unassign) + server.requests(assign)).map { Triple(it.path, mapper.readTree(it.body).path("usernames").toList().map { n -> n.asString() }, it.header("Authorization")) })
+			.containsExactly(Triple(unassign, listOf("dana@example.test"), "Bearer ya29.fake-access"), Triple(assign, listOf("dana@example.test"), "Bearer ya29.fake-access"))
+		assertThat(failure { connector.release!!.release(settings, VendorAccount("dana@example.test", null)) }.kind).isEqualTo(ConnectorFailure.Kind.INSUFFICIENT_PERMISSION)
 	}
 }

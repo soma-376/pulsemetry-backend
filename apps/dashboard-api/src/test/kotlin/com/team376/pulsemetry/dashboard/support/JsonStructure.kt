@@ -26,7 +26,7 @@ object JsonStructure {
 		),
 		// 회수 후보의 좌석 벤더 계정 — ADR 0048.
 		"members-response.example.json" to mapOf(
-			"/reclaimCandidates/data/items/0" to setOf("vendorAccount"),
+			"/reclaimCandidates/data/items/0" to setOf("vendorAccount", "reclaimMethod"),
 		),
 		"teams-response.example.json" to mapOf(
 			"/teams/items/0" to setOf("products"),

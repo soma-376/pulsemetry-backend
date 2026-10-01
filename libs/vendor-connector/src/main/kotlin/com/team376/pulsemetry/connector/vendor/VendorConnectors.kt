@@ -19,7 +19,8 @@ import java.util.Base64
 
 /*
  * 벤더 좌석 커넥터 넷 (ADR 0048 §8). 요청·응답은 `docs/vendor-connector-evidence.md` 의 문서 근거를 따른다 — 근거 없는 엔드포인트·필드를 쓰지 않는다.
- * 지금은 좌석 목록과 연결 확인(읽기)만 한다. 해제·복원·청구는 구현하지 않았다(설명의 capability 가 좌석 목록뿐이다).
+ * 좌석 목록·연결 확인(읽기)과, 문서가 요청·응답을 준 해제·복원(ADR 0049)을 한다. 청구는 구현하지 않았다.
+ * 제어 결과는 벤더가 돌려준 상태 그대로다 — 요청을 받아들였다는 것을 완료로 올리지 않는다([ControlStatus]).
  * 기준 주소는 생성자로 받는다 — 모의 서버와 실서버가 같은 코드를 쓴다.
  */
 
@@ -51,6 +52,17 @@ class ClaudeEnterpriseConnector(private val http: VendorHttp, baseUrl: URI = URI
 			VendorSeat(account = email, email = email, state = VendorSeatState.PENDING_ASSIGNMENT, assignedAt = optionalInstant(invite, "invited_at"))
 		}.filter { it.account.trim().lowercase() !in memberEmails }
 		return members + invites
+	}
+
+	/**
+	 * 제거(`DELETE /v1/organizations/users/{user_id}`, `write:members`) — "returning any purchased seat they occupied to the organization's pool".
+	 * 구성원 ID 가 필요하다(동기화가 남긴 벤더 내부 ID). 응답은 `{"type":"user_deleted"}`. 관리자 역할·SCIM 조직의 제거는 벤더가 400 으로 거절한다.
+	 */
+	override val release = SeatRelease { target, account ->
+		val id = account.vendorAccountRef ?: throw ConnectorFailure(ConnectorFailure.Kind.VENDOR_REJECTED)
+		val body = http.sendJson("DELETE", URI("$base/v1/organizations/users/${segment(id)}"), headers(target), null)
+		if (text(body, "type") != "user_deleted") throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+		ControlResult(ControlStatus.COMPLETED)
 	}
 
 	private fun pages(target: ConnectionTarget, resource: String): List<JsonNode> {
@@ -99,6 +111,20 @@ class CursorEnterpriseConnector(private val http: VendorHttp, baseUrl: URI = URI
 		VendorSeat(account = email, vendorAccountRef = text(member, "id"), email = email)
 	}
 
+	/**
+	 * 제거(`POST /teams/remove-member`, Enterprise) — 본문은 `userId` 또는 `email` 중 하나("but not both"). 벤더 내부 ID 가 있으면 그것을 쓴다.
+	 * 응답 `success` 가 true 여야 한다. 마지막 유료 구성원·마지막 관리자는 벤더가 거절한다.
+	 */
+	override val release = SeatRelease { target, account ->
+		val body = account.vendorAccountRef?.let { mapOf("userId" to it) } ?: mapOf("email" to account.account)
+		val response = http.sendJson("POST", URI("$base/teams/remove-member"), headers(target), body)
+		when (response.path("success").takeIf { it.isBoolean }?.asBoolean()) {
+			true -> ControlResult(ControlStatus.COMPLETED)
+			false -> throw ConnectorFailure(ConnectorFailure.Kind.VENDOR_REJECTED)
+			null -> throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+		}
+	}
+
 	private fun members(target: ConnectionTarget) = array(http.getJson(URI("$base/teams/members"), headers(target)), "teamMembers")
 }
 
@@ -115,6 +141,32 @@ class CopilotConnector(private val http: VendorHttp, baseUrl: URI = URI("https:/
 	private fun headers(target: ConnectionTarget) = mapOf(
 		"Accept" to "application/vnd.github+json", "Authorization" to "Bearer " + target.credential.reveal(), "X-GitHub-Api-Version" to API_VERSION,
 	)
+
+	private fun selectedUsers(target: ConnectionTarget) = URI("$base/orgs/${segment(target.settings.getValue("organization"))}/copilot/billing/selected_users")
+
+	/**
+	 * 취소(`DELETE …/copilot/billing/selected_users`, 본문 `selected_usernames`) — "Sets seats … to 'pending cancellation'"이고 주기 말에 효력이 생긴다.
+	 * 그래서 결과는 예정이다. 응답에 날짜가 없어 예정일은 다음 동기화(`pending_cancellation_date`)가 채운다. `seats_cancelled` 가 0 이면 취소되지 않았다
+	 * (팀을 통해 배정된 좌석 등) — 벤더 거절이다.
+	 */
+	override val release = SeatRelease { target, account ->
+		val body = http.sendJson("DELETE", selectedUsers(target), headers(target), mapOf("selected_usernames" to listOf(account.account)))
+		if (count(body, "seats_cancelled") < 1) throw ConnectorFailure(ConnectorFailure.Kind.VENDOR_REJECTED)
+		ControlResult(ControlStatus.SCHEDULED)
+	}
+
+	/**
+	 * 재배정(`POST …/copilot/billing/selected_users`) — "Purchases a GitHub Copilot seat for each user"이고 응답 `seats_created` 는 새로 만들거나
+	 * 되살린(refreshed) 좌석 수다. 0 이면 벤더 거절이다.
+	 */
+	override val restore = SeatRestore { target, account ->
+		val body = http.sendJson("POST", selectedUsers(target), headers(target), mapOf("selected_usernames" to listOf(account.account)))
+		if (count(body, "seats_created") < 1) throw ConnectorFailure(ConnectorFailure.Kind.VENDOR_REJECTED)
+		ControlResult(ControlStatus.COMPLETED)
+	}
+
+	private fun count(body: JsonNode, field: String): Long =
+		body.path(field).takeIf { it.isIntegralNumber }?.asLong() ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
 
 	private fun seatsUri(target: ConnectionTarget, page: Int, perPage: Int) =
 		URI("$base/orgs/${segment(target.settings.getValue("organization"))}/copilot/billing/seats?per_page=$perPage&page=$page")
@@ -194,10 +246,25 @@ class GeminiConnector(
 		throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
 	}
 
+	/** 해제(`licensePool:unassign`, 본문 `{"usernames": [...]}`) — 성공 응답은 빈 본문이다. 자동 배정 구독이면 벤더가 다시 배정할 수 있다(다음 동기화가 보인다). */
+	override val release = SeatRelease { target, account -> control(target, "unassign", account) }
+
+	/** 배정(`licensePool:assign`) — 요청·응답 형식은 해제와 같다. 남은 라이선스가 없으면 벤더가 거절한다. */
+	override val restore = SeatRestore { target, account -> control(target, "assign", account) }
+
+	private fun control(target: ConnectionTarget, verb: String, account: VendorAccount): ControlResult {
+		http.sendJson("POST", URI("$base/v1/${parent(target)}:$verb"), headers(target, accessToken(target)), mapOf("usernames" to listOf(account.account)))
+		return ControlResult(ControlStatus.COMPLETED)
+	}
+
+	private fun parent(target: ConnectionTarget) =
+		"billingAccounts/${segment(target.settings.getValue("billingAccount"))}/orders/${segment(target.settings.getValue("order"))}/licensePool"
+
+	private fun headers(target: ConnectionTarget, token: String) = mapOf("Authorization" to "Bearer $token", "X-Goog-User-Project" to target.settings.getValue("project"))
+
 	private fun page(target: ConnectionTarget, token: String, size: Int, pageToken: String?): JsonNode {
-		val parent = "billingAccounts/${segment(target.settings.getValue("billingAccount"))}/orders/${segment(target.settings.getValue("order"))}/licensePool"
-		val uri = URI("$base/v1/$parent:enumerateLicensedUsers?pageSize=$size" + (pageToken?.let { "&pageToken=" + VendorHttp.encode(it) } ?: ""))
-		return http.getJson(uri, mapOf("Authorization" to "Bearer $token", "X-Goog-User-Project" to target.settings.getValue("project")))
+		val uri = URI("$base/v1/${parent(target)}:enumerateLicensedUsers?pageSize=$size" + (pageToken?.let { "&pageToken=" + VendorHttp.encode(it) } ?: ""))
+		return http.getJson(uri, headers(target, token))
 	}
 
 	/** 서비스 계정 키로 서명한 JWT 를 액세스 토큰으로 바꾼다. 키가 서비스 계정 키 모양이 아니면 자격증명 무효다. */

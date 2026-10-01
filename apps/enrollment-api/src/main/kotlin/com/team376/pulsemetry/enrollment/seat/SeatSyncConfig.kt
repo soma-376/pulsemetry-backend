@@ -13,6 +13,7 @@ import com.team376.pulsemetry.connector.vendor.VendorHttp
 import com.team376.pulsemetry.enrollment.management.ManagementProperties
 import com.team376.pulsemetry.persistence.enrollment.seat.CredentialCipher
 import com.team376.pulsemetry.persistence.enrollment.seat.CredentialKeyUnavailable
+import com.team376.pulsemetry.persistence.enrollment.seat.SeatControl
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger
 import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnectionStore
 import org.slf4j.LoggerFactory
@@ -114,9 +115,19 @@ class SeatSyncConfig {
         return SeatSynchronizer(ledger, connections, connectors, interval, lease, worker)
     }
 
+    /** 회수·복원의 벤더 제어 대상을 실행한다(ADR 0049). 선점 기한은 동기화와 같은 값이다 — 호출 하나의 재시도 전체보다 길다. */
     @Bean
-    fun seatSyncJob(synchronizer: SeatSynchronizer, properties: VendorConnectionProperties) =
-        SeatSyncJob(positive(properties.sync.checkInterval, "sync.check-interval")) { synchronizer.runOnce() }
+    fun seatControlRunner(jdbc: JdbcClient, manager: PlatformTransactionManager, clock: Clock, mapper: ObjectMapper, connections: VendorConnectionStore,
+        connectors: SeatConnectors, properties: VendorConnectionProperties): SeatControlRunner {
+        val worker = "enrollment-api-${ProcessHandle.current().pid()}-${UUID.randomUUID().toString().take(8)}"
+        return SeatControlRunner(SeatControl(jdbc, manager, clock, mapper, vendorControl = true), connections, connectors,
+            positive(properties.sync.lease, "sync.lease"), worker)
+    }
+
+    /** 한 바퀴 = 회수·복원의 벤더 제어 → 동기화. 제어가 먼저라 같은 바퀴의 동기화가 예정일(해제 예정) 같은 벤더 값을 곧바로 채운다. */
+    @Bean
+    fun seatSyncJob(synchronizer: SeatSynchronizer, controls: SeatControlRunner, properties: VendorConnectionProperties) =
+        SeatSyncJob(positive(properties.sync.checkInterval, "sync.check-interval")) { controls.runOnce(); synchronizer.runOnce() }
 
     private fun missing(key: String) = "pulsemetry.vendor-connections.$key 가 비어 있다"
     private fun positive(value: Duration?, key: String): Duration =
@@ -193,6 +204,84 @@ class SeatSynchronizer(
 
     private companion object {
         val log = LoggerFactory.getLogger(SeatSynchronizer::class.java)
+    }
+}
+
+/**
+ * 회수·복원의 벤더 제어 한 바퀴 (ADR 0049). 대상마다: 선점 → 자격증명 복호화 → 계약 플랜의 커넥터 확인 → 해제·복원 호출 → 원장·작업 대상 결과.
+ * 실패는 작업 대상의 사유(분류 코드)로만 남고 원장은 바꾸지 않는다. 일시 장애도 대상 실패다 — 다시 하려면 관리자가 새로 회수·복원한다.
+ *
+ * | 실패 | 사유 |
+ * | --- | --- |
+ * | 커넥터 호출 | 커넥터 실패 종류(`invalid_credentials`·`insufficient_permission`·`vendor_rejected`·`rate_limited`·`vendor_unavailable`·`invalid_response`) |
+ * | 연결이 지워졌거나 바뀜 | `connection_removed` |
+ * | 계약 플랜이 연결의 커넥터와 다름 | `plan_mismatch` |
+ * | 이 배포에 그 기능의 구현이 없음 | `connector_unavailable` |
+ * | 행의 암호화 키가 설정에 없음 | `credential_key_unavailable` |
+ * | 그 밖의 예외 | `control_error` |
+ */
+class SeatControlRunner(
+    private val control: SeatControl,
+    private val connections: VendorConnectionStore,
+    private val connectors: SeatConnectors,
+    private val lease: Duration,
+    private val worker: String,
+) {
+    /** 한 바퀴의 결과 — 벤더가 받아들인 대상 수와 실패한 대상 수. */
+    data class Round(val completed: Int, val failed: Int)
+
+    fun runOnce(): Round {
+        var completed = 0
+        var failed = 0
+        repeat(MAX_PER_ROUND) {
+            val claim = try { control.claim(worker, lease) } catch (error: Exception) {
+                log.warn("좌석 제어 대상을 선점하지 못했다 error={}", error.javaClass.simpleName)
+                return Round(completed, failed)
+            } ?: return Round(completed, failed)
+            if (execute(claim)) completed++ else failed++
+        }
+        return Round(completed, failed)
+    }
+
+    private fun execute(claim: SeatControl.Claim): Boolean {
+        val error = try {
+            val (record, credential) = connections.credential(claim.tenantId, claim.connectionId) ?: return fail(claim, "connection_removed")
+            val expected = try { connections.view(claim.tenantId, record.vendorId).connector?.connectorId } catch (_: Exception) { null }
+            val connector = connectors.byId(record.connector)
+            val target = ConnectionTarget(record.settings, credential)
+            val result = when {
+                expected != record.connector -> null
+                connector == null -> null
+                claim.action == SeatControl.Action.RELEASE -> connector.release?.release(target, claim.account)
+                else -> connector.restore?.restore(target, claim.account)
+            }
+            when {
+                expected != record.connector -> "plan_mismatch"
+                result == null -> "connector_unavailable"
+                else -> return control.complete(claim, result)
+            }
+        } catch (failure: ConnectorFailure) {
+            failure.kind.wire
+        } catch (_: CredentialKeyUnavailable) {
+            "credential_key_unavailable"
+        } catch (error: Exception) {
+            // 예외 원문에는 벤더 응답·바인딩 값이 섞일 수 있어 종류만 남긴다.
+            log.warn("좌석 제어가 예외로 끝났다 operation={} error={}", claim.operationId, error.javaClass.simpleName)
+            "control_error"
+        }
+        log.info("좌석 제어 실패 operation={} error={}", claim.operationId, error)
+        return fail(claim, error)
+    }
+
+    private fun fail(claim: SeatControl.Claim, reason: String): Boolean {
+        control.fail(claim, reason)
+        return false
+    }
+
+    private companion object {
+        /** 한 바퀴에 부르는 대상의 상한 — 나머지는 다음 바퀴다. */
+        const val MAX_PER_ROUND = 200
+        val log = LoggerFactory.getLogger(SeatControlRunner::class.java)
     }
 }
 

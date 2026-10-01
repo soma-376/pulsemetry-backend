@@ -3,7 +3,7 @@
 커넥터(ADR 0048)는 벤더 문서의 요청·응답을 재현한 모의 서버로 검증했다(`VendorConnectorsTest`, `SeatSyncApiTest`).
 **실계정 검증은 하지 않았다.** 이 문서는 자격증명이 생긴 뒤 돌릴 절차다. 근거 문서는 [`vendor-connector-evidence.md`](vendor-connector-evidence.md)다.
 
-지금 구현은 **읽기만** 한다 — 연결 확인과 좌석 목록. 상태를 바꾸는 검증(회수·복원)은 해제·복원을 구현할 때 이 문서의 "상태를 바꾸는 검증" 절에 더한다.
+2절(커넥터 단독)은 **읽기만** 한다 — 연결 확인과 좌석 목록. 회수·복원(ADR 0049)은 좌석 상태를 바꾸므로 4절의 **테스트 조직 전용** 절차로만 검증한다.
 
 ## 1. 준비물 — 벤더별 자격증명과 권한
 
@@ -60,6 +60,28 @@ PULSEMETRY_VERIFY_CREDENTIAL_FILE=/secure/path/key.json PULSEMETRY_VERIFY_SETTIN
 5. 설정 조회의 그 벤더 `seatSource.connection.sync.status = succeeded`, DB `enrollment.seat_assignments`의 좌석 수가 2절의 출력과 같다.
 6. 연결을 지우고(`DELETE …/connection`, `If-Match`) 암호문 열이 비었는지 본다.
 
-## 4. 상태를 바꾸는 검증
+## 4. 상태를 바꾸는 검증 — 테스트 조직 전용
 
-지금은 없다 — 해제·복원을 구현하지 않았다. 구현하면 테스트 조직의 테스트 계정 하나로만 돌리는 절차(회수 → 벤더 콘솔 확인 → 복원)를 여기에 적는다.
+**운영 조직에서 돌리지 않는다.** 회수는 실제 좌석을 해지한다(Claude Enterprise는 구성원을 조직에서 제거한다). 벤더의 테스트 조직과, 그 조직에서 잃어도 되는 테스트 계정
+하나(관리자 역할이 아닌 계정)로만 돌린다. 쓰기 권한이 필요하다 — Claude `write:members`, Cursor 팀 관리자, Copilot `manage_billing:copilot`, Gemini `consumerprocurement.licensePools.unassign`·`assign`.
+
+| 커넥터 | 회수 | 복원 |
+| --- | --- | --- |
+| `claude_enterprise` | 벤더 제어(구성원 제거 — 좌석이 풀로 돌아간다) | 관리자 조치 — 콘솔에서 재초대 후 확인(역할을 정해야 해 자동으로 하지 않는다) |
+| `cursor_enterprise` | 벤더 제어(`remove-member`) | 관리자 조치 — 대시보드에서 재초대 후 확인 |
+| `copilot` | 벤더 제어(취소 — **주기 말 효력**, 즉시는 `pending_release`) | 벤더 제어(재배정 — 새 좌석 구매와 같다) |
+| `gemini` | 벤더 제어(`unassign`) | 벤더 제어(`assign`) — 자동 배정 구독이면 벤더가 다시 배정할 수 있어 먼저 배정 방식을 확인한다 |
+
+3절의 연결·동기화가 끝난 스테이징에서:
+
+1. 테스트 계정의 좌석을 찾는다 — `GET O/members/{memberId}/seats`(dashboard-api)의 `seatAssignmentId`·`version`·`canReclaim`·`reclaimMethod`(`vendor_control`이어야 한다).
+2. `POST O/seat-reclaims/preview`(좌석 하나) → `eligibleSeatAssignmentIds`에 그 좌석, `targets[0].method = vendor_control`.
+3. `POST O/seat-reclaims`(`previewId`, `Idempotency-Key`) → 202. `sync.check-interval`이 지난 뒤 `GET O/operations/{operationId}`가 `succeeded`.
+4. 벤더 콘솔에서 확인: Claude·Cursor는 구성원 목록에서 사라졌다, Copilot은 그 로그인이 "pending cancellation", Gemini는 라이선스 사용자에서 빠졌다.
+   원장(`enrollment.seat_assignments`)은 `released`(Copilot은 `pending_release`, 다음 동기화 뒤 예정일이 채워진다), 원천 `vendor_control`.
+5. 복원 — Copilot·Gemini: `POST O/seat-reclaims/{operationId}/restore` → 다음 주기 뒤 `succeeded`, 콘솔에 좌석이 돌아왔고 원장 `assigned`.
+   Claude·Cursor: 복원 작업이 `awaiting_admin_action` → 콘솔에서 재초대 → `POST O/operations/{restoreId}/targets/{seatAssignmentId}/confirm` → 원장 `assigned`(원천 `admin_action`).
+   Claude는 초대 수락 전까지 다음 동기화가 `pending_assignment`로 보일 수 있다.
+6. 실패 경로: 관리자 역할 계정(Claude)·팀으로 배정된 좌석(Copilot)을 회수하면 대상이 `vendor_rejected`로 실패하고 원장은 그대로인지 본다.
+
+결과(성공·실패 코드, 콘솔과 원장의 일치)와 확인일을 [`vendor-connector-evidence.md`](vendor-connector-evidence.md)의 해당 절에 적는다.

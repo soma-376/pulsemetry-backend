@@ -3,6 +3,10 @@ package com.team376.pulsemetry.dashboard.analytics
 import com.team376.pulsemetry.connector.vendor.VendorSeat
 import com.team376.pulsemetry.dashboard.authentication.DashboardPrincipal
 import com.team376.pulsemetry.dashboard.authentication.Role
+import com.team376.pulsemetry.dashboard.config.AnalyticsConfig
+import com.team376.pulsemetry.dashboard.config.DashboardApiProperties
+import com.team376.pulsemetry.dashboard.request.PageCursorCodec
+import com.team376.pulsemetry.dashboard.request.PageRequest
 import com.team376.pulsemetry.dashboard.request.QueryReader
 import com.team376.pulsemetry.dashboard.support.AbstractDashboardApiTest
 import com.team376.pulsemetry.dashboard.support.DashboardHttp
@@ -18,6 +22,7 @@ import org.assertj.core.data.Offset
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.jdbc.datasource.DriverManagerDataSource
@@ -38,6 +43,16 @@ import java.util.UUID
  * 원장은 enrollment 의 저장 연산(SeatLedger)으로 채운다 — 이 앱은 읽기만 한다. 시각은 지금 기준의 상대값이다(검토 창은 확정된 날만 쓴다).
  */
 class SeatQueryApiTest : AbstractDashboardApiTest() {
+
+	@Autowired private lateinit var properties: DashboardApiProperties
+	@Autowired private lateinit var frames: AnalyticsFrames
+	@Autowired private lateinit var aggregator: UsageAggregator
+	@Autowired private lateinit var references: SnapshotReferences
+	@Autowired private lateinit var snapshots: com.team376.pulsemetry.dashboard.snapshot.SnapshotService
+	@Autowired private lateinit var codec: PageCursorCodec
+	@Autowired private lateinit var tokens: CurrentStateTokens
+	@Autowired private lateinit var source: JdbcClient
+	@Autowired private lateinit var seatService: SeatService
 
 	@BeforeEach
 	fun backfillDone() { SourceFixtures.completeBackfill() }
@@ -143,7 +158,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		assertThat(first.at("/candidates/data/totalCount").asInt()).isEqualTo(2)
 		val dana = first.at("/candidates/data/items/0")
 		assertThat(listOf(dana.path("seatAssignmentId").asString(), dana.path("memberId").asString(), dana.path("idleDays").asLong(), dana.path("canReclaim").asBoolean(),
-			dana.path("reason").asString())).containsExactly(org.seats.getValue("dana").toString(), org.members.getValue("dana").toString(), 60L, false, "vendor_control_unavailable")
+			dana.path("reason").asString())).containsExactly(org.seats.getValue("dana").toString(), org.members.getValue("dana").toString(), 60L, false, "management_disabled")
 		assertThat(dana.path("lastUsedAt").isNull).describedAs("사용 이력이 없으면 배정 시각부터 센다").isTrue()
 		assertThat(dana.path("tierId").isNull && dana.path("estimatedMonthlySavingsUsd").isNull).isTrue()
 		assertThat(dana.path("vendorAccount").asString()).startsWith("dana-")
@@ -180,7 +195,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		with(seats("dana").single()) {
 			assertThat(listOf(path("state").asString(), path("source").asString(), path("ledgerAvailability").asString(), path("tierLabel").isNull,
 				path("reclaimCandidate").asBoolean(), path("reviewReason").isNull, path("idleDays").asLong(), path("canReclaim").asBoolean(), path("reclaimReason").asString()))
-				.containsExactly("assigned", "manual", "available", true, true, true, 60L, false, "vendor_control_unavailable")
+				.containsExactly("assigned", "manual", "available", true, true, true, 60L, false, "management_disabled")
 		}
 		assertThat(seats("eli").single().let { it.path("reviewReason").asString() to it.path("idleDays").asLong() }).describedAs("2일 전 사용 — 완전한 24시간 둘").isEqualTo("in_use" to 2L)
 		assertThat(seats("fox").single().let { it.path("reviewReason").asString() to it.path("reclaimCandidate").asBoolean() }).isEqualTo("observation_incomplete" to false)
@@ -362,5 +377,36 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		val body = ok(none, "/analytics/overview?$period").path("seats")
 		assertThat(body.path("availability").asString() to body.path("reason").asString()).isEqualTo("unavailable" to "not_applicable")
 		assertThat(body.path("current").isNull).isTrue()
+	}
+
+	@Test
+	@DisplayName("회수 가능 여부(ADR 0049) — 관리 기능이 있으면 연결된 제품은 벤더 제어, 없으면 관리자 조치이고 배정 좌석만·진행 중인 회수가 없을 때만이다")
+	fun reclaimControl() {
+		val org = organization()
+		// 앱 조립과 같은 경로로 만든다 — 관리 기능이 켜진 배포.
+		val service = AnalyticsConfig().membersService(true, properties, frames, aggregator, references, snapshots, codec, tokens, java.time.Clock.systemUTC(), source, seatService)
+		val organization = requireNotNull(organizations.find(org.tenant))
+		fun seat(name: String) = service.memberSeats(organization, org.members.getValue(name), null).seats.single()
+		assertThat(seat("dana").let { Triple(it.canReclaim, it.reclaimReason, it.reclaimMethod) }).describedAs("Team 플랜 수동 원장").isEqualTo(Triple(true, null, "admin_action"))
+		assertThat(seat("admin").let { Triple(it.canReclaim, it.reclaimReason, it.reclaimMethod) }).describedAs("Copilot 활성 연결").isEqualTo(Triple(true, null, "vendor_control"))
+		assertThat(seat("gil").let { Triple(it.canReclaim, it.reclaimReason, it.reclaimMethod) }).isEqualTo(Triple(false, "not_assigned", null))
+		val candidates = service.reclaimCandidates(organization, PageRequest(10, null), null).candidates.data!!.items
+		assertThat(candidates.map { Triple(it.canReclaim, it.reason, it.reclaimMethod) }).containsOnly(Triple(true, null, "admin_action"))
+		val today = now.atZone(QueryReader.SEOUL).toLocalDate()
+		val dashboard = service.dashboard(organization, org.admin, com.team376.pulsemetry.dashboard.request.ComparedPeriod(
+			com.team376.pulsemetry.dashboard.request.DatePeriod(today.minusDays(8), today.minusDays(2), QueryReader.SEOUL), com.team376.pulsemetry.dashboard.request.CompareMode.NONE))
+		assertThat(dashboard.capabilities.let { it.reclaimSeats to it.restoreSeats }).isEqualTo(true to true)
+
+		// dana 의 좌석에 끝나지 않은 회수(관리자 조치 대기)가 있다 — 다시 회수할 수 없다.
+		val operation = UUID.randomUUID()
+		DashboardTestStores.writer.sql("INSERT INTO enrollment.operations (id, tenant_id, kind, status, requested_by, created_at) VALUES (:id, :t, 'seat_reclaim', 'awaiting_admin_action', :admin, now())")
+			.param("id", operation).param("t", org.tenant).param("admin", org.admin).update()
+		DashboardTestStores.writer.sql("""INSERT INTO enrollment.operation_targets (operation_id, target_id, position, status, action)
+			VALUES (:id, :seat, 0, 'awaiting_admin_action', 'release_in_vendor_console')""").param("id", operation).param("seat", org.seats.getValue("dana").toString()).update()
+		DashboardTestStores.writer.sql("""INSERT INTO enrollment.seat_controls (operation_id, seat_assignment_id, tenant_id, action, method, requested_at)
+			VALUES (:id, :seat, :t, 'release', 'admin_action', now())""").param("id", operation).param("seat", org.seats.getValue("dana")).param("t", org.tenant).update()
+		assertThat(seat("dana").let { it.canReclaim to it.reclaimReason }).isEqualTo(false to "control_in_progress")
+		assertThat(service.reclaimCandidates(organization, PageRequest(10, null), null).candidates.data!!.items
+			.single { it.seatAssignmentId == org.seats.getValue("dana").toString() }.let { it.canReclaim to it.reason }).isEqualTo(false to "control_in_progress")
 	}
 }

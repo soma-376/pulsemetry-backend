@@ -99,13 +99,16 @@ data class VendorSeat(
 /** 제어 호출의 대상. */
 data class VendorAccount(val account: String, val vendorAccountRef: String?)
 
-/** 제어 호출의 결과. [ControlStatus.SCHEDULED] 는 [effectiveOn] 에 효력이 생긴다. */
+/**
+ * 제어 호출의 결과. [ControlStatus.SCHEDULED] 는 [effectiveOn] 에 효력이 생긴다 — 벤더가 응답에 날짜를 주지 않으면 null 이고 다음 동기화가 목록의 예정일로 채운다.
+ */
 data class ControlResult(val status: ControlStatus, val effectiveOn: LocalDate? = null) {
 	init {
-		require((status == ControlStatus.SCHEDULED) == (effectiveOn != null)) { "효력일은 예정 결과에만 있다" }
+		require(effectiveOn == null || status == ControlStatus.SCHEDULED) { "효력일은 예정 결과에만 있다" }
 	}
 }
 
+/** 벤더가 요청을 받아들인 뒤의 상태. [SCHEDULED] 는 해제 예정(주기 말 효력), [AWAITING_ACCEPTANCE] 는 초대 수락 대기다 — 둘 다 끝난 것이 아니다. */
 enum class ControlStatus { COMPLETED, SCHEDULED, AWAITING_ACCEPTANCE }
 
 /** 청구 금액 한 구간. [finalized] 가 false 면 벤더가 뒤에 고칠 수 있는 값이다. */

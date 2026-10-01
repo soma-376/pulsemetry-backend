@@ -48,10 +48,13 @@ data class ConnectorDescriptor(
 	val supported: Set<Capability>,
 	/** 이 저장소가 구현한 기능. 구현이 이것과 다르면 조립이 실패한다. */
 	val capabilities: Set<Capability>,
+	/** 벤더 내부 ID([VendorAccount.vendorAccountRef])가 있어야 부를 수 있는 기능. 그 ID 가 없는 좌석(연결 전 수동 기록)에는 이 기능을 쓰지 못한다. */
+	val accountRefRequired: Set<Capability> = emptySet(),
 ) {
 	init {
 		require(Capability.SEAT_LIST in capabilities) { "좌석 목록은 모든 커넥터가 한다" }
 		require(supported.containsAll(capabilities)) { "벤더 문서에 근거가 없는 기능을 구현하지 않는다" }
+		require(capabilities.containsAll(accountRefRequired)) { "구현하지 않은 기능의 호출 조건을 두지 않는다" }
 		require(plans.isNotEmpty()) { "플랜이 없다" }
 	}
 }
@@ -61,24 +64,27 @@ data class ConnectorDescriptor(
  * 그 제품은 커넥터가 없는 플랜이다(ADR 0048 §3의 1행).
  */
 object ConnectorDescriptors {
-	/** 지금 구현한 기능 — 좌석 목록(과 연결 확인)뿐이다. 해제·복원·청구는 아직 구현하지 않았다. */
-	private val LISTING = setOf(Capability.SEAT_LIST)
+	private val LIST_RELEASE = setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE)
+	private val LIST_RELEASE_RESTORE = setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE)
 
-	/** Claude Enterprise: 구성원 조회·제거·재초대(수락 대기), 사용량 기반 계약의 사용 비용. 등급·활동 시각은 주지 않는다. */
+	/**
+	 * Claude Enterprise: 구성원 조회·제거·재초대(수락 대기), 사용량 기반 계약의 사용 비용. 등급·활동 시각은 주지 않는다.
+	 * 제거는 구성원 ID 로 부른다. 복원(재초대)은 구현하지 않는다 — 초대에 역할을 정해야 하는데 원장은 옛 역할을 모른다(ADR 0049). 청구는 아직이다.
+	 */
 	val CLAUDE_ENTERPRISE = ConnectorDescriptor("claude_enterprise", "claude_team", setOf("enterprise"), AccountKind.EMAIL, emptyList(),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE, Capability.BILLING), LISTING)
+		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE, Capability.BILLING), LIST_RELEASE, accountRefRequired = setOf(Capability.SEAT_RELEASE))
 
-	/** Cursor Enterprise: 구성원 조회·제거, 현재 주기의 사용 지출. 복원 API 는 없다. */
+	/** Cursor Enterprise: 구성원 조회·제거, 현재 주기의 사용 지출. 복원 API 는 없다. 청구는 아직이다. */
 	val CURSOR_ENTERPRISE = ConnectorDescriptor("cursor_enterprise", "cursor", setOf("cursor_enterprise"), AccountKind.EMAIL, emptyList(),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.BILLING), LISTING)
+		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.BILLING), LIST_RELEASE)
 
 	/** GitHub Copilot: 좌석 조회·취소(주기 말 효력)·재배정. 계정은 GitHub 로그인이고 조직 이름이 설정이다. */
 	val COPILOT = ConnectorDescriptor("copilot", "copilot", setOf("copilot_business", "copilot_enterprise"), AccountKind.GITHUB_LOGIN, listOf("organization"),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE), LISTING)
+		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE), LIST_RELEASE_RESTORE)
 
 	/** Gemini Code Assist: 라이선스 풀 조회·해제·배정. 청구 계정·주문·요청 프로젝트가 설정이다. 자격증명은 서비스 계정 키(JSON)다. */
 	val GEMINI = ConnectorDescriptor("gemini", "gemini", setOf("gemini_standard", "gemini_enterprise"), AccountKind.EMAIL, listOf("billingAccount", "order", "project"),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE), LISTING)
+		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE), LIST_RELEASE_RESTORE)
 
 	val ALL: List<ConnectorDescriptor> = listOf(CLAUDE_ENTERPRISE, CURSOR_ENTERPRISE, COPILOT, GEMINI)
 

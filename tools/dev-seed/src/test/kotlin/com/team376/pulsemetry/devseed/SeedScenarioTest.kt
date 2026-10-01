@@ -370,5 +370,9 @@ class SeedScenarioTest {
         // 조직 정책 설정은 조직과 저장한 구성원을 가리킨다. 구성원보다 먼저 지운다.
         val policies = resetStatements("A", tables + "organization_policy_settings")
         assertTrue(policies.single { "organization_policy_settings" in it }.let { policies.indexOf(it) < policies.indexOfFirst { s -> "enrollment.members " in s } })
+        // 회수·복원 기록(ADR 0049)은 작업·좌석을 가리킨다. 좌석·작업보다 먼저 지운다.
+        val controls = resetStatements("A", tables + setOf("seat_controls", "seat_reclaim_previews", "seat_assignments", "operations"))
+            .map { it.substringAfter("enrollment.").substringBefore(" ") }
+        assertTrue(listOf("seat_controls", "seat_reclaim_previews").all { controls.indexOf(it) in 0 until minOf(controls.indexOf("seat_assignments"), controls.indexOf("operations")) })
     }
 }

@@ -68,6 +68,15 @@ class VendorHttp(
 			.POST(HttpRequest.BodyPublishers.ofString(form.entries.joinToString("&") { (k, v) -> encode(k) + "=" + encode(v) }))
 	})
 
+	/**
+	 * 상태를 바꾸는 호출(해제·복원). [body] 는 JSON 으로 보내고(null 이면 본문 없음) 응답 본문은 JSON 객체여야 한다 — 빈 본문은 빈 객체로 읽는다.
+	 * 처분은 읽기와 같다. 같은 요청을 다시 보내는 재시도(일시 장애·한도 초과)도 같다 — 벤더 문서의 해제·복원은 같은 대상에 다시 불러도 상태가 같다.
+	 */
+	fun sendJson(method: String, uri: URI, headers: Map<String, String>, body: Any?): JsonNode = json(send {
+		val publisher = body?.let { HttpRequest.BodyPublishers.ofByteArray(mapper.writeValueAsBytes(it)) } ?: HttpRequest.BodyPublishers.noBody()
+		HttpRequest.newBuilder(uri).withHeaders(if (body != null) headers + ("Content-Type" to "application/json") else headers).method(method, publisher)
+	}, emptyAsObject = true)
+
 	/** 성공 응답(2xx)의 본문과 헤더. */
 	class Response(val status: Int, val body: String, val headers: java.net.http.HttpHeaders)
 
@@ -124,8 +133,9 @@ class VendorHttp(
 			?.let { Duration.between(now, Instant.ofEpochSecond(it)).coerceAtLeast(Duration.ZERO) }
 	}
 
-	private fun json(response: Response): JsonNode = try {
-		mapper.readTree(response.body).takeIf { it.isObject } ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
+	private fun json(response: Response, emptyAsObject: Boolean = false): JsonNode = try {
+		if (emptyAsObject && response.body.isBlank()) mapper.createObjectNode()
+		else mapper.readTree(response.body).takeIf { it.isObject } ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
 	} catch (_: JacksonException) {
 		throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
 	}

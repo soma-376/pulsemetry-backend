@@ -121,8 +121,8 @@ type ProductRef = { kind: string | null; displayName: string | null };
 - 서로 다른 토큰 의미 프로파일을 섞거나 필수 토큰 값이 누락되면 합계가 null일 수 있다.
 - 환산 비용과 실제 청구액은 별개다. 인보이스 원천이 없으므로 실제 청구액은 null이다.
 - 최근 수신만으로 수집 정상·장애를 확정하지 않는다. unknown/empty를 정상으로 바꾸지 않는다.
-- 좌석은 좌석 원장(ADR 0048)의 값이다 — 계약의 구매 수량이 아니다. 원장은 기준 시각으로 다시 세우고 제품 단위로 가용성을 낸다(아래 "좌석 원장 조회"). 회수 실행은 아직 없다.
-- 알림·회수 실행·기존 설치로의 정책 배포·보존 설정 조작은 capability=false 또는 unavailable 상태다. 기존 설치는 새 정책을 서버가 밀어 넣지 않고
+- 좌석은 좌석 원장(ADR 0048)의 값이다 — 계약의 구매 수량이 아니다. 원장은 기준 시각으로 다시 세우고 제품 단위로 가용성을 낸다(아래 "좌석 원장 조회"). 회수·복원은 enrollment-api의 명령이다(ADR 0049).
+- 알림·기존 설치로의 정책 배포·보존 설정 조작은 capability=false 또는 unavailable 상태다. 기존 설치는 새 정책을 서버가 밀어 넣지 않고
   설치 보고의 응답으로 알고 스스로 받는다(enrollment 명세 §4.5). 관리자가 할 수 있는 것은 아래 "정책 적용 현황과 업데이트 안내"의 확인 요청 메일뿐이다.
 
 ### 정책 적용 현황과 업데이트 안내 (ADR 0043)
@@ -248,15 +248,20 @@ type ProductRef = { kind: string | null; displayName: string | null };
   4. 관측이 충분하다 — 확정된 마지막 날까지의 [회수 기준]일이 모두 완전하고(ADR 0042), 기준 시각 앞 [회수 기준]일 동안 등록돼 폐기되지 않은 그 구성원의 설치가 있다.
 
   유휴 일수 내림차순 + 좌석 ID 오름차순이다. 판정하지 못한 배정 좌석(미연결·관측 매핑 없음·원장 없음·관측 부족)이 있으면 목록에서 빼고 `partial` `observation_incomplete`다.
-  `canReclaim`은 false, `reason`은 `vendor_control_unavailable`(회수 실행이 아직 없다)이다. `tierId`는 모르면 null(요청서는 문자열), 절감액은 null,
+  `canReclaim`·`reason`은 아래 "회수 가능 여부"이고 실행 방식 `reclaimMethod`(가산)를 더했다. `tierId`는 모르면 null(요청서는 문자열), 절감액은 null,
   `vendorAccount`(가산)는 좌석의 벤더 계정이다(`account`는 구성원의 계정).
 - **구성원 좌석** `GET O/members/{memberId}/seats`: 로스터에 없는 구성원은 404(다른 조직·없는 ID·UUID 아님 포함). 보관한 등록 제품의 좌석은 싣지 않는다.
+- **회수 가능 여부**(ADR 0049 §2·§6): 좌석마다 `canReclaim`과 불가 사유, 가능하면 실행 방식(`reclaimMethod` — `vendor_control`·`admin_action`)이다. 규칙은 enrollment 의 회수 명령과
+  같은 함수다 — 배정 좌석만(`not_assigned`), 활성 연결이 있고 계약 플랜의 커넥터가 그 연결의 것이며 해제를 구현했으면 벤더 제어, 연결이 없거나 커넥터가 없는 플랜은 관리자 조치,
+  연결의 커넥터가 플랜과 다르면 `plan_mismatch`, 구성원 ID 가 필요한데 없으면 `vendor_account_unknown`, 끝나지 않은 회수·복원이 있으면 `control_in_progress`,
+  관리 기능이 꺼진 배포는 `management_disabled`다. 이 배포에 커넥터가 조립됐는지는 모른다(명령이 확인한다). 연결·진행 중인 작업은 현재 값이다.
+  구성원 화면의 `capabilities.reclaimSeats`·`restoreSeats`는 관리 기능이 켜졌으면 true다 — 벤더 제어가 없는 좌석도 관리자 조치로 끝난다. 회수 후보인가와 회수할 수 있는가는 별개다.
 - **개요 좌석과 효율**(`/analytics/overview`의 `seats`): 같은 벤더 범위의 환산가치와 좌석료를 비교한다. 범위(`scopeVendorIds`)는 유효한 계약이 있고,
   원장이 unavailable 이 아니고, 관측 제품 매핑이 있는 등록 제품이다 — 셋 중 하나라도 없으면 그 제품을 빼고 `partial`(뺀 첫 제품의 원장 사유, 매핑 없음은 `product_unobservable`).
   유효한 계약이 없으면 unavailable `not_applicable`, 범위가 비면 unavailable(첫 사유)이다. 기간마다(`current`·`previous`) **그 기간 끝**(기준 시각 이전)의 계약·원장으로 따로 센다.
   `contractedSeats`는 계약 좌석, `monthlyFeeUsd`는 월 요금 합(하나라도 미입력이면 그 기간 null), `allocatedFeeUsd` = 월 요금 × 기간 일수 / 30(`allocationBasis = estimated_30_day` — 배분 **추정액**이다),
   `equivalentCostUsd`는 범위 제품의 환산가치 합(완전한 기간의 사용 없음은 0, 단가 없는 사용이 있으면 null), `efficiency` = 환산가치 / 배분액.
-  `activeSeats`는 그 기간에 그 제품을 쓴 보유 좌석 수이고 구성원에 이어지지 않은 보유 좌석이 있으면 null 이다. `reclaimEstimate`는 회수 실행이 없어 null,
+  `activeSeats`는 그 기간에 그 제품을 쓴 보유 좌석 수이고 구성원에 이어지지 않은 보유 좌석이 있으면 null 이다. `reclaimEstimate`는 회수로 줄어드는 금액의 원천(계약의 감액 시점)이 없어 null,
   `reclaimCandidates`(가산)는 범위 제품의 회수 후보 수(판정할 수 없으면 null)다.
 - **설정 좌석**(`/settings`·`/vendors`·`/vendors/{vendorId}`): vendor 마다 `seats: Section<{assigned, contracted, unallocated}>`(가산)를 낸다 — 가용성·사유는 위 표,
   `assigned`는 보유 좌석, `contracted`·`unallocated`는 계약이 유효할 때만(아니면 null). `summary.assignedSeats`(가산)는 쓸 수 있는 원장의 보유 좌석 합이고
@@ -276,6 +281,7 @@ type MemberSeat = {
   idleDays: number | null;     // 관측할 수 있는 배정 좌석만
   reviewReason: "not_assigned" | "seat_unlinked" | "seat_source_unavailable" | "product_unobservable" | "in_use" | "observation_incomplete" | null; // null = 후보
   reclaimCandidate: boolean; canReclaim: boolean; reclaimReason: string | null;
+  reclaimMethod: "vendor_control" | "admin_action" | null;   // 가산(ADR 0049)
 };
 ```
 
@@ -321,7 +327,9 @@ type OperationResponse = {
   `logically_deleted`는 논리 삭제 완료이며 물리 제거 완료가 아니다. 삭제한 행 수와 상세 문구는 싣지 않는다.
 - 그 조직에 없는 작업은 404 `not_found`다. 다른 조직의 작업, 없는 ID, UUID가 아닌 ID가 같은 응답이다. **실패한 작업은 404가 아니라 200과 `status=failed`다.**
 - 작업을 만드는 명령은 설치 업데이트 안내(`installation_notification` — 대상 ID는 설치 ID, 결과는 메일 발송 결과), 수집 정책 저장의 보존 단축(`retention_cleanup`, ADR 0047),
-  좌석 동기화 요청(`seat_sync` — 대상 ID는 벤더 연결 ID, 결과는 동기화 실행의 결과이고 실패 사유는 Enrollment 명세 §12 "벤더 연결"의 실패 코드, ADR 0048)이다. 회수·복원은 아직 만드는 명령이 없다.
+  좌석 동기화 요청(`seat_sync` — 대상 ID는 벤더 연결 ID, 결과는 동기화 실행의 결과이고 실패 사유는 Enrollment 명세 §12 "벤더 연결"의 실패 코드, ADR 0048),
+  좌석 회수·복원(`seat_reclaim`·`seat_restore` — 대상 ID는 좌석 ID, 관리자 조치 대상의 조치 코드는 `release_in_vendor_console`·`restore_in_vendor_console`, 실패 사유는
+  Enrollment 명세 §12 "좌석 회수·복원", ADR 0049)이다.
 
 ## 3. 벤더와 플랜 카탈로그
 
@@ -456,7 +464,7 @@ enrollment Flyway는 이 앱에서 실행하지 않는다. 새 원천 테이블�
 collectionPolicy.collectRawContent는 프롬프트·응답 중 하나라도 허용됐는지다. 도구 내용·API 원문은 이 선택과 별개다.
 두 플래그가 다를 때 온보딩 조회는 null로 표현해 명시적 재선택을 받는다.
 설정의 계약 좌석·월 요금은 계약의 값이고, 보유·활성 좌석과 개요의 좌석 집계는 좌석 원장의 값이다(위 "좌석 원장 조회").
-실제 벤더 좌석 회수·알림 평가·원격 정책 갱신 완료·실제 청구액은 구현하지 않는다.
+알림 평가·원격 정책 갱신 완료·실제 청구액은 구현하지 않는다. 좌석 회수·복원은 enrollment-api 명령이고 이 앱은 가능 여부와 작업 결과를 읽는다(ADR 0049).
 
 ## 7. 등록 제품과 계약 정정
 

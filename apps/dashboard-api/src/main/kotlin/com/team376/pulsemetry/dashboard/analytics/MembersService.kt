@@ -29,7 +29,7 @@ import java.util.UUID
  *   팀 ID 는 null 이고 이름은 소속 팀 이름을 모두 적는다(대표 팀을 고르는 규칙을 만들지 않는다).
  * - 로스터는 `active`·`suspended` 구성원이다. 초대 중(`invited`)인 사람은 로스터가 아니다.
  * - 좌석(요약·`seatState`·회수 후보·구성원 좌석)은 좌석 원장(ADR 0048)을 기준 시각으로 다시 세운 값이다([SeatService]). 구성원 화면의 기준 시각은
- *   snapshot 의 asOf 이고, 회수 후보의 다음 페이지는 같은 시각의 현재 상태 토큰으로 잇는다. 회수 실행은 아직 없다(`reclaimSeats=false`).
+ *   snapshot 의 asOf 이고, 회수 후보의 다음 페이지는 같은 시각의 현재 상태 토큰으로 잇는다. 회수 가능 여부는 좌석마다 낸다(ADR 0049).
  * - 목록은 선택 기간 비용 내림차순(수집되지 않은 사람은 null 로 마지막) + memberId 오름차순. 검색은 첫 페이지가 아니라 로스터 전체에 적용한다.
  */
 class MembersService(
@@ -65,7 +65,8 @@ class MembersService(
 				seats = seatSummary(view),
 			),
 			policy = policy(organization),
-			capabilities = MemberCapabilities(invite = managementEnabled, assignTeam = managementEnabled, reclaimSeats = false, restoreSeats = false),
+			// 회수·복원은 관리 기능이 있으면 된다 — 벤더 제어가 없는 좌석은 관리자 조치 확인으로 끝난다(ADR 0049). 좌석마다의 가능 여부는 따로 낸다.
+			capabilities = MemberCapabilities(invite = managementEnabled, assignTeam = managementEnabled, reclaimSeats = managementEnabled, restoreSeats = managementEnabled),
 			members = page(view, view.roster, first, scope(null)),
 			unassigned = page(view, view.roster.filter { it.currentTeamIds.isEmpty() }, first, UNASSIGNED_SCOPE),
 			reclaimCandidates = candidatePage(view.seats!!, view.roster.associate { it.id to (it.account to view.currentTeam(it)) }, first, token),
@@ -125,6 +126,7 @@ class MembersService(
 			val state = states[seat.vendorId] ?: return@mapNotNull null
 			val product = state.product
 			val review = if (seat.state == com.team376.pulsemetry.persistence.enrollment.seat.SeatState.ASSIGNED) assessment.review(seat) else null
+			val reclaim = assessment.reclaim(seat, managementEnabled)
 			MemberSeat(
 				seatAssignmentId = seat.id.toString(), version = seat.version, vendorId = seat.vendorId, vendorName = product.displayName, kind = product.kind,
 				contractVersion = product.contract?.version, tierId = seat.tierId, tierLabel = product.tier(seat.tierId)?.label, vendorTier = seat.vendorTier,
@@ -132,7 +134,7 @@ class MembersService(
 				assignedAt = seat.assignedAt.toString(), releaseEffectiveOn = seat.releaseEffectiveOn?.toString(), releasedAt = seat.releasedAt?.toString(),
 				ledgerAvailability = state.availability, ledgerReason = state.reason,
 				lastUsedAt = review?.lastUsedAt?.toString(), idleDays = review?.idleDays, reviewReason = review?.reason ?: "not_assigned".takeIf { review == null },
-				reclaimCandidate = review?.candidate == true, canReclaim = false, reclaimReason = SeatAssessment.CONTROL_UNAVAILABLE,
+				reclaimCandidate = review?.candidate == true, canReclaim = reclaim.canReclaim, reclaimReason = reclaim.reason, reclaimMethod = reclaim.method,
 			)
 		}.sortedWith(compareBy<MemberSeat> { if (it.state == "released") 1 else 0 }.thenBy { it.vendorName }.thenBy { it.account })
 		return MemberSeatsResponse(CurrentMeta(organization.id.toString(), now.toString(), token.asOf.toString(), token.value, AnalyticsFrames.USD, QueryReader.SEOUL_ID),
@@ -158,8 +160,9 @@ class MembersService(
 		val next = if (start + items.size < all.size) codec.encode(PageCursor(token.value, RECLAIM_SCOPE, listOf(items.last().idleDays.toString(), items.last().seat.id.toString()))) else null
 		return Section(availability, reason, Page(items.map { review ->
 			val (account, team) = members.getValue(review.seat.memberId!!)
+			val reclaim = assessment.reclaim(review.seat, managementEnabled)
 			ReclaimCandidate(review.seat.id.toString(), review.seat.memberId.toString(), account, team, review.seat.vendorId, review.seat.tierId, review.seat.version,
-				review.lastUsedAt?.toString(), review.idleDays!!, null, false, SeatAssessment.CONTROL_UNAVAILABLE, review.seat.account)
+				review.lastUsedAt?.toString(), review.idleDays!!, null, reclaim.canReclaim, reclaim.reason, review.seat.account, reclaim.method)
 		}, all.size, next))
 	}
 

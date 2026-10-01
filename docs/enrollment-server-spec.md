@@ -499,8 +499,8 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.vendor-connections.credential-keys.<키 ID>` | 없음 | 벤더 자격증명의 AES-256-GCM 키(Base64 32바이트). 키 ID는 `[A-Za-z0-9_-]{1,64}`. 옛 키는 그 키로 암호화된 연결(`vendor_connections.credential_key_id`)이 남아 있는 동안 둔다 |
 | `pulsemetry.vendor-connections.credential-key-id` | 없음 | 새 암호문을 만드는 키의 ID. 키 목록에 있어야 한다 |
 | `pulsemetry.vendor-connections.sync.interval` | 없음 | 연결 하나를 다시 동기화하는 간격(마지막 시도부터). 벤더 권장 주기보다 짧게 두지 않는다(Cursor는 "polled at most once per hour") |
-| `pulsemetry.vendor-connections.sync.check-interval` | 없음 | 차례인 연결을 찾는 주기. "지금 동기화" 요청이 기다리는 최대 시간이다 |
-| `pulsemetry.vendor-connections.sync.lease` | 없음 | 한 연결의 선점 기한. 한 번의 동기화(모든 페이지 × 시도 횟수 × 시간 제한)보다 길게 |
+| `pulsemetry.vendor-connections.sync.check-interval` | 없음 | 차례인 연결을 찾는 주기. "지금 동기화" 요청과 회수·복원의 벤더 제어 대상이 기다리는 최대 시간이다(ADR 0049) |
+| `pulsemetry.vendor-connections.sync.lease` | 없음 | 한 연결(과 회수·복원 대상 하나)의 선점 기한. 한 번의 동기화(모든 페이지 × 시도 횟수 × 시간 제한)보다 길게 |
 | `pulsemetry.vendor-connections.http.request-timeout` | 없음 | 벤더 호출 하나의 시간 제한 |
 | `pulsemetry.vendor-connections.http.max-attempts` | 없음 | 호출 하나의 최대 시도 횟수(첫 시도 포함). 일시 장애·한도 초과만 다시 시도한다 |
 | `pulsemetry.vendor-connections.http.retry-backoff` | 없음 | 벤더가 대기 시간을 알려 주지 않은 일시 장애 뒤의 대기 |
@@ -963,12 +963,13 @@ type Capability = "seat_list" | "seat_release" | "seat_restore" | "billing";
 
 | 커넥터 | 제품 · 플랜 | 계정 | settingKeys | 자격증명 | supported | capabilities(구현) |
 | --- | --- | --- | --- | --- | --- | --- |
-| `claude_enterprise` | `claude_team` · `enterprise` | 이메일 | 없음 | Admin API 키(`read:members`) | 조회·해제·복원·청구 | 조회 |
-| `cursor_enterprise` | `cursor` · `cursor_enterprise` | 이메일 | 없음 | Admin API 키 | 조회·해제·청구 | 조회 |
-| `copilot` | `copilot` · `copilot_business`·`copilot_enterprise` | GitHub 로그인 | `organization` | 토큰(`manage_billing:copilot` 또는 `read:org`) | 조회·해제·복원 | 조회 |
-| `gemini` | `gemini` · `gemini_standard`·`gemini_enterprise` | 이메일 | `billingAccount`·`order`·`project` | 서비스 계정 키 JSON 전체 | 조회·해제·복원 | 조회 |
+| `claude_enterprise` | `claude_team` · `enterprise` | 이메일 | 없음 | Admin API 키(`read:members`, 해제는 `write:members`) | 조회·해제·복원·청구 | 조회·해제 |
+| `cursor_enterprise` | `cursor` · `cursor_enterprise` | 이메일 | 없음 | Admin API 키 | 조회·해제·청구 | 조회·해제 |
+| `copilot` | `copilot` · `copilot_business`·`copilot_enterprise` | GitHub 로그인 | `organization` | 토큰(`manage_billing:copilot` 또는 `read:org`) | 조회·해제·복원 | 조회·해제·복원 |
+| `gemini` | `gemini` · `gemini_standard`·`gemini_enterprise` | 이메일 | `billingAccount`·`order`·`project` | 서비스 계정 키 JSON 전체 | 조회·해제·복원 | 조회·해제·복원 |
 
-`supported`는 `docs/vendor-connector-evidence.md`의 결론을 옮긴 것이고, 구현은 지금 좌석 목록(과 연결 확인)뿐이다. 그 밖의 제품·플랜(Claude Team, OpenAI, Cursor Teams, `other`)은 커넥터가 없고 수동 원천이다.
+`supported`는 `docs/vendor-connector-evidence.md`의 결론을 옮긴 것이다. 구현은 좌석 목록(과 연결 확인), 해제(넷), 복원(Copilot·Gemini)이다 — Claude Enterprise 재초대는
+역할을 정해야 해 관리자 조치로 남기고(ADR 0049 §2), 청구는 아직이다. 그 밖의 제품·플랜(Claude Team, OpenAI, Cursor Teams, `other`)은 커넥터가 없고 수동 원천이다.
 
 - 커넥터는 등록 제품의 **현재 계약 플랜**으로 고른다. 계약이 없거나, 그 플랜에 커넥터가 없거나, 이 배포에 그 커넥터의 구현이 없으면 422 `connector_unavailable`이다.
 - `settings`는 커넥터의 `settingKeys`와 정확히 같은 키의 문자열(1~200자, 제어 문자 없음)이어야 하고, `credential`은 1~8192자의 비어 있지 않은 문자열이어야 한다. 아니면 400 `invalid_request`(field `settings`·`credential`·`expectedVersion`).
@@ -1071,6 +1072,50 @@ type SeatImport = {
 행 오류 코드: `account` — `required`·`invalid_account`·`duplicate_account`·`not_found`(없는 좌석의 해제), `status` — `invalid_status`·`seat_not_changeable`(해제 예정·배정 대기),
 `tier` — `invalid_tier`·`ambiguous_tier`·`not_applicable`(해제 행), `member_email` — `invalid_email`·`member_not_found`·`member_ambiguous`·`not_applicable`, `line` — `column_count`.
 
+### 좌석 회수·복원 (ADR 0049)
+
+회수는 **미리보기 → 실행**이다. 실행은 작업(`seat_reclaim`)으로 접수하고 결과는 작업 상태 조회(`GET O/operations/{operationId}`, dashboard-api)로 본다. 접수(202)는 성공이 아니다.
+원장은 벤더가 받아들였거나 관리자가 조치를 확인했을 때만 바뀐다. 벤더 연결 기능이 꺼진 배포에서도 관리자 조치 흐름은 된다.
+
+| 경로 | 본문 | 응답 |
+| --- | --- | --- |
+| `POST O/seat-reclaims/preview` | `{seats: [{seatAssignmentId, expectedVersion}]}` (1~100, 같은 좌석 두 번 불가) | 200 `ReclaimPreview` |
+| `POST O/seat-reclaims` | `{previewId}` | 202 `OperationResponse` + `Location` |
+| `POST O/seat-reclaims/{operationId}/restore` | `{}` | 202 `OperationResponse` + `Location` |
+| `POST O/operations/{operationId}/targets/{seatAssignmentId}/confirm` | 없음 | 200 `OperationResponse` — 관리자 조치 대기 대상의 확인 |
+| `POST O/operations/{operationId}/targets/{seatAssignmentId}/cancel` | 없음 | 200 `OperationResponse` — 관리자 조치 대기 대상의 취소(`cancelled`) |
+
+```ts
+type ReclaimPreview = {
+  previewId: string; expiresAt: string;                          // 만든 뒤 5분
+  eligibleSeatAssignmentIds: string[];
+  rejected: { seatAssignmentId: string; reason: string }[];
+  estimatedMonthlySavingsUsd: string | null;                     // 대상 좌석 등급의 계약 단가 합. 하나라도 모르면 null
+  savingsEffectiveAt: null;                                      // 감액 시점은 모른다
+  resultingUnallocatedSeats: number | null;                      // 대상 제품마다 max(계약 − (보유 − 회수), 0)의 합
+  savingsBasis: "contract_unit_price" | null;                    // 가산
+  targets: { seatAssignmentId: string; vendorId: string; method: "vendor_control" | "admin_action" }[];  // 가산
+};
+```
+
+- **실행 방식**: 활성 연결이 있고 계약 플랜의 커넥터가 그 연결의 커넥터이며 그 기능(해제·복원)을 구현했으면 `vendor_control`, 아니면 `admin_action`(ADR 0049 §2의 표).
+- **거절 사유**: `not_found`(없는 좌석·다른 조직·보관한 제품·UUID 아님), `version_conflict`, `not_assigned`(해제는 배정 좌석만), `control_in_progress`(끝나지 않은 회수·복원이 있음),
+  `plan_mismatch`, `vendor_account_unknown`(Claude Enterprise 해제에 구성원 ID가 필요한데 연결 전 기록), `connector_unavailable`(이 배포에 커넥터 호출이 없음).
+  복원은 여기에 `seat_reassigned`(이미 다시 보유)·`not_restorable`(해제 예정 좌석을 벤더 제어 없이 되살림)을 더한다.
+- **실행**은 미리보기를 요청한 관리자만 한다(다른 관리자에게는 404 `not_found`). 대상마다 판·방식·연결·진행 중인 작업을 다시 검사해 하나라도 다르면 409 `preview_stale`로 전부 거절한다.
+  기한이 지나면 409 `preview_expired`, 이미 쓴 미리보기는 409 `preview_used`(같은 `Idempotency-Key`의 재시도는 같은 202), 대상이 없으면 422 `no_eligible_seats`.
+  회수 작업의 복원 기한(`restoreUntil`)은 만든 시각 + 30일이다.
+- **벤더 제어 대상**은 `pending`으로 남고 주기 작업(좌석 동기화와 같은 작업·`sync.check-interval`, 한 바퀴에서 제어가 먼저)이 선점(`sync.lease`)해 커넥터를 부른다.
+  받아들이면 원장(원천 `vendor_control`): 해제 끝남 → `released`, Copilot 취소 → `pending_release`(예정일은 다음 동기화가 채운다), 복원 → `assigned`.
+  실패는 대상의 사유다 — 커넥터 실패 종류(위 "좌석 동기화"의 표와 같은 코드), `connection_removed`, `plan_mismatch`, `connector_unavailable`, `credential_key_unavailable`,
+  `seat_changed`(호출 전에 좌석이 바뀌어 부르지 않음), `control_error`. 일시 장애도 대상 실패다(다시 하려면 새로 회수한다).
+- **관리자 조치 대상**은 `awaiting_admin_action`(조치 코드 `release_in_vendor_console`·`restore_in_vendor_console`)이다. 관리자가 벤더 콘솔에서 조치하고 **확인**하면 원장이 옮겨지고
+  (원천 `admin_action` — 해제 `released`, 복원 `assigned`) 대상이 성공한다(확인자 = 요청한 관리자). 확인 사이에 좌석이 이미 그 상태면 원장은 그대로, 표에 없는 전이면 409 `seat_changed`.
+  조치 대기에는 기한이 없다. 하지 않기로 하면 **취소**한다(원장 불변). 조치 대기가 아닌 대상의 확인·취소는 409 `not_awaiting_admin_action`.
+- **복원**은 되돌릴 수 있는 회수(성공한 대상이 있는 끝난 회수, 기한 안, 살아 있는 복원 없음)에만 된다. 아니면 422 `restore_not_available`. 대상은 회수에서 성공한 좌석이고
+  대상마다 방식을 다시 정한다. 되돌릴 수 없는 대상은 그 사유로 실패로 남고, 모든 대상이 불가면 작업을 만들지 않고 422(`details`에 대상별 사유)다.
+- 원장 이력의 행위자는 작업이다(`seat_assignment_events.operation_id`). 대상 ID는 `seatAssignmentId`다.
+
 ### 조회·관리 오류
 
 ```json
@@ -1083,8 +1128,8 @@ type SeatImport = {
 | 401 | unauthenticated, 로그인/토큰 갱신 |
 | 403 | forbidden, 해당 동작 비활성화 |
 | 404 | not_found, 타 조직/없는 자원 |
-| 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, member_suspended, installation_unavailable, snapshot_expired, connector_managed, seat_already_held, seat_not_releasable |
-| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change, notification_channel_unavailable, connector_unavailable, invalid_tier, seat_import_invalid(`details`에 행별 오류) |
+| 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, member_suspended, installation_unavailable, snapshot_expired, connector_managed, seat_already_held, seat_not_releasable, preview_stale, preview_expired, preview_used, not_awaiting_admin_action, seat_changed |
+| 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change, notification_channel_unavailable, connector_unavailable, invalid_tier, seat_import_invalid(`details`에 행별 오류), no_eligible_seats, restore_not_available(`details`에 대상별 사유가 있을 수 있다) |
 | 503 | unavailable, Retry-After 후 재시도. credential_key_unavailable(벤더 연결 — 운영이 암호화 키 설정을 고칠 때까지 재시도해도 같다) |
 
 쓰기 성공 후 관련 조직의 팀·구성원·설정·개요 Query 캐시를 무효화한다.
@@ -1275,6 +1320,7 @@ Flyway가 enrollment 스키마의 진실원이다. 관련 추가 마이그레이
 | V21 | 벤더 연결(`vendor_connections` — 자격증명 암호문·확인·동기화 선점과 결과)·동기화 실행(`seat_sync_runs`)·좌석 원장(`seat_assignments`)과 판별 이력(`seat_assignment_events`) (ADR 0048) |
 | V22 | 좌석 동기화 요청 — 작업 종류 `seat_sync`, 연결의 요청 칸(`sync_requested_operation_id`), 실행이 끝내는 요청(`seat_sync_runs.operation_id`) (ADR 0048 §7) |
 | V23 | 좌석 이력에 보유 구간의 시작(`seat_assignment_events.assigned_at`) — 조회가 기준 시각의 좌석을 이력으로 다시 세운다 (ADR 0048 §7) |
+| V24 | 좌석 회수 미리보기(`seat_reclaim_previews`)와 회수·복원 대상별 실행 방식·벤더 제어 선점(`seat_controls`) (ADR 0049) |
 
 V12는 이 표에 없다 — 사용자 로그인 방식 작업이 예약한 번호다. Flyway는 이미 적용한 판보다 낮은 번호를 뒤늦게 받지 않으므로,
 V13이 먼저 적용된 DB에는 V12를 넣을 수 없다. 머지 순서가 뒤집히면 그 작업이 번호를 다시 매긴다.

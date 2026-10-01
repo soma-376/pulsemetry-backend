@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.enrollment.management
 
+import com.team376.pulsemetry.connector.vendor.SeatConnectors
 import com.team376.pulsemetry.persistence.enrollment.installation.InstallationNotifier
 import com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer
 import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
@@ -48,9 +49,11 @@ class ManagementConfig {
     @Bean
     fun managementStore(jdbc: JdbcClient, manager: PlatformTransactionManager, mapper: ObjectMapper, clock: Clock,
         properties: ManagementProperties, invitationMail: ObjectProvider<InvitationMailer>,
-        installationNotifier: ObjectProvider<InstallationNotifier>): ManagementStore = ManagementStore(jdbc, manager, mapper, clock,
+        installationNotifier: ObjectProvider<InstallationNotifier>, seatConnectors: ObjectProvider<SeatConnectors>): ManagementStore = ManagementStore(jdbc, manager, mapper, clock,
             properties.responseEncryptionKey, { InitialOnboardingManifest.create(properties.onboardingOtlpEndpoint, mapper) }, invitationMail.ifAvailable,
-            installationNotifier.ifAvailable)
+            installationNotifier.ifAvailable,
+            // 커넥터가 조립된 배포(벤더 연결 기능)에서만 주기 실행이 벤더 제어 대상을 부른다(ADR 0049).
+            vendorControl = seatConnectors.ifAvailable != null)
 }
 
 @RestController
@@ -59,7 +62,8 @@ class ManagementConfig {
 class ManagementController(private val auth: UserAuthService, private val store: ManagementStore, private val mapper: ObjectMapper) {
     @RequestMapping(path = ["/teams", "/member-team-assignments", "/invitations/batch", "/invitations/{invitationId}/revoke", "/invitations/{invitationId}/reissue", "/vendors", "/onboarding/complete",
         "/installation-update-notifications", "/vendors/{vendorId}/connection/sync", "/vendors/{vendorId}/seats", "/vendors/{vendorId}/seats/import",
-        "/vendors/{vendorId}/seats/{seatId}/release"], method = [RequestMethod.POST])
+        "/vendors/{vendorId}/seats/{seatId}/release", "/seat-reclaims/preview", "/seat-reclaims", "/seat-reclaims/{operationId}/restore",
+        "/operations/{operationId}/targets/{targetId}/confirm", "/operations/{operationId}/targets/{targetId}/cancel"], method = [RequestMethod.POST])
     fun post(@PathVariable organizationId: UUID, @RequestBody(required = false) body: JsonNode?, request: HttpServletRequest) = handle(organizationId, body, request)
 
     @RequestMapping(path = ["/teams/{teamId}"], method = [RequestMethod.PATCH, RequestMethod.DELETE])
@@ -101,8 +105,9 @@ class ManagementController(private val auth: UserAuthService, private val store:
         }
         val result = store.command(tenant, actor, "${request.method} $path", body ?: mapper.createObjectNode(), request.getHeader("Idempotency-Key"), etag)
         if (request.method == "DELETE" || path.endsWith("/revoke")) return ResponseEntity.noContent().build<Void>()
-        // 안내·동기화 요청은 접수만 했다 — 결과는 작업 상태 조회(dashboard-api)로 본다(ADR 0039·0043·0048). 멱등 재시도도 같은 작업을 가리킨다.
-        if (path == "/installation-update-notifications" || (path.startsWith("/vendors/") && path.endsWith("/connection/sync"))) {
+        // 안내·동기화·회수·복원 요청은 접수만 했다 — 결과는 작업 상태 조회(dashboard-api)로 본다(ADR 0039·0043·0048·0049). 멱등 재시도도 같은 작업을 가리킨다.
+        if (path == "/installation-update-notifications" || (path.startsWith("/vendors/") && path.endsWith("/connection/sync")) ||
+            path == "/seat-reclaims" || (path.startsWith("/seat-reclaims/") && path.endsWith("/restore"))) {
             return ResponseEntity.accepted().header("Cache-Control", "no-store")
                 .location(URI("/api/v1/organizations/$tenant/operations/${result.path("operationId").asString()}")).body(result)
         }

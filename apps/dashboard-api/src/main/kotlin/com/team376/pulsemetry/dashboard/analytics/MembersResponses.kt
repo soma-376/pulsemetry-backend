@@ -52,6 +52,8 @@ data class ReclaimCandidate(
 	val canReclaim: Boolean,
 	val reason: String?,
 	val vendorAccount: String,
+	/** 회수할 수 있을 때의 실행 방식(가산, ADR 0049) — `vendor_control`·`admin_action`. 불가면 null. */
+	val reclaimMethod: String? = null,
 )
 
 /**
@@ -84,6 +86,8 @@ data class MemberSeat(
 	val reclaimCandidate: Boolean,
 	val canReclaim: Boolean,
 	val reclaimReason: String?,
+	/** 회수할 수 있을 때의 실행 방식(가산, ADR 0049). 불가면 null. */
+	val reclaimMethod: String? = null,
 )
 
 data class MemberSeatsResponse(val meta: CurrentMeta, val memberId: String, val policy: IdlePolicy, val seats: List<MemberSeat>)

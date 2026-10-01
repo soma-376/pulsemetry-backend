@@ -34,8 +34,10 @@ class ConnectorDescriptorsTest {
 		val actual = catalog.associateWith { (product, plan) -> ConnectorDescriptors.forPlan(product, plan)?.supported }.filterValues { it != null }
 		assertThat(actual).isEqualTo(expected)
 		assertThat(ConnectorDescriptors.forPlan("copilot", null)).isNull()
-		// 이 저장소가 구현한 기능은 좌석 목록뿐이다 — 해제·복원·청구를 구현하면 넓힌다.
-		assertThat(ConnectorDescriptors.ALL.map { it.capabilities }).containsOnly(setOf(SEAT_LIST))
+		// 이 저장소가 구현한 기능(ADR 0049): 해제는 넷, 복원은 Copilot·Gemini 뿐이고 청구는 아직이다.
+		assertThat(ConnectorDescriptors.ALL.associate { it.id to it.capabilities }).isEqualTo(mapOf(
+			"claude_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE), "cursor_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE),
+			"copilot" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE), "gemini" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE)))
 		assertThatThrownBy { ConnectorDescriptor("x", "copilot", setOf("copilot_business"), AccountKind.GITHUB_LOGIN, emptyList(), setOf(SEAT_LIST), setOf(SEAT_LIST, BILLING)) }
 			.describedAs("문서 근거가 없는 기능은 구현으로 선언하지 못한다").isInstanceOf(IllegalArgumentException::class.java)
 	}
@@ -79,10 +81,10 @@ class ConnectorDescriptorsTest {
 		assertThatThrownBy { SeatConnectors(listOf(Fake(controlled, withRelease = true, withRestore = true, withBilling = true))) }
 			.isInstanceOf(IllegalArgumentException::class.java).hasMessageContaining("cursor_enterprise")
 		assertThatThrownBy { SeatConnectors(listOf(Fake(ConnectorDescriptors.COPILOT, withRelease = false, withRestore = true, withBilling = false))) }
-			.describedAs("설명은 목록뿐인데 복원을 구현").isInstanceOf(IllegalArgumentException::class.java)
+			.describedAs("설명은 해제·복원인데 복원만 구현").isInstanceOf(IllegalArgumentException::class.java)
 		assertThatThrownBy { SeatConnectors(listOf(cursor, Fake(controlled, withRelease = true, withRestore = false, withBilling = true))) }
 			.isInstanceOf(IllegalArgumentException::class.java)
-		assertThat(SeatConnectors(listOf(Fake(ConnectorDescriptors.COPILOT, withRelease = false, withRestore = false, withBilling = false))).byId("copilot")).isNotNull()
+		assertThat(SeatConnectors(listOf(Fake(ConnectorDescriptors.COPILOT, withRelease = true, withRestore = true, withBilling = false))).byId("copilot")).isNotNull()
 	}
 
 	@Test
@@ -96,7 +98,9 @@ class ConnectorDescriptorsTest {
 
 	@Test
 	fun `요청 성공과 완료를 나눈다 — 예정 결과만 효력일을 갖고 해제 예정 좌석만 예정일을 갖는다`() {
-		assertThatThrownBy { ControlResult(ControlStatus.SCHEDULED) }.isInstanceOf(IllegalArgumentException::class.java)
+		// 벤더가 날짜를 주지 않는 예정(Copilot 취소 응답)은 효력일을 모른다 — 다음 동기화가 채운다(ADR 0049).
+		assertThat(ControlResult(ControlStatus.SCHEDULED).effectiveOn).isNull()
+		assertThatThrownBy { ControlResult(ControlStatus.AWAITING_ACCEPTANCE, java.time.LocalDate.parse("2026-10-31")) }.isInstanceOf(IllegalArgumentException::class.java)
 		assertThatThrownBy { ControlResult(ControlStatus.COMPLETED, java.time.LocalDate.parse("2026-10-31")) }.isInstanceOf(IllegalArgumentException::class.java)
 		assertThatThrownBy { VendorSeat("octocat", releaseEffectiveOn = java.time.LocalDate.parse("2026-10-31")) }.isInstanceOf(IllegalArgumentException::class.java)
 		assertThat(VendorSeat("octocat", state = VendorSeatState.PENDING_RELEASE, releaseEffectiveOn = java.time.LocalDate.parse("2026-10-31")).lastActivityAt).isNull()
