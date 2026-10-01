@@ -505,7 +505,7 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.vendor-connections.http.max-attempts` | 없음 | 호출 하나의 최대 시도 횟수(첫 시도 포함). 일시 장애·한도 초과만 다시 시도한다 |
 | `pulsemetry.vendor-connections.http.retry-backoff` | 없음 | 벤더가 대기 시간을 알려 주지 않은 일시 장애 뒤의 대기 |
 | `pulsemetry.vendor-connections.http.max-retry-wait` | 없음 | 벤더가 알려 준 대기 시간(`Retry-After` 등)의 상한. 넘으면 기다리지 않고 `rate_limited`로 남긴다 |
-| `pulsemetry.vendor-connections.base-urls.<커넥터 ID>` · `.gemini-token-url` | 벤더 공식 주소 | 모의 서버·스테이징에서만 바꾼다 |
+| `pulsemetry.vendor-connections.base-urls.<커넥터 ID>` · `.gemini-token-url` | 벤더 공식 주소 | 모의 서버·스테이징에서만 바꾼다. 로컬 모의 서버는 `tools/mock-vendor/README.md` |
 
 DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_PASSWORD` 로 덮어쓴다.
 메일의 키는 `PULSEMETRY_MAIL_ENABLED` · `_FROM` · `_ENCRYPTION_KEY` · `_DISPATCH_INTERVAL` · `_RETRY_INTERVAL` · `_MAX_ATTEMPTS` · `_SEND_TIMEOUT` ·
