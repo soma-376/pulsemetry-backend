@@ -16,29 +16,19 @@ object JsonStructure {
 
 	/** 예시 파일 → (경로 → 가산 키). 경로는 [assertSameKeys] 의 표기(`/a/b`, 배열은 첫 원소 `/0`)다. */
 	val EXTENSIONS: Map<String, Map<String, Set<String>>> = mapOf(
-		// 관측 제품별 사용 — ADR 0045.
+		// 관측 제품별 사용(ADR 0045)은 요청서 예시에 들어갔다. 남은 가산: 회수 검토 수 — ADR 0048.
 		"overview-response.example.json" to mapOf(
-			"" to setOf("productUsage"),
-			// 회수 검토 수 — ADR 0048.
 			"/seats" to setOf("reclaimCandidates"),
-			"/teamUsage/topTeams/0" to setOf("products"),
-			"/teamUsage/unassigned" to setOf("products"),
 		),
 		// 회수 후보의 좌석 벤더 계정 — ADR 0048.
 		"members-response.example.json" to mapOf(
 			"/reclaimCandidates/data/items/0" to setOf("vendorAccount", "reclaimMethod"),
-		),
-		"teams-response.example.json" to mapOf(
-			"/teams/items/0" to setOf("products"),
-			"/unassigned" to setOf("products"),
 		),
 		// 관측됐지만 등록하지 않은 제품·매핑 없는 관측 — ADR 0044.
 		"settings-response.example.json" to mapOf(
 			// 알림 규칙이 기대는 모델·도구 목록 — ADR 0051.
 			"" to setOf("alertLists"),
 			"/summary" to setOf("detectedProducts", "unmappedObservations", "assignedSeats"),
-			// 조직 정책 설정의 판·저장 시각·출처·저장할 수 있는 값 — ADR 0046. 마지막 보존 정리 작업 — ADR 0047.
-			"/collectionPolicy" to setOf("settingsVersion", "settingsUpdatedAt", "settingsUpdatedBy", "reclaimIdleDaysSource", "options", "cleanupOperationId"),
 			// 등록 제품의 좌석 원천(권위·커넥터 설명·활성 연결) — ADR 0048.
 			"/vendors/items/0" to setOf("seatSource", "seats"),
 		),
