@@ -40,6 +40,7 @@
 | `/members/unassigned` | 기간, limit=20(최대 100), cursor, snapshotId | MemberListResponse |
 | `/seat-reclaim-candidates` | limit=20(최대 100), cursor, snapshotId | ReclaimCandidatesResponse |
 | `/members/{memberId}/seats` | snapshotId(선택 — 현재 상태 토큰) | MemberSeatsResponse — 아래 "좌석 원장 조회" |
+| `/vendors/{vendorId}/seats` | limit=50(최대 200), cursor, snapshotId(현재 상태 토큰) | VendorSeatsResponse — 아래 "좌석 원장 조회" |
 | `/ingest-status` | 없음 | IngestStatusResponse |
 | `/settings` | 없음 | SettingsResponse |
 | `/vendors` | limit=20(최대 100), cursor, snapshotId | VendorsResponse |
@@ -251,6 +252,10 @@ type ProductRef = { kind: string | null; displayName: string | null };
   `canReclaim`·`reason`은 아래 "회수 가능 여부"이고 실행 방식 `reclaimMethod`(가산)를 더했다. `tierId`는 모르면 null(요청서는 문자열), 절감액은 null,
   `vendorAccount`(가산)는 좌석의 벤더 계정이다(`account`는 구성원의 계정).
 - **구성원 좌석** `GET O/members/{memberId}/seats`: 로스터에 없는 구성원은 404(다른 조직·없는 ID·UUID 아님 포함). 보관한 등록 제품의 좌석은 싣지 않는다.
+- **제품 좌석** `GET O/vendors/{vendorId}/seats`(설정 권한): 등록 제품 하나의 좌석 전부 — 구성원에 잇지 않은 좌석·해제된 좌석까지, 계정 오름차순 + 좌석 ID. 현재 상태 토큰으로 다음 페이지를 잇는다.
+  그 조직에 없는 제품(보관 포함)은 404. 좌석 입력·회수 화면이 쓴다. `memberAccount`는 이은 구성원의 계정(로스터에 없으면 null), `ledgerAvailability`·`ledgerReason`은 그 제품의 원장 가용성이다.
+- **최근 회수·복원 작업**(`lastControl`, 구성원 좌석·제품 좌석의 가산 필드): 좌석마다 가장 최근의 `seat_reclaim`·`seat_restore` 작업 ID다(현재 값). 화면이 새로고침 뒤에도 그 작업의 상태(작업 조회)와
+  관리자 조치 확인·복원을 다시 찾는다.
 - **회수 가능 여부**(ADR 0049 §2·§6): 좌석마다 `canReclaim`과 불가 사유, 가능하면 실행 방식(`reclaimMethod` — `vendor_control`·`admin_action`)이다. 규칙은 enrollment 의 회수 명령과
   같은 함수다 — 배정 좌석만(`not_assigned`), 활성 연결이 있고 계약 플랜의 커넥터가 그 연결의 것이며 해제를 구현했으면 벤더 제어, 연결이 없거나 커넥터가 없는 플랜은 관리자 조치,
   연결의 커넥터가 플랜과 다르면 `plan_mismatch`, 구성원 ID 가 필요한데 없으면 `vendor_account_unknown`, 끝나지 않은 회수·복원이 있으면 `control_in_progress`,
@@ -269,6 +274,15 @@ type ProductRef = { kind: string | null; displayName: string | null };
   관측 가능한 제품일 때만 내고, 창이 모두 완전하면 0 포함 정확한 수, 아니면 센 수가 있을 때만 그 수다(§7.3 관측 인원과 같은 규칙). 관측 사용자 수를 좌석으로 쓰지 않는다.
 
 ```ts
+type VendorSeatsResponse = { meta: CurrentMeta; vendorId: string; ledgerAvailability: Availability; ledgerReason: string | null; seats: Page<VendorSeatItem> };
+type VendorSeatItem = {
+  seatAssignmentId: string; version: number; account: string; accountKind: "email" | "github_login";
+  state: "assigned" | "pending_assignment" | "pending_release" | "released"; source: string;
+  memberId: string | null; memberAccount: string | null; memberLink: "email_match" | "admin" | null;
+  tierId: string | null; tierLabel: string | null; vendorTier: string | null; assignedAt: string; releaseEffectiveOn: string | null; releasedAt: string | null; note: string | null;
+  canReclaim: boolean; reclaimReason: string | null; reclaimMethod: "vendor_control" | "admin_action" | null;
+  lastControl: { operationId: string; kind: "seat_reclaim" | "seat_restore" } | null;
+};
 type MemberSeatsResponse = { meta: CurrentMeta; memberId: string; policy: { idleDays: number; version: number }; seats: MemberSeat[] };
 type MemberSeat = {
   seatAssignmentId: string; version: number; vendorId: string; vendorName: string; kind: string;
@@ -282,6 +296,7 @@ type MemberSeat = {
   reviewReason: "not_assigned" | "seat_unlinked" | "seat_source_unavailable" | "product_unobservable" | "in_use" | "observation_incomplete" | null; // null = 후보
   reclaimCandidate: boolean; canReclaim: boolean; reclaimReason: string | null;
   reclaimMethod: "vendor_control" | "admin_action" | null;   // 가산(ADR 0049)
+  lastControl: { operationId: string; kind: "seat_reclaim" | "seat_restore" } | null;  // 가산 — 이 좌석의 가장 최근 회수·복원 작업(현재 값). 상태는 작업 조회로
 };
 ```
 

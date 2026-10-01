@@ -73,10 +73,14 @@ class SeatLedgerReader(
 		val mapping: Map<String, String>,
 		/** 끝나지 않은 회수·복원 대상이 있는 좌석(현재 값, ADR 0049). */
 		val openControls: Set<UUID> = emptySet(),
+		/** 좌석마다 가장 최근의 회수·복원 작업(현재 값, ADR 0049) — 화면이 새로고침 뒤에도 그 작업을 다시 찾는다. */
+		val lastControls: Map<UUID, LastControl> = emptyMap(),
 	) {
 		val observableKinds: Set<String> get() = mapping.values.toSet()
 		fun product(vendorId: String): Product? = products.firstOrNull { it.vendorId == vendorId }
 	}
+
+	data class LastControl(val operationId: UUID, val kind: String)
 
 	data class RosterEntry(val id: UUID, val account: String, val status: String, val teamIds: List<UUID>)
 
@@ -114,7 +118,10 @@ class SeatLedgerReader(
 			JOIN enrollment.operation_targets t ON t.operation_id = c.operation_id AND t.target_id = c.seat_assignment_id::text
 			WHERE c.tenant_id = :tenant AND t.status IN ('pending', 'awaiting_admin_action')""").param("tenant", tenant)
 			.query { rs, _ -> rs.getObject(1, UUID::class.java) }.list().toSet()
-		return Ledger(asOf, products, seats, VendorConnections.active(source, mapper, tenant).associateBy { it.vendorId }, mapping, open)
+		val last = source.sql("""SELECT DISTINCT ON (c.seat_assignment_id) c.seat_assignment_id, c.operation_id, o.kind FROM enrollment.seat_controls c
+			JOIN enrollment.operations o ON o.id = c.operation_id WHERE c.tenant_id = :tenant ORDER BY c.seat_assignment_id, c.requested_at DESC, c.operation_id""")
+			.param("tenant", tenant).query { rs, _ -> rs.getObject(1, UUID::class.java) to LastControl(rs.getObject(2, UUID::class.java), rs.getString(3)) }.list().toMap()
+		return Ledger(asOf, products, seats, VendorConnections.active(source, mapper, tenant).associateBy { it.vendorId }, mapping, open, last)
 	}
 
 	/** 현재 로스터(활성·정지)와 기준 시각의 소속 팀. 구성원 화면이 아닌 현재 상태 목록이 쓴다. */

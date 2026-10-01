@@ -380,6 +380,26 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
+	@DisplayName("등록 제품의 좌석 — 구성원에 잇지 않은 좌석까지 계정 순서로, 같은 토큰으로 다음 페이지를 잇고, 없는 제품은 404")
+	fun vendorSeats() {
+		val org = organization()
+		val first = ok(org.tenant, "/vendors/${org.claude}/seats?limit=4")
+		assertThat(first.path("ledgerAvailability").asString() to first.path("ledgerReason").isNull).isEqualTo("available" to true)
+		assertThat(first.at("/seats/totalCount").asInt()).describedAs("해제된 gil·외부 계정 포함 7").isEqualTo(7)
+		val items = first.at("/seats/items").toList() + ok(org.tenant, "/vendors/${org.claude}/seats?limit=4&cursor=${first.at("/seats/nextCursor").asString()}").at("/seats/items").toList()
+		assertThat(items.map { it.path("account").asString().substringBefore("-").substringBefore("@") })
+			.containsExactly("dana", "eli", "fox", "gil", "hana", "ivy", "outside")
+		with(items.single { it.path("account").asString().startsWith("outside") }) {
+			assertThat(listOf(path("memberId").isNull, path("memberAccount").isNull, path("state").asString(), path("canReclaim").asBoolean())).containsExactly(true, true, "assigned", false)
+		}
+		with(items.single { it.path("account").asString().startsWith("gil") }) {
+			assertThat(listOf(path("state").asString(), path("source").asString(), path("memberAccount").asString().startsWith("gil-"))).containsExactly("released", "admin_action", true)
+		}
+		assertThat(get(org.tenant, "/vendors/no-such-vendor/seats").statusCode()).isEqualTo(404)
+		assertThat(get(organization(withCopilot = false).tenant, "/vendors/${org.claude}/seats").statusCode()).describedAs("다른 조직의 제품").isEqualTo(404)
+	}
+
+	@Test
 	@DisplayName("회수 가능 여부(ADR 0049) — 관리 기능이 있으면 연결된 제품은 벤더 제어, 없으면 관리자 조치이고 배정 좌석만·진행 중인 회수가 없을 때만이다")
 	fun reclaimControl() {
 		val org = organization()
@@ -406,6 +426,8 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		DashboardTestStores.writer.sql("""INSERT INTO enrollment.seat_controls (operation_id, seat_assignment_id, tenant_id, action, method, requested_at)
 			VALUES (:id, :seat, :t, 'release', 'admin_action', now())""").param("id", operation).param("seat", org.seats.getValue("dana")).param("t", org.tenant).update()
 		assertThat(seat("dana").let { it.canReclaim to it.reclaimReason }).isEqualTo(false to "control_in_progress")
+		assertThat(seat("dana").lastControl).describedAs("새로고침 뒤에도 그 작업을 찾는다").isEqualTo(SeatControlRef(operation.toString(), "seat_reclaim"))
+		assertThat(seat("eli").lastControl).isNull()
 		assertThat(service.reclaimCandidates(organization, PageRequest(10, null), null).candidates.data!!.items
 			.single { it.seatAssignmentId == org.seats.getValue("dana").toString() }.let { it.canReclaim to it.reason }).isEqualTo(false to "control_in_progress")
 	}

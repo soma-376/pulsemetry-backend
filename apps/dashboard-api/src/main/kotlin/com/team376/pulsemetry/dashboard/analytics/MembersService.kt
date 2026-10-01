@@ -135,10 +135,42 @@ class MembersService(
 				ledgerAvailability = state.availability, ledgerReason = state.reason,
 				lastUsedAt = review?.lastUsedAt?.toString(), idleDays = review?.idleDays, reviewReason = review?.reason ?: "not_assigned".takeIf { review == null },
 				reclaimCandidate = review?.candidate == true, canReclaim = reclaim.canReclaim, reclaimReason = reclaim.reason, reclaimMethod = reclaim.method,
+				lastControl = assessment.ledger.lastControls[seat.id]?.let { SeatControlRef(it.operationId.toString(), it.kind) },
 			)
 		}.sortedWith(compareBy<MemberSeat> { if (it.state == "released") 1 else 0 }.thenBy { it.vendorName }.thenBy { it.account })
 		return MemberSeatsResponse(CurrentMeta(organization.id.toString(), now.toString(), token.asOf.toString(), token.value, AnalyticsFrames.USD, QueryReader.SEOUL_ID),
 			memberId.toString(), policy(organization), items)
+	}
+
+	/**
+	 * 등록 제품 하나의 좌석 (`GET O/vendors/{vendorId}/seats`). 현재 상태라 토큰의 기준 시각으로 원장을 다시 세운다. 그 조직에 없는 제품(보관 포함)은 404.
+	 * 계정 오름차순 + 좌석 ID, cursor 는 그 토큰·이 제품의 것이어야 한다.
+	 */
+	fun vendorSeats(organization: Organization, vendorId: String, page: PageRequest, snapshotId: String?): VendorSeatsResponse {
+		val now = clock.instant()
+		val token = tokens.resolve(VENDOR_SEATS_KIND, organization.id, snapshotId ?: page.cursor?.snapshotId, now)
+		val scope = "$VENDOR_SEATS_KIND:$vendorId"
+		page.cursor?.let { if (it.snapshotId != token.value || it.scope != scope) throw DashboardException.invalid(CURSOR, FieldErrorCode.INVALID_CURSOR) }
+		val roster = seats.roster(organization.id, token.asOf)
+		val assessment = seats.assess(organization.id, token.asOf, roster.keys, withReviews = false)
+		val state = assessment.products.firstOrNull { it.product.vendorId == vendorId }
+			?: throw DashboardException(com.team376.pulsemetry.dashboard.error.ErrorCode.NOT_FOUND)
+		val all = assessment.ledger.seats.filter { it.vendorId == vendorId }.sortedWith(compareBy({ it.account }, { it.id.toString() }))
+		val start = page.cursor?.let { cursor ->
+			val index = all.indexOfFirst { it.id.toString() == cursor.after.lastOrNull() }
+			if (index < 0) throw DashboardException.invalid(CURSOR, FieldErrorCode.INVALID_CURSOR)
+			index + 1
+		} ?: 0
+		val items = all.drop(start).take(page.limit)
+		val next = if (start + items.size < all.size) codec.encode(PageCursor(token.value, scope, listOf(items.last().account, items.last().id.toString()))) else null
+		return VendorSeatsResponse(CurrentMeta(organization.id.toString(), now.toString(), token.asOf.toString(), token.value, AnalyticsFrames.USD, QueryReader.SEOUL_ID),
+			vendorId, state.availability, state.reason, Page(items.map { seat ->
+				val reclaim = assessment.reclaim(seat, managementEnabled)
+				VendorSeatItem(seat.id.toString(), seat.version, seat.account, seat.accountKind.wire, seat.state.wire, seat.source.wire, seat.memberId?.toString(),
+					seat.memberId?.let { roster[it]?.account }, seat.memberLink?.wire, seat.tierId, state.product.tier(seat.tierId)?.label, seat.vendorTier,
+					seat.assignedAt.toString(), seat.releaseEffectiveOn?.toString(), seat.releasedAt?.toString(), seat.note, reclaim.canReclaim, reclaim.reason, reclaim.method,
+					assessment.ledger.lastControls[seat.id]?.let { SeatControlRef(it.operationId.toString(), it.kind) })
+			}, all.size, next))
 	}
 
 	/** 회수 후보 한 페이지. cursor 는 그 토큰·이 목록의 것이어야 하고, 뒤따르는 위치는 (유휴 일수, 좌석 ID)다. */
@@ -292,6 +324,7 @@ class MembersService(
 		const val DASHBOARD_LIMIT = 20
 		const val RECLAIM_KIND = "seat-reclaim-candidates"
 		const val MEMBER_SEATS_KIND = "member-seats"
+		const val VENDOR_SEATS_KIND = "vendor-seats"
 		private const val RECLAIM_SCOPE = "seat-reclaim-candidates"
 		private const val UNASSIGNED_SCOPE = "members-unassigned"
 		private const val CURSOR = "cursor"

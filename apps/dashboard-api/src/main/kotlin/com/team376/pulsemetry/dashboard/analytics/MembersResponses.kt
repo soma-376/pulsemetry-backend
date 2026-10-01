@@ -88,6 +88,39 @@ data class MemberSeat(
 	val reclaimReason: String?,
 	/** 회수할 수 있을 때의 실행 방식(가산, ADR 0049). 불가면 null. */
 	val reclaimMethod: String? = null,
+	/** 이 좌석의 가장 최근 회수·복원 작업(가산, ADR 0049) — 상태는 작업 조회로 본다. 없으면 null. */
+	val lastControl: SeatControlRef? = null,
+)
+
+data class SeatControlRef(val operationId: String, val kind: String)
+
+/**
+ * 등록 제품 하나의 좌석 (`GET O/vendors/{vendorId}/seats`, ADR 0048·0049) — 구성원에 잇지 않은 좌석까지. 좌석 입력·회수 화면이 쓴다. 현재 상태다.
+ * `memberAccount` 는 이은 구성원의 계정(로스터에 없으면 null), `ledgerAvailability`·`ledgerReason` 은 그 제품의 원장 가용성이다.
+ */
+data class VendorSeatsResponse(val meta: CurrentMeta, val vendorId: String, val ledgerAvailability: String, val ledgerReason: String?, val seats: Page<VendorSeatItem>)
+
+data class VendorSeatItem(
+	val seatAssignmentId: String,
+	val version: Long,
+	val account: String,
+	val accountKind: String,
+	val state: String,
+	val source: String,
+	val memberId: String?,
+	val memberAccount: String?,
+	val memberLink: String?,
+	val tierId: String?,
+	val tierLabel: String?,
+	val vendorTier: String?,
+	val assignedAt: String,
+	val releaseEffectiveOn: String?,
+	val releasedAt: String?,
+	val note: String?,
+	val canReclaim: Boolean,
+	val reclaimReason: String?,
+	val reclaimMethod: String?,
+	val lastControl: SeatControlRef?,
 )
 
 data class MemberSeatsResponse(val meta: CurrentMeta, val memberId: String, val policy: IdlePolicy, val seats: List<MemberSeat>)
