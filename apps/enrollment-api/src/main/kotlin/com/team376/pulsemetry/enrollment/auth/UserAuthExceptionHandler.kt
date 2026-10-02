@@ -1,7 +1,9 @@
 package com.team376.pulsemetry.enrollment.auth
 
+import com.team376.pulsemetry.enrollment.error.FilterErrorResponse
 import com.team376.pulsemetry.security.user.UserAuthException
 import org.springframework.core.annotation.Order
+import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.web.HttpRequestMethodNotSupportedException
@@ -23,7 +25,9 @@ class UserAuthExceptionHandler {
     @ExceptionHandler(Exception::class)
     fun unavailable(): ResponseEntity<Map<String, String>> = error(503, "auth_unavailable", 1)
     private fun error(status: Int, code: String, retry: Long? = null): ResponseEntity<Map<String, String>> {
+        // 필터가 쓰는 오류와 같은 Content-Type 이다 — 같은 경로의 429 가 진입·세션 어느 쪽에서 나와도 문자셋이 같다(ADR 0052).
         val builder = ResponseEntity.status(status).header("Cache-Control", "no-store")
+            .contentType(MediaType.parseMediaType(FilterErrorResponse.CONTENT_TYPE))
         retry?.let { builder.header("Retry-After", it.toString()) }
         return builder.body(mapOf("error" to code, "message" to "사용자 인증 요청을 처리할 수 없습니다."))
     }

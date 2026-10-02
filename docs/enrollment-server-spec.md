@@ -129,7 +129,7 @@ telemetryctl 기본 브랜치의 데몬은 등록(§4.2)·토큰 재발급(§4.3
   그 시간이 지난 뒤의 같은 입력은 새 문의다. 같은 입력의 동시 요청도 한 번만 저장한다.
 - **남용 제한**: 출처 주소(서블릿 `remoteAddr`)별로 `rate-limit.window` 안에 `rate-limit.requests`회까지 받는다. 검증에 실패한 요청과 재전송도 센다.
   넘으면 429 `rate_limited`와 `Retry-After`(창이 끝날 때까지의 초)다. preflight(`OPTIONS`)는 세지 않는다.
-  제한 상태와 문의 행에는 주소의 SHA-256만 남긴다. forwarded 헤더를 믿지 않으므로 프록시 뒤에서는 프록시 주소 단위의 제한이 된다(사용자 인증의 IP 제한과 같다 — ADR 0018).
+  제한 상태와 문의 행에는 주소의 SHA-256만 남긴다. forwarded 헤더를 믿지 않으므로 프록시 뒤에서는 프록시 주소 단위의 제한이 된다(사용자 인증의 진입 요청 제한과 같다 — ADR 0018·0052).
 - **CORS**: `/v1/inquiries`는 `pulsemetry.inquiries.allowed-origins`의 출처에만 `POST`·`Content-Type`을 허용하고 `Retry-After`를 노출한다. 사용자 인증의 출처 목록과 따로 둔다.
 
 오류 본문은 §7의 두 필드 형태다. 문장은 CLI 가 아니라 문의 폼의 사용자에게 보인다.
@@ -826,8 +826,15 @@ type CurrentUser = {
 400 `invalid_request`, 401 `invalid_credentials`, 409 `signup_unavailable`,
 429 `rate_limited`, 503 `auth_unavailable`. 429·503의 `Retry-After`를 따른다.
 `message`는 모든 인증 오류에서 `사용자 인증 요청을 처리할 수 없습니다.`이고, 무엇이 틀렸는지 알려 주지 않는다.
-본문은 UTF-8이다. IP 요청 제한의 429와 제한 상태를 읽지 못한 503은 컨트롤러 앞의 필터가 쓰며
-`Content-Type: application/json;charset=UTF-8`로 문자셋을 명시한다. 둘의 `Retry-After`는 초 단위 정수다.
+인증 오류 응답은 `Content-Type: application/json;charset=UTF-8`로 문자셋을 명시한다 — 컨트롤러 앞의 필터가 쓰는
+진입 요청 제한의 429와 제한 상태를 읽지 못한 503도 같다. 429·503의 `Retry-After`는 초 단위 정수다.
+
+요청 제한(ADR 0052)은 둘이다. 토큰 없는 진입(login·signup·`cli/authorize`·`cli/token`과 아래에 없는 `/v1/auth/*`)은 remoteAddr 단위,
+자격을 가진 요청(`POST refresh`·`POST logout`·`GET /v1/manifest`·`GET /v1/auth/me`)은 세션 단위로 센다.
+세션은 RT 기록 또는 서명을 검증한 AT의 `sid`로 찾고, 토큰이 없거나 형식이 틀렸거나 모르는 토큰은 진입으로 센다.
+한도는 `pulsemetry.user-auth.rate-limit.{entry,session}.{requests,window}`이고 기본은 둘 다 60초 30회다.
+초과는 429 `rate_limited`와 `Retry-After`(창이 끝날 때까지의 초)다. 자격 보유 요청의 429는 RT를 소비하기 전에 나므로
+같은 RT로 `Retry-After` 뒤에 다시 요청한다. 브라우저용 CORS 응답은 `Retry-After`를 노출한다(`Access-Control-Expose-Headers`).
 응답은 `Cache-Control: no-store`다. 상세 DTO는 [UserAuthController](../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/UserAuthController.kt)를 참조한다.
 
 계약·벤더·manifest·온보딩 완료 여부는 로그인 조건이 아니다(ADR 0033).

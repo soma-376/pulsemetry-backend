@@ -29,12 +29,19 @@ pulsemetry:
       key-2026-09: /run/secrets/user-auth-public.pem
     allowed-origins:
       - https://dashboard.example.com
+    rate-limit:          # 생략하면 둘 다 60초 30회
+      entry:
+        requests: 30
+        window: 60s
+      session:
+        requests: 30
+        window: 60s
 ```
 
 issuer/audience는 요청 Host에서 만들지 않는다. RSA는 2048비트 이상이며 개인키는 PKCS8,
 공개키는 X509 PEM이다. 키는 배포자가 secret volume으로 읽기 전용 주입한다. 코드/이미지에 넣지 않는다.
 활성 키 누락·쌍 불일치는 기동 실패다. 테스트는 임시 키를 생성하며 운영 자동 생성은 없다.
-프록시 forwarded 헤더 자동 복원을 켜지 않는다. 현재 rate limit은 remoteAddr 기준이므로
+프록시 forwarded 헤더 자동 복원을 켜지 않는다. 진입 요청 제한은 remoteAddr 기준이므로
 신뢰 프록시 설정을 검토하기 전에는 ALB 주소 단위로 제한될 수 있다.
 
 ## 키 교체
@@ -60,7 +67,23 @@ AT 300초, 시계 오차 30초, RT 절대 만료 30일이다. 세션을 유지�
 회원 상태·tenant 상태·role 변경은 다음 사용자 AT 검증/refresh부터 확인한다.
 기존 관리자 경로에서 이 검증기를 사용하는 작업은 PROJ-109에 남아 있다.
 
-5회/15분 로그인 실패는 15분 잠금이다. IP별 30회/분은 PostgreSQL 공유 상태다.
+5회/15분 로그인 실패는 15분 잠금이다. 요청 제한은 둘로 나뉘며 상태는 PostgreSQL `enrollment.auth_attempts`에 공유한다(ADR 0052).
+
+| 범주 | 요청 | 단위 | 설정 키(기본) |
+| --- | --- | --- | --- |
+| 진입 | 로그인·가입·CLI 인가·CLI 코드 교환, 아래 자격 보유가 아닌 `/v1/auth/*` 전부 | remoteAddr | `rate-limit.entry.requests`·`window`(30회·60초) |
+| 자격 보유 | RT 갱신·로그아웃·`GET /v1/manifest`·`GET /v1/auth/me` | 세션 | `rate-limit.session.requests`·`window`(30회·60초) |
+
+토큰이 없거나 형식이 틀렸거나 모르는 토큰은 진입 한도로 센다. 자격 보유 요청의 429는 RT를 소비하기 전에 나므로
+클라이언트는 `Retry-After` 뒤에 같은 RT로 다시 요청한다. 한도는 고정 창이며 요청 수는 1 이상, 창은 1초 이상이어야 기동한다.
+
+조정 기준:
+- 진입 한도는 비밀번호·초대 코드·인가 코드 추측을 막는 값이다. 올리기 전에 서버가 프록시 주소만 보는지 확인한다 —
+  그렇다면 배포 전체가 한 버킷이다. 정상 로그인이 창마다 한도를 넘는 것이 확인될 때만 올리고, 계정 잠금은 따로 유지된다.
+- 세션 한도는 클라이언트 하나(브라우저 탭·CLI)의 요청량이다. 대시보드는 AT 수명(5분)마다 갱신하고 화면마다 현재 사용자를 읽는다.
+  정상 클라이언트가 이 한도를 넘으면 한도보다 먼저 클라이언트의 중복 요청(동시 갱신·반복 조회)을 줄인다.
+- 낮추면 같은 창 안의 정상 요청도 429가 된다. 실서버 E2E처럼 한 주소에서 로그인을 반복하는 작업은 진입 한도를 존중해 간격을 둔다.
+
 인증 실패 401, 제한 429, 인프라/서명 오류 503을 구분하고 429/503의 Retry-After를 따른다.
 로그·APM의 request body와 Authorization 수집은 인증 경로에서 비활성화한다.
 

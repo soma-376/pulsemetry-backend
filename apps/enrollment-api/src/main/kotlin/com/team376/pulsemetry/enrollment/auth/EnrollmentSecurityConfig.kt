@@ -4,8 +4,8 @@ import com.team376.pulsemetry.enrollment.error.FilterErrorResponse
 import com.team376.pulsemetry.enrollment.inquiry.InquiryProperties
 import com.team376.pulsemetry.enrollment.inquiry.InquiryRequestFilter
 import com.team376.pulsemetry.persistence.enrollment.inquiry.InquiryStore
+import com.team376.pulsemetry.security.user.AuthRateLimiter
 import com.team376.pulsemetry.security.user.UserAuthException
-import com.team376.pulsemetry.security.user.UserAuthService
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
@@ -33,13 +33,13 @@ class EnrollmentSecurityConfig {
     }
 
     @Bean
-    fun enrollmentSecurity(http: HttpSecurity, service: ObjectProvider<UserAuthService>, properties: ObjectProvider<UserAuthProperties>,
+    fun enrollmentSecurity(http: HttpSecurity, limiter: ObjectProvider<AuthRateLimiter>, properties: ObjectProvider<UserAuthProperties>,
         inquiries: ObjectProvider<InquiryStore>, inquiryProperties: ObjectProvider<InquiryProperties>): SecurityFilterChain {
         http.csrf { it.disable() }.sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .requestCache { it.disable() }.formLogin { it.disable() }.httpBasic { it.disable() }.logout { it.disable() }
             .authorizeHttpRequests { it.anyRequest().permitAll() }
         val source = UrlBasedCorsConfigurationSource()
-        val auth = service.ifAvailable
+        val auth = limiter.ifAvailable
         if (auth != null) {
             val cors = CorsConfiguration().apply {
                 allowedOrigins = properties.getObject().allowedOrigins
@@ -71,13 +71,14 @@ class EnrollmentSecurityConfig {
     }
 }
 
-private class UserAuthRequestFilter(private val auth: UserAuthService) : OncePerRequestFilter() {
+/** 토큰 없는 진입을 IP 로 센다. 자격을 가진 요청은 컨트롤러가 토큰을 읽은 뒤 세션으로 센다(ADR 0052). */
+private class UserAuthRequestFilter(private val limiter: AuthRateLimiter) : OncePerRequestFilter() {
     override fun shouldNotFilter(request: HttpServletRequest) = !request.servletPath.startsWith("/v1/auth/") && request.servletPath != "/v1/manifest"
     override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
         response.setHeader("Cache-Control", "no-store")
         response.setHeader("Pragma", "no-cache")
         try {
-            if (request.method != "OPTIONS") auth.limitIp(request.remoteAddr)
+            if (request.method != "OPTIONS" && !credential(request)) limiter.entry(request.remoteAddr)
             chain.doFilter(request, response)
         } catch (e: UserAuthException) {
             writeError(response, e.status, e.code, e.retryAfter)
@@ -85,6 +86,11 @@ private class UserAuthRequestFilter(private val auth: UserAuthService) : OncePer
             // 드라이버 예외에 바인딩된 비밀이 섞일 수 있어 예외 원문을 응답·로그에 싣지 않는다.
             writeError(response, 503, "auth_unavailable", 1)
         }
+    }
+    private fun credential(request: HttpServletRequest) = when (request.servletPath) {
+        "/v1/auth/refresh", "/v1/auth/logout" -> request.method == "POST"
+        "/v1/auth/me", "/v1/manifest" -> request.method == "GET" || request.method == "HEAD"
+        else -> false
     }
     private fun writeError(response: HttpServletResponse, status: Int, code: String, retry: Long?) =
         FilterErrorResponse.write(response, status, code, "사용자 인증 요청을 처리할 수 없습니다.", retry)

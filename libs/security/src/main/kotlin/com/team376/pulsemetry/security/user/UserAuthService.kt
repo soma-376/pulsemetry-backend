@@ -23,6 +23,7 @@ class UserAuthService(
     private val clock: Clock,
 ) {
     private val tx = TransactionTemplate(transactionManager)
+    private val defaultLimits = AuthRateLimiter(repository, transactionManager, jwt, clock)
     private val passwords = BCryptPasswordEncoder(12)
     private val dummyHash = passwords.encode("not-a-real-member-password")
 
@@ -113,20 +114,8 @@ class UserAuthService(
         return identity
     }
 
-    fun limitIp(ip: String) {
-        val hash = UserSecrets.hash("ip:$ip")
-        val retry = tx.execute {
-            val now = clock.instant()
-            val attempt = repository.lockAttempt(hash, now)
-            val reset = now >= attempt.windowStartedAt.plusSeconds(60)
-            val start = if (reset) now else attempt.windowStartedAt
-            val count = if (reset) 0 else attempt.attempts
-            if (count >= 30) return@execute secondsUntil(now, start.plusSeconds(60))
-            repository.saveAttempt(hash, start, count + 1, null)
-            0L
-        }
-        if (retry > 0) throw UserAuthException("rate_limited", 429, retry)
-    }
+    /** 토큰 없는 진입의 IP 버킷을 기본 한도로 센다. 설정 한도를 쓰는 경로는 앱이 조립한 [AuthRateLimiter]를 부른다(ADR 0052). */
+    fun limitIp(ip: String) = defaultLimits.entry(ip)
 
     private fun <T : Any> authenticated(tenant: UUID, email: String, password: String, operation: (AuthMember) -> T): T {
         if (email.length > 320 || password.toByteArray(StandardCharsets.UTF_8).size > 72) invalid()
