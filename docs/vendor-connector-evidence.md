@@ -1,6 +1,6 @@
 # 벤더 좌석·청구 API 근거
 
-확인일: 2026-09-30. 카탈로그의 등록 제품에 대해 좌석 조회, 좌석 회수, 좌석 복원, 실제 청구액 조회를
+확인일: 2026-09-30(OpenAI 절은 2026-10-03 재확인). 카탈로그의 등록 제품에 대해 좌석 조회, 좌석 회수, 좌석 복원, 실제 청구액 조회를
 공식 문서로 확인한 결과를 기록한다. 커넥터는 이 문서에 근거가 있는 벤더·기능만 구현한다.
 GitHub Copilot(`copilot`)·Gemini Code Assist(`gemini`)는 연동 대상이 아니다(ADR 0054) — 커넥터를 두지 않고 이 문서의 조사 대상에서 뺐다.
 두 제품의 카탈로그 플랜은 커넥터가 없는 플랜이라 수동 원천이다.
@@ -255,6 +255,27 @@ Claude Console(API 플랫폼) 조직의 비용은 다른 API다: `GET /v1/organi
 판정: 워크스페이스 구성원을 나열·제거·재초대하는 엔드포인트를 문서로 확인하지 못했다. 좌석 조회·회수·복원은 `확인 불가`다.
 커넥터를 만들지 않는다. Business 플랜은 SCIM 대상 목록에도 없다.
 
+#### 재확인 (2026-10-03)
+
+조사 범위는 OpenAI 공식 문서 도메인(`developers.openai.com`·`platform.openai.com`·`help.openai.com`)이다.
+API 플랫폼 조직의 Administration API(`/v1/organization/*`)와 ChatGPT 워크스페이스는 다른 대상이다 — 앞의 것은 좌석 근거로 쓰지 않는다.
+
+- [Administration 개요](https://developers.openai.com/api/reference/administration/overview)를 다시 읽었다. 여전히 API 플랫폼 조직만 다루고
+  ChatGPT 워크스페이스·`api.chatgpt.com`·좌석·요금제별 가용성에 대한 서술이 없다.
+- `help.openai.com` 의 관련 글은 이 환경에서 모두 HTTP 403 이었다 — 본문을 읽지 못했다:
+  `…/articles/8542216-managing-members-seat-types-and-roles-in-chatgpt-business`, `…/articles/20001407-managing-admin-keys-in-admin-console`.
+  아래 두 항목은 **검색 색인이 보여 준 그 글들의 요약**이다. 본문을 읽은 인용이 아니므로 구현 근거로 쓰지 않는다.
+  - 워크스페이스 범위 Admin API 가 있다: 요청 주소는 `https://api.chatgpt.com/v1`, 구성원 목록 예시 경로 `/manage/workspaces/{workspace_id}/users`,
+    Users 읽기 권한 `chatgpt.enterprise.user.read`. 초대 API(목록·조회·생성·재전송·삭제)와 사용자 API(수락한 구성원 조회, owner 의 역할·좌석 변경과 멤버십 제거)가 있다.
+  - Admin 키는 "eligible managed ChatGPT workspaces, including ChatGPT Enterprise, ChatGPT Edu, and ChatGPT for Healthcare"에 제공된다.
+    새 관리 콘솔은 Enterprise·Edu 워크스페이스에 해당하고 "standalone ChatGPT Business customers continue using their existing ChatGPT workspace settings".
+    Business 의 구성원 제거는 관리 화면 절차("Remove member")이고, 제거해도 다음 청구 주기 전까지 청구 좌석 수에서 빠지지 않는다.
+- 요청·응답 스키마가 있는 Admin API reference 는 이 범위에서 읽지 못했다.
+
+판정(재확인): **Business 플랜** — 좌석 API 를 확인하지 못했고, 확인한 요약도 Admin API 대상에서 Business 를 빼고 관리 화면 절차만 안내한다.
+**Enterprise 플랜** — 워크스페이스 Admin API 의 존재와 주소는 요약으로 보이지만 엔드포인트별 요청·응답을 읽지 못했다.
+두 플랜 모두 판정 값은 `확인 불가` 그대로다. 근거 없는 엔드포인트를 추측해 구현하지 않으므로 `openai_biz` 는 수동 기록을 유지한다.
+
 ### 2.2 실제 청구액 — 확인 불가
 
 ChatGPT 구독(좌석) 청구액을 조회하는 API는 확인하지 못했다.
@@ -413,6 +434,7 @@ Admin API 문서에 구성원 초대·재추가 엔드포인트가 없다. 복�
 
 ## 다시 확인할 것
 
-- OpenAI 도움말(`help.openai.com`)과 API reference(`platform.openai.com`)는 조회 시 403이었고, ChatGPT 워크스페이스의 Admin API reference는 인증이 필요하다. 좌석 관리 API 유무는 열려 있다.
+- OpenAI 도움말(`help.openai.com`)은 조회 시 403이었다(2026-09-30·2026-10-03). ChatGPT Enterprise·Edu 워크스페이스의 Admin API(`https://api.chatgpt.com/v1/manage/workspaces/{workspace_id}/…`)는
+  요약으로만 확인했다 — 그 reference(요청·응답·오류·페이지)를 읽으면 `openai_biz` · `enterprise` 의 좌석 조회·회수·복원을 다시 판정한다. Business 플랜은 대상이 아닌 것으로 보인다.
 - Cursor Teams 플랜에서 Admin API를 쓸 수 없다는 판정은 API 개요의 가용성 표에 근거한다. Admin API 문서 자체는 전체 제공 범위를 적지 않았다.
 - 각 벤더의 레이트 리밋 중 이 문서에 수치가 없는 것.
