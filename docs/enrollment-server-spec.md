@@ -133,6 +133,7 @@ telemetryctl 기본 브랜치의 데몬은 등록(§4.2)·토큰 재발급(§4.3
 - **CORS**: `/v1/inquiries`는 `pulsemetry.inquiries.allowed-origins`의 출처에만 `POST`·`Content-Type`을 허용하고 `Retry-After`를 노출한다. 사용자 인증의 출처 목록과 따로 둔다.
 
 오류 본문은 §7의 두 필드 형태다. 문장은 CLI 가 아니라 문의 폼의 사용자에게 보인다.
+요청 수 초과와 제한 상태의 저장소 장애는 컨트롤러 앞의 필터가 쓰며 `Content-Type: application/json;charset=UTF-8`로 문자셋을 명시한다.
 
 | 상황 | HTTP | error |
 |---|---|---|
@@ -824,6 +825,9 @@ type CurrentUser = {
 인증 오류는 `{error: string, message: string}`이다.
 400 `invalid_request`, 401 `invalid_credentials`, 409 `signup_unavailable`,
 429 `rate_limited`, 503 `auth_unavailable`. 429·503의 `Retry-After`를 따른다.
+`message`는 모든 인증 오류에서 `사용자 인증 요청을 처리할 수 없습니다.`이고, 무엇이 틀렸는지 알려 주지 않는다.
+본문은 UTF-8이다. IP 요청 제한의 429와 제한 상태를 읽지 못한 503은 컨트롤러 앞의 필터가 쓰며
+`Content-Type: application/json;charset=UTF-8`로 문자셋을 명시한다. 둘의 `Retry-After`는 초 단위 정수다.
 응답은 `Cache-Control: no-store`다. 상세 DTO는 [UserAuthController](../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/UserAuthController.kt)를 참조한다.
 
 계약·벤더·manifest·온보딩 완료 여부는 로그인 조건이 아니다(ADR 0033).

@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.context.annotation.Import
+import org.springframework.http.MediaType
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.PlatformTransactionManager
 import tools.jackson.databind.JsonNode
@@ -23,6 +24,7 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Clock
 import java.time.Duration
@@ -68,6 +70,12 @@ class InquiryApiTest {
         assertThat(body.propertyNames().toList()).containsExactlyInAnyOrder("error", "message")
         assertThat(body.path("error").asString()).isEqualTo(code)
         assertThat(body.path("message").asString()).isNotBlank()
+    }
+    /** 컨트롤러 앞의 필터가 쓴 오류는 문자셋을 명시한다(명세 §2.2). */
+    private fun assertFilterCharset(response: HttpResponse<String>) {
+        val type = MediaType.parseMediaType(response.headers().firstValue("Content-Type").orElseThrow())
+        assertThat(type.isCompatibleWith(MediaType.APPLICATION_JSON)).describedAs(type.toString()).isTrue()
+        assertThat(type.charset).describedAs(type.toString()).isEqualTo(StandardCharsets.UTF_8)
     }
 
     @Test fun `문의를 저장하고 접수 번호와 상태와 시각을 돌려준다`() {
@@ -157,6 +165,7 @@ class InquiryApiTest {
         assertThat(inquire("다른 회사", "other@example.test").statusCode()).isEqualTo(201)
         val refused = inquire("세 번째 회사", "third@example.test")
         assertError(refused, 429, "rate_limited")
+        assertFilterCharset(refused)
         assertThat(refused.headers().firstValue("Retry-After")).hasValue("60")
         clock.now = start.plusSeconds(30)
         assertThat(inquire("세 번째 회사", "third@example.test").headers().firstValue("Retry-After")).hasValue("30")
@@ -204,6 +213,7 @@ class InquiryApiTest {
         try {
             val response = inquire("코드웍스", "lead@example.test")
             assertError(response, 503, "inquiry_unavailable")
+            assertFilterCharset(response)
             assertThat(response.headers().firstValue("Retry-After")).hasValue("1")
         } finally { rename("inquiry_attempts_unavailable", "inquiry_attempts") }
         assertThat(count("inquiries")).isEqualTo(0)

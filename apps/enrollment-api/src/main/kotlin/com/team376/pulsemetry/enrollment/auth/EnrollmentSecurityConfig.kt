@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.enrollment.auth
 
+import com.team376.pulsemetry.enrollment.error.FilterErrorResponse
 import com.team376.pulsemetry.enrollment.inquiry.InquiryProperties
 import com.team376.pulsemetry.enrollment.inquiry.InquiryRequestFilter
 import com.team376.pulsemetry.persistence.enrollment.inquiry.InquiryStore
@@ -85,11 +86,6 @@ private class UserAuthRequestFilter(private val auth: UserAuthService) : OncePer
             writeError(response, 503, "auth_unavailable", 1)
         }
     }
-    private fun writeError(response: HttpServletResponse, status: Int, code: String, retry: Long?) {
-        if (response.isCommitted) return
-        response.status = status
-        response.contentType = "application/json"
-        retry?.let { response.setHeader("Retry-After", it.toString()) }
-        response.writer.write("""{"error":"$code","message":"사용자 인증 요청을 처리할 수 없습니다."}""")
-    }
+    private fun writeError(response: HttpServletResponse, status: Int, code: String, retry: Long?) =
+        FilterErrorResponse.write(response, status, code, "사용자 인증 요청을 처리할 수 없습니다.", retry)
 }

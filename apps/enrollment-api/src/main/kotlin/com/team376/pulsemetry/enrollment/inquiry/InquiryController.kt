@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.enrollment.inquiry
 
+import com.team376.pulsemetry.enrollment.error.FilterErrorResponse
 import com.team376.pulsemetry.persistence.enrollment.inquiry.InquiryException
 import com.team376.pulsemetry.persistence.enrollment.mail.InquiryNotifier
 import org.springframework.beans.factory.ObjectProvider
@@ -116,11 +117,7 @@ class InquiryRequestFilter(private val store: InquiryStore) : OncePerRequestFilt
         chain.doFilter(request, response)
     }
     private fun write(response: HttpServletResponse, status: Int, code: String, retry: Long?) {
-        response.status = status
-        response.contentType = "application/json"
-        response.characterEncoding = "UTF-8"
         response.setHeader("Cache-Control", "no-store")
-        retry?.let { response.setHeader("Retry-After", it.toString()) }
-        response.writer.write("""{"error":"$code","message":"${InquiryErrorBody.message(code)}"}""")
+        FilterErrorResponse.write(response, status, code, InquiryErrorBody.message(code), retry)
     }
 }
