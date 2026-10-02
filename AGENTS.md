@@ -23,7 +23,7 @@ apps/telemetry-ingest/       조립 앱 — OTLP 수신부터 적재까지 한 �
 apps/dashboard-api/          분석·설정·카탈로그 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐. 사용자 인증 어댑터 (ADR 0026)
 apps/retention-worker/       조직별 보존 삭제 — 서버가 아닌 일회성 실행. 분석 원본 DELETE 권한은 여기뿐 (ADR 0024)
 libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이그레이션
-libs/security/               횡단 인증 라이브러리 — 사용자 JWT·세션·암호 검증, OTLP 경로 ptt_ 검증 · telemetry token 해시
+libs/security/               횡단 인증 라이브러리 — 사용자 JWT·세션·OIDC 신원 연결, OTLP 경로 ptt_ 검증 · telemetry token 해시
 libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 신원 스탬프 · 원본 아카이브
 libs/telemetry-adapter/      파이프라인 변환 단계 — 관측 모델 2판 · 제품 프로파일(Codex · Claude Code) · 가격 단계
 libs/telemetry-enricher/     파이프라인 보강 단계 — member_id · 대표 팀 as-of · provider 주석
@@ -39,7 +39,7 @@ libs/telemetry-ops-persistence/ 수집 운영 기록의 RDS 쪽 — telemetry_op
 
 | 항목 | 상태 | 근거 |
 |---|---|---|
-| 사람 계정·로그인 | 구현됨. 설정으로 활성화 | enrollment-api가 로그인·갱신·로그아웃·현재 사용자 조회를 제공하고 dashboard-api가 JWT와 현재 세션을 검증한다. ADR 0018·0026, `docs/user-auth-operations.md` 참고. OIDC/SAML SSO는 미구현 |
+| 사람 계정·로그인 | 표준 OIDC 구현. 개발·데모는 Cognito, 외부 계정 없는 테스트는 모의 OIDC | 비밀번호 API 대신 사전 등록 회원을 최초 SSO의 검증된 이메일로 연결하고 이후 issuer/sub로 식별한다. dashboard-api는 자체 JWT·현재 세션을 검증한다. 허브 ADR 0010·0013, `docs/user-auth-operations.md` 참고. 프론트 BFF·OIDC 배선은 구현됐으며 CLI 배선·운영 배포·SAML은 별도 |
 | 수집 정책·온보딩 | 최초 생성·수정·완료 상태 구현 | `PUT /collection-policy`가 최초 manifest를 만들거나 새 판을 저장한다. 기존 설치에 원격 배포하는 기능은 없다. ADR 0029·0032·0033 |
 | 대시보드 API | 개요·팀·구성원·설정·카탈로그 조회 구현 | `docs/dashboard-server-spec.md` 참고. 관리 쓰기는 enrollment-api가 맡는다. API 구현과 프론트 전체 배선·E2E 완료는 별개 |
 | 텔레메트리 파이프라인 이관 | **코드는 끝났다. 배포만 남았다** | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다 — 남은 것은 infra 가 이 앱을 배포하고 collector 컨테이너를 내리는 일이다(PROJ-106) |
@@ -100,7 +100,7 @@ docker compose ps -a dev-seed                     # 일회성 준비 작업의 E
 ```
 
 Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보존·선택 초기화 절차는
-`tools/dev-seed/README.md`를 따른다. 서버 재시작이나 프론트 fixture 갱신은 기존 시드를 초기화하지 않는다.
+`tools/dev-seed/README.md`를 따른다. 서버 재시작이나 프론트 fixture 갱신은 기존 시드를 초기화하지 않는다. Compose init은 `tools/dev-seed/config/cognito` 공개 JSON으로 A·B의 회사 OIDC 설정을 준비한다. 회원 sub는 시딩하지 않는다. 기존 연결이 다르면 자동 교체하지 않는다. 실제 Secret은 호스트의 회사별 환경변수로만 주입한다.
 
 로컬에서 파이프라인 전체를 돌리는 절차는 `docs/enrollment-server-spec.md` 10절에 있다.
 

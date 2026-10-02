@@ -1,5 +1,8 @@
 # Enrollment 서버 명세
 
+사람 인증은 표준 OIDC이며 개발·데모 Cognito 설정은 [실행 안내](cognito-dev.md)를 따른다.
+사전 등록 회원만 회사 IdP의 검증된 이메일로 최초 sub 연결을 허용한다. 공개 가입이나 자동 회원 생성은 하지 않는다. Cognito 전용 그룹·속성·토큰으로 업무 권한을 판단하지 않으며 아래 API 계약은 제공자에 독립적이다.
+
 데스크탑 CLI 설치·사용자 인증·조직 관리·온보딩을 담당하는 `:apps:enrollment-api`의 동작 명세다.
 기본 포트는 8080이다. 대시보드 조회와 공통 벤더 카탈로그는 [Dashboard 서버 명세](dashboard-server-spec.md)를 따른다.
 기존 설치 계약은 §2~§10, 사람 로그인은 §11, 관리 명령은 §12, 온보딩은 §13에 정의한다.
@@ -88,6 +91,123 @@
 
 **원본 `code` 는 이 응답에서 딱 한 번만 나간다.** DB 에는 해시만 있어 다시 볼 방법이 없고,
 그래서 재조회 API 를 두지 않는다. 관리자가 이 응답을 잃으면 새로 발급해야 한다.
+
+`POST /v1/invitations/{id}/revoke`는 같은 `X-Admin-Token` 헤더를 사용한다.
+
+```ts
+// 요청 본문과 쿼리 파라미터 없음
+{}
+```
+
+```text
+# 응답(204)
+(본문 없음)
+```
+
+### 2.2 CLI 설치 등록 — `POST /v1/enroll`
+
+요청 본문. `invite`, `installer_version`, `operating_environment`, `device_id`, `tools_detected`는
+구버전 클라이언트 호환 필드다. 새 클라이언트는 앞의 다섯 필드만 보낸다.
+
+```json
+{
+  "code": "ABCD-EFGH-JKMN",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "hostname": "hong-macbook",
+  "client_version": "1.2.3"
+}
+```
+
+응답(201). 최상위 키는 아래 네 개가 전부이며 필드를 추가하지 않는다.
+
+```json
+{
+  "installation_id": "b6e9305a-ec5a-4aa4-bc5a-f520ad7ccbe1",
+  "installation_token": "pit_<base64url>",
+  "telemetry_token": "ptt_<base64url>",
+  "manifest": {
+    "schema_version": 1,
+    "config_revision": 3,
+    "otlp": {
+      "endpoint": "https://telemetry.example.com",
+      "protocol": "http/protobuf",
+      "compression": "gzip",
+      "timeout_ms": 10000
+    },
+    "signals": { "logs": true, "metrics": true, "traces": true },
+    "privacy": {
+      "collect_user_prompts": false,
+      "collect_assistant_responses": false,
+      "collect_tool_details": false,
+      "collect_tool_content": false,
+      "collect_user_email": false,
+      "collect_raw_api_bodies": false
+    },
+    "repository_allowlist": [],
+    "resource_attributes": {}
+  }
+}
+```
+
+### 2.3 텔레메트리 토큰 재발급 — `POST /v1/installations/telemetry-token`
+
+요청 본문과 쿼리 파라미터는 없다. 장기 설치 토큰을 헤더에 보낸다.
+
+```http
+Authorization: Bearer pit_<base64url>
+```
+
+응답(200). 기존 활성 telemetry token은 폐기된다.
+
+```json
+{
+  "installation_id": "b6e9305a-ec5a-4aa4-bc5a-f520ad7ccbe1",
+  "telemetry_token": "ptt_<new-base64url>"
+}
+```
+
+### 2.4 설치 스크립트와 바이너리 다운로드
+
+`GET /windows`, `GET /unix`
+
+```ts
+// 쿼리 파라미터
+{ code: string; } // XXXX-XXXX-XXXX
+```
+
+```text
+# 응답(200, text/plain;charset=UTF-8)
+# 플랫폼별 설치 스크립트. 응답에는 요청한 초대 코드가 삽입된다.
+```
+
+`GET /bin/{filename}`
+
+```ts
+// 쿼리 파라미터 없음
+{}
+```
+
+```text
+# 응답(200, application/octet-stream)
+# Content-Disposition: attachment; filename="<filename>"
+```
+
+### 2.5 생존 확인 — `GET /v1/healthz`
+
+```ts
+// 쿼리 파라미터 없음
+{}
+```
+
+```json
+{
+  "status": "ok",
+  "checks": { "database": "ok" }
+}
+```
+
+DB 장애 시에는 503과 함께 `status=degraded`, `checks.database=down`을 반환한다.
 
 ---
 
@@ -506,51 +626,245 @@ psql postgresql://pulsemetry:pulsemetry@localhost:5432/pulsemetry \
 테스트는 Testcontainers 로 실제 PostgreSQL 을 띄우므로 Docker 데몬이 필요하다.
 H2 등 임베디드 DB 로 대체하지 않는다 — jsonb·부분 유니크 인덱스·스키마 분리를 검증할 수 없다.
 
-V1 마이그레이션이 native enum 채택(ADR 0009)으로 재작성되어 Flyway 체크섬이 바뀌었다.
-이전 버전으로 만들어진 로컬 DB 는 `docker compose down -v` 로 볼륨째 지우고 다시 띄운다.
+과거 native enum 채택(ADR 0009) 때 V1 체크섬이 변경된 이력이 있다. 체크섬 불일치는 해당 DB의 이력과 백업을 먼저 확인한다. 현재 OIDC V12·V13 적용은 기존 데이터 보존을 전제로 하며, 로그인 설정 변경을 위해 DB 볼륨을 초기화하지 않는다.
 
 
 ## 11. 사용자 인증
 
 `pulsemetry.user-auth.enabled=true`와 인증 키 설정이 필요하다.
 로컬에서는 Compose가 키를 준비하고, `:apps:enrollment-api:bootRun --args="--spring.profiles.active=local"`이
-인증·관리 기능을 활성화한다. 서버는 키를 생성하지 않는다(ADR 0031).
+인증·관리 기능을 활성화한다. Cognito A·B의 회사 OIDC 설정만 Compose가 공개 JSON으로 시딩한다. 회원 sub는 최초 SSO에서 연결하며 실제 Secret만 [호스트 환경변수로 준비](cognito-dev.md)한다.
+`local`에 개발 Cognito OIDC 설정을 포함한다. 서버는 키를 생성하지 않는다(ADR 0031).
 키 설정 상세는 [사용자 인증 운영](user-auth-operations.md)을 따른다.
 
-| 메서드·경로 | 요청 JSON | 성공 |
-| --- | --- | --- |
-| `POST /v1/auth/signup` | `code`, `email`, `password` | 201, 본문 없음 |
-| `POST /v1/auth/login` | `tenant_id` UUID, `email`, `password` | 200 TokenResponse |
-| `POST /v1/auth/refresh` | `refresh_token` | 200 TokenResponse |
-| `POST /v1/auth/logout` | `refresh_token` | 204 |
-| `GET /v1/auth/me` | Bearer 인증 | 200 CurrentUser |
-| `POST /v1/auth/cli/authorize` | `tenant_id`, `email`, `password`, `redirect_uri`, `state`, `code_challenge`, `code_challenge_method: "S256"` | 200 `{callback_url}` |
-| `POST /v1/auth/cli/token` | `code`, `redirect_uri`, `code_verifier` | 200 TokenResponse |
+### 11.0 로그인 페이지 — 이메일 회사 탐색
 
-로그인 요청은 조직 ID를 필요로 한다. 이메일만으로 조직을 자동 탐색하는 API는 없다.
-가입 비밀번호는 12글자 이상·UTF-8 72바이트 이하다. 초대 코드는 설치 소비와 가입 소비가 독립적이다.
-AT 유효기간은 5분, 세션은 30일이다. refresh는 RT를 회전시키므로 응답의 새 RT를 사용한다.
-이미 소비한 RT를 재사용하면 해당 세션이 폐기된다. 동시 refresh를 클라이언트에서 하나로 합친다.
+`POST /v1/auth/organizations` (`user-auth.enabled=true`, `oidc.enabled=true`)
+
+요청 본문:
+
+```json
+{ "email": "owner@seed-a.example.test" }
+```
+
+응답(200):
+
+```json
+{
+  "organizations": [
+    { "organizationId": "1b59ab21-1788-35e0-bfd7-23baa88a35b4", "organizationName": "시드 A · 정상 사용" }
+  ]
+}
+```
+
+전체 이메일을 trim·소문자로 정규화한다. `invited`·`active` 회원, 활성 회사, 활성화된 회사 OIDC 설정이 있는 회사만 반환한다. sub가 NULL이어도 조회되며 정규화한 이메일이 같은 회원이 여러 명이면 제외한다. issuer/client/secret 참조는 tenants에서 읽고 비밀 원문은 서버 설정에서 주입한다.
+미등록은 빈 배열이며 1개면 바로 SSO 시작, 여러 개면 사용자가 회사를 선택한다. member ID·issuer·sub·secret은 반환하지 않는다.
+**경로 탐색일 뿐 인증이 아니다.** 세션·토큰 발급, 이메일 자동 연결, 회원 생성이 없다.
+400 invalid_request, 429 rate_limited, 503 auth_unavailable; no-store와 IP 30회/분 제한을 적용한다.
+소속 회사 정보가 공개 탐색되는 위험은 남으므로 운영 모니터링이 필요하다.
+
+### 11.1 로그인 페이지 — SSO 시작
+
+`GET /v1/auth/oidc/authorize`
+
+`pulsemetry.oidc.enabled=true`도 필요하다. 비밀번호를 Pulsemetry로 보내지 않고 브라우저를 이 주소로 이동한다.
+조직별로 서버에 등록한 IdP만 사용한다. 신규 회원·조직을 자동 생성하지 않으며 미연결 회원만 검증된 회사 이메일로 연결한다.
+
+쿼리 파라미터(모두 필수, URL 인코딩):
+
+```text
+tenant_id=<사전 등록된 조직 UUID>
+redirect_uri=http://localhost:3000/auth/callback
+state=<클라이언트가 생성·보관하는 예측 불가능한 값, 16~256자>
+code_challenge=<BASE64URL(SHA256(code_verifier)), 패딩 없이 43자>
+code_challenge_method=S256
+```
+
+응답(302, JSON 본문 없음):
+
+```http
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+Set-Cookie: PULSEMETRY_OIDC=<opaque>; Path=/v1/auth/oidc; HttpOnly; SameSite=Lax; Secure
+Location: https://sso.example.com/authorize?...
+```
+
+운영은 HTTPS + Secure 쿠키이며 local 프로필의 loopback HTTP에서만 Secure가 빠진다.
+복귀 주소는 `pulsemetry.user-auth.allowed-redirect-uris`의 정확한 주소만 허용한다.
+CLI는 명시적 포트가 있는 `http://127.0.0.1:<port>/callback` 또는 IPv6 loopback을 허용한다.
+userinfo·query·fragment가 붙은 주소, 와일드카드 호스트, 임의 외부 주소는 허용하지 않는다.
+서버가 IdP에 보내는 state·nonce·PKCE는 클라이언트의 state·PKCE와 **별도**다.
+
+선택 쿼리 `login_hint`에 이메일을 보내면 앞뒤 공백 제거·소문자 정규화 후 IdP 인증 요청에 전달한다.
+미전달도 허용하며, 전달 시 단일 값·이메일 형식·최대 254자·제어 문자 없음 조건을 검사한다.
+전달된 이메일은 해당 회사의 `invited`·`active` 회원인지 서버에서 확인하고 회원 UUID와 정규화 이메일을 왕복 세션에 저장한다. 미등록·정지·중복 이메일이면 403으로 IdP 이동 전에 거부한다. 최초 연결에는 이 대상 회원과 ID Token의 검증된 이메일 일치가 필요하다. 미전달 로그인은 기존 sub 연결에만 허용한다.
+
+### 11.2 IdP callback → 프론트 callback 페이지
+
+`GET /v1/auth/oidc/callback/{registrationId}` (개발 등록 이름: `cognito`)
+
+IdP가 호출하는 경로다. 프론트에서 직접 code를 만들거나 이 경로로 토큰을 POST하지 않는다.
+
+쿼리 파라미터:
+
+```text
+code=<IdP authorization code>
+state=<백엔드가 생성한 OIDC state>
+# IdP가 추가하는 iss/session_state 등의 표준 필드가 있을 수 있다.
+```
+
+서버는 임시 쿠키의 원래 요청과 state, IdP 서명·issuer·audience·만료·nonce 및 PKCE를 검증한다.
+이미 연결된 회원은 검증된 `(tenant_id, issuer, sub)`와 활성 상태가 일치해야 한다. 시작 시 선택한 회원이 있으면 동일 회원이어야 한다.
+미연결 회원은 왕복 세션에 고정한 대상 회원의 회사·현재 이메일·상태를 DB 잠금 아래 다시 검사한다. ID Token의 `email_verified=true`와 정규화 이메일이 시작 이메일 및 현재 DB 이메일과 일치할 때만 sub를 저장하고 `invited`를 `active`로 전환한다. 회사의 `oidc_require_verified_email=false`도 최초 연결에는 예외가 아니다.
+sub 충돌·다른 sub로의 교체·미등록·정지·중복 이메일은 거부한다. 연결·활성화·코드 발급은 함께 커밋/롤백한다. 회원 UUID·역할·설치 초대는 변경하지 않는다.
+
+성공 응답(302):
+
+```http
+Cache-Control: no-store
+Location: http://localhost:3000/auth/callback?code=uac_<one-time-code>&state=<client-state>
+Set-Cookie: PULSEMETRY_OIDC=; Path=/v1/auth/oidc; Max-Age=0; HttpOnly; SameSite=Lax; Secure
+```
+
+프론트는 보관한 state와 일치하는지 먼저 확인하고 §11.3에서 code를 교환한다.
+`uac_`는 Pulsemetry 전용 **60초·1회용** 코드이며 IdP code와 다르다. AT/RT는 URL에 싣지 않는다.
+OIDC 왕복용 JDBC 세션은 10분, 완료·실패 시 폐기한다. 이 쿠키로 업무 API를 인증하지 않는다.
+
+실패도 **서버에 저장된 안전한 복귀 주소**로 반환한다(302):
+
+```http
+Location: http://localhost:3000/auth/callback?error=member_not_allowed&state=<client-state>
+Cache-Control: no-store
+```
+
+`error`는 login_cancelled(IdP access_denied), member_not_allowed(사전 등록/활성 조건 불충족),
+invalid_credentials(서명·nonce·state 등 검증 실패), auth_unavailable(IdP/인프라 장애) 중 하나다.
+IdP의 error_description·토큰·입력 redirect_uri를 그대로 반사하지 않는다. 프론트는 오류도 state 확인 후 표시한다.
+임시 쿠키/세션 유실 시 신뢰할 요청을 복원할 수 없으므로 `oidc.failure-redirect-uri`로만 아래처럼 반환한다:
+
+```http
+Location: http://localhost:3000/auth/callback?error=login_expired
+```
+
+이 고정 주소는 user-auth.allowed-redirect-uris의 정확한 항목이어야 하며 시작 시 검증한다.
+미설정 환경은 JSON 오류를 반환한다. 잘못된 로그인 시작 요청과 IP 제한은 JSON 4xx/5xx이며 임의 리다이렉트를 하지 않는다.
+
+### 11.3 callback 페이지 — 서비스 토큰 교환
+
+`POST /v1/auth/token` (`POST /v1/auth/cli/token`도 같은 계약)
+
+요청 본문:
+
+```json
+{
+  "code": "uac_<one-time-code>",
+  "redirect_uri": "http://localhost:3000/auth/callback",
+  "code_verifier": "<로그인 시작 전 생성해 보관한 PKCE verifier>"
+}
+```
+
+`redirect_uri`는 시작 요청과 정확히 같아야 한다. verifier는 RFC 7636의 43~128자 unreserved 문자열이다.
+토큰 요청은 JSON이고 쿠키/IdP access token을 요구하지 않는다.
+
+응답(200):
+
+```json
+{
+  "access_token": "<Pulsemetry JWT>",
+  "refresh_token": "urt_<opaque refresh token>",
+  "token_type": "Bearer",
+  "expires_in": 300
+}
+```
+
+### 11.4 공통 — 로그인 유지·로그아웃·현재 사용자
+
+`POST /v1/auth/refresh`
+
+```jsonc
+// 요청 본문
+{ "refresh_token": "<current refresh token>" }
+```
+
+```jsonc
+// 응답(200). refresh token도 새 값으로 회전한다.
+{
+  "access_token": "<new JWT>",
+  "refresh_token": "<new refresh token>",
+  "token_type": "Bearer",
+  "expires_in": 300
+}
+```
+
+`POST /v1/auth/logout`
+
+```jsonc
+// 요청 본문
+{ "refresh_token": "<current refresh token>" }
+```
+
+```text
+# 응답(204)
+(본문 없음)
+```
+
+현재 Pulsemetry 세션만 폐기한다. IdP 브라우저 SSO 세션을 로그아웃시키지는 않는다.
+
+`GET /v1/auth/me`
+
+```http
+Authorization: Bearer <access_token>
+```
+
+```jsonc
+// 응답(200)
+{
+  "memberId": "3a7166fd-f38e-4d03-90ba-6ce9a07bf712",
+  "organizationId": "0f9c4ba3-c488-4245-af0d-00a81c94f00f",
+  "organizationName": "Pulsemetry",
+  "email": "hong@example.com",
+  "displayName": "홍길동",
+  "role": "admin"
+}
+```
+
+AT 유효기간은 5분, 세션의 절대 유효기간은 30일이다.
+refresh는 RT를 회전시키며 이미 소비한 RT를 재사용하면 해당 세션 전체가 폐기된다.
+동시 refresh를 클라이언트에서 하나로 합친다. IdP 토큰을 업무 API Bearer로 사용하지 않는다.
+
+### 11.5 폐기된 가입·비밀번호 로그인
+
+`POST /v1/auth/signup`, `POST /v1/auth/login`, `POST /v1/auth/cli/authorize`는 폐기됐다.
+요청 본문을 파싱하지 않으며 다음을 반환한다. 공개 가입/비밀번호 API는 없다.
+
+```jsonc
+// 응답(410)
+{ "error": "auth_method_removed", "message": "사용자 인증 요청을 처리할 수 없습니다." }
+```
+
+초대 코드는 CLI **설치용**이다. 가입 소비 상태는 새로 기록하지 않는다.
+기존 `signup_used_at`/`signupUsedAt`은 이력 호환용으로 남으며 초대의 used 판정은 설치 소비만 따른다.
+
+### 11.6 공통 오류와 적용 범위
 
 ```ts
-type TokenResponse = {
-  access_token: string; refresh_token: string;
-  token_type: "Bearer"; expires_in: number;
-};
-type CurrentUser = {
-  memberId: string; organizationId: string; organizationName: string;
-  email: string; displayName: string; role: "admin" | "member";
+type AuthError = {
+  error: "invalid_request" | "invalid_credentials" | "member_not_allowed"
+       | "auth_method_removed" | "rate_limited" | "auth_unavailable";
+  message: string;
 };
 ```
 
-인증 오류는 `{error: string, message: string}`이다.
-400 `invalid_request`, 401 `invalid_credentials`, 409 `signup_unavailable`,
-429 `rate_limited`, 503 `auth_unavailable`. 429·503의 `Retry-After`를 따른다.
-응답은 `Cache-Control: no-store`다. 상세 DTO는 [UserAuthController](../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/UserAuthController.kt)를 참조한다.
+400 잘못된 요청, 401 잘못된 인증/code, 403 사전 등록 안 됨·회원/조직 비활성,
+410 폐기 경로, 429 제한, 503 IdP/DB/서명 인프라 장애다.
+429·503의 `Retry-After`를 따른다. 응답은 `Cache-Control: no-store`다.
 
 계약·벤더·manifest·온보딩 완료 여부는 로그인 조건이 아니다(ADR 0033).
-활성 manifest가 없는 세션도 생성하며 `manifest_revision=0`을 쓴다. 일반 RT 갱신은 기존 revision을 유지한다.
-이 값으로 온보딩 상태를 판단하지 않고 §13의 온보딩 조회를 사용한다.
+활성 manifest가 없으면 `manifest_revision=0`이며 RT 갱신은 기존 revision을 유지한다.
+온보딩 판단은 §13을 사용한다.
+프론트는 `/auth/callback`에서 state·10분 TTL 검증 → 단회 token 교환 → /me의 선택 회사/admin 확인 → 온보딩 상태별 이동을 수행한다.
+임시 state/verifier와 URL code는 성공/실패 모두 정리하며 중복 교환은 하지 않는다. `/api/dev/seed-login`은 삭제했다.
+telemetryctl의 로그인 배선은 별도 작업이다. 회원 초대/CLI 설치 계약은 바꾸지 않는다.
 
 
 ## 12. 조직 관리 API
@@ -563,39 +877,234 @@ POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`, 8~128자)를 보낸다.
 같은 조직·사용자·경로·키·본문은 24시간 같은 응답을 반환한다. 같은 키와 다른 본문은 409 `idempotency_conflict`다.
 초대 코드가 포함된 재시도 응답은 DB에서 암호화된다.
 
-| 메서드·경로 | 요청 | 성공 |
-| --- | --- | --- |
-| `POST /teams` | `{teamName}` | 201 `{teamId,teamName,version}`, Location |
-| `PATCH /teams/{teamId}` | `{teamName,expectedVersion}` | 200 같은 팀 응답 |
-| `DELETE /teams/{teamId}` | `If-Match: "team-{version}"` | 204, 팀 보관·현재 배정 해제 |
-| `POST /member-team-assignments` | `{assignments:[{memberId,teamId,expectedVersion}]}` | 200 `{effectiveAt,members:[{memberId,teamId,version}]}` |
-| `POST /invitations/batch` | `{invitations:[{email,teamId,role}]}` | 200 InvitationsResponse |
-| `POST /invitations/{invitationId}/revoke` | `{}` | 204 |
-| `POST /vendors` | `{kind,displayName,contract?}` | 201 VendorResponse, Location, ETag |
-| `PATCH /vendors/{vendorId}` | `{expectedVersion,displayName}` | 200 VendorResponse, ETag, 계약 유무와 무관한 이름 정정 |
-| `PUT /vendors/{vendorId}/contract` | `{expectedVersion,displayName,contract}` | 200 VendorResponse, ETag |
-| `DELETE /vendors/{vendorId}/contract` | `If-Match: "vendor-{version}"` | 204 |
-| `DELETE /vendors/{vendorId}` | `If-Match: "vendor-{version}"` | 204, 수동 벤더 보관 |
+```http
+Authorization: Bearer <access_token>
+Idempotency-Key: <8~128자의 재시도 키>  # POST 명령에만 필수
+```
+
+### 12.1 팀 관리 페이지
+
+`POST /teams`
+
+```jsonc
+// 요청 본문
+{ "teamName": "플랫폼" }
+```
+
+```jsonc
+// 응답(201). Location 헤더도 함께 반환한다.
+{
+  "teamId": "814fbf68-2193-48aa-a5e6-3a563250592a",
+  "teamName": "플랫폼",
+  "version": 1790758800000
+}
+```
+
+`PATCH /teams/{teamId}`
+
+```jsonc
+// 요청 본문
+{ "teamName": "플랫폼 엔지니어링", "expectedVersion": 1790758800000 }
+```
+
+```jsonc
+// 응답(200)
+{
+  "teamId": "814fbf68-2193-48aa-a5e6-3a563250592a",
+  "teamName": "플랫폼 엔지니어링",
+  "version": 1790758801000
+}
+```
+
+`DELETE /teams/{teamId}`
+
+```http
+If-Match: "team-1790758801000"
+```
+
+```text
+# 응답(204)
+(본문 없음)
+```
+
+팀 삭제는 행을 보관하고 현재 배정을 해제하며 과거 사용 집계를 지우지 않는다.
+
+### 12.2 구성원·초대 관리 페이지
+
+`POST /member-team-assignments`
+
+```jsonc
+// 요청 본문. teamId=null이면 현재 배정을 해제한다.
+{
+  "assignments": [
+    {
+      "memberId": "3a7166fd-f38e-4d03-90ba-6ce9a07bf712",
+      "teamId": "814fbf68-2193-48aa-a5e6-3a563250592a",
+      "expectedVersion": 1790758800000
+    }
+  ]
+}
+```
+
+```jsonc
+// 응답(200)
+{
+  "effectiveAt": "2026-09-30T04:00:00Z",
+  "members": [
+    {
+      "memberId": "3a7166fd-f38e-4d03-90ba-6ce9a07bf712",
+      "teamId": "814fbf68-2193-48aa-a5e6-3a563250592a",
+      "version": 1790758801000
+    }
+  ]
+}
+```
+
+`POST /invitations/batch`
+
+```jsonc
+// 요청 본문
+{
+  "invitations": [
+    {
+      "email": "new-member@example.com",
+      "teamId": "814fbf68-2193-48aa-a5e6-3a563250592a",
+      "role": "member"
+    }
+  ]
+}
+```
+
+```ts
+// 응답(200)
+type InvitationsResponse = {
+  results: {
+    email: string;
+    invitationId: string | null;
+    status: "issued" | "already_member" | "already_invited" | "rejected";
+    reason: string | null;
+    expiresAt: string | null;
+    code: string | null; // issued일 때만 원본 코드
+  }[];
+};
+```
+
+`POST /invitations/{invitationId}/revoke`
+
+```jsonc
+// 요청 본문
+{}
+```
+
+```text
+# 응답(204)
+(본문 없음)
+```
+
+### 12.3 설정 페이지의 벤더 관리
+
+`POST /vendors`
+
+```ts
+// 요청 본문. contract는 생략하거나 null로 보낼 수 있다.
+type CreateVendorRequest = {
+  kind: string;
+  displayName: string;
+  contract?: ContractWrite | null;
+};
+```
+
+`PATCH /vendors/{vendorId}`
+
+```jsonc
+// 요청 본문
+{ "expectedVersion": 1790758800000, "displayName": "Claude Team" }
+```
+
+`PUT /vendors/{vendorId}/contract`
+
+```ts
+// 요청 본문
+type SaveContractRequest = {
+  expectedVersion: number;
+  displayName: string;
+  contract: ContractWrite;
+};
+type ContractWrite = {
+  planId: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  termNote: string | null;
+  tiers: { label: string; seats: number; monthlyFeePerSeatUsd: string }[];
+};
+```
+
+세 엔드포인트의 응답은 생성 시 201, 수정 시 200이며 `Location`(생성)과 `ETag`를 함께 반환한다.
+
+```ts
+type VendorResponse = {
+  meta: {
+    organizationId: string;
+    generatedAt: string;
+    asOf: string;
+    snapshotId: string;
+    currency: "USD";
+    timeZone: "Asia/Seoul";
+  };
+  vendor: {
+    vendorId: string;
+    displayName: string;
+    kind: string;
+    source: "manual" | "detected";
+    version: number;
+    firstSeenAt: string | null;
+    lastSeenAt: string | null;
+    activeUsers7d: number | null;
+    activeUsers30d: number | null;
+    observation: string;
+    state: "configured" | "needs_review";
+    contractStatus: "missing" | "scheduled" | "active" | "expired";
+    contract: {
+      version: number;
+      planId: string;
+      effectiveFrom: string;
+      effectiveTo: string | null;
+      termNote: string | null;
+      tiers: {
+        tierId: string;
+        label: string;
+        seats: number;
+        monthlyFeePerSeatUsd: string;
+      }[];
+      monthlySeatFeeUsd: string | null;
+      confirmedAt: string;
+      confirmedBy: string;
+    } | null;
+    meteredMonthToDate: {
+      availability: "unavailable";
+      reason: string;
+      data: null;
+    };
+    checks: { code: string; severity: string }[];
+  };
+};
+```
+
+`DELETE /vendors/{vendorId}/contract`, `DELETE /vendors/{vendorId}`
+
+```http
+If-Match: "vendor-1790758800000"
+```
+
+```text
+# 응답(204)
+(본문 없음)
+```
 
 팀 배정은 최대 100명, 전체 검증 후 한 트랜잭션으로 적용한다. `teamId:null`은 배정 해제다.
 효력 시각은 서버 시각이며 과거 ClickHouse 팩트는 바꾸지 않는다.
 수정 version은 직전 조회 응답 값을 그대로 보낸다. 불일치는 409 `version_conflict`다.
 version을 1부터 시작하는 순번이나 날짜로 해석하지 않는다. PUT/PATCH는 expectedVersion, DELETE는 If-Match로 전달한다.
-
-```ts
-type InvitationsResponse = {
-  results: {
-    email: string; invitationId: string | null;
-    status: "issued" | "already_member" | "already_invited" | "rejected";
-    reason: string | null; expiresAt: string | null; code: string | null;
-  }[];
-};
-type ContractWrite = {
-  planId: string; effectiveFrom: string; effectiveTo: string | null;
-  termNote: string | null;
-  tiers: { label: string; seats: number; monthlyFeePerSeatUsd: Money }[];
-};
-```
 
 초대는 최대 100명, role은 `admin`·`member`, `teamId`는 UUID 또는 null이다.
 **메일 발송을 접수하지 않으므로 `queued`를 반환하지 않는다.** `issued`의 코드를 사용자에게 전달한다.
@@ -656,15 +1165,16 @@ PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계
 기본 manifest의 수집=false만으로 관리자가 선택을 완료했다고 간주하지 않는다.
 초안·현재 단계는 저장하지 않는다. 저장한 정책·벤더·팀·초대는 남고, 조회 결과로 재개 단계를 결정한다.
 
-| 메서드·경로 | 요청 | 성공 |
-| --- | --- | --- |
-| `GET /onboarding` | 없음 | 200 OnboardingState |
-| `PUT /collection-policy` | `{expectedVersion,collectRawContent}` | 200 PolicySaved |
-| `POST /onboarding/complete` | `{}`, Idempotency-Key | 200 OnboardingState |
-| `GET /invitations` | limit=20(1~100), cursor | 200 InvitationPage |
-| `POST /invitations/{invitationId}/reissue` | `{}`, Idempotency-Key | 200 ReissuedInvitation |
-
 ### 13.1 상태와 완료
+
+온보딩 페이지 진입 시 `GET /onboarding`을 호출한다.
+
+```ts
+// 쿼리 파라미터 없음
+{}
+```
+
+응답(200):
 
 ```ts
 type OnboardingState = {
@@ -680,6 +1190,15 @@ type OnboardingState = {
   nextStep: "collection" | "vendors" | "team" | "complete";
 };
 ```
+
+필수 조건을 모두 충족한 뒤 `POST /onboarding/complete`를 호출한다.
+
+```jsonc
+// 요청 본문
+{}
+```
+
+응답(200)은 위 `OnboardingState`와 같은 형태이며, `completed=true`와 최초 `completedAt`을 반환한다.
 
 초기 manifest가 없으면 policy.version=0, collectRawContent=null이다.
 프롬프트와 응답 플래그가 서로 달라도 collectRawContent=null로 반환해 다시 선택하게 한다.
@@ -699,9 +1218,15 @@ confirmed는 저장 완료 여부이며 수집 허용 여부가 아니다. false
 
 ### 13.2 수집 정책 저장
 
+`PUT /collection-policy`
+
+요청 본문:
+
 ```json
 {"expectedVersion":1,"collectRawContent":false}
 ```
+
+응답(200):
 
 ```ts
 type PolicySaved = {
@@ -724,6 +1249,18 @@ installation_manifest_assignments를 적용 완료로 변경하지 않는다. �
 
 ### 13.3 초대 목록·재발급
 
+`GET /invitations`
+
+```ts
+// 쿼리 파라미터
+{
+  limit?: number; // 기본 20, 1~100
+  cursor?: string;
+}
+```
+
+응답(200):
+
 ```ts
 type InvitationPage = {
   items: {
@@ -735,21 +1272,34 @@ type InvitationPage = {
   }[];
   nextCursor: string | null;
 };
+```
+
+`POST /invitations/{invitationId}/reissue`
+
+```jsonc
+// 요청 본문
+{}
+```
+
+```ts
+// 응답(200)
 type ReissuedInvitation = {
-  invitationId: string; replacesInvitationId: string;
-  code: string; expiresAt: string;
+  invitationId: string;
+  replacesInvitationId: string;
+  code: string;
+  expiresAt: string;
 };
 ```
 
 목록은 invitationId 오름차순이며 다음 요청에는 nextCursor를 그대로 보낸다.
 cursor는 UUID다. 실시간 목록으로 snapshot 일관성을 보장하지 않는다. 코드 원문·해시는 목록에 포함하지 않는다.
-상태 우선순위는 revoked → 두 소비 완료인 used → expired → pending이다.
-pending은 가입 또는 설치 중 하나만 남은 경우도 포함하므로 소비 시각 둘을 함께 확인한다.
+상태 우선순위는 revoked → 설치 소비 완료인 used → expired → pending이다.
+`signupUsedAt`은 과거 이력 호환 필드이며 상태 판단에는 사용하지 않는다.
 
-재발급은 만료 여부와 관계없이 아직 폐기되지 않고 소비 권한이 남은 초대에만 허용한다.
+재발급은 만료 여부와 관계없이 아직 폐기되지 않고 설치에 미사용인 초대에만 허용한다.
 기존 코드를 즉시 폐기하고 새 ID·코드·72시간 만료를 만든다. 두 작업은 원자적이다.
-소비된 가입/설치 권한은 새 초대에도 소비 시각을 유지한다. 기존 계정·설치·세션은 삭제하지 않는다.
-폐기됐거나 두 용도 모두 소비한 초대는 409 `invitation_unavailable`이다.
+과거 가입 소비 시각은 이력으로 유지한다. 기존 계정·설치·세션은 삭제하지 않는다.
+폐기됐거나 설치에 사용한 초대는 409 `invitation_unavailable`이다.
 같은 멱등 키의 재시도는 최초 새 코드를 재전달한다. 재시도 응답 저장에는 §12의 암호화를 사용한다.
 이 API도 메일을 발송하지 않는다.
 
@@ -766,6 +1316,8 @@ Flyway가 enrollment 스키마의 진실원이다. 관련 추가 마이그레이
 | V9 | managed_vendors.archived 동기화, 조직·제품당 활성 등록 하나의 부분 유일 인덱스 |
 | V10 | 공통 공급사·제품·플랜 카탈로그와 초기 목록 |
 | V11 | openai_biz의 복수 좌석 유형 입력 허용 |
+| V12 | 비밀번호 컬럼 제거, OIDC issuer/subject·임시 왕복 세션 추가, 구 사용자 세션/code 폐기 |
+| V13 | issuer를 tenants로 이관, 회사별 client ID·비밀 참조·SSO 활성/이메일 검증 설정 추가, 회원 sub 유지 |
 
 V9는 기존 버전 이력의 보관 여부를 반영한 뒤 중복 활성 제품을 검사한다.
 중복이 있으면 적용을 중단하며 자동 병합·삭제하지 않는다. 해당 조직의 중복 등록을 검토한 뒤 다시 적용한다.
@@ -774,7 +1326,7 @@ telemetry_ops의 V3는 별도 이력으로 관리하며 신규 조직 생성 시
 organization_onboarding에는 정책 확인자·시각과 완료자만 남는다. 기존 완료 시각은 V8에서 보존한다.
 개발 시드 초기화는 이 기록도 해당 시드 조직에 한해 삭제한다.
 
-주요 검증은 `:apps:enrollment-api:test`의 UserAuthApiTest(인증)와 ManagementApiTest(관리·온보딩)다.
+주요 검증은 `:apps:enrollment-api:test`의 OidcLoginApiTest(OIDC·최초 sub 연결·동시 연결), UserAuthApiTest(서비스 인증), ManagementApiTest(관리·온보딩)다.
 팀/초대/계약 쓰기, 조직 격리, 온보딩 완료 조건, 정책 판 보존, 재발급 소비 상태 계승을 실제 PostgreSQL에서 확인한다.
 서버 API 구현, 프론트 배선, 실제 시드 E2E 통과는 별도로 확인한다.
 프론트 온보딩에서 계약 입력은 선택이며 설정의 계약 관리도 API에 연결돼 있다. 초대 메일 발송은 구현하지 않는다.

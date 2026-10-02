@@ -1,7 +1,8 @@
 # Docker Compose가 DB·시드·인증 키를 준비한다. 서버는 시드를 실행하지 않는다(ADR 0031).
 spring:
   config:
-    import: "file:${PULSEMETRY_DEV_AUTH_DIR:../../build/dev-auth}/local-auth.properties"
+    import:
+      - "file:${PULSEMETRY_DEV_AUTH_DIR:../../build/dev-auth}/local-auth.properties"
 
 server:
   address: 127.0.0.1
@@ -16,6 +17,17 @@ pulsemetry:
     public-key-files:
       local: ${PULSEMETRY_DEV_AUTH_DIR:../../build/dev-auth}/public.pem
     allowed-origins: http://localhost:3000,http://localhost:3107
+    allowed-redirect-uris: ${PULSEMETRY_USER_AUTH_ALLOWED_REDIRECT_URIS:http://localhost:3000/auth/callback,http://localhost:3107/auth/callback}
+  oidc:
+    enabled: ${PULSEMETRY_OIDC_ENABLED:true}
+    allow-insecure-localhost: true
+    callback-base-url: ${PULSEMETRY_OIDC_CALLBACK_BASE_URL:http://localhost:8080}
+    failure-redirect-uri: ${PULSEMETRY_OIDC_FAILURE_REDIRECT_URI:http://localhost:3000/auth/callback}
+    # 회사 연결은 tenants에 저장한다. 비밀 원문만 서버 설정으로 주입한다.
+    callback-registration-id: cognito
+    client-secrets:
+      cognito-a: ${PULSEMETRY_COGNITO_A_CLIENT_SECRET:}
+      cognito-b: ${PULSEMETRY_COGNITO_B_CLIENT_SECRET:}
   management:
     enabled: true
     onboarding-otlp-endpoint: ${PULSEMETRY_ONBOARDING_OTLP_ENDPOINT:http://localhost:4316}

@@ -24,6 +24,10 @@ class SeedCommandTest {
             SeedCommand.parse(arrayOf("fixture", "2026-09-28", "A"), environment))
     }
 
+    @Test fun `고정 제공자 신원을 만드는 구 연결 명령은 거부한다`() {
+        assertFailsWith<IllegalArgumentException> { SeedCommand.parse(arrayOf("link-oidc", "A,C"), environment) }
+    }
+
     @Test fun `호스트 실행과 잘못된 명령은 DB 작업 전에 거부한다`() {
         assertFailsWith<IllegalStateException> { SeedCommand.parse(arrayOf("plan", "2026-09-28"), emptyMap()) }
         for (args in listOf(arrayOf("delete"), arrayOf("verify"), arrayOf("apply", ""),

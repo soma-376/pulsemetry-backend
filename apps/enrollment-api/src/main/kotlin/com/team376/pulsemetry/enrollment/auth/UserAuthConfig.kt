@@ -22,6 +22,7 @@ class UserAuthProperties {
     var privateKeyFile: String = ""
     var publicKeyFiles: Map<String, String> = emptyMap()
     var allowedOrigins: List<String> = emptyList()
+    var allowedRedirectUris: Set<String> = emptySet()
 }
 
 @Configuration(proxyBeanMethods = false)
@@ -37,6 +38,6 @@ class UserAuthConfig {
     @Bean
     fun userAuthRepository(jdbc: JdbcClient) = UserAuthRepository(jdbc)
     @Bean
-    fun userAuthService(repository: UserAuthRepository, manager: PlatformTransactionManager, jwt: UserJwt, clock: Clock) =
-        UserAuthService(repository, manager, jwt, clock)
+    fun userAuthService(repository: UserAuthRepository, manager: PlatformTransactionManager, jwt: UserJwt, clock: Clock,
+        properties: UserAuthProperties) = UserAuthService(repository, manager, jwt, clock, properties.allowedRedirectUris)
 }

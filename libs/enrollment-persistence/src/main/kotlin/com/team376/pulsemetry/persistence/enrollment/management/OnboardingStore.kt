@@ -88,7 +88,7 @@ class OnboardingStore(private val jdbc: JdbcClient, private val mapper: ObjectMa
                 mapOf("invitationId" to r.getString("id"), "email" to r.getString("email"), "role" to r.getString("role"),
                     "createdAt" to r.getTimestamp("created_at").toInstant().toString(), "expiresAt" to expires.toString(),
                     "installationUsedAt" to used?.toString(), "signupUsedAt" to signup?.toString(), "revokedAt" to revoked?.toString(),
-                    "status" to when { revoked != null -> "revoked"; used != null && signup != null -> "used"; expires <= now -> "expired"; else -> "pending" })
+                    "status" to when { revoked != null -> "revoked"; used != null -> "used"; expires <= now -> "expired"; else -> "pending" })
             }.list()
         return node(mapOf("items" to rows.take(limit), "nextCursor" to if (rows.size > limit) rows[limit-1]["invitationId"] else null))
     }

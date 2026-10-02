@@ -58,6 +58,12 @@ pulsemetry:
     public-key-files:
       local: ${PULSEMETRY_USER_AUTH_PUBLIC_KEY_FILE:}
     allowed-origins: ${PULSEMETRY_USER_AUTH_ALLOWED_ORIGINS:}
+    allowed-redirect-uris: ${PULSEMETRY_USER_AUTH_ALLOWED_REDIRECT_URIS:}
+  oidc:
+    enabled: ${PULSEMETRY_OIDC_ENABLED:false}
+    callback-base-url: ${PULSEMETRY_OIDC_CALLBACK_BASE_URL:}
+    failure-redirect-uri: ${PULSEMETRY_OIDC_FAILURE_REDIRECT_URI:}
+    # 개발은 local 프로파일, 운영은 조직별 등록을 별도 서버 설정으로 주입한다.
   management:
     enabled: ${PULSEMETRY_MANAGEMENT_ENABLED:false}
     response-encryption-key: ${PULSEMETRY_MANAGEMENT_RESPONSE_ENCRYPTION_KEY:}

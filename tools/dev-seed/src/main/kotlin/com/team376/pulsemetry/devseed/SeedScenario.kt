@@ -21,10 +21,6 @@ internal fun sql(value: Any?): String = when (value) {
     else -> "'" + value.toString().replace("'", "''") + "'"
 }
 
-// 공개된 로컬 개발용 계정이다. 운영 계정에는 사용하지 않는다.
-const val SEED_PASSWORD = "Pulsemetry-local-2026!"
-private const val PASSWORD_HASH = "\$2a\$12\$1UOJpgz.rEryDueX68mqxebO4v9zLldEp7P/pn.otP4IBwDgsQKKm"
-
 data class SeedData(
     val scenario: String,
     val asOf: LocalDate,
@@ -34,7 +30,20 @@ data class SeedData(
     val invitationCodes: Map<String, String>,
 ) {
     val tenantId = id(scenario)
-    val fingerprint: String get() = hash(encode(listOf(1, scenario, asOf.toString(), rows, events, ledger)))
+    val fingerprint: String get() {
+        // V13의 컬럼 이동만으로 기존 ready 시드가 reset을 요구하지 않도록 v1 지문을 유지한다.
+        val legacyRows = rows.mapValues { (table, values) ->
+            if (table != "enrollment.members") values else values.map { row ->
+                buildMap<String, Any?> {
+                    row.forEach { (key, value) ->
+                        if (key == "oidc_subject") put("oidc_issuer", null)
+                        put(key, value)
+                    }
+                }
+            }
+        }
+        return hash(encode(listOf(1, scenario, asOf.toString(), legacyRows, events, ledger)))
+    }
 
     fun summary(): Row {
         val start = asOf.minusDays(28).atStartOfDay(seoul).toInstant().toString()
@@ -52,7 +61,7 @@ data class SeedData(
             "period_known_estimated_usd" to current.mapNotNull { it["cost_estimated_usd"] as? BigDecimal }.fold(BigDecimal.ZERO, BigDecimal::add),
             "period_cost_complete" to current.all { it["cost_estimated_usd"] != null },
             "owner_email" to rows.getValue("enrollment.members").first()["email"],
-            "development_password" to SEED_PASSWORD, "invitation_codes" to invitationCodes)
+            "invitation_codes" to invitationCodes)
     }
 }
 
@@ -85,7 +94,8 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
         val local = when (index) { 0 -> "owner"; 1 -> "admin"; else -> "member$index" }
         add("enrollment.members", "id" to member(index), "tenant_id" to tenant, "email" to "$local@seed-${name.lowercase()}.example.test",
             "display_name" to "$name 구성원 %02d".format(index), "role" to when(index) { 0 -> "owner"; 1 -> "admin"; else -> "member" },
-            "status" to if (index >= count) "invited" else "active", "password_hash" to if (index < 2) PASSWORD_HASH else null,
+            "status" to if (index >= count) "invited" else "active",
+            "oidc_subject" to null,
             "created_at" to origin, "updated_at" to origin)
     }
     repeat(if (name == "A") 4 else 1) { index ->
@@ -260,7 +270,8 @@ private fun newOrganizationScenario(asOf: LocalDate): SeedData {
         )),
         "enrollment.members" to mutableListOf(linkedMapOf(
             "id" to id("B/member/0"), "tenant_id" to tenant, "email" to "owner@seed-b.example.test",
-            "display_name" to "B 구성원 00", "role" to "owner", "status" to "active", "password_hash" to PASSWORD_HASH,
+            "display_name" to "B 구성원 00", "role" to "owner", "status" to "active",
+            "oidc_subject" to null,
             "created_at" to origin, "updated_at" to origin,
         )),
     )

@@ -63,7 +63,12 @@ abstract class AbstractUserAuthApiTest {
     protected lateinit var member: UUID
     protected lateinit var code: String
     protected val email = "user@example.com"
-    protected val password = "correct-password-123"
+    protected val oidcIssuer = "https://idp.example.test"
+    protected val oidcSubject = "test-subject-1"
+    protected val verifier = "v".repeat(43)
+    protected val redirect = "http://127.0.0.1:12345/callback"
+    protected val challenge: String get() = Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray()))
 
     @BeforeEach fun setup() {
         data.reset()
@@ -79,9 +84,19 @@ abstract class AbstractUserAuthApiTest {
     protected fun post(path: String, body: Any): HttpResponse<String> = http.send(HttpRequest.newBuilder(
         URI("http://localhost:$port/v1/auth/$path")).header("Content-Type", "application/json")
         .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build(), HttpResponse.BodyHandlers.ofString())
-    protected fun signup() = post("signup", mapOf("code" to code, "email" to " User@Example.com ", "password" to password))
-    protected fun login(pw: String = password) = post("login", mapOf("tenant_id" to tenant, "email" to email, "password" to pw))
-    protected fun tokens(): JsonNode { assertThat(signup().statusCode()).isEqualTo(201); val r=login(); assertThat(r.statusCode()).isEqualTo(200); return mapper.readTree(r.body()) }
+    protected fun provisionMember() {
+        jdbc.sql("UPDATE enrollment.tenants SET oidc_issuer=:issuer,oidc_client_id='test',oidc_client_secret_ref='config:mock',sso_enabled=true WHERE id=:id")
+            .param("issuer", oidcIssuer).param("id", tenant).update()
+        jdbc.sql("UPDATE enrollment.members SET status='active',oidc_subject=:subject WHERE id=:id")
+            .param("subject", oidcSubject).param("id", member).update()
+    }
+    protected fun authorize(redirectUri: String = redirect): String = auth.authorizeOidc(tenant, oidcIssuer, oidcSubject,
+        redirectUri, "client-state-1234567890", challenge, "S256")
+    protected fun login(): HttpResponse<String> {
+        val authorizationCode = URI(authorize()).rawQuery.substringAfter("code=").substringBefore('&')
+        return post("token", mapOf("code" to authorizationCode, "redirect_uri" to redirect, "code_verifier" to verifier))
+    }
+    protected fun tokens(): JsonNode { provisionMember(); val r=login(); assertThat(r.statusCode()).isEqualTo(200); return mapper.readTree(r.body()) }
     protected fun refresh(rt: String) = post("refresh", mapOf("refresh_token" to rt))
     protected fun sql(query: String) { jdbc.sql(query).update() }
 
@@ -90,7 +105,7 @@ abstract class AbstractUserAuthApiTest {
             mapOf("code" to code, "platform" to "macos")))).build(), HttpResponse.BodyHandlers.ofString())
 
     protected fun adminToken(): String {
-        assertThat(signup().statusCode()).isEqualTo(201)
+        provisionMember()
         jdbc.sql("UPDATE enrollment.members SET role='owner' WHERE id=:id").param("id", member).update()
         return mapper.readTree(login().body()).path("access_token").asString()
     }

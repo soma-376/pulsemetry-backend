@@ -12,6 +12,17 @@ import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
 
 class SeedScenarioTest {
+    @org.junit.jupiter.api.Test fun `V13 컬럼 이동은 기존 시드 지문을 보존한다`() {
+        val expected = mapOf(
+            "A" to "440f7b4a44c6967d6773b3d7e71adc75f3039ae30e5633d087c363c3b636e6a5",
+            "B" to "e358dbff7c1361029b0708c4b3cec266b16de0a64892e205ca27e00ec5957459",
+            "C" to "6d3bd772686d6931806dd1eb4ce1924052a3985ef00a77d3ea041b5b1322a39a",
+        )
+        expected.forEach { (name, fingerprint) ->
+            assertEquals(fingerprint, scenario(name, java.time.LocalDate.parse("2026-09-28")).fingerprint)
+        }
+    }
+
     private val date = LocalDate.of(2026, 9, 28)
     private val a = scenario("A", date)
     private val b = scenario("B", date)
@@ -61,7 +72,7 @@ class SeedScenarioTest {
         assertEquals(1, fixture.path("policyRollout").path("unknown").asInt())
         assertEquals(0, fixture.path("policyRollout").path("outdated").asInt())
         val serialized = encode(fixture)
-        for (secret in listOf("password_hash", "development_password", "code_hash", "invitation_codes", SEED_PASSWORD)) {
+        for (secret in listOf("password_hash", "development_password", "code_hash", "invitation_codes", "client_secret")) {
             assertFalse(serialized.contains(secret))
         }
         assertEquals(encode(frontendFixture(a)), encode(frontendFixture(scenario("A", date))))
@@ -101,7 +112,9 @@ class SeedScenarioTest {
         assertEquals("owner@seed-b.example.test", owner["email"])
         assertEquals("owner", owner["role"])
         assertEquals("active", owner["status"])
-        assertFalse(owner["password_hash"]?.toString().isNullOrBlank())
+        assertFalse(owner.containsKey("password_hash"))
+        assertEquals(false, owner.containsKey("oidc_issuer"))
+        assertEquals(null, owner["oidc_subject"])
         assertNull(b.rows.getValue("enrollment.tenants").single()["onboarding_completed_at"])
         assertTrue(b.invitationCodes.isEmpty())
         assertTrue(b.events.isEmpty()); assertTrue(b.ledger.isEmpty())

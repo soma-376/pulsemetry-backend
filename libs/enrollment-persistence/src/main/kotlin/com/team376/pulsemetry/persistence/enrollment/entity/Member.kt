@@ -14,7 +14,7 @@ import java.util.UUID
 /**
  * 조직 구성원.
  *
- * 관리자 등 웹 사용자는 우리가 직접 발급·검증하는 세션 토큰으로 인증하고(ADR 0007 — Cognito 미사용),
+ * 관리자 등 웹 사용자는 외부 OIDC 인증 후 자체 서비스 세션 토큰을 사용하고(허브 ADR 0013),
  * 초대로 들어온 일반 사용자는 `status='invited'` 로만 만들어지고 installation 으로 서비스와 이어진다.
  */
 @Entity
@@ -50,14 +50,9 @@ class Member(
 	@Column(name = "updated_at", nullable = false)
 	var updatedAt: Instant = Instant.now(),
 
-	/**
-	 * Spring Security 의 `PasswordEncoder` 로 해싱한 비밀번호 (ADR 0007, `V4`).
-	 *
-	 * 아직 로그인 경로가 없어 쓰는 곳이 없다 — 컬럼과 매핑을 함께 세워 두는 자리다.
-	 * `null` 은 "초대만 받고 아직 가입하지 않음" 이다. 결정론적 해시가 아니므로 조회 키로 쓰지 않는다.
-	 */
-	@Column(name = "password_hash", length = 255)
-	var passwordHash: String? = null,
+	/** 외부 신원은 사전 등록한다. NULL이면 설치는 가능하지만 OIDC 로그인은 불가하다. */
+	@Column(name = "oidc_subject", length = 255)
+	var oidcSubject: String? = null,
 ) {
 	/**
 	 * 초대를 발급할 수 있는 권한인지 (PLAN.md §6.5 — owner 또는 admin 만 가능).

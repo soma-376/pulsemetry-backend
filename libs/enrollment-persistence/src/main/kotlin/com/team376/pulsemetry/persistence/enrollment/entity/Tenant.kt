@@ -54,6 +54,17 @@ class Tenant(
 
 	@Column(name = "onboarding_completed_at")
 	var onboardingCompletedAt: Instant? = null,
+
+	@Column(name = "oidc_issuer", length = 512)
+	var oidcIssuer: String? = null,
+	@Column(name = "oidc_client_id", length = 255)
+	var oidcClientId: String? = null,
+	@Column(name = "oidc_client_secret_ref", length = 255)
+	var oidcClientSecretRef: String? = null,
+	@Column(name = "sso_enabled", nullable = false)
+	var ssoEnabled: Boolean = false,
+	@Column(name = "oidc_require_verified_email", nullable = false)
+	var oidcRequireVerifiedEmail: Boolean = false,
 ) {
 	/** DB의 생성 컬럼과 동일하게 완료 시각으로 판정한다(ADR 0032). */
 	@get:Transient

@@ -13,6 +13,8 @@ dependencies {
 	implementation(project(":libs:telemetry-ops-persistence"))
 	implementation(libs.spring.boot.starter.webmvc)
 	implementation(libs.spring.boot.starter.security)
+	implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
+	implementation("org.springframework.session:spring-session-jdbc")
 	implementation(libs.jackson.module.kotlin)
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
@@ -35,6 +37,7 @@ val contractsDir: String = providers.environmentVariable("PULSEMETRY_CONTRACTS_D
 	.getOrElse(rootProject.projectDir.parentFile.resolve("telemetryctl/contracts").absolutePath)
 
 tasks.withType<Test>().configureEach {
+	useJUnitPlatform()
 	systemProperty("pulsemetry.contracts.dir", contractsDir)
 
 	// 관리자 키가 비어 있으면 애플리케이션이 뜨지 않는다. 테스트 JVM 전체에 한 번만 주입해

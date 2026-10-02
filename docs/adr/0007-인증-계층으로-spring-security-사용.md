@@ -3,6 +3,9 @@
 ## Status
 Accepted
 
+부분 대체: [허브 ADR 0008](../../../docs/adr/0008-keycloak-oidc-user-authentication.md)이 사람의
+비밀번호 저장·가입을 Keycloak OIDC로 대체한다. 서비스 AT·RT 직접 발급과 앱 계층 인가는 유지한다.
+
 ## Context
 
 지금까지의 설계는 인증을 **외부 관리형 IdP(Cognito User Pool)와 ALB** 가 담당하는 것을 전제로 했다.

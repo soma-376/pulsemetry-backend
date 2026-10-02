@@ -60,7 +60,7 @@ class MembersCognitoRemovalMigrationTest : AbstractPersistenceIntegrationTest() 
 		before = readMembers()
 
 		// ② 여기서 컬럼이 걷힌다.
-		migrateTo(MigrationVersion.LATEST)
+		migrateTo(MigrationVersion.fromVersion("4"))
 	}
 
 	@AfterEach

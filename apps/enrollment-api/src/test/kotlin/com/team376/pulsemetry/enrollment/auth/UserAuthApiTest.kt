@@ -54,74 +54,8 @@ import java.net.InetSocketAddress
 @AutoConfigureMockMvc
 @Import(PostgresContainerConfig::class, EnrollmentTestData::class, AuthClockConfig::class)
 class UserAuthApiTest : AbstractUserAuthApiTest() {
-    @Test fun `가입 뒤 설치와 설치 뒤 가입이 각각 성공한다`() {
-        assertThat(signup().statusCode()).isEqualTo(201)
-        val installed = enroll()
-        assertThat(installed.statusCode()).isEqualTo(201)
-        assertThat(mapper.readTree(installed.body()).size()).isEqualTo(4)
-        assertThat(signup().statusCode()).isEqualTo(409)
-        assertThat(enroll().statusCode()).isEqualTo(409)
-        setup()
-        assertThat(enroll().statusCode()).isEqualTo(201)
-        assertThat(signup().statusCode()).isEqualTo(201)
-        assertThat(login().statusCode()).isEqualTo(200)
-    }
-    @Test fun `설치 후에도 남은 가입 권한을 폐기할 수 있고 가입 후 설치 권한도 폐기한다`() {
-        assertThat(enroll().statusCode()).isEqualTo(201)
-        fun revoke(): Int {
-            val id = jdbc.sql("SELECT id FROM enrollment.invitations").query(UUID::class.java).single()
-            return http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/invitations/$id/revoke"))
-                .header("X-Admin-Token", "test-admin-token").POST(HttpRequest.BodyPublishers.noBody()).build(),
-                HttpResponse.BodyHandlers.ofString()).statusCode()
-        }
-        assertThat(revoke()).isEqualTo(204)
-        assertThat(signup().statusCode()).isEqualTo(409)
-        assertThat(revoke()).isEqualTo(409)
-        setup()
-        assertThat(signup().statusCode()).isEqualTo(201)
-        assertThat(revoke()).isEqualTo(204)
-        assertThat(enroll().statusCode()).isEqualTo(409)
-        assertThat(login().statusCode()).isEqualTo(200)
-    }
-
-    @Test fun `가입 경합에서 정확히 한 요청만 비밀번호를 설정한다`() {
-        val gate = CountDownLatch(1)
-        Executors.newFixedThreadPool(2).use { pool ->
-            val futures = (1..2).map { pool.submit(Callable { gate.await(); signup().statusCode() }) }
-            gate.countDown()
-            assertThat(futures.map { it.get() }).containsExactlyInAnyOrder(201,409)
-        }
-        assertThat(login().statusCode()).isEqualTo(200)
-    }
-
-    @Test fun `초대 만료 폐기 이메일 불일치와 정지 계정은 가입할 수 없다`() {
-        assertThat(post("signup", mapOf("code" to code,"email" to "other@example.com","password" to password)).statusCode()).isEqualTo(409)
-        sql("UPDATE enrollment.invitations SET revoked_at=now()")
-        assertThat(signup().statusCode()).isEqualTo(409)
-        sql("UPDATE enrollment.invitations SET revoked_at=NULL, expires_at='2020-01-01'")
-        assertThat(signup().statusCode()).isEqualTo(409)
-        sql("UPDATE enrollment.invitations SET expires_at='2030-01-01'")
-        sql("UPDATE enrollment.members SET status='suspended'")
-        assertThat(signup().statusCode()).isEqualTo(409)
-        sql("UPDATE enrollment.members SET status='invited'")
-        sql("UPDATE enrollment.tenants SET status='suspended'")
-        assertThat(signup().statusCode()).isEqualTo(409)
-    }
-
-    @Test fun `비밀번호 길이를 문자와 바이트로 검사하고 기존 비밀번호를 덮어쓰지 않는다`() {
-        for (pw in listOf("short", "a".repeat(73), "한".repeat(25)))
-            assertThat(post("signup", mapOf("code" to code,"email" to email,"password" to pw)).statusCode()).isEqualTo(400)
-        assertThat(signup().statusCode()).isEqualTo(201)
-        val hash = jdbc.sql("SELECT password_hash FROM enrollment.members WHERE id=:id").param("id",member).query(String::class.java).single()
-        assertThat(hash).startsWith("$2a$12$")
-        val another = InvitationCode.generate()
-        data.invitation(tenant,member,another,expiresAt=clock.now.plusSeconds(3600))
-        assertThat(post("signup",mapOf("code" to another,"email" to email,"password" to "other-password-123")).statusCode()).isEqualTo(409)
-        assertThat(login().statusCode()).isEqualTo(200)
-    }
-
     @Test fun `토큰 봉투와 각 role은 같은 발급 코어를 쓴다`() {
-        signup()
+        provisionMember()
         for (role in listOf("owner","admin","member")) {
             sql("UPDATE enrollment.members SET role='$role'")
             val r=login()
@@ -135,21 +69,6 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
             assertThat(identity.revision).isEqualTo(3)
             assertThat(r.headers().firstValue("Cache-Control").orElse("")).contains("no-store")
         }
-    }
-
-    @Test fun `가입 미완료 오입력 다른 tenant는 같은 실패이고 DB 장애는 별개다`() {
-        val before=login()
-        assertThat(before.statusCode()).isEqualTo(401)
-        signup()
-        assertThat(login("wrong").body()).isEqualTo(before.body())
-        assertThat(post("login",mapOf("tenant_id" to UUID.randomUUID(),"email" to email,"password" to password)).body()).isEqualTo(before.body())
-        sql("ALTER TABLE enrollment.auth_attempts RENAME TO auth_attempts_unavailable")
-        try {
-            val r=login()
-            assertThat(r.statusCode()).isEqualTo(503)
-            assertThat(r.headers().firstValue("Retry-After")).isPresent()
-            assertThat(r.body()).doesNotContain(password,email,"SQLException")
-        } finally { sql("ALTER TABLE enrollment.auth_attempts_unavailable RENAME TO auth_attempts") }
     }
 
     @Test fun `refresh는 revision을 보존하고 재사용은 후속 토큰까지 폐기한다`() {
@@ -189,17 +108,6 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
         assertThat(refresh(next["refresh_token"].asString()).statusCode()).isEqualTo(401)
     }
 
-    @Test fun `로그인 5회 실패 잠금과 15분 후 해제`() {
-        signup()
-        repeat(4) { assertThat(login("wrong").statusCode()).isEqualTo(401) }
-        val locked=login("wrong")
-        assertThat(locked.statusCode()).isEqualTo(429)
-        assertThat(locked.headers().firstValue("Retry-After").orElse("")).isEqualTo("900")
-        assertThat(login().statusCode()).isEqualTo(429)
-        clock.now=clock.now.plusSeconds(900)
-        assertThat(login().statusCode()).isEqualTo(200)
-    }
-
     @Test fun `IP 제한은 DB 공유 상태를 사용하고 경계에서 초기화된다`() {
         repeat(30) { auth.limitIp("198.51.100.1") }
         assertThatThrownBy { auth.limitIp("198.51.100.1") }.isInstanceOf(UserAuthException::class.java)
@@ -213,7 +121,7 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
     }
 
     @Test fun `모의 CLI가 loopback state와 PKCE를 검증하고 토큰을 교환한다`() {
-        signup()
+        provisionMember()
         val received = java.util.concurrent.CompletableFuture<String>()
         val state="state-12345678901234567890"
         val server=HttpServer.create(InetSocketAddress("127.0.0.1",0),0)
@@ -232,10 +140,7 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
             val redirect="http://127.0.0.1:${server.address.port}/callback"
             val verifier="v".repeat(43)
             val challenge=Base64.getUrlEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray()))
-            val response=post("cli/authorize",mapOf("tenant_id" to tenant,"email" to email,"password" to password,
-                "redirect_uri" to redirect,"state" to state,"code_challenge" to challenge,"code_challenge_method" to "S256"))
-            assertThat(response.statusCode()).isEqualTo(200)
-            val callback=mapper.readTree(response.body())["callback_url"].asString()
+            val callback=auth.authorizeOidc(tenant, oidcIssuer, oidcSubject, redirect, state, challenge, "S256")
             assertThat(callback).doesNotContain("urt_","access_token","refresh_token")
             val wrongState=callback.substringBefore("&state=")+"&state=unrelated-state"
             assertThat(http.send(HttpRequest.newBuilder(URI(wrongState)).GET().build(),HttpResponse.BodyHandlers.discarding()).statusCode()).isEqualTo(400)
@@ -255,24 +160,67 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
         } finally { server.stop(0) }
     }
 
-    @Test fun `CLI 코드는 60초 뒤 만료되고 외부 callback은 거부한다`() {
-        signup()
-        val challenge=Base64.getUrlEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest("v".repeat(43).toByteArray()))
-        val body=mapOf("tenant_id" to tenant,"email" to email,"password" to password,"state" to "state-12345678901234567890",
-            "redirect_uri" to "http://[::1]:1234/callback","code_challenge" to challenge,"code_challenge_method" to "S256")
-        for (redirect in listOf("https://evil.example/callback","http://localhost:1234/callback","http://127.0.0.1:1234/callback?evil=1","http://evil@127.0.0.1:1234/callback"))
-            assertThat(post("cli/authorize",body + ("redirect_uri" to redirect)).statusCode()).isEqualTo(400)
-        val callback=mapper.readTree(post("cli/authorize",body).body())["callback_url"].asString()
-        val code=URI(callback).rawQuery.substringAfter("code=").substringBefore('&')
-        clock.now=clock.now.plusSeconds(60)
-        assertThat(post("cli/token",mapOf("code" to code,"redirect_uri" to body.getValue("redirect_uri"),"code_verifier" to "v".repeat(43))).statusCode()).isEqualTo(401)
+    @Test fun `인증 DTO는 알려지지 않은 필드를 거부하고 비밀을 반환하지 않는다`() {
+        val r=post("refresh",mapOf("refresh_token" to "a-secret-value", "role" to "owner"))
+        assertThat(r.statusCode()).isEqualTo(400)
+        assertThat(r.body()).doesNotContain("a-secret-value")
+        assertThat(r.headers().firstValue("Cache-Control").orElse("")).contains("no-store")
     }
 
-    @Test fun `인증 DTO는 알려지지 않은 필드를 거부하고 비밀을 반환하지 않는다`() {
-        val r=post("login",mapOf("tenant_id" to tenant,"email" to email,"password" to password,"role" to "owner"))
-        assertThat(r.statusCode()).isEqualTo(400)
-        assertThat(r.body()).doesNotContain(password,email)
-        assertThat(r.headers().firstValue("Cache-Control").orElse("")).contains("no-store")
+    @Test fun `비밀번호 API는 410이고 컬럼이 존재하지 않는다`() {
+        for (path in listOf("signup", "login", "cli/authorize")) {
+            val response=post(path, mapOf("password" to "do-not-echo", "email" to email))
+            assertThat(response.statusCode()).isEqualTo(410)
+            assertThat(response.body()).contains("auth_method_removed").doesNotContain("do-not-echo", email)
+        }
+        assertThat(jdbc.sql("SELECT count(*) FROM information_schema.columns WHERE table_schema='enrollment' AND table_name='members' AND column_name='password_hash'").query(Int::class.java).single()).isZero()
+    }
+
+    @Test fun `OIDC 등록은 정확한 issuer subject 조직과 활성 상태를 요구한다`() {
+        assertThatThrownBy { authorize() }.isInstanceOf(UserAuthException::class.java)
+        provisionMember()
+        for ((t, iss, sub) in listOf(Triple(UUID.randomUUID(), oidcIssuer, oidcSubject),
+            Triple(tenant, "https://other-idp.test", oidcSubject), Triple(tenant, oidcIssuer, "other-subject"))) {
+            assertThatThrownBy { auth.authorizeOidc(t, iss, sub, redirect, "client-state-1234567890", challenge, "S256") }
+                .isInstanceOf(UserAuthException::class.java).hasMessage("member_not_allowed")
+        }
+        sql("UPDATE enrollment.members SET status='suspended'")
+        assertThatThrownBy { authorize() }.isInstanceOf(UserAuthException::class.java)
+        sql("UPDATE enrollment.members SET status='active'")
+        sql("UPDATE enrollment.tenants SET status='suspended'")
+        assertThatThrownBy { authorize() }.isInstanceOf(UserAuthException::class.java)
+    }
+
+    @Test fun `코드는 60초 만료하고 허용하지 않은 주소와 PKCE를 거부한다`() {
+        provisionMember()
+        for (bad in listOf("https://evil.test/callback", "http://localhost:1234/callback",
+            "http://127.0.0.1:1234/callback?x=1", "http://evil@127.0.0.1:1234/callback"))
+            assertThatThrownBy { authorize(bad) }.isInstanceOf(UserAuthException::class.java)
+        assertThatThrownBy { auth.validateAuthorizationRequest(redirect, "client-state-1234567890", challenge, "plain") }
+            .isInstanceOf(UserAuthException::class.java)
+        val c=URI(authorize()).rawQuery.substringAfter("code=").substringBefore('&')
+        clock.now=clock.now.plusSeconds(60)
+        assertThat(post("token",mapOf("code" to c,"redirect_uri" to redirect,"code_verifier" to verifier)).statusCode()).isEqualTo(401)
+    }
+
+    @Test fun `DB 장애는 503이고 내부 내용은 응답하지 않는다`() {
+        sql("ALTER TABLE enrollment.auth_attempts RENAME TO auth_attempts_unavailable")
+        try {
+            val r=post("refresh",mapOf("refresh_token" to "do-not-echo"))
+            assertThat(r.statusCode()).isEqualTo(503)
+            assertThat(r.headers().firstValue("Retry-After")).isPresent()
+            assertThat(r.body()).doesNotContain("SQLException","do-not-echo")
+        } finally { sql("ALTER TABLE enrollment.auth_attempts_unavailable RENAME TO auth_attempts") }
+    }
+
+    @Test fun `OIDC 로그인과 설치 초대 소비는 별개이며 설치 봉투는 4키다`() {
+        provisionMember()
+        assertThat(login().statusCode()).isEqualTo(200)
+        val installed=enroll()
+        assertThat(installed.statusCode()).isEqualTo(201)
+        assertThat(mapper.readTree(installed.body()).size()).isEqualTo(4)
+        assertThat(enroll().statusCode()).isEqualTo(409)
+        assertThat(jdbc.sql("SELECT signup_used_at IS NULL FROM enrollment.invitations").query(Boolean::class.java).single()).isTrue()
     }
 
     @Test fun `MockMvc에서 위조 forwarded IP로 제한을 우회하지 못한다`() {
