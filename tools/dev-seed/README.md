@@ -109,7 +109,7 @@ PostgreSQL·ClickHouse 볼륨을 삭제하므로 시드 외에 직접 추가한 
 | B | `db1c8c6b-6970-38c6-821a-eb5e61b7a180` | 조직과 오너 1명만 존재. 첫 로그인·최초 온보딩용 |
 | C | `4769355c-a20e-327f-89fc-fef69e94dfb6` | 8명, 이벤트 15건. 미확인 모델, 토큰·비용 누락, 과거 사용, 계약 없음, 어느 카탈로그 제품에도 매핑되지 않는 관측(`product = unknown`, 사용량 행 아님) 1건 |
 | D | `e77dd38f-4e6c-33ff-84bd-79c8a53ba900` | 명시할 때만. B처럼 조직과 오너(`owner@seed-d.example.test`) 1명만 존재. 온보딩을 끝까지 돌리는 파괴적 E2E용 — A·B·C를 바꾸지 않는다 |
-| E | `bd6fe5c2-6fdd-3433-b77e-5d5334b0bb8e` | 명시할 때만. 오너가 수집 정책 1판을 저장했고(온보딩 미완료, 벤더·팀 없음) 초대한 구성원 `member1@seed-e.example.test`의 설치 코드가 있다. 설치·수신 없음 — 데몬 등록 흐름용. 코드는 `plan`의 `invitation_codes.pending` |
+| E | `bd6fe5c2-6fdd-3433-b77e-5d5334b0bb8e` | 명시할 때만. 오너가 수집 정책 1판을 저장했고(온보딩 미완료, 벤더·팀 없음) 초대한 구성원 `member1@seed-e.example.test`의 설치 코드가 있다. 설치·수신 없음 — 데몬 등록 흐름과 벤더 커넥터 E2E 용(그 E2E 가 Claude·Cursor Enterprise 계약 등록·온보딩 완료·member1 합류를 한다, `tools/mock-vendor/README.md`). 코드는 `plan`의 `invitation_codes.pending` |
 
 기준일 직전 28일이 현재 조회 구간이고 그 앞 28일은 이전 구간이다. 기준일 `2026-09-29`라면
 현재 `2026-09-01`~`2026-09-28`, 이전 `2026-08-04`~`2026-08-31`이다(서울 시간).
