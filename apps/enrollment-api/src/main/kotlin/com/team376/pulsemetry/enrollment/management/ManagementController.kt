@@ -65,7 +65,7 @@ class ManagementConfig {
 @ConditionalOnProperty(prefix = "pulsemetry.management", name = ["enabled"], havingValue = "true")
 @RequestMapping("/api/v1/organizations/{organizationId}")
 class ManagementController(private val auth: UserAuthService, private val store: ManagementStore, private val mapper: ObjectMapper) {
-    @RequestMapping(path = ["/teams", "/member-team-assignments", "/invitations/batch", "/invitations/{invitationId}/revoke", "/invitations/{invitationId}/reissue", "/vendors", "/onboarding/complete",
+    @RequestMapping(path = ["/teams", "/member-team-assignments", "/invitations/batch", "/invitations/{invitationId}/revoke", "/invitations/{invitationId}/reissue", "/members/{memberId}/installation-invitations", "/vendors", "/onboarding/complete",
         "/installation-update-notifications", "/vendors/{vendorId}/connection/sync", "/vendors/{vendorId}/seats", "/vendors/{vendorId}/seats/import",
         "/vendors/{vendorId}/seats/{seatId}/release", "/seat-reclaims/preview", "/seat-reclaims", "/seat-reclaims/{operationId}/restore",
         "/operations/{operationId}/targets/{targetId}/confirm", "/operations/{operationId}/targets/{targetId}/cancel"], method = [RequestMethod.POST])

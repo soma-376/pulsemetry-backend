@@ -105,6 +105,7 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                 operation.startsWith("DELETE /teams/") -> archiveTeam(tenant, operation.substringAfterLast('/'), version, now)
                 operation == "POST /member-team-assignments" -> assignTeams(tenant, body, now)
                 operation.startsWith("PATCH /members/") -> editMember(tenant, actor, operation.substringAfterLast('/'), body, now)
+                INSTALLATION_INVITATION.matches(operation) -> installationInvitation(tenant, actor, operation.split('/')[2], body, now)
                 operation == "POST /invitations/batch" -> invite(tenant, actor, body, now)
                 operation.startsWith("POST /invitations/") && operation.endsWith("/revoke") -> revoke(tenant, operation.split('/')[2], now)
                 operation.startsWith("POST /invitations/") && operation.endsWith("/reissue") -> reissue(tenant, actor, operation.split('/')[2], now)
@@ -270,7 +271,7 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                         .param("id", member).param("tenant", tenant).param("email", email).param("role", role).param("now", Timestamp.from(now)).update()
                     if (team != null) addMembership(member, team, now)
                 }
-                code = (1..12).map { "0123456789ABCDEFGHJKMNPQRSTVWXYZ"[random.nextInt(32)] }.joinToString("").chunked(4).joinToString("-")
+                code = newCode()
                 invitation = UUID.randomUUID()
                 jdbc.sql("INSERT INTO enrollment.invitations(id,tenant_id,target_member_id,created_by_member_id,code_hash,expires_at,created_at) VALUES (:id,:tenant,:member,:actor,:hash,:expires,:now)")
                     .param("id", invitation).param("tenant", tenant).param("member", member).param("actor", actor).param("hash", hash(code))
@@ -302,12 +303,16 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
         invitationMail?.cancel(id)
         return node(emptyMap<String, String>())
     }
-    /** 초대 메일을 적재하고 그 발송 상태를 돌려준다. 메일 기능이 꺼져 있으면 발송하지 않았다고 말한다. */
-    private fun mail(tenant: UUID, invitation: UUID, email: String, code: String, expiresAt: Instant): Map<String, Any?> {
+    /**
+     * 초대 메일을 적재하고 그 발송 상태를 돌려준다. 메일 기능이 꺼져 있으면 발송하지 않았다고 말한다.
+     * [signup]·[install] 은 그 코드에 남은 용도다 — 메일은 남은 용도만 안내한다(ADR 0055).
+     */
+    private fun mail(tenant: UUID, invitation: UUID, email: String, code: String, expiresAt: Instant, signup: Boolean = true, install: Boolean = true): Map<String, Any?> {
         val mailer = invitationMail ?: return MailDeliveryView.notSent(false)
         val organization = jdbc.sql("SELECT name FROM enrollment.tenants WHERE id=:id").param("id", tenant).query(String::class.java).single()
-        return MailDeliveryView.of(mailer.enqueue(invitation, organization, email, code, expiresAt))
+        return MailDeliveryView.of(mailer.enqueue(invitation, organization, email, code, expiresAt, signup, install))
     }
+    private fun newCode() = (1..12).map { "0123456789ABCDEFGHJKMNPQRSTVWXYZ"[random.nextInt(32)] }.joinToString("").chunked(4).joinToString("-")
     private fun reissue(tenant: UUID, actor: UUID, raw: String, now: Instant): JsonNode {
         val old = jdbc.sql("""SELECT target_member_id,used_at,signup_used_at FROM enrollment.invitations
             WHERE tenant_id=:tenant AND id=:id AND revoked_at IS NULL FOR UPDATE""")
@@ -315,7 +320,7 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
             .optional().orElse(null) ?: fail("invitation_unavailable", 409)
         if (old.second != null && old.third != null) fail("invitation_unavailable", 409)
         revoke(tenant, raw, now)
-        val code = (1..12).map { "0123456789ABCDEFGHJKMNPQRSTVWXYZ"[random.nextInt(32)] }.joinToString("").chunked(4).joinToString("-")
+        val code = newCode()
         val id = UUID.randomUUID()
         val expires = now.plusSeconds(72 * 3600)
         jdbc.sql("""INSERT INTO enrollment.invitations(id,tenant_id,target_member_id,created_by_member_id,code_hash,expires_at,created_at,used_at,signup_used_at)
@@ -324,7 +329,37 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
             .param("expires", Timestamp.from(expires)).param("now", Timestamp.from(now)).param("used", old.second).param("signup", old.third).update()
         val email = jdbc.sql("SELECT email FROM enrollment.members WHERE id=:id").param("id", old.first).query(String::class.java).single()
         return node(mapOf("invitationId" to id, "replacesInvitationId" to raw, "code" to code, "expiresAt" to expires.toString(),
-            "delivery" to mail(tenant, id, email, code, expires)))
+            "delivery" to mail(tenant, id, email, code, expires, signup = old.third == null, install = old.second == null)))
+    }
+    /**
+     * 활성 구성원의 설치 전용 초대 (ADR 0055). 새 초대는 발급 시각을 가입 소비로 기록해 가입 경로를 열지 않고,
+     * 설치는 다른 초대와 같이 enroll 이 한 번 소비한다. 일괄 초대의 `already_member` 는 그대로다.
+     *
+     * 그 구성원의 남은 설치 전용 초대(가입은 소비했고 설치는 남은 것)는 같은 트랜잭션에서 폐기하고 아직 나가지 않은 메일을 취소한다 —
+     * 이 명령으로 산 설치 코드는 하나다. 가입 권한이 남은 초대는 건드리지 않는다.
+     */
+    private fun installationInvitation(tenant: UUID, actor: UUID, raw: String, body: JsonNode, now: Instant): JsonNode {
+        val id = uuid(raw)
+        val member = jdbc.sql("SELECT email,status::text,updated_at FROM enrollment.members WHERE tenant_id=:tenant AND id=:id FOR UPDATE")
+            .param("tenant", tenant).param("id", id).query { rs, _ -> Triple(rs.getString(1), rs.getString(2), rs.getTimestamp(3).toInstant()) }
+            .optional().orElse(null) ?: fail("not_found", 404, "memberId")
+        if (member.second == "suspended") fail("member_suspended", 409)
+        // 아직 합류하지 않은 구성원은 초대(일괄 초대·재발급)로 코드를 받는다.
+        if (member.second != "active") fail("member_not_active", 409)
+        checkVersion(member.third, long(body, "expectedVersion"))
+        val replaced = jdbc.sql("""UPDATE enrollment.invitations SET revoked_at=:now WHERE tenant_id=:tenant AND target_member_id=:id
+            AND revoked_at IS NULL AND used_at IS NULL AND signup_used_at IS NOT NULL RETURNING id""")
+            .param("now", Timestamp.from(now)).param("tenant", tenant).param("id", id).query { r, _ -> r.getObject(1, UUID::class.java) }.list().sorted()
+        replaced.forEach { invitationMail?.cancel(it) }
+        val code = newCode()
+        val invitation = UUID.randomUUID()
+        val expires = now.plusSeconds(72 * 3600)
+        jdbc.sql("""INSERT INTO enrollment.invitations(id,tenant_id,target_member_id,created_by_member_id,code_hash,expires_at,created_at,signup_used_at)
+            VALUES (:id,:tenant,:member,:actor,:hash,:expires,:now,:now)""")
+            .param("id", invitation).param("tenant", tenant).param("member", id).param("actor", actor).param("hash", hash(code))
+            .param("expires", Timestamp.from(expires)).param("now", Timestamp.from(now)).update()
+        return node(mapOf("invitationId" to invitation, "memberId" to id, "replacesInvitationIds" to replaced, "code" to code,
+            "expiresAt" to expires.toString(), "delivery" to mail(tenant, invitation, member.first, code, expires, signup = false)))
     }
     /**
      * 설치 업데이트 안내 (ADR 0043). 대상을 모두 확인한 뒤에만 작업을 만들고 메일을 적재한다 — 하나라도 안 되면 아무것도 보내지 않는다.
@@ -582,5 +617,6 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
         val RECLAIM_RESTORE = Regex("POST /seat-reclaims/[^/]+/restore")
         val TARGET_CONFIRM = Regex("POST /operations/[^/]+/targets/[^/]+/confirm")
         val TARGET_CANCEL = Regex("POST /operations/[^/]+/targets/[^/]+/cancel")
+        val INSTALLATION_INVITATION = Regex("POST /members/[^/]+/installation-invitations")
     }
 }

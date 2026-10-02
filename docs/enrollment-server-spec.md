@@ -874,6 +874,7 @@ POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`, 8~128자)를 보낸다.
 | `PATCH /members/{memberId}` | `{expectedVersion,teamId?,role?}` | 200 MemberSaved |
 | `POST /invitations/batch` | `{invitations:[{email,teamId,role}]}` | 200 InvitationsResponse |
 | `POST /invitations/{invitationId}/revoke` | `{}` | 204 |
+| `POST /members/{memberId}/installation-invitations` | `{expectedVersion}` | 200 InstallationInvitation — 아래 "활성 구성원 설치 코드" |
 | `POST /vendors` | `{kind,displayName,contract?}` | 201 VendorResponse, Location, ETag |
 | `PATCH /vendors/{vendorId}` | `{expectedVersion,displayName}` | 200 VendorResponse, ETag, 계약 유무와 무관한 이름 정정 |
 | `PUT /vendors/{vendorId}/contract` | `{expectedVersion,displayName,contract}` | 200 VendorResponse, ETag |
@@ -947,6 +948,7 @@ type ContractWrite = {
 발급 결과의 `status`는 코드 발급만 말한다. **발급은 발송이 아니다** — 초대 메일의 상태는 `delivery`가 따로 말한다(ADR 0038).
 메일 기능(`pulsemetry.mail.enabled`)이 켜져 있으면 발급과 같은 트랜잭션에서 초대 메일을 outbox에 적재하고(`delivery.status=queued`), 발송 작업이 SMTP로 보낸다(ADR 0037).
 메일에는 조직 이름·코드·만료 시각, 수락 링크(`pulsemetry.management.invitation-accept-url`에 `#code=…`를 붙인 주소 — 코드를 쿼리에 싣지 않는다), 설치 명령(§2.1의 `install_commands`와 같은 형태)이 담긴다. 제목에는 코드가 없다.
+메일은 그 코드에 남은 용도만 안내한다(ADR 0055) — 가입 권한이 없으면 수락 링크를, 설치를 마쳤으면 설치 명령을 싣지 않는다. 가입 권한이 없는 코드의 메일 제목은 `Pulsemetry 설치 코드`다.
 메일 기능이 꺼져 있으면 `delivery`는 `{status:"not_sent", reason:"mail_disabled"}`다. **적재되지 않은 메일을 `queued`로 내지 않는다.** 그때는 `issued`의 코드를 관리자가 직접 전달한다.
 `sent`는 SMTP 서버가 메시지를 받았다는 뜻이고 수신함 도착을 뜻하지 않는다. 실패 코드는 `recipient_rejected` · `message_rejected` · `invalid_address`(재시도하지 않음),
 `recipient_deferred` · `smtp_deferred` · `smtp_auth_failed` · `smtp_unavailable` · `send_error`(재시도), `outcome_unknown`이다.
@@ -956,6 +958,28 @@ type ContractWrite = {
 만료만 된 초대도 기존 초대다 — 재발급(§13.3)으로 살린다.
 초대가 취소(`revoke`)돼 남은 초대가 없는 대기자(`invited`)는 다시 초대할 수 있다. 새 구성원을 만들지 않고 **같은 `memberId`**에
 새 초대를 발급하며(`issued`), 요청의 `teamId`·`role`을 그 구성원에 적용하고 version을 올린다. 취소한 코드는 되살아나지 않는다.
+
+### 활성 구성원 설치 코드 (ADR 0055)
+
+이미 합류한 구성원(`active`)이 새 PC 등에 설치할 코드를 관리자가 다시 낸다. 일괄 초대의 `already_member`는 그대로다.
+
+```ts
+type InstallationInvitation = {
+  invitationId: string;
+  memberId: string;
+  replacesInvitationIds: string[]; // 이 명령이 폐기한 그 구성원의 설치 전용 초대
+  code: string; expiresAt: string;
+  delivery: Delivery;              // 새 초대의 메일
+};
+```
+
+`expectedVersion`은 그 구성원의 version(구성원 목록의 `version`)이다. 다르면 409 `version_conflict`다. 이 명령은 구성원을 바꾸지 않으므로 version은 그대로다.
+정지 구성원은 409 `member_suspended`, 아직 합류하지 않은 구성원(`invited`)은 409 `member_not_active`다 — 일괄 초대·재발급(§13.3)으로 코드를 받는다.
+없는 구성원·다른 조직 구성원은 404 `not_found`다.
+새 초대는 기존 초대의 소비 상태를 옮기지 않는다. 72시간 만료이고, 발급 시각을 가입 소비 시각으로 기록해 **가입에는 쓸 수 없다**(가입은 409 `signup_unavailable`).
+설치(`POST /v1/enroll`)는 다른 초대와 같이 한 번 소비한다. 활성 구성원의 설치는 구성원 상태를 바꾸지 않는다.
+그 구성원의 남은 설치 전용 초대(미폐기, 설치 미소비, 가입 소비)는 같은 트랜잭션에서 폐기하고 아직 나가지 않은 메일을 취소한다.
+가입 권한이 남은 초대는 건드리지 않는다. 같은 멱등 키의 재시도는 최초 코드와 발송 상태를 그대로 돌려주고 메일은 한 통이다.
 
 벤더 kind/plan은 dashboard-api의 [벤더 카탈로그](dashboard-server-spec.md#3-벤더와-플랜-카탈로그)에서 얻는다.
 카탈로그 `id`를 kind로 보내며 조직에 등록된 `vendorId` UUID와 혼동하지 않는다.
@@ -1246,7 +1270,7 @@ type AlertList = { listId: "allowed_models" | "approved_tools"; version: number;
 | 401 | unauthenticated, 로그인/토큰 갱신 |
 | 403 | forbidden, 해당 동작 비활성화 |
 | 404 | not_found, 타 조직/없는 자원 |
-| 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, member_suspended, installation_unavailable, snapshot_expired, connector_managed, seat_already_held, seat_not_releasable, preview_stale, preview_expired, preview_used, not_awaiting_admin_action, seat_changed |
+| 409 | version_conflict, idempotency_conflict, team_name_conflict, vendor_already_registered, member_suspended, member_not_active, installation_unavailable, snapshot_expired, connector_managed, seat_already_held, seat_not_releasable, preview_stale, preview_expired, preview_used, not_awaiting_admin_action, seat_changed |
 | 422 | invalid_vendor, invalid_plan, invalid_contract_period, detected_vendor, role_not_assignable, owner_role_immutable, self_role_change, notification_channel_unavailable, connector_unavailable, invalid_tier, seat_import_invalid(`details`에 행별 오류), no_eligible_seats, restore_not_available(`details`에 대상별 사유가 있을 수 있다), alert_rule_unavailable(`details.reason`), alert_list_in_use |
 | 503 | unavailable, Retry-After 후 재시도. credential_key_unavailable(벤더 연결 — 운영이 암호화 키 설정을 고칠 때까지 재시도해도 같다) |
 
@@ -1401,12 +1425,13 @@ pending은 가입 또는 설치 중 하나만 남은 경우도 포함하므로 �
 초대 대기자의 팀·역할 편집(§12 `PATCH /members/{memberId}`)에 그대로 쓴다. 이메일로 초대와 구성원을 짝짓지 않는다.
 `role`은 구성원에 저장된 현재 역할이다. 편집하면 목록의 값도 바뀐다.
 `memberStatus`는 초대 대상 구성원의 상태다. 가입이나 설치 중 하나를 마친 구성원은 `active`이고 초대는 남은 용도 때문에 `pending`일 수 있다.
+활성 구성원 설치 코드(§12)로 낸 초대는 가입 권한 없이 발급되므로 `signupUsedAt`이 발급 시각(`createdAt`과 같은 값)이다 — 실제 가입 시각이 아니다.
 아직 합류하지 않은 사람만 보려면 `memberStatus=invited`로 거른다. 값은 `invited`·`active`·`suspended`이고 그 밖은 400 `invalid_request`다.
 
 재발급은 만료 여부와 관계없이 아직 폐기되지 않고 소비 권한이 남은 초대에만 허용한다.
 기존 코드를 즉시 폐기하고 새 ID·코드·72시간 만료를 만든다. 두 작업은 원자적이다.
 소비된 가입/설치 권한은 새 초대에도 소비 시각을 유지한다. 기존 계정·설치·세션은 삭제하지 않는다.
-폐기됐거나 두 용도 모두 소비한 초대는 409 `invitation_unavailable`이다.
+폐기됐거나 두 용도 모두 소비한 초대는 409 `invitation_unavailable`이다. 그런 활성 구성원에게 설치 코드가 필요하면 §12 "활성 구성원 설치 코드"다.
 같은 멱등 키의 재시도는 최초 새 코드를 재전달한다. 재시도 응답 저장에는 §12의 암호화를 사용한다.
 재발급은 새 초대의 메일을 같은 트랜잭션에서 적재하고, 폐기한 초대의 아직 보내지 않은 메일을 취소한다. 이미 나간 메일 뒤의 재발급은 새 메일을 한 통 더 보낸다.
 같은 멱등 키의 재시도는 메일을 다시 만들지 않는다.
@@ -1455,6 +1480,7 @@ organization_onboarding에는 정책 확인자·시각과 완료자만 남는다
 서버 API 구현, 프론트 배선, 실제 시드 E2E 통과는 별도로 확인한다.
 프론트 온보딩에서 계약 입력은 선택이며 설정의 계약 관리도 API에 연결돼 있다.
 초대 메일과 문의 통지는 `InvitationMailApiTest`가 실제 SMTP(메일 수신 컨테이너)로 도착을 확인한다.
+활성 구성원 설치 코드는 `InstallationInvitationApiTest`가 새 코드의 실제 enroll·가입 거절·남은 설치 코드 폐기·설치 경로만 담은 메일을 확인한다.
 전체 화면의 연동 완료 여부는 [E2E 목표 시나리오](frontend-e2e-scenarios.md)와 실제 실행 결과를 대조한다.
 
 ### 계약 기간 상태 (`contractStatus`)
