@@ -750,8 +750,11 @@ telemetryctl 에는 이 단계를 대신 운전하는 통합 테스트가 없다
 준비:
 
 - 세 서버를 local 프로필로 띄운다. ingest 는 `PULSEMETRY_TELEMETRY_OPS_ENABLED=true`. 프론트는 서버의 허용 origin 주소로 띄운다.
-- **manifest 가 없는 조직**을 쓴다(시드 B). 최초 정책을 저장하면 전달 주소가 `PULSEMETRY_ONBOARDING_OTLP_ENDPOINT` 가 된다 — 띄운 ingest 주소로 맞춘다.
+- **fresh 조직 E** 를 쓴다(개발 시드 시나리오 E — 정책 1판, 설치·수신 없음. `tools/dev-seed/README.md`). 시드 A·B·C 는 바꾸지 않는다.
+  E 는 기본 시나리오 목록에 없으니 시드를 `A,B,C,D,E`처럼 명시해 적재한다. 정책은 새로 저장하지 않는다 — 시드의 1판 manifest 를 받는다.
+  그 전달 주소는 시드 수신 주소(`PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT`, 기본 `http://localhost:4316`)다 — 띄운 ingest 주소로 맞춘다.
   telemetryctl 은 `http` 주소를 호스트가 `localhost`일 때만 받는다(`internal/contract/manifest.go`).
+  화면이 설치 수를 정확히 보므로 E 에 다른 설치가 없을 때 돈다 — 실서버 E2E(`tests/e2e`)는 E 에 설치를 등록하지 않는다.
 - 업데이트 확인용 릴리스를 `PULSEMETRY_BINARIES_DIR` 에 태그 이름 디렉터리로 둔다(§6.3·§9.2).
 
 ```sh
@@ -761,11 +764,11 @@ E2E_DAEMON_STAGE_DIR=<단계 디렉터리> npx playwright test --config=playwrig
 
 | 단계 | 데몬 쪽이 하는 것과 `<단계>.ready` | 화면이 확인하는 것(대시보드 명세 "공통 헤더 수집 현황"·"정책 적용 현황") |
 | --- | --- | --- |
-| `enrolled` | 최초 정책 → 초대 발급 → 실제 `POST /v1/enroll`과 설정 적용. `{installationId}` | 헤더 "수신 대기"(수신 이력 없음), 정책 적용 현황 "확인 불가 1대"(보고 없음), 설치 행의 마지막 보고 "-" |
+| `enrolled` | 초대 발급 → 실제 `POST /v1/enroll`과 설정 적용. `{installationId}` | 헤더 "수신 대기"(수신 이력 없음), 정책 적용 현황 "확인 불가 1대"·근거 없음 1대(설치 보고도 적용 확인 기록도 없음 — 대시보드 명세 `appliedEvidence` `none`), 설치 행의 근거 "근거 없음"·근거 시각 "-" |
 | `collecting` | 전달기로 OTLP 로그 한 묶음 → ingest 2xx. `{installationId}` | 헤더 "수집 상태 확인 불가"·"수집 기기의 보고가 없어 판정할 수 없습니다"와 마지막 수신 — 수신이 있어도 보고 없이 정상이라고 하지 않는다 |
 | `updates` | 업데이트 확인 → 릴리스의 판·업데이트 있음, 릴리스를 치우면 미지원. `{latestVersion}` | 없음(데몬 쪽 상태) |
 
-이 검증은 조직에 정책·초대·설치·수집 데이터를 실제로 만든다. 끝나면 DB 볼륨을 새로 만든다(`docker compose down -v` 뒤 다시 올린다).
+이 검증은 조직 E 에 초대·설치·수집 데이터를 실제로 만든다. 다시 돌리려면 DB 볼륨을 새로 만든다(`docker compose down -v` 뒤 다시 올린다).
 
 테스트는 Testcontainers 로 실제 PostgreSQL 을 띄우므로 Docker 데몬이 필요하다.
 H2 등 임베디드 DB 로 대체하지 않는다 — jsonb·부분 유니크 인덱스·스키마 분리를 검증할 수 없다.
