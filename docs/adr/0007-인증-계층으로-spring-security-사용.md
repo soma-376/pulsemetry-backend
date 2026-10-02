@@ -188,7 +188,7 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
   dbml(`rdb-schema/dbdiagram.dbml`)과 허브 `contracts/data-model.md` 를 같은 라운드에서 뒤따라 맞췄다 —
   그래서 기록할 **의도적 차이는 남지 않았다.** 비밀번호를 실제로 읽고 쓰는 로그인 경로는 아직 없다.
   구성원 식별은 이제 `(tenant_id, email)` 유니크 하나뿐이다.
-- **구현(PROJ-108), 계약 리뷰 대기** — telemetryctl user-auth.schema.json과 manifest-resync.schema.json이 클레임·봉투 원본이다. manifest 안에 토큰을 넣지 않는다.
+- **구현(PROJ-108), 계약 리뷰 대기** — 클레임·봉투의 원본은 명세 §11·§11.1의 표다(telemetryctl 기본 브랜치에 스키마 파일도 재조회 클라이언트도 없다 — ADR 0053). manifest 안에 토큰을 넣지 않는다.
 - **완료(PROJ-107)** — ADR 0018이 secret 파일과 kid 중첩 교체를 정한다.
 - **완료(PROJ-108)** — GET /v1/manifest를 구현하고 명세 §1·§2·§11.1을 갱신했다.
 - **완료(PROJ-107)** — CLI 콜백은 허브 ADR 0007의 loopback 일회용 code와 S256 PKCE를 사용한다. AT/RT를 콜백 URL에 직접 넣지 않는다.

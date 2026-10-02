@@ -42,8 +42,8 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | 항목 | 상태 | 근거 |
 |---|---|---|
 | 사람 계정·로그인 | 구현됨. 설정으로 활성화 | enrollment-api가 로그인·갱신·로그아웃·현재 사용자 조회를 제공하고 dashboard-api가 JWT와 현재 세션을 검증한다. ADR 0018·0026, `docs/user-auth-operations.md` 참고. OIDC/SAML SSO는 미구현(별도 작업 PROJ-186 — 이 저장소에 아직 없다) |
-| 수집 정책·온보딩 | 최초 생성·수정·완료 상태 구현 | `PUT /collection-policy`가 최초 manifest를 만들거나 새 판을 저장하고, 회수 기준·집계 보존을 manifest 와 따로 저장한다. 서버가 기존 설치에 밀어 넣지 않는다 — 설치 보고의 응답이 기대 판을 알리고 로그인한 데몬이 스스로 받아 적용한다. ADR 0029·0032·0033·0046 |
-| 설치 보고·업데이트 확인 | 구현됨 | 데몬의 설치 보고(수집 구간·적용 판)와 업데이트 확인, 정책 적용 현황·업데이트 안내 메일. ADR 0040·0043, 허브 `contracts/daemon-updates.md` |
+| 수집 정책·온보딩 | 최초 생성·수정·완료 상태 구현 | `PUT /collection-policy`가 최초 manifest를 만들거나 새 판을 저장하고, 회수 기준·집계 보존을 manifest 와 따로 저장한다. 서버가 기존 설치에 밀어 넣지 않는다. telemetryctl 기본 브랜치의 데몬은 새 정책을 스스로 받지 않는다 — 이미 설치된 기기는 다시 설치해야 새 판을 받는다(ADR 0053). ADR 0029·0032·0033·0046 |
+| 설치 보고·업데이트 확인 | 서버 구현됨. 데몬 쪽은 업데이트 확인만 있다 | 설치 보고 수신(수집 구간·적용 판), 업데이트 확인(telemetryctl 릴리스 디렉터리와 `SHA256SUMS`로 판 확인), 정책 적용 현황·업데이트 안내 메일. telemetryctl 기본 브랜치에는 보고 송신·RT 재조회·CLI 로그인이 없어 그 데몬의 설치는 적용 판 확인 불가다. ADR 0040·0043·0053, 허브 `contracts/daemon-updates.md` |
 | 메일 | 구현됨. 설정으로 활성화 | 초대 메일·문의 통지·설치 업데이트 안내를 outbox 로 적재하고 enrollment-api 의 발송 작업이 SMTP로 보낸다. ADR 0037·0038·0043 |
 | 좌석·벤더 연결·청구 | 구현됨. 벤더 연결은 설정으로 활성화 | 좌석 원장·수동 기록·CSV, 커넥터 동기화(Claude Enterprise·Cursor Enterprise·Copilot·Gemini)·회수·복원, 벤더 청구 누계. 실계정 검증은 남았다(`docs/vendor-connector-verification.md`). ADR 0048·0049·0050 |
 | 알림 | 구현됨 | 규칙 켜기·모델·도구 목록(enrollment-api), 주기 평가·개요 미확인 수·확인(dashboard-api 평가 + enrollment-api 확인). 한도 초과는 근거가 없어 켤 수 없다. ADR 0051 |

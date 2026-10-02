@@ -34,6 +34,8 @@
 **범위 밖**: 웹 대시보드 조회 API,
 `uninstall`/`repair`, 데이터 파이프라인.
 설치된 데몬의 주기 보고(heartbeat)는 §4.5가 받는다. 그 값으로 수집 상태와 적용 현황을 판정하는 것은 조회 API의 몫이다.
+telemetryctl 기본 브랜치의 데몬은 등록(§4.2)·토큰 재발급(§4.3)·OTLP 전달·업데이트 확인(§6.3)을 한다. 설치 보고 송신·manifest 재조회(§11.1)·CLI 로그인(§11)은
+데몬 쪽 구현이 없다 — 서버 경로만 있다(ADR 0053).
 초대 이메일은 조직 관리 API의 초대(§12·§13.3)가 보낸다. 관리자 키 경로(`POST /v1/invitations`)는 메일을 보내지 않고 설치 명령을 응답으로 돌려준다.
 
 ---
@@ -337,6 +339,9 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 
 저장소 장애는 **503 `heartbeat_unavailable` + `Retry-After`** 다. 401·403으로 돌리지 않는다 — 데몬이 재등록이 필요하다고 오해한다.
 
+**현재 상태** — telemetryctl 기본 브랜치에는 이 보고의 송신이 없다. 지금 배포된 데몬의 설치는 보고하지 않으므로 `last_seen_at`·수집 구간·적용 확인이
+보고로 생기지 않는다. 조회 API는 그 설치의 적용 판을 확인 불가로 낸다(ADR 0043·0053).
+
 ---
 
 ## 5. Manifest
@@ -422,7 +427,11 @@ pulsemetry_darwin_amd64        pulsemetry_darwin_arm64
 pulsemetry_linux_amd64         pulsemetry_linux_arm64
 ```
 
-목록에 없으면 404. 목록에 있어도 `pulsemetry.binaries.dir` 에 파일이 없으면 404.
+목록에 없으면 404.
+
+파일의 출처는 ADR 0053이다. `pulsemetry.binaries.dir`에 telemetryctl 릴리스 디렉터리(`v<SemVer>`, §6.3)가 있으면 공개 이름을 그 릴리스의
+데몬 자산 `pulsemetry_cli_{os}_{arch}`(Windows만 `.exe`)로 대응하고, `SHA256SUMS`와 해시가 같은 파일만 내려준다. 그 릴리스에 없는 대상은 404다.
+릴리스 디렉터리가 하나도 없으면 공개 이름 그대로의 파일을 내려주고, 파일이 없으면 404다.
 `..` 를 문자열 치환으로 지우거나 경로를 정규화해 방어하지 않는다 — 인코딩 변형에 언젠가 뚫린다.
 
 응답 헤더는 `Content-Type: application/octet-stream` 과 함께
@@ -445,11 +454,14 @@ pulsemetry_linux_amd64         pulsemetry_linux_arm64
 ```
 
 - **최신 버전은 이 서버가 §6.2로 배포하는 바이너리의 판이다.** 외부 릴리스 목록을 보지 않는다.
-  판은 `pulsemetry.binaries.dir`의 `pulsemetry_release.json`이 말한다 — `{"version": "0.2.0", "sha256": {"<파일명>": "<소문자 hex 64자>", …}}`.
-  `version`은 SemVer(`v` 없음)이고 `sha256`은 비어 있지 않은 객체다. `sha256`의 키는 §6.2의 여섯 이름뿐이다. 모르는 최상위 키는 무시한다.
-  이 파일은 `/bin`으로 서빙하지 않는다.
-- 요청의 `platform`·`architecture`로 파일명(`pulsemetry_{platform}_{architecture}`, Windows만 `.exe`)을 정한다. 허용 목록과의 동등 비교뿐이다.
-  **그 파일이 있고 SHA-256이 메타데이터와 같을 때만** 그 버전을 답한다. 해시는 파일의 크기·수정 시각이 바뀔 때만 다시 계산한다.
+  판은 telemetryctl 릴리스 산출물 그대로가 말한다(ADR 0053) — `pulsemetry.binaries.dir` 안의 `v<SemVer>` 디렉터리 하나가 릴리스 하나이고,
+  그 태그의 데몬 자산 `pulsemetry_cli_{os}_{arch}`(Windows만 `.exe`)와 `SHA256SUMS`를 받은 그대로 담는다. 디렉터리 이름에서 `v`를 뗀 것이 판이다.
+  `v` 뒤가 SemVer가 아닌 디렉터리는 릴리스가 아니다. 릴리스가 여럿이면 판이 가장 높은 하나가 이 서버의 릴리스이고, 거기 없는 대상은 낮은 판으로 내려가지 않는다.
+- `SHA256SUMS`는 줄마다 소문자 hex 64자, 공백 둘, 자산 이름이다(telemetryctl `scripts/release.mjs`의 `checksums`). 데몬 자산이 아닌 줄(GUI 패키지)은 무시한다.
+  형식이 틀린 줄이나 같은 이름이 두 번 나오면 그 릴리스를 읽지 않는다. 마지막 줄바꿈은 없어도 된다.
+- 요청의 `platform`·`architecture`로 공개 이름(`pulsemetry_{platform}_{architecture}`, Windows만 `.exe`)을 정하고 허용 목록과 동등 비교한다.
+  **그 대상의 자산이 있고 SHA-256이 `SHA256SUMS`와 같을 때만** 그 판을 답한다. 해시는 파일의 크기·수정 시각이 바뀔 때만 다시 계산한다.
+  `/bin/{filename}`(§6.2)이 같은 확인을 거친 같은 파일을 내려준다.
 - `update_available`은 `current_version` < `latest_version`일 때만 true다. 순서는 SemVer 2.0.0의 우선순위 규칙이다 —
   사전 릴리스는 같은 번호의 정식 판보다 낮고 빌드 메타데이터는 순서에 영향을 주지 않는다. 버전을 주입하지 않은 빌드(`0.1.0`)를 따로 취급하지 않는다.
 - 응답은 두 키의 JSON 문서 하나이고 `Cache-Control: no-store`다. 리다이렉트를 내지 않는다(데몬이 따라가지 않는다).
@@ -457,13 +469,13 @@ pulsemetry_linux_amd64         pulsemetry_linux_arm64
 | 상황 | HTTP | error |
 |---|---|---|
 | 쿼리가 빠졌거나 비었다, `current_version`이 SemVer가 아니다(`v0.2.0`·`dev` 등) | 400 | `invalid_request` |
-| 메타데이터가 없거나 형식이 틀렸다 | 404 | `not_found` |
+| 릴리스 디렉터리가 없다(공개 이름의 평면 파일만 있어도 같다), 그 릴리스의 `SHA256SUMS`가 없거나 형식이 틀렸다 | 404 | `not_found` |
 | `platform`·`architecture`가 여섯 파일명으로 이어지지 않는다 | 404 | `not_found` |
-| 그 대상의 바이너리가 없거나, 메타데이터에 없거나, 해시가 다르다 | 404 | `not_found` |
+| 그 대상의 자산이 없거나, `SHA256SUMS`에 없거나, 해시가 다르다 | 404 | `not_found` |
 
 404는 "업데이트 없음"이 아니라 "이 서버가 확인해 줄 수 없음"이다. 데몬은 미지원으로 표시한다.
 **확인할 수 없을 때 임의의 버전이나 `update_available=false`로 답하지 않는다.**
-별도 스위치는 없다 — 메타데이터 파일을 놓으면 켜지고 없으면 404다. 읽는 도중 파일이 교체되는 경합은 §6.2와 같이 없는 파일로 다룬다.
+별도 스위치는 없다 — 릴리스 디렉터리를 놓으면 켜지고 없으면 404다. 읽는 도중 파일이 교체되는 경합은 §6.2와 같이 없는 파일로 다룬다.
 
 ---
 
@@ -512,7 +524,7 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.admin.api-token` | 없음 | 관리자 API 키. **비어 있으면 기동 실패** |
 | `pulsemetry.token-hash-secret` | 없음 | telemetry token 의 HMAC-SHA256 키. **비어 있으면 기동 실패.** auth-proxy(ai-telemetry-pipeline)와 같은 값을 써야 OTLP 인증이 성립한다. dev 인프라에서는 `DevEdgeStack` 의 `TokenHashSecretArn` 이 가리키는 Secrets Manager 값. 키 변경 = 발급된 전 토큰 무효 |
 | `pulsemetry.invitation.default-ttl-hours` | `72` | `expires_in_hours` 생략 시 만료 시간 |
-| `pulsemetry.binaries.dir` | `./binaries` | CLI 바이너리와 릴리스 메타데이터(`pulsemetry_release.json`, §6.3)가 놓인 서버 로컬 디렉터리 |
+| `pulsemetry.binaries.dir` | `./binaries` | telemetryctl 릴리스 디렉터리(`v<SemVer>`, §6.3)나 공개 이름의 CLI 바이너리(§6.2)가 놓인 서버 로컬 디렉터리 |
 | `pulsemetry.mail.enabled` | `false` | 메일 발송(ADR 0037)을 켠다. 켜면 아래 열한 값이 **모두 필요하다 — 하나라도 비면 기동 실패**. 꺼져 있으면 outbox에 적재하지도 보내지도 않는다 |
 | `pulsemetry.mail.smtp.host` · `.port` | 없음 | SMTP 서버 |
 | `pulsemetry.mail.smtp.username` · `.password` | 없음 | SMTP 계정. 로그·응답에 싣지 않는다 |
@@ -594,11 +606,18 @@ Compose 날짜 생략은 서울 기준 실행일이며, 완료된 시드는 재�
 
 ### 9.2 바이너리 배치
 
-`pulsemetry.binaries.dir` 에 §6.2 의 이름 그대로 파일을 놓는다.
-없는 아키텍처는 404 가 되며, 그 아키텍처의 사용자는 설치가 실패한다.
+`pulsemetry.binaries.dir` 에 telemetryctl 릴리스를 그 태그 이름의 디렉터리로 받아 둔다(§6.3, ADR 0053). 이름을 바꾸거나 메타데이터를 따로 만들지 않는다.
 
-같은 디렉터리에 릴리스 메타데이터 `pulsemetry_release.json`(§6.3)을 함께 놓는다. 바이너리를 교체할 때마다 같이 교체한다.
-메타데이터가 없거나 바이너리와 해시가 맞지 않으면 업데이트 확인이 404로 답하고, 설치된 데몬은 업데이트를 "미지원"으로 표시한다.
+```sh
+gh release download v0.2.0 --repo soma-376/telemetryctl \
+  --pattern 'pulsemetry_cli_*' --pattern SHA256SUMS --dir "$PULSEMETRY_BINARIES_DIR/v0.2.0"
+```
+
+GUI 패키지는 받지 않아도 된다(서빙하지 않는다). 새 릴리스는 새 디렉터리로 받는다 — 판이 가장 높은 디렉터리가 곧 이 서버의 릴리스다.
+되돌릴 때는 높은 판의 디렉터리를 치운다. 그 릴리스에 없는 아키텍처는 404 가 되며, 그 아키텍처의 사용자는 설치가 실패한다.
+자산의 해시가 `SHA256SUMS`와 다르면 그 대상은 설치(§6.2)도 업데이트 확인(§6.3)도 404다. 설치된 데몬은 업데이트를 "미지원"으로 표시한다.
+
+릴리스 디렉터리 없이 §6.2 의 공개 이름 그대로 파일을 놓아도 설치는 된다. 그 판은 알 수 없어 업데이트 확인은 404다.
 
 ### 9.3 헬스체크
 
@@ -719,43 +738,33 @@ psql postgresql://pulsemetry:pulsemetry@localhost:5432/pulsemetry \
 
 ### 10.2 데몬 → 서버 → 화면 실경로 검증
 
-설치 보고 묶음(§4.5 설치 보고, 수집 상태 판정, 정책 재조회·적용, 업데이트 확인)이 끝에서 끝까지 이어지는지 한 번에 본다.
-데몬 쪽은 telemetryctl 의 통합 테스트 `TestIntegrationEndToEndInstallationReportFromEnrollmentToDashboard`(빌드 태그 `integration`)가,
-화면 쪽은 프론트의 `tests/e2e-daemon/installation-report.spec.ts`(`playwright.daemon.config.ts`)가 맡는다. 둘은 **같은 단계 디렉터리**로 걸음을 맞춘다 —
-데몬 쪽이 단계마다 `<단계>.ready`(관찰값 JSON)를 쓰고 화면 쪽이 확인한 뒤 `<단계>.seen`을 쓴다.
+telemetryctl 기본 브랜치의 데몬이 하는 일(등록 · OTLP 전달 · 업데이트 확인)이 서버를 거쳐 화면까지 이어지는지 한 번에 본다(ADR 0053).
+설치 보고·정책 재조회는 데몬 쪽 구현이 없어 이 검증에 없다 — 그 화면 상태(적용·미적용, 수집 정상·지연)는 서버 통합 테스트와 프론트 목 테스트의 fixture가 맡는다.
 
-데몬 테스트는 데몬 바이너리를 띄우지 않고 **실제 데몬 코드**(`daemon.Run`)를 테스트 프로세스 안에서 임시 설치·메모리 키링으로 돌린다 —
-개발자 PC의 키체인·자동 시작 등록을 건드리지 않는다. 서버는 실제 HTTP 로 부른다.
+화면 쪽은 프론트의 `tests/e2e-daemon/installation-report.spec.ts`(`playwright.daemon.config.ts`)다. 데몬 쪽과 **같은 단계 디렉터리**로 걸음을 맞춘다 —
+데몬 쪽이 단계마다 `<단계>.ready`(관찰값 JSON)를 쓰고 화면 쪽이 확인한 뒤 `<단계>.seen`을 쓴다.
+데몬 쪽은 telemetryctl 의 실제 코드(`enroll` 명령의 등록·설정 적용, `internal/forward` 전달기, `internal/updatecheck` 클라이언트)를 돌리는 쪽이 맡는다.
+telemetryctl 에는 이 단계를 대신 운전하는 통합 테스트가 없다. CLI 는 OS 키링과 홈의 벤더 설정을 쓰므로 개발자 PC 가 아니라 격리한 사용자 환경에서 돌린다.
 
 준비:
 
-- 세 서버를 local 프로필로 띄운다(설치 보고 주기 1분, 메일 켬). ingest 는 `PULSEMETRY_TELEMETRY_OPS_ENABLED=true`, dashboard-api 의
-  `pulsemetry.dashboard.ingest.*`·`completeness.settle-after` 는 local 값 그대로다. 프론트는 서버의 허용 origin 주소로 띄운다.
-- **manifest 가 없는 조직**을 쓴다(시드 B). 테스트가 최초 정책을 저장하면 전달 주소가 `PULSEMETRY_ONBOARDING_OTLP_ENDPOINT` 가 된다 — 띄운 ingest 주소로 맞춘다.
-  시드 A 의 manifest 는 `http://localhost:4316` 고정이라 다른 ingest 로 보낼 수 있다. 테스트는 등록으로 받은 전달 주소가 `PULSEMETRY_IT_INGEST_URL` 과 다르면 보내지 않고 멈춘다.
-- 업데이트 확인용 릴리스 자산(바이너리와 `pulsemetry_release.json` — telemetryctl `task release:assets`)을 `PULSEMETRY_BINARIES_DIR` 에 둔다(§6.3).
+- 세 서버를 local 프로필로 띄운다. ingest 는 `PULSEMETRY_TELEMETRY_OPS_ENABLED=true`. 프론트는 서버의 허용 origin 주소로 띄운다.
+- **manifest 가 없는 조직**을 쓴다(시드 B). 최초 정책을 저장하면 전달 주소가 `PULSEMETRY_ONBOARDING_OTLP_ENDPOINT` 가 된다 — 띄운 ingest 주소로 맞춘다.
+  telemetryctl 은 `http` 주소를 호스트가 `localhost`일 때만 받는다(`internal/contract/manifest.go`).
+- 업데이트 확인용 릴리스를 `PULSEMETRY_BINARIES_DIR` 에 태그 이름 디렉터리로 둔다(§6.3·§9.2).
 
 ```sh
-# telemetryctl — 단계 디렉터리는 비어 있는 새 디렉터리
-PULSEMETRY_IT_SERVER_URL=http://localhost:8080 PULSEMETRY_IT_DASHBOARD_URL=http://localhost:8081 PULSEMETRY_IT_INGEST_URL=http://localhost:4316 \
-PULSEMETRY_IT_TENANT_ID=<시드 B 조직 ID> PULSEMETRY_IT_ADMIN_EMAIL=owner@seed-b.example.test PULSEMETRY_IT_ADMIN_PASSWORD=<개발 시드 비밀번호> \
-PULSEMETRY_IT_RELEASE_METADATA=<바이너리 디렉터리>/pulsemetry_release.json PULSEMETRY_IT_RELEASE_PLATFORM=darwin PULSEMETRY_IT_RELEASE_ARCH=arm64 \
-PULSEMETRY_IT_STAGE_DIR=<단계 디렉터리> go test -tags integration -count=1 -timeout 20m -run TestIntegrationEndToEnd ./internal/daemon &
-
 # frontend — 실서버 E2E 와 같은 .env.local 값에 단계 디렉터리를 더한다
 E2E_DAEMON_STAGE_DIR=<단계 디렉터리> npx playwright test --config=playwright.daemon.config.ts
 ```
 
-| 단계 | 데몬 쪽이 만드는 것과 확인하는 것 | 화면이 확인하는 것 |
+| 단계 | 데몬 쪽이 하는 것과 `<단계>.ready` | 화면이 확인하는 것(대시보드 명세 "공통 헤더 수집 현황"·"정책 적용 현황") |
 | --- | --- | --- |
-| `enrolled` | 최초 정책 → 초대 발급 → 실제 `POST /v1/enroll` → 데몬 기동 직후 보고에 서버가 그 판을 적용 확인. `GET O/installations` 의 적용 판·`lastHeartbeatAt`, 수집 상태 `empty`(수신 이력 없음)·보고 설치 1 | 정책 적용 현황 "적용 1대", 설치 행의 판·마지막 보고, 헤더 "수신 대기 · 보고 중인 설치 1대" |
-| `collecting` | 수신기에 OTLP 로그 → 데몬이 ingest 로 전달 → 수집 상태 `healthy`·`lastReceivedAt` | 헤더 "수집 정상 · 마지막 수신" |
-| `outdated` | 관리자가 정책 저장(판 +1). 이 PC 의 사용자 세션이 없어 데몬은 `login_required` — 설치는 미적용·알림 가능 | "미적용 1대", 미적용 목록의 이전 판·선택 칸 |
-| `applied` | 사용자 로그인 → 다음 보고의 답으로 재조회·적용 → 서버가 새 판 적용 확인 | "적용 1대", 적용 목록의 새 판 |
-| `updates` | 릴리스 메타데이터로 `ready`(최신 판·업데이트 있음), 메타데이터를 치우면 `unsupported` — 끝나면 되돌린다 | 없음(데몬 로컬 API) |
+| `enrolled` | 최초 정책 → 초대 발급 → 실제 `POST /v1/enroll`과 설정 적용. `{installationId}` | 헤더 "수신 대기"(수신 이력 없음), 정책 적용 현황 "확인 불가 1대"(보고 없음), 설치 행의 마지막 보고 "-" |
+| `collecting` | 전달기로 OTLP 로그 한 묶음 → ingest 2xx. `{installationId}` | 헤더 "수집 상태 확인 불가"·"수집 기기의 보고가 없어 판정할 수 없습니다"와 마지막 수신 — 수신이 있어도 보고 없이 정상이라고 하지 않는다 |
+| `updates` | 업데이트 확인 → 릴리스의 판·업데이트 있음, 릴리스를 치우면 미지원. `{latestVersion}` | 없음(데몬 쪽 상태) |
 
 이 검증은 조직에 정책·초대·설치·수집 데이터를 실제로 만든다. 끝나면 DB 볼륨을 새로 만든다(`docker compose down -v` 뒤 다시 올린다).
-설치 보고가 1분 주기라 한 번 도는 데 2분 남짓 걸린다.
 
 테스트는 Testcontainers 로 실제 PostgreSQL 을 띄우므로 Docker 데몬이 필요하다.
 H2 등 임베디드 DB 로 대체하지 않는다 — jsonb·부분 유니크 인덱스·스키마 분리를 검증할 수 없다.
@@ -782,6 +791,7 @@ V1 마이그레이션이 native enum 채택(ADR 0009)으로 재작성되어 Flyw
 | `POST /v1/auth/cli/token` | `code`, `redirect_uri`, `code_verifier` | 200 TokenResponse |
 
 로그인 요청은 조직 ID를 필요로 한다. 이메일만으로 조직을 자동 탐색하는 API는 없다.
+CLI 로그인(`cli/authorize`·`cli/token`)은 서버 경로만 있다 — telemetryctl 기본 브랜치에는 `login` 명령도, RT를 키링에 두는 클라이언트도 없다(ADR 0053).
 가입 비밀번호는 12글자 이상·UTF-8 72바이트 이하다. 초대 코드는 설치 소비와 가입 소비가 독립적이다.
 AT 유효기간은 5분, 세션은 30일이다. refresh는 RT를 회전시키므로 응답의 새 RT를 사용한다.
 이미 소비한 RT를 재사용하면 해당 세션이 폐기된다. 동시 refresh를 클라이언트에서 하나로 합친다.
@@ -966,9 +976,9 @@ PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계
 
 ### 설치 업데이트 안내 (ADR 0043)
 
-새 수집 정책을 아직 집행하지 않는 설치의 구성원에게 **확인을 부탁하는 메일**을 보낸다. 원격 업데이트가 아니다 — 서버는 설치에 정책을 밀어 넣지 않고,
-설치는 설치 보고(§4.5)의 응답으로 새 판을 알고 사용자 로그인 세션이 있는 데몬이 스스로 받아 적용한다. 메일은 그 확인 절차
-(`pulsemetry status`로 상태를 보고, 로그인이 필요하다고 나오면 `pulsemetry login`)를 안내한다. 기기 이름·플랫폼·기대 판·지금 판을 싣고 비밀은 싣지 않는다.
+새 수집 정책을 아직 집행하지 않는 설치의 구성원에게 **확인을 부탁하는 메일**을 보낸다. 원격 업데이트가 아니다 — 서버는 설치에 정책을 밀어 넣지 않는다.
+메일은 telemetryctl 기본 브랜치에 있는 명령만 안내한다(ADR 0053): `pulsemetry status`로 데몬이 도는지 보고, 지금의 데몬은 새 정책을 스스로 받아 오지 않으므로
+새 정책을 적용하려면 관리자에게 설치 안내를 다시 받아 다시 설치하라고 적는다. 기기 이름·플랫폼·기대 판·지금 판을 싣고 비밀은 싣지 않는다.
 
 ```json
 {"installationIds":["…"],"expectedPolicyVersion":2}

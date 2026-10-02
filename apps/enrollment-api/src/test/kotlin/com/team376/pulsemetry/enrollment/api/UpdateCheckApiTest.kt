@@ -32,8 +32,9 @@ import java.util.HexFormat
  * 공백이 아닌 문자열, `update_available` 은 빠지면 안 되는 불리언이다. 본문은 64 KiB 를 넘으면 무효다.
  * 원격에는 이 경로의 JSON Schema 가 없다. 버전 형식은 SemVer 2.0.0(semver.org 가 권하는 정규식, [SEMVER])으로 본다.
  *
- * 최신 버전은 서버가 배포하는 바이너리의 판이고, 그 판은 바이너리 옆의 `pulsemetry_release.json` 이 말한다(명세 §6.3 — 형식은
- * [specValidMetadata] 가 명세 문장을 옮긴 것이다).
+ * 최신 버전은 서버가 배포하는 바이너리의 판이고, 그 판은 telemetryctl 릴리스 산출물 그대로가 말한다(명세 §6.3, ADR 0053):
+ * 바이너리 디렉터리의 `v<버전>` 디렉터리에 데몬 자산 `pulsemetry_cli_{os}_{arch}[.exe]` 와 `SHA256SUMS` 를 둔다. `SHA256SUMS` 의 모양은
+ * 원격 `scripts/release.mjs` 의 `checksums`(한 줄에 해시·공백 둘·자산 이름·줄바꿈, 이름 순)를 옮긴 [releaseSums] 가 만든다.
  * 바이너리 디렉터리는 [BinaryApiTest] 와 같은 곳이다 — 테스트마다 비우고 채운다.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -48,33 +49,28 @@ class UpdateCheckApiTest {
     @BeforeEach fun setUp() {
         directory = Path.of(properties.binaries.dir)
         Files.createDirectories(directory)
-        Files.list(directory).use { paths -> paths.forEach(Files::delete) }
+        Files.walk(directory).use { paths -> paths.sorted(java.util.Comparator.reverseOrder()).filter { it != directory }.forEach(Files::delete) }
     }
 
     private fun sha256(content: String) = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content.toByteArray()))
 
-    /**
-     * 명세 §6.3 의 메타데이터 형식: 객체이고, `version` 은 SemVer(`v` 없음), `sha256` 은 비어 있지 않은 객체이며 그 키는 §6.2 의 여섯 이름,
-     * 값은 소문자 hex 64자다. 모르는 최상위 키는 무시한다. 테스트가 쓰는 "맞는/틀린 메타데이터"가 명세로도 그런지 확인하는 데만 쓴다.
-     */
-    private fun specValidMetadata(json: String): Boolean {
-        val node = runCatching { mapper.readTree(json) }.getOrNull() ?: return false
-        if (!node.isObject) return false
-        val version = node.path("version")
-        val hashes = node.path("sha256")
-        return version.isString && SEMVER.matches(version.asString()) && hashes.isObject && hashes.size() > 0 &&
-            hashes.propertyNames().all { it in SPEC_BINARIES && hashes.path(it).isString && HEX64.matches(hashes.path(it).asString()) }
+    /** 공개 이름(`pulsemetry_{os}_{arch}`)의 릴리스 자산 이름(`pulsemetry_cli_{os}_{arch}`) — 원격 `scripts/release.mjs` 의 `assetNames`. */
+    private fun asset(publicName: String) = publicName.replaceFirst("pulsemetry_", "pulsemetry_cli_")
+
+    /** 원격 `scripts/release.mjs` 의 `checksums` 와 같은 모양: 이름 순으로 `<해시>  <이름>\n`. */
+    private fun releaseSums(assets: Map<String, String>) = assets.toSortedMap().entries.joinToString("") { (name, content) -> "${sha256(content)}  $name\n" }
+
+    /** 릴리스 `v<version>` 디렉터리에 공개 이름별 데몬 자산과 [releaseSums] 를 놓는다. [extra] 는 데몬이 아닌 자산(GUI 패키지)이다. */
+    private fun release(version: String, vararg binaries: Pair<String, String>, extra: Map<String, String> = emptyMap()) {
+        val assets = binaries.associate { (name, content) -> asset(name) to content } + extra
+        val dir = Files.createDirectories(directory.resolve("v$version"))
+        assets.forEach { (name, content) -> Files.writeString(dir.resolve(name), content) }
+        sums(version, releaseSums(assets))
     }
 
-    /** 바이너리들을 놓고 그 해시를 담은 메타데이터를 쓴다. 메타데이터는 명세의 형식으로 확인한다. */
-    private fun release(version: String, vararg binaries: Pair<String, String>) {
-        binaries.forEach { (name, content) -> Files.writeString(directory.resolve(name), content) }
-        val metadata = mapper.writeValueAsString(mapOf("version" to version, "sha256" to binaries.associate { (name, content) -> name to sha256(content) }))
-        assertThat(specValidMetadata(metadata)).describedAs(metadata).isTrue()
-        metadata(metadata)
+    private fun sums(version: String, text: String) {
+        Files.writeString(Files.createDirectories(directory.resolve("v$version")).resolve("SHA256SUMS"), text)
     }
-
-    private fun metadata(json: String) { Files.writeString(directory.resolve("pulsemetry_release.json"), json) }
 
     private fun check(version: String? = "0.1.0", platform: String? = "darwin", architecture: String? = "arm64", extra: String = ""): HttpResponse<String> {
         val query = listOfNotNull(version?.let { "current_version" to it }, platform?.let { "platform" to it }, architecture?.let { "architecture" to it })
@@ -209,53 +205,67 @@ class UpdateCheckApiTest {
         }
     }
 
-    // ── 메타데이터 ───────────────────────────────────────────────────────────
+    // ── 릴리스 산출물 ────────────────────────────────────────────────────────
 
-    @Test fun `메타데이터가 없으면 바이너리가 있어도 404다`() {
+    @Test fun `릴리스가 없으면 바이너리가 있어도 404다`() {
+        // 공개 이름 그대로의 평면 파일은 판을 말하지 않는다.
         Files.writeString(directory.resolve("pulsemetry_darwin_arm64"), "binary")
+        rejected(check(), 404, "not_found")
+        // 릴리스 디렉터리가 있어도 SHA256SUMS 가 없으면 릴리스를 읽지 않는다.
+        Files.writeString(Files.createDirectories(directory.resolve("v0.2.0")).resolve(asset("pulsemetry_darwin_arm64")), "binary")
         rejected(check(), 404, "not_found")
     }
 
-    @Test fun `형식이 틀린 메타데이터는 없는 것과 같다`() {
-        Files.writeString(directory.resolve("pulsemetry_darwin_arm64"), "binary")
-        val hash = sha256("binary")
+    @Test fun `형식이 틀린 SHA256SUMS 는 없는 것과 같다`() {
+        val content = "binary"
+        val dir = Files.createDirectories(directory.resolve("v0.2.0"))
+        Files.writeString(dir.resolve(asset("pulsemetry_darwin_arm64")), content)
+        val hash = sha256(content)
+        val name = asset("pulsemetry_darwin_arm64")
         val broken = listOf(
-            "not json", "[]", "null", "",
-            """{"sha256":{"pulsemetry_darwin_arm64":"$hash"}}""",
-            """{"version":"v0.2.0","sha256":{"pulsemetry_darwin_arm64":"$hash"}}""",
-            """{"version":"latest","sha256":{"pulsemetry_darwin_arm64":"$hash"}}""",
-            """{"version":2,"sha256":{"pulsemetry_darwin_arm64":"$hash"}}""",
-            """{"version":"0.2.0"}""",
-            """{"version":"0.2.0","sha256":{}}""",
-            """{"version":"0.2.0","sha256":"$hash"}""",
-            """{"version":"0.2.0","sha256":{"pulsemetry_darwin_arm64":"${hash.uppercase()}"}}""",
-            """{"version":"0.2.0","sha256":{"pulsemetry_darwin_arm64":"${hash.dropLast(1)}"}}""",
-            """{"version":"0.2.0","sha256":{"pulsemetry_darwin_arm64":null}}""",
-            """{"version":"0.2.0","sha256":{"pulsemetry_darwin_arm64":"$hash","pulsemetry_freebsd_amd64":"$hash"}}""",
+            "", "not sums\n", "$hash $name\n", "$hash\t$name\n", "$hash   $name\n", "${hash.uppercase()}  $name\n", "${hash.dropLast(1)}  $name\n",
+            "$hash  *$name\n", "$hash  $name\r\n", "$hash  $name\n\n", "$hash  $name\n$hash  $name\n", "$hash  $name\nnot a line\n",
         )
-        for (json in broken) {
-            // 테스트의 "틀린 형식"이 명세로도 틀린 것인지 확인한다.
-            assertThat(specValidMetadata(json)).describedAs(json).isFalse()
-            metadata(json)
+        for (text in broken) {
+            sums("0.2.0", text)
             rejected(check(), 404, "not_found")
         }
-        // 모르는 키는 무시한다.
-        val unknownKeys = """{"version":"0.2.0","sha256":{"pulsemetry_darwin_arm64":"$hash"},"built_at":"2026-09-30T00:00:00Z","notes":{"url":"x"}}"""
-        assertThat(specValidMetadata(unknownKeys)).isTrue()
-        metadata(unknownKeys)
+        // 마지막 줄바꿈이 없어도, 데몬이 아닌 자산(GUI 패키지) 줄이 있어도 읽는다.
+        sums("0.2.0", "$hash  $name")
+        assertThat(available(check())).isTrue()
+        sums("0.2.0", releaseSums(mapOf(name to content, "pulsemetry_gui_darwin_arm64.dmg" to "gui")))
         assertThat(available(check())).isTrue()
     }
 
-    @Test fun `바이너리의 해시가 메타데이터와 다르면 404이고 파일이 맞게 바뀌면 다시 답한다`() {
+    @Test fun `태그 형식이 아닌 디렉터리는 릴리스가 아니고 가장 높은 판의 릴리스가 답한다`() {
+        for (dir in listOf("0.9.0", "latest", "v0.9", "v01.0.0", "V0.9.0")) {
+            val path = Files.createDirectories(directory.resolve(dir))
+            Files.writeString(path.resolve(asset("pulsemetry_darwin_arm64")), "binary")
+            Files.writeString(path.resolve("SHA256SUMS"), "${sha256("binary")}  ${asset("pulsemetry_darwin_arm64")}\n")
+        }
+        rejected(check(), 404, "not_found")
+        release("0.2.0", "pulsemetry_darwin_arm64" to "binary-0.2.0")
+        release("0.10.0", "pulsemetry_darwin_arm64" to "binary-0.10.0")
+        release("0.10.0-rc.1", "pulsemetry_darwin_arm64" to "binary-0.10.0-rc.1")
+        assertThat(mapper.readTree(check("0.1.0").body()).path("latest_version").asString()).isEqualTo("0.10.0")
+        // 가장 높은 판에 그 대상이 없으면 낮은 판으로 내려가지 않는다 — 이 서버의 릴리스는 하나다.
+        release("0.11.0", "pulsemetry_linux_amd64" to "linux-0.11.0")
+        rejected(check("0.1.0", "darwin", "arm64"), 404, "not_found")
+        assertThat(mapper.readTree(check("0.1.0", "linux", "amd64").body()).path("latest_version").asString()).isEqualTo("0.11.0")
+    }
+
+    @Test fun `바이너리의 해시가 SHA256SUMS 와 다르면 404이고 파일이 맞게 바뀌면 다시 답한다`() {
         release("0.2.0", "pulsemetry_darwin_arm64" to "binary-0.2.0")
         assertThat(available(check())).isTrue()
 
-        // 메타데이터만 새 판으로 바뀌고 바이너리는 옛 파일이다.
-        metadata(mapper.writeValueAsString(mapOf("version" to "0.3.0", "sha256" to mapOf("pulsemetry_darwin_arm64" to sha256("binary-0.3.0")))))
+        // 새 판의 SHA256SUMS 만 놓이고 자산은 옛 파일이다.
+        val dir = Files.createDirectories(directory.resolve("v0.3.0"))
+        val binary = dir.resolve(asset("pulsemetry_darwin_arm64"))
+        Files.writeString(binary, "binary-0.2.0")
+        sums("0.3.0", releaseSums(mapOf(asset("pulsemetry_darwin_arm64") to "binary-0.3.0")))
         rejected(check(), 404, "not_found")
 
         // 같은 크기의 새 파일로 바뀐다. 수정 시각이 달라지면 해시를 다시 계산한다.
-        val binary = directory.resolve("pulsemetry_darwin_arm64")
         Files.writeString(binary, "binary-0.3.0")
         Files.setLastModifiedTime(binary, FileTime.fromMillis(Files.getLastModifiedTime(binary).toMillis() + 5_000))
         val response = check("0.2.0")
@@ -267,9 +277,9 @@ class UpdateCheckApiTest {
         rejected(check(), 404, "not_found")
     }
 
-    @Test fun `메타데이터에 없는 바이너리는 디렉터리에 있어도 답하지 않는다`() {
+    @Test fun `SHA256SUMS 에 없는 바이너리는 릴리스 디렉터리에 있어도 답하지 않는다`() {
         release("0.2.0", "pulsemetry_linux_amd64" to "linux")
-        Files.writeString(directory.resolve("pulsemetry_darwin_arm64"), "stray binary")
+        Files.writeString(directory.resolve("v0.2.0").resolve(asset("pulsemetry_darwin_arm64")), "stray binary")
         rejected(check("0.1.0", "darwin", "arm64"), 404, "not_found")
         assertThat(available(check("0.1.0", "linux", "amd64"))).isTrue()
     }
@@ -295,7 +305,7 @@ class UpdateCheckApiTest {
             "/api/v1/CHECK-UPDATES?current_version=0.1.0&platform=darwin&architecture=arm64", "/api/v1/check-updates?current_version=0.1.0&platform=darwin&architecture=arm64")) {
             assertThat(get(path).statusCode() in 300..399).describedAs(path).isFalse()
         }
-        assertThat(get("/bin/pulsemetry_release.json").statusCode()).isEqualTo(404)
+        for (path in listOf("/bin/SHA256SUMS", "/bin/v0.2.0", "/bin/pulsemetry_cli_darwin_arm64")) assertThat(get(path).statusCode()).describedAs(path).isEqualTo(404)
         val post = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/check-updates?current_version=0.1.0&platform=darwin&architecture=arm64"))
             .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString())
         assertThat(post.statusCode()).isEqualTo(405)
@@ -304,9 +314,5 @@ class UpdateCheckApiTest {
     companion object {
         /** semver.org "Is there a suggested regular expression (RegEx) to check a SemVer string?" 의 정규식. Java 의 `\d` 는 ASCII 숫자뿐이다. */
         private val SEMVER = Regex("""^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$""")
-        private val HEX64 = Regex("^[0-9a-f]{64}$")
-        /** 명세 §6.2 의 여섯 파일명. */
-        private val SPEC_BINARIES = setOf("pulsemetry_windows_amd64.exe", "pulsemetry_windows_arm64.exe", "pulsemetry_darwin_amd64",
-            "pulsemetry_darwin_arm64", "pulsemetry_linux_amd64", "pulsemetry_linux_arm64")
     }
 }

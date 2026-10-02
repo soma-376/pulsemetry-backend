@@ -119,8 +119,10 @@ class InstallationNotificationApiTest : AbstractUserAuthApiTest() {
         assertThat(notifier.reconcile()).isEqualTo(0)
         assertThat(dispatcher.runOnce()).isEqualTo(2)
         val toOutdated = MailpitServer.text(mailsTo("outdated@example.test").single())
-        assertThat(toOutdated).contains("정책 판 3", "아직 이전 정책(판 2)을 적용하고 있습니다", "my-macbook", "pulsemetry status", "pulsemetry login",
-            "원격으로 업데이트하거나 이 PC의 설정을 바꾸지 않습니다")
+        assertThat(toOutdated).contains("정책 판 3", "아직 이전 정책(판 2)을 적용하고 있습니다", "my-macbook", "pulsemetry status",
+            "새 정책을 스스로 받아 오지 않습니다", "다시 설치합니다", "원격으로 업데이트하거나 이 PC의 설정을 바꾸지 않습니다")
+        // telemetryctl 기본 브랜치에 없는 명령·동작을 안내하지 않는다(ADR 0053) — 사용자 로그인 명령도, 보고 때의 자동 재조회도 없다.
+        assertThat(toOutdated).doesNotContain("pulsemetry login", "로그인 필요", "다음 보고 때")
         assertThat(MailpitServer.text(mailsTo("unknown@example.test").single())).contains("정책 판 3", "새 정책을 적용했다는 보고를 아직 보내지 않았습니다")
         // 발송 결과를 대상 결과로 옮긴다. 한 번 옮긴 결과는 다시 옮기지 않는다.
         assertThat(operation(id).status.wire).isEqualTo("running")
