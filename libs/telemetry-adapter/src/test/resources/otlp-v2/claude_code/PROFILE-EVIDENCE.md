@@ -91,6 +91,31 @@ generic 목록(`internal_error`·`plugin_installed`·`plugin_loaded`·`at_mentio
 못해 intValue·10진 문자열을 모두 받는다. 필드 이름은 문서 요약과 참조 분석이 일부 어긋나(`attempts` 대 `total_attempts` 등) 실캡처로
 확인하기 전까지 명세 사례(`synthetic/errors`)만 고정한다.
 
+### 7.1 한도·쿼터 소진 근거 조사 — 근거 없음 (조사일 2026-10-03)
+
+알림 규칙 `quota_exceeded`(backend ADR 0051 §1)를 켤 근거, 곧 **쿼터·사용 한도 소진을 속도 제한과 구분해 나타내는 OTel 이벤트·속성**이
+공식 문서에 있는지 봤다. 문서는 서문과 같이 웹 조회 도구가 요약한 형태로 읽었다.
+
+- `code.claude.com/docs/en/monitoring-usage` — `claude_code.api_error` 의 속성은 `model`·`error`("Error message")·`status_code`
+  ("HTTP status code as a number. Absent for non-HTTP errors such as connection failures.")·`duration_ms`·`attempt`·`request_id`·
+  `client_request_id`·`speed`·`query_source`·`effort`·귀속 속성이다. `claude_code.api_retries_exhausted` 는 `model`·`error`("Final error
+  message")·`status_code`·`total_attempts`·`total_retry_duration_ms`·`speed` 다. 한도·쿼터를 가리키는 이벤트·속성·값은 없고,
+  이 페이지에서 limit·quota·429 를 말하는 문장을 찾지 못했다. 메트릭(`claude_code.cost.usage` 등)에도 없다.
+- `code.claude.com/docs/en/errors` — 클라이언트는 한도를 **화면 메시지**로 구분한다: 계획 한도 "You've hit your session limit · resets
+  3:45pm"(주간·모델별도 같은 꼴), 일시 제한 "API Error: Server is temporarily limiting requests (not your usage limit)", 그 밖의 429
+  "API Error: Request rejected (429) · this may be a temporary capacity issue.", 지출 한도 "You've hit your monthly spend limit · …",
+  게이트웨이 지출 한도 "spend limit reached (daily; …)". 구분의 근거는 응답 헤더다 — "Claude Code tells these apart from your plan limit
+  by the absence of the unified quota headers a real limit response carries", 게이트웨이 지출 한도 429 는 `x-should-retry: false`.
+  이 헤더와 구분 결과를 OTel 로 내보낸다는 진술은 없다. 문구는 버전마다 바뀐다("Before v2.1.239, the message didn't name the plan
+  window's reset time") — `error` 의 값은 계약된 어휘가 아니다. 한도에 걸린 뒤 "Claude Code blocks further requests until the reset
+  time" 이므로 그 동안 `api_error` 가 나오는지도 문서로 알 수 없다.
+- `code.claude.com/docs/en/changelog` — OTel 항목 가운데 한도·쿼터·429 를 다루는 것은 찾지 못했다.
+- 실캡처: §7 대로 `api_error`·`api_retries_exhausted` 가 없다.
+
+결론: **같은 `status_code=429` 를 일시 제한·API 키 한도·게이트웨이 지출 한도가 함께 쓰고, 한도 소진을 가리키는 OTel 속성은 정의돼
+있지 않다.** 429 나 오류 메시지 문구를 한도 초과로 바꾸지 않는다 — `api_error` 매핑(`error_type = unknown`, `http_status`)은 그대로다.
+해소 조건: 공식 문서가 OTel 이벤트·속성으로 한도 소진을 정의하거나, 한도 소진 시점의 실캡처가 안정된 구분 값을 보여 줄 때.
+
 ## 8. 스팬과 메트릭
 
 - 스팬 여섯(`claude_code.interaction`·`llm_request`·`tool`·`tool.execution`·`tool.blocked_on_user`·`hook`)만 행이 된다. 실캡처에

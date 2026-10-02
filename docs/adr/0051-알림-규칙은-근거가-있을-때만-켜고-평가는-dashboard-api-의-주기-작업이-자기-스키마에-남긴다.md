@@ -151,6 +151,10 @@ dashboard-api 의 원천 계정은 읽기 전용이다(ADR 0022 §4). 쓰려면 
 ## Follow-up
 
 - 알림 발송(메일 등)은 범위 밖이다 — 저장·조회·확인뿐이다. 발송을 더하려면 이 ADR 을 개정한다.
-- 한도 초과의 근거: Claude Code `api_error` 실캡처와 fixture.
+- 한도 초과의 근거: Claude Code `api_error` 실캡처와 fixture. 공식 문서 조사(Claude Code·Codex 의 OTel 이벤트·속성)에서도 쿼터·사용 한도 소진을
+  속도 제한과 구분하는 정의된 속성·값을 찾지 못했다 — 클라이언트의 구분은 응답 헤더와 화면 메시지에 있고 OTel 에는 상태 코드와 자유 문자열 오류만 있다.
+  조사 기록(조사일·문서·인용)은 `libs/telemetry-adapter/src/test/resources/otlp-v2/claude_code/PROFILE-EVIDENCE.md` §7.1 과 같은 디렉터리의
+  `codex/PROFILE-EVIDENCE.md` "한도·쿼터 소진 근거 조사"다. `quota_exceeded` 는 계속 `source_not_available` 이다.
+  공식 문서가 OTel 로 한도 소진을 정의하거나 한도 소진 시점의 실캡처가 안정된 구분 값을 보여 주면 이 ADR 을 개정한다.
 - 허브 PRD 개정 제안의 제품 문서 소유자 검토, 허브 ADR 0007 리뷰에 알림 평가 기록 포함.
 - 운영: enrollment 계정의 알림 표 SELECT 권한, 평가 주기(`pulsemetry.dashboard.alerts.evaluation-interval`)·선점 기한(`.lease`) 주입.
