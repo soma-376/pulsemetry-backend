@@ -22,14 +22,22 @@ docker compose ps -a dev-seed
 Compose 서비스 이름과 고정 개발 계정만 사용하고 Docker 소켓은 사용하지 않는다.
 
 최초 적재 기준일은 서울 기준 실행일이며 시나리오 기본값은 `A,B,C`다. 선택적으로 지정할 수 있다.
+빈 조직 D·E(아래 시나리오 표)는 기본 목록에 없다 — 파괴적 E2E 를 돌릴 격리 DB에서만 `A,B,C,D,E`처럼 명시한다.
 
 ```powershell
 $env:PULSEMETRY_LOCAL_SEED_DATE = '2026-09-28'
 $env:PULSEMETRY_LOCAL_SEED_SCENARIOS = 'A,B,C'
+$env:PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT = 'http://localhost:4316'
 docker compose up -d --build
 ```
 
-시드 조직은 A/B/C 세 개다. A는 정책 확인·활성 벤더 선택·온보딩 완료 상태이며 B/C는 미완료다.
+`PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT`는 시드 manifest(A·C·E)의 수신 주소다. 비우면 `http://localhost:4316`(이 Compose 의 ingest)이고,
+호스트가 있는 http(s) 주소만 받는다(사용자 정보·쿼리·조각 불가). telemetryctl 은 http 를 호스트가 `localhost`일 때만 받으므로
+다른 포트의 ingest 를 쓰는 격리 스택은 `http://localhost:<포트>`로 준다. 실제로 쓴 주소는 `plan`·`init` 출력의 `otlp_endpoint`에 나온다.
+**주소는 지문에 들지 않는다** — 주소만 바꿨다고 기존 볼륨에 reset 을 요구하지 않고 `verify`도 manifest 의 주소를 비교하지 않는다.
+대신 이미 적재된 manifest 의 주소는 바뀌지 않는다. 새 주소로 다시 쓰려면 그 시나리오를 reset 한 뒤 적재한다.
+
+시드 조직은 기본 A/B/C 세 개(+ 명시하면 빈 조직 D/E)다. A는 정책 확인·활성 벤더 선택·온보딩 완료 상태이며 B/C/D/E는 미완료다.
 B는 조직과 `owner@seed-b.example.test` 한 명만 생성한다. manifest·수집 이력·팀·벤더도 없다.
 조직 생성 트리거가 필수 초기 상태인 빈 수집 요약을 함께 만든다(ADR 0034). 수신·관측 시각은 모두 NULL이며
 신규 B의 개요 응답은 `200`, `meta.dataState=never_observed`, `ingest.status=empty`다.
@@ -38,7 +46,7 @@ A/C는 자동 생성된 요약에 합성 이력을 채운다. 기존 조직의 �
 `tenants.onboarding_completed`는 완료 시각에서 계산하므로 시각과 완료 여부가 어긋나지 않는다.
 기존 기본 로컬 개발 조직과 `local-owner@example.com`은 더 이상 생성하지 않는다(ADR 0032).
 CLI 설치는 A의 `plan`에 나오는 대기 초대 또는 관리자 API로 발급한 새 초대를 사용한다.
-시드 manifest의 수신 주소는 `http://localhost:4316`이다.
+시드 manifest의 수신 주소는 기본 `http://localhost:4316`이다(`PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT`로 바꾼다).
 기존 ready 데이터는 자동 갱신하지 않는다. 새 시나리오 정의와 엄격히 비교하려면 해당 조직을 명시적으로 reset 후 재적재한다.
 
 ## 서버 실행
@@ -100,6 +108,8 @@ PostgreSQL·ClickHouse 볼륨을 삭제하므로 시드 외에 직접 추가한 
 | A | `1b59ab21-1788-35e0-bfd7-23baa88a35b4` | 온보딩 완료·선택 제품 4개. 관리자 2명·일반 구성원 10명·초대 대기 2명. 4팀+미배정, 팀 이동, 설치 11대. 두 도구·6모델의 56일 사용 이력 |
 | B | `db1c8c6b-6970-38c6-821a-eb5e61b7a180` | 조직과 오너 1명만 존재. 첫 로그인·최초 온보딩용 |
 | C | `4769355c-a20e-327f-89fc-fef69e94dfb6` | 8명, 이벤트 15건. 미확인 모델, 토큰·비용 누락, 과거 사용, 계약 없음, 어느 카탈로그 제품에도 매핑되지 않는 관측(`product = unknown`, 사용량 행 아님) 1건 |
+| D | `e77dd38f-4e6c-33ff-84bd-79c8a53ba900` | 명시할 때만. B처럼 조직과 오너(`owner@seed-d.example.test`) 1명만 존재. 온보딩을 끝까지 돌리는 파괴적 E2E용 — A·B·C를 바꾸지 않는다 |
+| E | `bd6fe5c2-6fdd-3433-b77e-5d5334b0bb8e` | 명시할 때만. 오너가 수집 정책 1판을 저장했고(온보딩 미완료, 벤더·팀 없음) 초대한 구성원 `member1@seed-e.example.test`의 설치 코드가 있다. 설치·수신 없음 — 데몬 등록 흐름용. 코드는 `plan`의 `invitation_codes.pending` |
 
 기준일 직전 28일이 현재 조회 구간이고 그 앞 28일은 이전 구간이다. 기준일 `2026-09-29`라면
 현재 `2026-09-01`~`2026-09-28`, 이전 `2026-08-04`~`2026-08-31`이다(서울 시간).
@@ -109,7 +119,7 @@ A의 현재 활성 사용자는 8명, 이전 구간은 과거 전용 사용자 1
 서로 다른 도구의 토큰 의미를 억지로 통일하지 않는다. API의 혼합 토큰 합계·비교 등은 null/unavailable일 수 있다.
 
 계정은 `owner@seed-a.example.test` 또는 `admin@seed-a.example.test`다. C는 `seed-c`로 바꾼다.
-B 계정은 `owner@seed-b.example.test` 하나뿐이다.
+B 계정은 `owner@seed-b.example.test` 하나뿐이다. D·E는 `owner@seed-d.example.test`·`owner@seed-e.example.test`다.
 개발용 비밀번호는 `Pulsemetry-local-2026!`이며 DB에는 BCrypt 해시로 저장한다.
 실제 로그인에는 해당 조직 ID도 함께 보낸다. 초대 코드는 `plan` 출력에서 확인한다.
 

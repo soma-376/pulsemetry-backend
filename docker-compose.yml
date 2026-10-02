@@ -82,6 +82,8 @@ services:
       # 빈 날짜는 서울 기준 오늘. 완료된 시드는 날짜가 달라져도 보존한다.
       PULSEMETRY_LOCAL_SEED_DATE: ${PULSEMETRY_LOCAL_SEED_DATE:-}
       PULSEMETRY_LOCAL_SEED_SCENARIOS: ${PULSEMETRY_LOCAL_SEED_SCENARIOS:-A,B,C}
+      # 시드 manifest 의 수신 주소. 비우면 http://localhost:4316. 지문에 들지 않는다(tools/dev-seed/README.md).
+      PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT: ${PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT:-}
 
 volumes:
   pulsemetry-postgres-data:

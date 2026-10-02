@@ -107,13 +107,13 @@ class SeedStore private constructor(private val pg: Connection, private val clic
         return "적재 및 검증 완료"
     }
 
-    fun ensureOnStartup(name: String, asOf: LocalDate): String {
-        require(name in listOf("A", "B", "C"))
+    fun ensureOnStartup(name: String, asOf: LocalDate, otlpEndpoint: String = DEFAULT_OTLP_ENDPOINT): String {
+        require(name in SCENARIOS)
         val tenant = sql(id(name))
         val state = scalar("SELECT state FROM dev_seed.dashboard_datasets WHERE tenant_id=$tenant")
         val slug = scalar("SELECT slug FROM enrollment.tenants WHERE id=$tenant")
         if (!shouldSeedOnStartup(state, slug, name)) return "이미 준비된 시드 — 개발 중 변경 유지 (검증은 verify)"
-        return "$asOf 기준 ${apply(scenario(name, asOf))}"
+        return "$asOf 기준 ${apply(scenario(name, asOf, otlpEndpoint))}"
     }
 
     fun verify(data: SeedData) {
@@ -121,11 +121,15 @@ class SeedStore private constructor(private val pg: Connection, private val clic
         check(scalar("SELECT count(*) FROM telemetry_ops.tenant_ingest_summary WHERE tenant_id=$tenant") == "1") {
             "${data.scenario}: 조직 생성 시 초기화해야 하는 수집 요약이 없습니다."
         }
-        if (data.scenario == "B") check(scalar("""SELECT count(*) FROM telemetry_ops.tenant_ingest_summary
+        if (data.scenario in setOf("B", "D", "E")) check(scalar("""SELECT count(*) FROM telemetry_ops.tenant_ingest_summary
             WHERE tenant_id=$tenant AND first_received_at IS NULL AND first_observed_at IS NULL
-            AND last_received_at IS NULL AND NOT has_pre_ledger_history""") == "1") { "B: 신규 조직의 수집 요약이 비어 있지 않습니다." }
+            AND last_received_at IS NULL AND NOT has_pre_ledger_history""") == "1") { "${data.scenario}: 신규 조직의 수집 요약이 비어 있지 않습니다." }
         for ((table, rows) in data.rows) for (row in rows) {
-            val predicate = row.entries.joinToString(" AND ") { (key, value) -> "$key IS NOT DISTINCT FROM ${sql(value)}" }
+            // manifest 의 수신 주소는 지문처럼 비교에서 뺀다 — 적재한 뒤 주소 설정만 바꿔도 검증이 실패하지 않는다(README).
+            val predicate = row.entries.joinToString(" AND ") { (key, value) ->
+                if (table == "enrollment.manifests" && key == "manifest") "manifest #- '{otlp,endpoint}' IS NOT DISTINCT FROM CAST(${sql(value)} AS jsonb) #- '{otlp,endpoint}'"
+                else "$key IS NOT DISTINCT FROM ${sql(value)}"
+            }
             check(scalar("SELECT count(*) FROM $table WHERE $predicate") == "1") { "${data.scenario}: $table 시드 행이 기대값과 다릅니다." }
         }
         for ((table, expected, identity) in listOf(Triple("telemetry_events", data.events, "observation_id"), Triple("telemetry_ingest_ledger", data.ledger, "receipt_id"))) {
@@ -174,7 +178,7 @@ class SeedStore private constructor(private val pg: Connection, private val clic
     }
 
     fun reset(scenario: String): String {
-        require(scenario in listOf("A", "B", "C"))
+        require(scenario in SCENARIOS)
         val tenant = sql(id(scenario))
         if (scalar("SELECT tenant_id FROM dev_seed.dashboard_datasets WHERE tenant_id=$tenant") == null) return "실행 기록 없음 (삭제 없음)"
         val slug = scalar("SELECT slug FROM enrollment.tenants WHERE id=$tenant")
@@ -201,7 +205,7 @@ class SeedStore private constructor(private val pg: Connection, private val clic
 private fun identifier(value: String): String { require(Regex("[a-z_][a-z0-9_]*").matches(value)); return value }
 
 internal fun resetStatements(scenario: String, present: Set<String>): List<String> {
-    require(scenario in listOf("A", "B", "C"))
+    require(scenario in SCENARIOS)
     val tenant = sql(id(scenario))
     val members = "SELECT id FROM enrollment.members WHERE tenant_id=$tenant"
     val installations = "SELECT id FROM enrollment.installations WHERE tenant_id=$tenant"

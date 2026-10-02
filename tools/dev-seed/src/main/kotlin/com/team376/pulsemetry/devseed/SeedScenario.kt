@@ -2,6 +2,7 @@ package com.team376.pulsemetry.devseed
 
 import tools.jackson.databind.json.JsonMapper
 import java.math.BigDecimal
+import java.net.URI
 import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.ZoneId
@@ -21,6 +22,27 @@ internal fun sql(value: Any?): String = when (value) {
     else -> "'" + value.toString().replace("'", "''") + "'"
 }
 
+/** 시드 조직. A·B·C 가 기본 초기화 대상이고 D·E 는 파괴적 E2E 용 빈 조직이다(명시해야 만든다). */
+internal val SCENARIOS = listOf("A", "B", "C", "D", "E")
+internal const val SCENARIO_CHOICES = "A,B,C,D,E"
+
+/** 시드 manifest 의 OTLP 수신 주소 기본값 — 개발 Compose 의 ingest(4316). */
+const val DEFAULT_OTLP_ENDPOINT = "http://localhost:4316"
+internal const val OTLP_ENDPOINT_ENV = "PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT"
+
+/**
+ * 시드 manifest 의 수신 주소. 비어 있으면 [DEFAULT_OTLP_ENDPOINT] 다. http·https 이고 호스트가 있어야 하며 사용자 정보·쿼리·조각을 받지 않는다.
+ * 원격 telemetryctl 은 http 를 호스트가 `localhost` 일 때만 받는다(`internal/contract/manifest.go`) — 격리 스택은 `http://localhost:<포트>` 를 쓴다.
+ */
+fun otlpEndpoint(environment: Map<String, String>): String {
+    val raw = environment[OTLP_ENDPOINT_ENV]?.trim().takeUnless { it.isNullOrEmpty() } ?: return DEFAULT_OTLP_ENDPOINT
+    val uri = runCatching { URI(raw) }.getOrNull()
+    require(uri != null && uri.scheme in setOf("http", "https") && !uri.host.isNullOrBlank() && uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null) {
+        "$OTLP_ENDPOINT_ENV 는 호스트가 있는 http(s) 주소여야 합니다: $raw"
+    }
+    return raw.trimEnd('/')
+}
+
 // 공개된 로컬 개발용 계정이다. 운영 계정에는 사용하지 않는다.
 const val SEED_PASSWORD = "Pulsemetry-local-2026!"
 private const val PASSWORD_HASH = "\$2a\$12\$1UOJpgz.rEryDueX68mqxebO4v9zLldEp7P/pn.otP4IBwDgsQKKm"
@@ -32,9 +54,14 @@ data class SeedData(
     val events: List<Row>,
     val ledger: List<Row>,
     val invitationCodes: Map<String, String>,
+    /** manifest 에 쓴 수신 주소. */
+    val otlpEndpoint: String = DEFAULT_OTLP_ENDPOINT,
+    /** 기본 주소로 만든 같은 시드의 지문. 주소가 기본이 아닐 때만 있다. */
+    internal val defaultEndpointFingerprint: String? = null,
 ) {
     val tenantId = id(scenario)
-    val fingerprint: String get() = hash(encode(listOf(1, scenario, asOf.toString(), rows, events, ledger)))
+    /** 수신 주소는 지문에 넣지 않는다 — 주소만 바꿨다고 기존 볼륨에 reset 을 요구하지 않는다. 주소가 다르면 기본 주소로 만든 같은 시드의 지문이다. */
+    val fingerprint: String get() = defaultEndpointFingerprint ?: hash(encode(listOf(1, scenario, asOf.toString(), rows, events, ledger)))
 
     fun summary(): Row {
         val start = asOf.minusDays(28).atStartOfDay(seoul).toInstant().toString()
@@ -52,14 +79,22 @@ data class SeedData(
             "period_known_estimated_usd" to current.mapNotNull { it["cost_estimated_usd"] as? BigDecimal }.fold(BigDecimal.ZERO, BigDecimal::add),
             "period_cost_complete" to current.all { it["cost_estimated_usd"] != null },
             "owner_email" to rows.getValue("enrollment.members").first()["email"],
-            "development_password" to SEED_PASSWORD, "invitation_codes" to invitationCodes)
+            "development_password" to SEED_PASSWORD, "invitation_codes" to invitationCodes, "otlp_endpoint" to otlpEndpoint)
     }
 }
 
-/** 서버·인증·수집 파이프라인을 실행하지 않는 합성 데이터 생성기다. */
-fun scenario(name: String, asOf: LocalDate): SeedData {
-    require(name in listOf("A", "B", "C"))
-    if (name == "B") return newOrganizationScenario(asOf)
+/** 서버·인증·수집 파이프라인을 실행하지 않는 합성 데이터 생성기다. [otlpEndpoint] 는 manifest 의 수신 주소이고 지문에 들지 않는다. */
+fun scenario(name: String, asOf: LocalDate, otlpEndpoint: String = DEFAULT_OTLP_ENDPOINT): SeedData {
+    require(name in SCENARIOS) { "시나리오는 $SCENARIO_CHOICES 중 선택하세요." }
+    val data = generate(name, asOf, otlpEndpoint)
+    return if (otlpEndpoint == DEFAULT_OTLP_ENDPOINT) data
+    else data.copy(otlpEndpoint = otlpEndpoint, defaultEndpointFingerprint = generate(name, asOf, DEFAULT_OTLP_ENDPOINT).fingerprint)
+}
+
+private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedData {
+    if (name == "B") return emptyOrganization("B", "신규 조직", asOf)
+    if (name == "D") return emptyOrganization("D", "빈 조직(온보딩 시험)", asOf)
+    if (name == "E") return enrollmentOrganization(asOf, otlpEndpoint)
     val base = asOf.atStartOfDay(seoul)
     fun at(days: Long, hours: Long = 0) = base.plusDays(days).plusHours(hours).toInstant().toString()
     val origin = at(-60)
@@ -100,7 +135,7 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
     val manifestId = id("$name/manifest")
     val privacy = listOf("user_prompts", "assistant_responses", "tool_details", "tool_content", "user_email", "raw_api_bodies").associate { "collect_$it" to false }
     fun manifest(revision: Int, privacy: Map<String, Boolean>) = linkedMapOf("schema_version" to 1, "config_revision" to revision,
-        "otlp" to mapOf("endpoint" to "http://localhost:4316", "protocol" to "http/protobuf"),
+        "otlp" to mapOf("endpoint" to otlpEndpoint, "protocol" to "http/protobuf"),
         "signals" to mapOf("logs" to true, "metrics" to true, "traces" to true), "privacy" to privacy)
     add("enrollment.manifests", "id" to manifestId, "tenant_id" to tenant, "version" to 1, "manifest" to encode(manifest(1, privacy)),
         "is_active" to (name != "A"), "created_by_member_id" to member(0), "created_at" to origin, "activated_at" to origin)
@@ -318,7 +353,7 @@ fun scenario(name: String, asOf: LocalDate): SeedData {
     add("telemetry_ops.tenant_ingest_summary", "tenant_id" to tenant, "first_received_at" to ledger.minOfOrNull { it["received_time"].toString() },
         "first_observed_at" to events.minOfOrNull { it["source_time"].toString() }, "last_received_at" to ledger.maxOfOrNull { it["received_time"].toString() },
         "has_pre_ledger_history" to false, "updated_at" to at(0))
-    return SeedData(name, asOf, rows, events, ledger, codes)
+    return SeedData(name, asOf, rows, events, ledger, codes, otlpEndpoint)
 }
 
 /**
@@ -380,19 +415,47 @@ private fun meteredBilling(name: String, tenant: String, origin: String, readAt:
 }
 
 /** B는 조직과 오너만 만든다. A/C의 팀·설정·수집 데이터 생성 경로를 공유하지 않는다. */
-private fun newOrganizationScenario(asOf: LocalDate): SeedData {
-    val tenant = id("B")
+/** 정책·벤더·팀이 없는 조직과 오너 하나. B 는 첫 온보딩 화면용, D 는 온보딩을 끝까지 돌리는 파괴적 E2E 용이다(A·B·C 를 바꾸지 않는다). */
+private fun emptyOrganization(name: String, label: String, asOf: LocalDate): SeedData {
+    val tenant = id(name)
     val origin = asOf.minusDays(60).atStartOfDay(seoul).toInstant().toString()
     val rows = linkedMapOf<String, MutableList<Row>>(
         "enrollment.tenants" to mutableListOf(linkedMapOf(
-            "id" to tenant, "name" to "시드 B · 신규 조직", "slug" to "pulsemetry-seed-b",
+            "id" to tenant, "name" to "시드 $name · $label", "slug" to "pulsemetry-seed-${name.lowercase()}",
             "timezone" to "Asia/Seoul", "status" to "active", "created_at" to origin, "updated_at" to origin,
         )),
         "enrollment.members" to mutableListOf(linkedMapOf(
-            "id" to id("B/member/0"), "tenant_id" to tenant, "email" to "owner@seed-b.example.test",
-            "display_name" to "B 구성원 00", "role" to "owner", "status" to "active", "password_hash" to PASSWORD_HASH,
+            "id" to id("$name/member/0"), "tenant_id" to tenant, "email" to "owner@seed-${name.lowercase()}.example.test",
+            "display_name" to "$name 구성원 00", "role" to "owner", "status" to "active", "password_hash" to PASSWORD_HASH,
             "created_at" to origin, "updated_at" to origin,
         )),
     )
-    return SeedData("B", asOf, rows, emptyList(), emptyList(), emptyMap())
+    return SeedData(name, asOf, rows, emptyList(), emptyList(), emptyMap())
+}
+
+/**
+ * E — 원격 데몬 흐름용 조직. 오너가 수집 정책 1판을 저장했고(온보딩의 정책 확인까지, 벤더·팀은 없다) 초대한 구성원 하나의 설치 코드가 있다.
+ * 설치·수신·설치 보고는 없다 — 데몬이 그 코드로 등록하는 데서 시작한다. 코드는 plan 의 `invitation_codes.pending` 이다(개발 시드 전용 값).
+ */
+private fun enrollmentOrganization(asOf: LocalDate, otlpEndpoint: String): SeedData {
+    val name = "E"
+    val base = emptyOrganization(name, "데몬 등록", asOf)
+    val tenant = base.tenantId
+    val origin = asOf.minusDays(60).atStartOfDay(seoul).toInstant().toString()
+    val rows = base.rows
+    fun add(table: String, vararg fields: Pair<String, Any?>) { rows.getOrPut(table) { mutableListOf() }.add(linkedMapOf(*fields)) }
+    val owner = id("$name/member/0")
+    add("enrollment.members", "id" to id("$name/member/1"), "tenant_id" to tenant, "email" to "member1@seed-e.example.test",
+        "display_name" to "E 구성원 01", "role" to "member", "status" to "invited", "password_hash" to null, "created_at" to origin, "updated_at" to origin)
+    val privacy = listOf("user_prompts", "assistant_responses", "tool_details", "tool_content", "user_email", "raw_api_bodies").associate { "collect_$it" to false }
+    val manifest = linkedMapOf("schema_version" to 1, "config_revision" to 1, "otlp" to mapOf("endpoint" to otlpEndpoint, "protocol" to "http/protobuf"),
+        "signals" to mapOf("logs" to true, "metrics" to true, "traces" to true), "privacy" to privacy)
+    add("enrollment.manifests", "id" to id("$name/manifest"), "tenant_id" to tenant, "version" to 1, "manifest" to encode(manifest),
+        "is_active" to true, "created_by_member_id" to owner, "created_at" to origin, "activated_at" to origin)
+    add("enrollment.organization_onboarding", "tenant_id" to tenant, "policy_confirmed_at" to origin, "policy_confirmed_by" to owner, "completed_by" to null)
+    val code = hash("seed-$name-1-pending").take(12).uppercase().chunked(4).joinToString("-")
+    add("enrollment.invitations", "id" to id("$name/invitation/1/pending"), "tenant_id" to tenant, "target_member_id" to id("$name/member/1"),
+        "created_by_member_id" to owner, "code_hash" to hash(code), "used_at" to null,
+        "expires_at" to asOf.plusDays(30).atStartOfDay(seoul).toInstant().toString(), "created_at" to origin)
+    return SeedData(name, asOf, rows, emptyList(), emptyList(), mapOf("pending" to code), otlpEndpoint)
 }

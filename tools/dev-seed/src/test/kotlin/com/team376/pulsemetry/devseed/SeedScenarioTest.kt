@@ -162,6 +162,63 @@ class SeedScenarioTest {
         assertTrue(b.events.isEmpty()); assertTrue(b.ledger.isEmpty())
     }
 
+    @Test fun `수신 주소를 바꿔도 A·B·C 의 지문은 이 기능 전과 같다 — 주소는 manifest 에만 들고 지문에 들지 않는다`() {
+        // 이 기능을 넣기 전 생성기의 지문(기존 볼륨이 reset 없이 그대로 맞아야 한다).
+        val before = mapOf(
+            "2026-09-28" to mapOf("A" to "7bb853e766593c769f6b96833b35a9ca1229ceede1c8071928c0cede01d1709c", "B" to "1a4e9cd3e8e756a135a6b169c3a08dd16b12b7890c74684afd940475533ad311",
+                "C" to "b650deeed60a2c89ff0bbf69afd631e77d93bcd8260fe2a5f0023779a4e6e712"),
+            "2026-10-01" to mapOf("A" to "040326cbe9dd94efb844af8e119fd00b3557fd4f55eeb8930ba3220f25e15a6a", "B" to "305c5f56c146520663c041ed860845c57699234230f8736cf6551bf411ee15c8",
+                "C" to "9ae368f5a64344f088bed1c50d119463eb6153038e457b1e10792adf57c5282e"))
+        for ((day, prints) in before) for ((name, print) in prints) {
+            assertEquals(print, scenario(name, LocalDate.parse(day)).fingerprint, "$day $name")
+            assertEquals(print, scenario(name, LocalDate.parse(day), "http://localhost:24316").fingerprint, "$day $name — 주소만 다름")
+        }
+        val moved = scenario("A", date, "http://localhost:24316")
+        val endpoints = moved.rows.getValue("enrollment.manifests").map { json.readTree(it["manifest"].toString()).at("/otlp/endpoint").asString() }
+        assertEquals(listOf("http://localhost:24316", "http://localhost:24316"), endpoints)
+        assertEquals(a.rows.getValue("enrollment.manifests").map { json.readTree(it["manifest"].toString()).at("/otlp/endpoint").asString() }.toSet(), setOf("http://localhost:4316"))
+        // 주소 밖의 내용은 같다.
+        assertEquals(a.rows.keys, moved.rows.keys); assertEquals(a.events, moved.events)
+        // plan 출력이 실제로 쓴 주소를 말한다.
+        assertEquals("http://localhost:24316", moved.summary()["otlp_endpoint"])
+        assertEquals("http://localhost:4316", a.summary()["otlp_endpoint"])
+    }
+
+    @Test fun `D 는 B 처럼 조직과 오너만 있는 빈 조직이다`() {
+        val d = scenario("D", date)
+        assertEquals(setOf("enrollment.tenants", "enrollment.members"), d.rows.keys)
+        assertEquals("owner@seed-d.example.test", d.rows.getValue("enrollment.members").single()["email"])
+        assertEquals("pulsemetry-seed-d", d.rows.getValue("enrollment.tenants").single()["slug"])
+        assertTrue(d.invitationCodes.isEmpty() && d.events.isEmpty() && d.ledger.isEmpty())
+        assertEquals(id("D"), d.tenantId)
+        assertTrue(setOf(a, b, c).none { it.tenantId == d.tenantId })
+    }
+
+    @Test fun `E 는 정책 1판과 설치 초대 코드가 있고 설치·수신이 없는 데몬 등록용 조직이다`() {
+        val e = scenario("E", date, "http://localhost:24316")
+        assertEquals(setOf("enrollment.tenants", "enrollment.members", "enrollment.manifests", "enrollment.organization_onboarding", "enrollment.invitations"), e.rows.keys)
+        val manifest = e.rows.getValue("enrollment.manifests").single()
+        assertEquals(listOf(1, true), listOf(manifest["version"], manifest["is_active"]))
+        val body = json.readTree(manifest["manifest"].toString())
+        assertEquals(listOf("http://localhost:24316", "1"), listOf(body.at("/otlp/endpoint").asString(), body.at("/config_revision").asString()))
+        // 정책은 확인했지만 온보딩은 끝나지 않았다(벤더·팀 없음).
+        assertNull(e.rows.getValue("enrollment.organization_onboarding").single()["completed_by"])
+        assertNull(e.rows.getValue("enrollment.tenants").single()["onboarding_completed_at"])
+        val members = e.rows.getValue("enrollment.members").associateBy { it["email"] }
+        assertEquals(listOf("owner", "active"), listOf(members.getValue("owner@seed-e.example.test")["role"], members.getValue("owner@seed-e.example.test")["status"]))
+        assertEquals("invited", members.getValue("member1@seed-e.example.test")["status"])
+        // 초대 코드는 원본이 plan 에만 나오고 행에는 해시만 있다. 아직 쓰지 않았고 기준일 뒤에 끝난다.
+        val code = e.invitationCodes.getValue("pending")
+        val invitation = e.rows.getValue("enrollment.invitations").single()
+        assertEquals(listOf(hash(code), null, members.getValue("member1@seed-e.example.test")["id"]), listOf(invitation["code_hash"], invitation["used_at"], invitation["target_member_id"]))
+        assertTrue(Instant.parse(invitation["expires_at"].toString()) > date.atStartOfDay(seoul).toInstant())
+        assertTrue(Regex("[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}").matches(code))
+        assertTrue(e.events.isEmpty() && e.ledger.isEmpty() && "enrollment.installations" !in e.rows)
+        assertEquals(mapOf("pending" to code), e.summary()["invitation_codes"])
+        // E 의 지문도 주소에 따라 바뀌지 않는다.
+        assertEquals(scenario("E", date).fingerprint, e.fingerprint)
+    }
+
     @Test fun `알 수 없는 비용과 무료 계약을 구분한다`() {
         val incomplete = c.events.filter { (it["quality_flags"] as List<*>).isNotEmpty() }
         assertEquals(4, incomplete.size)
@@ -391,6 +448,8 @@ class SeedScenarioTest {
         assertEquals(tables.size, statements.size)
         assertTrue(statements.all { "WHERE" in it && id("A") in it && id("B") !in it && "TRUNCATE" !in it })
         assertFailsWith<IllegalArgumentException> { resetStatements("real-tenant", tables) }
+        // 빈 조직 D·E 도 자기 조직만 지운다.
+        for (name in listOf("D", "E")) assertTrue(resetStatements(name, tables).all { id(name) in it && id("A") !in it })
         // 작업 기록은 구성원을 가리킨다. 대상 → 작업 → 구성원 순서로 지운다.
         val order = resetStatements("A", tables + setOf("operations", "operation_targets", "retention_cleanup_requests")).map { it.substringAfter("enrollment.").substringBefore(" ") }
         assertTrue(order.indexOf("operation_targets") < order.indexOf("operations") && order.indexOf("operations") < order.indexOf("members"))
