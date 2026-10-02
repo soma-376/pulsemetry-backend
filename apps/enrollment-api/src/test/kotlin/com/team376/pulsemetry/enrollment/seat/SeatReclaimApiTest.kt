@@ -33,7 +33,6 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDate
 import java.util.UUID
 
 /**
@@ -60,7 +59,7 @@ class SeatReclaimApiTest : AbstractUserAuthApiTest() {
         val vendors = MockVendorServer()
 
         @JvmStatic @DynamicPropertySource fun vendorApis(registry: DynamicPropertyRegistry) {
-            listOf("copilot", "claude_enterprise", "cursor_enterprise", "gemini").forEach { id ->
+            listOf("claude_enterprise", "cursor_enterprise").forEach { id ->
                 registry.add("pulsemetry.vendor-connections.base-urls.$id") { vendors.base.toString() }
             }
         }
@@ -71,22 +70,23 @@ class SeatReclaimApiTest : AbstractUserAuthApiTest() {
     @Autowired private lateinit var ledger: SeatLedger
     @Autowired private lateinit var manager: PlatformTransactionManager
 
-    private val copilotSeats = "/orgs/octo-org/copilot/billing/seats"
-    private val selectedUsers = "/orgs/octo-org/copilot/billing/selected_users"
+    private val cursorMembers = "/teams/members"
+    private val removeMember = "/teams/remove-member"
     private val secret = "fake-vendor-credential-" + "r".repeat(24)
+    private val octo = "octo@example.test"
+    private val hubot = "hubot@example.test"
+    private val mona = "mona@example.test"
 
-    /** Copilot 좌석 셋(octocat·hubot·monalisa). */
+    /** Cursor 구성원 셋(octo·hubot·mona)과 빈 지출. */
     @BeforeEach fun vendorReplies() {
         vendors.received.clear()
-        listing("octocat" to null, "hubot" to null, "monalisa" to null)
+        listing(octo, hubot, mona)
+        vendors.on("POST", "/teams/spend", reply(200, """{"teamMemberSpend":[],"subscriptionCycleStart":1788220800000,"totalPages":1}"""))
     }
 
-    private fun listing(vararg seats: Pair<String, String?>) {
-        val rows = seats.joinToString(",") { (login, cancel) ->
-            """{"assignee":{"login":"$login","id":1,"type":"User"},"pending_cancellation_date":${cancel?.let { "\"$it\"" } ?: "null"},
-                "last_activity_at":null,"created_at":"2026-01-01T00:00:00Z","plan_type":"business"}"""
-        }
-        vendors.on("GET", copilotSeats, reply(200, """{"total_seats":${seats.size},"seats":[$rows]}"""))
+    private fun listing(vararg emails: String) {
+        val rows = emails.joinToString(",") { email -> """{"id":"user_${email.substringBefore('@')}","email":"$email","role":"member","isRemoved":false}""" }
+        vendors.on("GET", cursorMembers, reply(200, """{"teamMembers":[$rows]}"""))
     }
 
     private fun json(response: HttpResponse<String>): JsonNode = mapper.readTree(response.body())
@@ -107,9 +107,9 @@ class SeatReclaimApiTest : AbstractUserAuthApiTest() {
     private fun assign(vendor: JsonNode, account: String, token: String, tier: Boolean = true): JsonNode = ok(manage("POST", "/vendors/${vendor.path("vendorId").asString()}/seats",
         mapOf("account" to account) + if (tier) mapOf("tierId" to vendor.at("/contract/tiers/0/tierId").asString()) else emptyMap(), token), 201).path("seat")
 
-    private fun copilot(token: String): String {
-        val vendorId = vendor("copilot", "copilot_business", token, fee = "19").path("vendorId").asString()
-        ok(manage("PUT", "/vendors/$vendorId/connection", mapOf("expectedVersion" to 0, "settings" to mapOf("organization" to "octo-org"), "credential" to secret), token))
+    private fun cursor(token: String): String {
+        val vendorId = vendor("cursor", "cursor_enterprise", token, fee = "19").path("vendorId").asString()
+        ok(manage("PUT", "/vendors/$vendorId/connection", mapOf("expectedVersion" to 0, "settings" to emptyMap<String, String>(), "credential" to secret), token))
         assertThat(synchronizer.runOnce().applied).isEqualTo(1)
         return vendorId
     }
@@ -204,12 +204,12 @@ class SeatReclaimApiTest : AbstractUserAuthApiTest() {
         assertThat(errorOf(preview(token, dana to 2L, dana to 2L))).describedAs("같은 좌석 두 번").isEqualTo(400 to "invalid_request")
     }
 
-    @Test fun `벤더 제어 — 받아들인 대상만 원장에 옮기고 실패는 사유로 남아 부분 실패다, 예정 해제는 동기화가 예정일을 채우고 복원은 커넥터가 한다`() {
+    @Test fun `벤더 제어 — 받아들인 대상만 원장에 옮기고 실패는 사유로 남아 부분 실패다, 복원은 커넥터가 없어 관리자 조치 확인으로 끝난다`() {
         val token = adminToken()
-        val copilot = copilot(token)
-        val octocat = seat(copilot, "octocat").id.toString()
-        val hubot = seat(copilot, "hubot").id.toString()
-        val body = ok(preview(token, octocat to 1L, hubot to 1L))
+        val cursor = cursor(token)
+        val octoSeat = seat(cursor, octo).id.toString()
+        val hubotSeat = seat(cursor, hubot).id.toString()
+        val body = ok(preview(token, octoSeat to 1L, hubotSeat to 1L))
         assertThat(body.path("targets").toList().map { it.path("method").asString() }).containsOnly("vendor_control")
         // 동기화한 좌석에는 계약 등급이 없다 — 단가를 모르니 절감 추정은 없다. 회수 뒤 미배정은 5 − (3 − 2).
         assertThat(body.path("estimatedMonthlySavingsUsd").isNull && body.path("savingsBasis").isNull).isTrue()
@@ -217,81 +217,84 @@ class SeatReclaimApiTest : AbstractUserAuthApiTest() {
         val reclaim = ok(manage("POST", "/seat-reclaims", mapOf("previewId" to body.path("previewId").asString()), token), 202)
         val reclaimId = reclaim.path("operationId").asString()
         assertThat(reclaim.path("status").asString()).isEqualTo("running")
-        assertThat(vendors.requests(selectedUsers)).describedAs("접수만 했다 — 벤더 호출은 주기 실행이 한다").isEmpty()
+        assertThat(vendors.requests(removeMember)).describedAs("접수만 했다 — 벤더 호출은 주기 실행이 한다").isEmpty()
 
-        vendors.on("DELETE", selectedUsers, { request ->
-            if (request.body.contains("hubot")) MockVendorServer.Reply(403, """{"message":"Resource not accessible by integration"}""")
-            else MockVendorServer.Reply(200, """{"seats_cancelled":1}""")
+        vendors.on("POST", removeMember, { request ->
+            if (request.body.contains("user_hubot")) MockVendorServer.Reply(403, """{"error":"forbidden"}""")
+            else MockVendorServer.Reply(200, """{"success":true,"userId":"user_octo","hasBillingCycleUsage":false}""")
         })
         assertThat(controls.runOnce()).isEqualTo(SeatControlRunner.Round(completed = 1, failed = 1))
         with(operation(reclaimId)) {
             assertThat(status).isEqualTo(OperationStatus.PARTIALLY_FAILED)
-            assertThat(results(this)).isEqualTo(mapOf(octocat to listOf("succeeded", null, null), hubot to listOf("failed", "insufficient_permission", null)))
+            assertThat(results(this)).isEqualTo(mapOf(octoSeat to listOf("succeeded", null, null), hubotSeat to listOf("failed", "insufficient_permission", null)))
             assertThat(canRestore(clock.now)).isTrue()
         }
-        // Copilot 취소는 주기 말 효력 — 해제 예정이고, 응답에 날짜가 없어 예정일은 아직 모른다.
-        with(seat(copilot, "octocat")) { assertThat(listOf(state, source, releaseEffectiveOn)).containsExactly(SeatState.PENDING_RELEASE, SeatSource.VENDOR_CONTROL, null) }
-        assertThat(ledger.history(tenant, UUID.fromString(octocat)).last().operationId).isEqualTo(UUID.fromString(reclaimId))
-        assertThat(seat(copilot, "hubot").let { it.state to it.version }).describedAs("실패한 대상의 원장은 그대로").isEqualTo(SeatState.ASSIGNED to 1L)
-        assertThat(vendors.requests(selectedUsers).map { it.header("Authorization") }).containsOnly("Bearer $secret")
+        // Cursor 제거는 그 자리에서 끝난다(벤더 응답 success) — 해제다. 벤더 내부 ID 로 불렀다.
+        with(seat(cursor, octo)) { assertThat(listOf(state, source, releaseEffectiveOn)).containsExactly(SeatState.RELEASED, SeatSource.VENDOR_CONTROL, null) }
+        assertThat(ledger.history(tenant, UUID.fromString(octoSeat)).last().operationId).isEqualTo(UUID.fromString(reclaimId))
+        assertThat(seat(cursor, hubot).let { it.state to it.version }).describedAs("실패한 대상의 원장은 그대로").isEqualTo(SeatState.ASSIGNED to 1L)
+        assertThat(vendors.requests(removeMember).map { it.header("Authorization") })
+            .containsOnly("Basic " + java.util.Base64.getEncoder().encodeToString("$secret:".toByteArray()))
+        assertThat(vendors.requests(removeMember).map { mapper.readTree(it.body).path("userId").asString() }).containsExactlyInAnyOrder("user_octo", "user_hubot")
 
-        listing("octocat" to "2026-09-30", "hubot" to null, "monalisa" to null)
+        // 복원 — 회수에서 성공한 octo 만. 복원을 구현한 커넥터가 없어(ADR 0049·0054) 관리자가 벤더 콘솔에서 하고 확인한다. 시계가 7시간 흘러 다시 로그인한다.
         clock.now = clock.now.plus(Duration.ofHours(7))
-        synchronizer.runOnce()
-        assertThat(seat(copilot, "octocat").let { it.state to it.releaseEffectiveOn }).isEqualTo(SeatState.PENDING_RELEASE to LocalDate.parse("2026-09-30"))
-
-        // 복원 — 회수에서 성공한 octocat 만. Copilot 재배정(주기 안의 해제 예정 좌석을 되살린다). 시계가 7시간 흘러 다시 로그인한다.
         val fresh = mapper.readTree(login().body()).path("access_token").asString()
         val restore = ok(manage("POST", "/seat-reclaims/$reclaimId/restore", emptyMap<String, Any>(), fresh), 202)
-        assertThat(restore.path("results").toList().map { it.path("targetId").asString() to it.path("status").asString() }).containsExactly(octocat to "pending")
-        vendors.on("POST", selectedUsers, reply(201, """{"seats_created":1}"""))
-        assertThat(controls.runOnce()).isEqualTo(SeatControlRunner.Round(1, 0))
-        with(seat(copilot, "octocat")) { assertThat(listOf(state, source, releaseEffectiveOn)).containsExactly(SeatState.ASSIGNED, SeatSource.VENDOR_CONTROL, null) }
-        assertThat(operation(restore.path("operationId").asString()).status).isEqualTo(OperationStatus.SUCCEEDED)
+        val restoreId = restore.path("operationId").asString()
+        assertThat(listOf(restore.path("status").asString(), restore.at("/results/0/targetId").asString(), restore.at("/results/0/action").asString()))
+            .containsExactly("awaiting_admin_action", octoSeat, "restore_in_vendor_console")
+        val calls = vendors.received.size
+        assertThat(controls.runOnce()).describedAs("관리자 조치는 벤더를 부르지 않는다").isEqualTo(SeatControlRunner.Round(0, 0))
+        assertThat(vendors.received).hasSize(calls)
+        assertThat(seat(cursor, octo).state).describedAs("확인 전에는 원장 불변").isEqualTo(SeatState.RELEASED)
+        ok(manage("POST", "/operations/$restoreId/targets/$octoSeat/confirm", null, fresh))
+        with(seat(cursor, octo)) { assertThat(listOf(state, source)).containsExactly(SeatState.ASSIGNED, SeatSource.ADMIN_ACTION) }
+        assertThat(operation(restoreId).status).isEqualTo(OperationStatus.SUCCEEDED)
         assertThat(operation(reclaimId).canRestore(clock.now)).describedAs("되돌리는 중(끝난 복원)이 있다").isFalse()
     }
 
     @Test fun `벤더 제어 — 모두 실패하면 실패이고 되돌릴 것이 없으며, 호출 전에 좌석이 바뀌었으면 벤더를 부르지 않는다`() {
         val token = adminToken()
-        val copilot = copilot(token)
-        val octocat = seat(copilot, "octocat").id.toString()
-        val monalisa = seat(copilot, "monalisa").id.toString()
-        vendors.on("DELETE", selectedUsers, reply(500, "{}"))
-        val reclaimId = ok(manage("POST", "/seat-reclaims", mapOf("previewId" to ok(preview(token, octocat to 1L)).path("previewId").asString()), token), 202).path("operationId").asString()
+        val cursor = cursor(token)
+        val octoSeat = seat(cursor, octo).id.toString()
+        val monaSeat = seat(cursor, mona).id.toString()
+        vendors.on("POST", removeMember, reply(500, "{}"))
+        val reclaimId = ok(manage("POST", "/seat-reclaims", mapOf("previewId" to ok(preview(token, octoSeat to 1L)).path("previewId").asString()), token), 202).path("operationId").asString()
         assertThat(controls.runOnce()).isEqualTo(SeatControlRunner.Round(0, 1))
-        assertThat(vendors.requests(selectedUsers)).describedAs("일시 장애는 정한 횟수만큼 시도한다").hasSize(2)
+        assertThat(vendors.requests(removeMember)).describedAs("일시 장애는 정한 횟수만큼 시도한다").hasSize(2)
         with(operation(reclaimId)) {
-            assertThat(status to results(this)).isEqualTo(OperationStatus.FAILED to mapOf(octocat to listOf("failed", "vendor_unavailable", null)))
+            assertThat(status to results(this)).isEqualTo(OperationStatus.FAILED to mapOf(octoSeat to listOf("failed", "vendor_unavailable", null)))
             assertThat(canRestore(clock.now)).isFalse()
         }
-        assertThat(seat(copilot, "octocat").state).isEqualTo(SeatState.ASSIGNED)
+        assertThat(seat(cursor, octo).state).isEqualTo(SeatState.ASSIGNED)
         assertThat(errorOf(manage("POST", "/seat-reclaims/$reclaimId/restore", emptyMap<String, Any>(), token))).isEqualTo(422 to "restore_not_available")
 
-        // 실행 뒤, 벤더 호출 전에 동기화가 monalisa 를 해제했다 — 제어할 좌석이 아니므로 부르지 않는다.
-        val second = ok(manage("POST", "/seat-reclaims", mapOf("previewId" to ok(preview(token, monalisa to 1L)).path("previewId").asString()), token), 202).path("operationId").asString()
-        listing("octocat" to null, "hubot" to null)
+        // 실행 뒤, 벤더 호출 전에 동기화가 mona 를 해제했다 — 제어할 좌석이 아니므로 부르지 않는다.
+        val second = ok(manage("POST", "/seat-reclaims", mapOf("previewId" to ok(preview(token, monaSeat to 1L)).path("previewId").asString()), token), 202).path("operationId").asString()
+        listing(octo, hubot)
         clock.now = clock.now.plus(Duration.ofHours(7))
         synchronizer.runOnce()
-        val calls = vendors.requests(selectedUsers).size
+        val calls = vendors.requests(removeMember).size
         assertThat(controls.runOnce()).isEqualTo(SeatControlRunner.Round(0, 0))
-        assertThat(vendors.requests(selectedUsers)).hasSize(calls)
-        assertThat(results(operation(second))).isEqualTo(mapOf(monalisa to listOf("failed", "seat_changed", null)))
+        assertThat(vendors.requests(removeMember)).hasSize(calls)
+        assertThat(results(operation(second))).isEqualTo(mapOf(monaSeat to listOf("failed", "seat_changed", null)))
     }
 
     @Test fun `선점 — 기한 안의 대상은 다른 실행이 가져가지 못하고, 기한이 지나 넘어간 대상의 옛 선점은 결과를 쓰지 못한다`() {
         val token = adminToken()
-        val copilot = copilot(token)
-        val octocat = seat(copilot, "octocat").id.toString()
-        ok(manage("POST", "/seat-reclaims", mapOf("previewId" to ok(preview(token, octocat to 1L)).path("previewId").asString()), token), 202)
+        val cursor = cursor(token)
+        val octoSeat = seat(cursor, octo).id.toString()
+        ok(manage("POST", "/seat-reclaims", mapOf("previewId" to ok(preview(token, octoSeat to 1L)).path("previewId").asString()), token), 202)
         val first = control().claim("worker-a", Duration.ofMinutes(5))!!
-        assertThat(first.account.account).isEqualTo("octocat")
+        assertThat(first.account.account).isEqualTo(octo)
         assertThat(control().claim("worker-b", Duration.ofMinutes(5))).isNull()
         clock.now = clock.now.plus(Duration.ofMinutes(6))
         val second = control().claim("worker-b", Duration.ofMinutes(5))!!
         assertThat(control().complete(first, ControlResult(ControlStatus.COMPLETED))).isFalse()
-        assertThat(seat(copilot, "octocat").state).isEqualTo(SeatState.ASSIGNED)
+        assertThat(seat(cursor, octo).state).isEqualTo(SeatState.ASSIGNED)
         assertThat(control().complete(second, ControlResult(ControlStatus.COMPLETED))).isTrue()
-        assertThat(seat(copilot, "octocat").let { it.state to it.source }).isEqualTo(SeatState.RELEASED to SeatSource.VENDOR_CONTROL)
+        assertThat(seat(cursor, octo).let { it.state to it.source }).isEqualTo(SeatState.RELEASED to SeatSource.VENDOR_CONTROL)
         assertThat(jdbc.sql("SELECT attempts FROM enrollment.seat_controls").query(Int::class.java).single()).isEqualTo(2)
     }
 

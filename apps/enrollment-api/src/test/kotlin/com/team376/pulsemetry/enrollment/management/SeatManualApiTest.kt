@@ -94,39 +94,41 @@ class SeatManualApiTest : AbstractUserAuthApiTest() {
         val openai = vendor("openai_biz", "business", token).path("vendorId").asString()
         val copilot = vendor("copilot", "copilot_business", token).path("vendorId").asString()
         assertThat(errorOf(manage("POST", "/vendors/$openai/seats", mapOf("account" to "octocat"), token))).isEqualTo(400 to "invalid_request")
-        assertThat(errorOf(manage("POST", "/vendors/$copilot/seats", mapOf("account" to "dana@example.test"), token))).describedAs("Copilot 은 GitHub 로그인").isEqualTo(400 to "invalid_request")
+        assertThat(errorOf(manage("POST", "/vendors/$copilot/seats", mapOf("account" to "octocat"), token))).describedAs("GitHub 로그인 계정 종류는 없다(ADR 0054)").isEqualTo(400 to "invalid_request")
         assertThat(errorOf(manage("POST", "/vendors/$openai/seats", mapOf("account" to "a@example.test", "tierId" to "nope"), token))).isEqualTo(422 to "invalid_tier")
         val stranger = data.member(data.tenant().id, "stranger@example.test").id
         assertThat(errorOf(manage("POST", "/vendors/$openai/seats", mapOf("account" to "a@example.test", "memberId" to stranger.toString()), token))).isEqualTo(404 to "not_found")
-        val seat = ok(manage("POST", "/vendors/$copilot/seats", mapOf("account" to "OctoCat"), token), 201).path("seat")
-        assertThat(seat.path("account").asString() to seat.path("memberId").isNull).describedAs("로그인 계정은 자동으로 잇지 않는다").isEqualTo("octocat" to true)
+        // 연동 대상이 아닌 제품은 커넥터가 없는 플랜이다 — 수동 기록이 주 원천이고(임시 아님) 계정은 이메일이다.
+        val created = ok(manage("POST", "/vendors/$copilot/seats", mapOf("account" to "Octo@Example.test"), token), 201)
+        val seat = created.path("seat")
+        assertThat(seat.path("account").asString() to created.path("provisional").asBoolean()).isEqualTo("octo@example.test" to false)
         assertThat(errorOf(manage("POST", "/vendors/$openai/seats/${seat.path("seatAssignmentId").asString()}/release", mapOf("expectedVersion" to 1), token)))
             .describedAs("다른 제품의 좌석 경로").isEqualTo(404 to "not_found")
     }
 
     @Test fun `커넥터 플랜에 연결이 없으면 수동 기록은 임시이고, 연결이 생기면 배정·해제·가져오기는 409 이지만 보정은 된다`() {
         val token = adminToken()
-        val copilot = vendor("copilot", "copilot_business", token).path("vendorId").asString()
-        val created = ok(manage("POST", "/vendors/$copilot/seats", mapOf("account" to "octocat"), token), 201)
+        val cursor = vendor("cursor", "cursor_enterprise", token).path("vendorId").asString()
+        val created = ok(manage("POST", "/vendors/$cursor/seats", mapOf("account" to "octo@example.test"), token), 201)
         assertThat(created.path("provisional").asBoolean()).isTrue()
         val seatId = created.at("/seat/seatAssignmentId").asString()
         jdbc.sql("""INSERT INTO enrollment.vendor_connections (id, tenant_id, vendor_id, connector, settings, credential_ciphertext, credential_key_id, credential_updated_at,
                 check_status, version, created_at, created_by, updated_at, updated_by)
-            VALUES (gen_random_uuid(), :tenant, :vendor, 'copilot', '{"organization":"octo-org"}', 'opaque', 'k1', now(), 'unverified', 1, now(), :member, now(), :member)""")
-            .param("tenant", tenant).param("vendor", copilot).param("member", member).update()
+            VALUES (gen_random_uuid(), :tenant, :vendor, 'cursor_enterprise', '{}', 'opaque', 'k1', now(), 'unverified', 1, now(), :member, now(), :member)""")
+            .param("tenant", tenant).param("vendor", cursor).param("member", member).update()
 
-        assertThat(errorOf(manage("POST", "/vendors/$copilot/seats", mapOf("account" to "hubot"), token))).isEqualTo(409 to "connector_managed")
-        assertThat(errorOf(manage("POST", "/vendors/$copilot/seats/$seatId/release", mapOf("expectedVersion" to 1), token))).isEqualTo(409 to "connector_managed")
-        assertThat(errorOf(manage("POST", "/vendors/$copilot/seats/import", mapOf("mode" to "preview", "csv" to "account\nhubot\n"), token))).isEqualTo(409 to "connector_managed")
-        val noted = ok(manage("PATCH", "/vendors/$copilot/seats/$seatId", mapOf("expectedVersion" to 1, "note" to "벤더 콘솔 확인 필요"), token))
+        assertThat(errorOf(manage("POST", "/vendors/$cursor/seats", mapOf("account" to "hubot@example.test"), token))).isEqualTo(409 to "connector_managed")
+        assertThat(errorOf(manage("POST", "/vendors/$cursor/seats/$seatId/release", mapOf("expectedVersion" to 1), token))).isEqualTo(409 to "connector_managed")
+        assertThat(errorOf(manage("POST", "/vendors/$cursor/seats/import", mapOf("mode" to "preview", "csv" to "account\nhubot@example.test\n"), token))).isEqualTo(409 to "connector_managed")
+        val noted = ok(manage("PATCH", "/vendors/$cursor/seats/$seatId", mapOf("expectedVersion" to 1, "note" to "벤더 콘솔 확인 필요"), token))
         assertThat(noted.at("/seat/note").asString() to noted.path("provisional").asBoolean()).isEqualTo("벤더 콘솔 확인 필요" to false)
     }
 
     @Test fun `구매 수량은 좌석이 아니다 — 넘어도 거절하지 않고 경고한다`() {
         val token = adminToken()
         val copilot = vendor("copilot", "copilot_business", token, seats = 1).path("vendorId").asString()
-        assertThat(ok(manage("POST", "/vendors/$copilot/seats", mapOf("account" to "octocat"), token), 201).path("warnings").toList()).isEmpty()
-        assertThat(ok(manage("POST", "/vendors/$copilot/seats", mapOf("account" to "hubot"), token), 201).path("warnings").toList().map { it.asString() })
+        assertThat(ok(manage("POST", "/vendors/$copilot/seats", mapOf("account" to "octo@example.test"), token), 201).path("warnings").toList()).isEmpty()
+        assertThat(ok(manage("POST", "/vendors/$copilot/seats", mapOf("account" to "hubot@example.test"), token), 201).path("warnings").toList().map { it.asString() })
             .containsExactly("exceeds_contracted_seats")
         assertThat(seatCount()).isEqualTo(2)
     }

@@ -556,7 +556,7 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.vendor-connections.http.max-attempts` | 없음 | 호출 하나의 최대 시도 횟수(첫 시도 포함). 일시 장애·한도 초과만 다시 시도한다 |
 | `pulsemetry.vendor-connections.http.retry-backoff` | 없음 | 벤더가 대기 시간을 알려 주지 않은 일시 장애 뒤의 대기 |
 | `pulsemetry.vendor-connections.http.max-retry-wait` | 없음 | 벤더가 알려 준 대기 시간(`Retry-After` 등)의 상한. 넘으면 기다리지 않고 `rate_limited`로 남긴다 |
-| `pulsemetry.vendor-connections.base-urls.<커넥터 ID>` · `.gemini-token-url` | 벤더 공식 주소 | 모의 서버·스테이징에서만 바꾼다. 로컬 모의 서버는 `tools/mock-vendor/README.md` |
+| `pulsemetry.vendor-connections.base-urls.<커넥터 ID>` | 벤더 공식 주소 | 모의 서버·스테이징에서만 바꾼다. 로컬 모의 서버는 `tools/mock-vendor/README.md` |
 
 DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_PASSWORD` 로 덮어쓴다.
 메일의 키는 `PULSEMETRY_MAIL_ENABLED` · `_FROM` · `_ENCRYPTION_KEY` · `_DISPATCH_INTERVAL` · `_RETRY_INTERVAL` · `_MAX_ATTEMPTS` · `_SEND_TIMEOUT` ·
@@ -1012,7 +1012,7 @@ type SeatSource = {
   authority: "connector" | "manual";
   provisional: boolean;             // 커넥터가 있는 플랜인데 연결이 없어 수동 기록이 임시로 권위다
   connector: {                      // 현재 계약 플랜의 커넥터 설명. null 이면 그 플랜은 수동 원천이다
-    connectorId: string; accountKind: "email" | "github_login";
+    connectorId: string; accountKind: "email";
     capabilities: Capability[];     // 이 저장소가 구현한 기능 — 실행 가능 여부는 이것으로 판단한다
     supported: Capability[];        // 벤더 문서가 근거를 준 기능(capabilities ⊆ supported)
     settingKeys: string[];
@@ -1033,11 +1033,10 @@ type Capability = "seat_list" | "seat_release" | "seat_restore" | "billing";
 | --- | --- | --- | --- | --- | --- | --- |
 | `claude_enterprise` | `claude_team` · `enterprise` | 이메일 | 없음 | Admin API 키(`read:members`, 해제는 `write:members`, 청구는 `read:analytics`) | 조회·해제·복원·청구 | 조회·해제·청구 |
 | `cursor_enterprise` | `cursor` · `cursor_enterprise` | 이메일 | 없음 | Admin API 키 | 조회·해제·청구 | 조회·해제·청구 |
-| `copilot` | `copilot` · `copilot_business`·`copilot_enterprise` | GitHub 로그인 | `organization` | 토큰(`manage_billing:copilot` 또는 `read:org`) | 조회·해제·복원 | 조회·해제·복원 |
-| `gemini` | `gemini` · `gemini_standard`·`gemini_enterprise` | 이메일 | `billingAccount`·`order`·`project` | 서비스 계정 키 JSON 전체 | 조회·해제·복원 | 조회·해제·복원 |
 
-`supported`는 `docs/vendor-connector-evidence.md`의 결론을 옮긴 것이다. 구현은 좌석 목록(과 연결 확인), 해제(넷), 복원(Copilot·Gemini), 청구 누계(Claude Enterprise·Cursor Enterprise, ADR 0050)다 —
-Claude Enterprise 재초대는 역할을 정해야 해 관리자 조치로 남긴다(ADR 0049 §2). 그 밖의 제품·플랜(Claude Team, OpenAI, Cursor Teams, `other`)은 커넥터가 없고 수동 원천이다.
+`supported`는 `docs/vendor-connector-evidence.md`의 결론을 옮긴 것이다. 구현은 좌석 목록(과 연결 확인), 해제(둘), 청구 누계(둘, ADR 0050)다 —
+복원을 구현한 커넥터는 없다. Claude Enterprise 재초대는 역할을 정해야 해 관리자 조치로 남긴다(ADR 0049 §2). 그 밖의 제품·플랜(Claude Team, OpenAI, Cursor Teams, `other`)은 커넥터가 없고 수동 원천이다.
+GitHub Copilot(`copilot`)·Gemini Code Assist(`gemini`)도 커넥터가 없다(ADR 0054) — 카탈로그 플랜으로 등록·계약하고 좌석은 관리자가 기록한다. 계정 종류는 모두 이메일이다.
 
 - 커넥터는 등록 제품의 **현재 계약 플랜**으로 고른다. 계약이 없거나, 그 플랜에 커넥터가 없거나, 이 배포에 그 커넥터의 구현이 없으면 422 `connector_unavailable`이다.
 - `settings`는 커넥터의 `settingKeys`와 정확히 같은 키의 문자열(1~200자, 제어 문자 없음)이어야 하고, `credential`은 1~8192자의 비어 있지 않은 문자열이어야 한다. 아니면 400 `invalid_request`(field `settings`·`credential`·`expectedVersion`).
@@ -1088,7 +1087,7 @@ Claude Enterprise 재초대는 역할을 정해야 해 관리자 조치로 남�
 type SeatSaved = { seat: Seat; warnings: "exceeds_contracted_seats"[]; provisional: boolean };
 type Seat = {
   seatAssignmentId: string; vendorId: string;
-  account: string; accountKind: "email" | "github_login";   // 계정 키 — 소문자로 정규화한 이메일 또는 GitHub 로그인
+  account: string; accountKind: "email";   // 계정 키 — 소문자로 정규화한 이메일
   state: "assigned" | "pending_assignment" | "pending_release" | "released";
   source: "connector" | "manual" | "csv" | "vendor_control" | "admin_action"; // 마지막으로 상태를 정한 원천
   memberId: string | null; memberLink: "email_match" | "admin" | null;  // admin + null 은 관리자가 "잇지 않음"으로 정한 것
@@ -1099,7 +1098,7 @@ type Seat = {
 };
 ```
 
-- **배정**(`POST …/seats`): 계정은 제품의 계정 종류(Copilot은 GitHub 로그인, 나머지는 이메일)로 정규화한다. 새 계정은 `expectedVersion`을 보내지 않는다(201).
+- **배정**(`POST …/seats`): 계정은 이메일로 정규화한다(trim·소문자 — 계정 종류는 이메일 하나다, ADR 0054). 새 계정은 `expectedVersion`을 보내지 않는다(201).
   해제된 좌석을 다시 배정할 때는 그 좌석의 `version`을 보낸다 — 같은 `seatAssignmentId`로 200이다. 보유 중인 좌석은 409 `seat_already_held`(바꾸려면 보정).
 - **구성원**: `memberId`를 보내지 않으면 이메일 일치 규칙(조직에 그 이메일의 구성원이 정확히 하나면 `email_match`, 로그인 계정은 잇지 않음), UUID면 관리자 연결(`admin`),
   `null`이면 관리자가 "잇지 않음"으로 정한 것이다. 보정에서 `memberLink: "automatic"`(이때 `memberId`는 보내지 않는다)은 관리자 연결을 거두고 규칙으로 돌린다. 다른 조직의 구성원은 404.
@@ -1114,7 +1113,7 @@ type Seat = {
 
 | 열 | 필수 | 값 |
 | --- | --- | --- |
-| `account` | 예 | 벤더 계정 — 이메일(Copilot은 GitHub 로그인) |
+| `account` | 예 | 벤더 계정 — 이메일 |
 | `status` | 아니오 | `assigned`(기본)·`released` |
 | `tier` | 아니오 | 현재 계약의 등급 ID 또는 표시 이름(대소문자 무시). 비우면 새 좌석은 등급 없음, 있는 좌석은 그대로 |
 | `member_email` | 아니오 | 이 좌석을 잇는 구성원의 이메일(관리자 연결). 비우면 새 좌석은 이메일 일치 규칙, 있는 좌석은 그대로 |
@@ -1178,7 +1177,8 @@ type ReclaimPreview = {
   기한이 지나면 409 `preview_expired`, 이미 쓴 미리보기는 409 `preview_used`(같은 `Idempotency-Key`의 재시도는 같은 202), 대상이 없으면 422 `no_eligible_seats`.
   회수 작업의 복원 기한(`restoreUntil`)은 만든 시각 + 30일이다.
 - **벤더 제어 대상**은 `pending`으로 남고 주기 작업(좌석 동기화와 같은 작업·`sync.check-interval`, 한 바퀴에서 제어가 먼저)이 선점(`sync.lease`)해 커넥터를 부른다.
-  받아들이면 원장(원천 `vendor_control`): 해제 끝남 → `released`, Copilot 취소 → `pending_release`(예정일은 다음 동기화가 채운다), 복원 → `assigned`.
+  받아들이면 원장(원천 `vendor_control`): 해제 끝남 → `released`, 주기 말 효력의 해제 예정 → `pending_release`(예정일은 다음 동기화가 채운다), 복원 → `assigned`.
+  지금 구현한 두 커넥터의 해제는 그 자리에서 끝난다(`released`). 해제 예정과 커넥터 복원은 그런 벤더 제어를 구현한 커넥터가 생기면 쓰는 규칙이다(ADR 0049·0054).
   실패는 대상의 사유다 — 커넥터 실패 종류(위 "좌석 동기화"의 표와 같은 코드), `connection_removed`, `plan_mismatch`, `connector_unavailable`, `credential_key_unavailable`,
   `seat_changed`(호출 전에 좌석이 바뀌어 부르지 않음), `control_error`. 일시 장애도 대상 실패다(다시 하려면 새로 회수한다).
 - **관리자 조치 대상**은 `awaiting_admin_action`(조치 코드 `release_in_vendor_console`·`restore_in_vendor_console`)이다. 관리자가 벤더 콘솔에서 조치하고 **확인**하면 원장이 옮겨지고

@@ -25,14 +25,18 @@ class VendorAccountCheckTest {
 	private val printed get() = output.toString()
 
 	@Test
-	fun `Copilot — 연결 확인과 좌석 목록을 읽고 수만 찍는다`() {
-		server.on("GET", "/orgs/octo-org/copilot/billing/seats", reply(200, """{"total_seats":2,"seats":[
-			{"assignee":{"login":"octocat","id":1,"type":"User"},"pending_cancellation_date":null,"last_activity_at":"2024-10-01T19:32:20Z","created_at":"2024-10-01T19:32:20Z","plan_type":"business"},
-			{"assignee":{"login":"hubot","id":2,"type":"User"},"pending_cancellation_date":"2025-02-15","last_activity_at":null,"created_at":"2024-11-01T00:00:00Z","plan_type":"business"}]}"""))
-		val code = check("copilot", mapOf("PULSEMETRY_VERIFY_CREDENTIAL" to secret, "PULSEMETRY_VERIFY_SETTING_ORGANIZATION" to "octo-org", "PULSEMETRY_VERIFY_BASE_URL" to server.base.toString()))
+	fun `Claude — 연결 확인과 좌석 목록을 읽고 수만 찍는다`() {
+		server.on("GET", "/v1/organizations/users", reply(200, """{"data":[
+			{"type":"user","id":"user_1","email":"jane@example.test","name":"Jane","role":"user","added_at":"2026-06-12T09:14:03Z"},
+			{"type":"user","id":"user_2","email":"kim@example.test","name":"Kim","role":"owner","added_at":"2026-01-02T03:04:05Z"}],"has_more":false,"first_id":"user_1","last_id":"user_2"}"""))
+		server.on("GET", "/v1/organizations/invites", reply(200, """{"data":[
+			{"type":"invite","id":"invite_1","email":"newhire@example.test","role":"user","invited_at":"2026-07-06T16:20:11Z","expires_at":"2026-07-27T16:20:11Z","accepted_at":null,"status":"pending"}],
+			"has_more":false,"first_id":"invite_1","last_id":"invite_1"}"""))
+		server.on("GET", "/v1/organizations/analytics/cost_report", reply(200, """{"data":[],"has_more":false,"next_page":null}"""))
+		val code = check("claude_enterprise", mapOf("PULSEMETRY_VERIFY_CREDENTIAL" to secret, "PULSEMETRY_VERIFY_BASE_URL" to server.base.toString()))
 		assertThat(code).withFailMessage(printed).isZero()
-		assertThat(printed).contains("[copilot] 연결 확인: 통과", "좌석 2개 — assigned 1, pending_assignment 0, pending_release 1", "마지막 활동 있음 1")
-			.doesNotContain(secret, "octocat", "hubot")
+		assertThat(printed).contains("[claude_enterprise] 연결 확인: 통과", "좌석 3개 — assigned 2, pending_assignment 1, pending_release 0", "이메일 있음 3")
+			.doesNotContain(secret, "jane@example.test", "kim@example.test", "newhire@example.test")
 		assertThat(server.received.map { it.method }).describedAs("읽기만 한다").containsOnly("GET")
 	}
 
@@ -50,22 +54,25 @@ class VendorAccountCheckTest {
 
 	@Test
 	fun `입력이 없으면 건너뛰지 않고 2, 벤더가 거절하면 1 이다`() {
-		assertThat(check("copilot", emptyMap())).isEqualTo(2)
-		assertThat(check("copilot", mapOf("PULSEMETRY_VERIFY_CREDENTIAL" to secret))).isEqualTo(2)
-		assertThat(printed).contains("PULSEMETRY_VERIFY_SETTING_ORGANIZATION")
+		assertThat(check("cursor_enterprise", emptyMap())).isEqualTo(2)
+		assertThat(printed).contains("PULSEMETRY_VERIFY_CREDENTIAL")
 		assertThat(check("nope", mapOf("PULSEMETRY_VERIFY_CREDENTIAL" to secret))).isEqualTo(2)
+		// 연동 대상이 아닌 제품(ADR 0054)은 커넥터 ID 가 아니다.
+		for (vendor in listOf("copilot", "gemini")) assertThat(check(vendor, mapOf("PULSEMETRY_VERIFY_CREDENTIAL" to secret))).describedAs(vendor).isEqualTo(2)
+		assertThat(printed).contains("커넥터 ID 는 claude_enterprise, cursor_enterprise 중 하나다")
+		assertThat(server.received).isEmpty()
 		server.on("GET", "/teams/members", reply(401, """{"error":"unauthorized"}"""))
 		assertThat(check("cursor_enterprise", mapOf("PULSEMETRY_VERIFY_CREDENTIAL" to secret, "PULSEMETRY_VERIFY_BASE_URL" to server.base.toString()))).isEqualTo(1)
 		assertThat(printed).contains("[cursor_enterprise] 실패: invalid_credentials").doesNotContain(secret)
 	}
 
 	@Test
-	fun `자격증명은 파일로도 받는다 — 서비스 계정 키 JSON 이 아니면 자격증명 무효로 끝난다`(@TempDir dir: Path) {
-		val file = Files.writeString(dir.resolve("key.json"), "not-a-service-account-key")
-		val code = check("gemini", mapOf("PULSEMETRY_VERIFY_CREDENTIAL_FILE" to file.toString(), "PULSEMETRY_VERIFY_SETTING_BILLINGACCOUNT" to "b",
-			"PULSEMETRY_VERIFY_SETTING_ORDER" to "o", "PULSEMETRY_VERIFY_SETTING_PROJECT" to "p", "PULSEMETRY_VERIFY_BASE_URL" to server.base.toString()))
+	fun `자격증명은 파일로도 받는다 — 앞뒤 공백을 떼고 그 값으로 부른다`(@TempDir dir: Path) {
+		val file = Files.writeString(dir.resolve("key.txt"), "  $secret\n")
+		server.on("GET", "/teams/members", reply(401, """{"error":"unauthorized"}"""))
+		val code = check("cursor_enterprise", mapOf("PULSEMETRY_VERIFY_CREDENTIAL_FILE" to file.toString(), "PULSEMETRY_VERIFY_BASE_URL" to server.base.toString()))
 		assertThat(code).isEqualTo(1)
-		assertThat(printed).contains("[gemini] 실패: invalid_credentials")
-		assertThat(server.received).isEmpty()
+		assertThat(printed).contains("[cursor_enterprise] 실패: invalid_credentials").doesNotContain(secret)
+		assertThat(server.received.single().header("Authorization")).isEqualTo("Basic " + java.util.Base64.getEncoder().encodeToString("$secret:".toByteArray()))
 	}
 }

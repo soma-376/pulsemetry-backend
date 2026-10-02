@@ -2,26 +2,17 @@ package com.team376.pulsemetry.connector.vendor
 
 import com.team376.pulsemetry.connector.vendor.VendorHttp.Companion.array
 import com.team376.pulsemetry.connector.vendor.VendorHttp.Companion.optionalInstant
-import com.team376.pulsemetry.connector.vendor.VendorHttp.Companion.optionalText
 import com.team376.pulsemetry.connector.vendor.VendorHttp.Companion.segment
 import com.team376.pulsemetry.connector.vendor.VendorHttp.Companion.text
-import tools.jackson.core.JacksonException
 import tools.jackson.databind.JsonNode
-import tools.jackson.databind.json.JsonMapper
 import java.net.URI
-import java.security.KeyFactory
-import java.security.Signature
-import java.security.spec.PKCS8EncodedKeySpec
 import java.math.BigDecimal
-import java.time.Clock
 import java.time.Instant
-import java.time.LocalDate
-import java.time.format.DateTimeParseException
 import java.util.Base64
 
 /*
- * 벤더 좌석 커넥터 넷 (ADR 0048 §8). 요청·응답은 `docs/vendor-connector-evidence.md` 의 문서 근거를 따른다 — 근거 없는 엔드포인트·필드를 쓰지 않는다.
- * 좌석 목록·연결 확인(읽기)과, 문서가 요청·응답을 준 해제·복원(ADR 0049)·청구 누계(ADR 0050 — Claude Enterprise·Cursor Enterprise)를 한다.
+ * 벤더 좌석 커넥터 둘 (ADR 0048 §8, ADR 0054). 요청·응답은 `docs/vendor-connector-evidence.md` 의 문서 근거를 따른다 — 근거 없는 엔드포인트·필드를 쓰지 않는다.
+ * 좌석 목록·연결 확인(읽기)과, 문서가 요청·응답을 준 해제(ADR 0049)·청구 누계(ADR 0050)를 한다.
  * 제어 결과는 벤더가 돌려준 상태 그대로다 — 요청을 받아들였다는 것을 완료로 올리지 않는다([ControlStatus]).
  * 기준 주소는 생성자로 받는다 — 모의 서버와 실서버가 같은 코드를 쓴다.
  */
@@ -190,183 +181,5 @@ class CursorEnterpriseConnector(private val http: VendorHttp, baseUrl: URI = URI
 	private companion object {
 		/** 문서에 최대값이 없다. */
 		const val SPEND_PAGE_SIZE = 100
-	}
-}
-
-/**
- * GitHub Copilot — `GET /orgs/{org}/copilot/billing/seats`(REST 권장 헤더: `Accept: application/vnd.github+json`, `Authorization: Bearer`,
- * `X-GitHub-Api-Version: 2022-11-28`). 페이지는 `page`·`per_page`(최대 100)이고 `link` 헤더에 `rel="next"`가 없으면 끝이다.
- * 계정 키는 `assignee.login`이다 — 이메일이 없다. `assignee`가 null 인 좌석은 계정 키가 없어 원장에 넣지 않는다.
- * `pending_cancellation_date`가 있으면 해제 예정(그날 효력). `plan_type`은 플랜이지 등급이 아니라 쓰지 않는다.
- */
-class CopilotConnector(private val http: VendorHttp, baseUrl: URI = URI("https://api.github.com")) : SeatConnector {
-	override val descriptor = ConnectorDescriptors.COPILOT
-	private val base = base(baseUrl)
-
-	private fun headers(target: ConnectionTarget) = mapOf(
-		"Accept" to "application/vnd.github+json", "Authorization" to "Bearer " + target.credential.reveal(), "X-GitHub-Api-Version" to API_VERSION,
-	)
-
-	private fun selectedUsers(target: ConnectionTarget) = URI("$base/orgs/${segment(target.settings.getValue("organization"))}/copilot/billing/selected_users")
-
-	/**
-	 * 취소(`DELETE …/copilot/billing/selected_users`, 본문 `selected_usernames`) — "Sets seats … to 'pending cancellation'"이고 주기 말에 효력이 생긴다.
-	 * 그래서 결과는 예정이다. 응답에 날짜가 없어 예정일은 다음 동기화(`pending_cancellation_date`)가 채운다. `seats_cancelled` 가 0 이면 취소되지 않았다
-	 * (팀을 통해 배정된 좌석 등) — 벤더 거절이다.
-	 */
-	override val release = SeatRelease { target, account ->
-		val body = http.sendJson("DELETE", selectedUsers(target), headers(target), mapOf("selected_usernames" to listOf(account.account)))
-		if (count(body, "seats_cancelled") < 1) throw ConnectorFailure(ConnectorFailure.Kind.VENDOR_REJECTED)
-		ControlResult(ControlStatus.SCHEDULED)
-	}
-
-	/**
-	 * 재배정(`POST …/copilot/billing/selected_users`) — "Purchases a GitHub Copilot seat for each user"이고 응답 `seats_created` 는 새로 만들거나
-	 * 되살린(refreshed) 좌석 수다. 0 이면 벤더 거절이다.
-	 */
-	override val restore = SeatRestore { target, account ->
-		val body = http.sendJson("POST", selectedUsers(target), headers(target), mapOf("selected_usernames" to listOf(account.account)))
-		if (count(body, "seats_created") < 1) throw ConnectorFailure(ConnectorFailure.Kind.VENDOR_REJECTED)
-		ControlResult(ControlStatus.COMPLETED)
-	}
-
-	private fun count(body: JsonNode, field: String): Long =
-		body.path(field).takeIf { it.isIntegralNumber }?.asLong() ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
-
-	private fun seatsUri(target: ConnectionTarget, page: Int, perPage: Int) =
-		URI("$base/orgs/${segment(target.settings.getValue("organization"))}/copilot/billing/seats?per_page=$perPage&page=$page")
-
-	override fun verify(target: ConnectionTarget) {
-		array(http.getJson(seatsUri(target, 1, 1), headers(target)), "seats")
-	}
-
-	override fun listSeats(target: ConnectionTarget): List<VendorSeat> {
-		val seats = mutableListOf<VendorSeat>()
-		for (page in 1..VendorHttp.MAX_PAGES) {
-			val (body, responseHeaders) = http.getPage(seatsUri(target, page, PAGE_SIZE), headers(target))
-			array(body, "seats").forEach { seat ->
-				val assignee = seat.path("assignee")
-				if (assignee.isNull || assignee.isMissingNode) return@forEach
-				val cancellation = optionalText(seat, "pending_cancellation_date")?.let {
-					try { LocalDate.parse(it) } catch (_: DateTimeParseException) { throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE) }
-				}
-				seats += VendorSeat(
-					account = text(assignee, "login"),
-					state = if (cancellation != null) VendorSeatState.PENDING_RELEASE else VendorSeatState.ASSIGNED,
-					releaseEffectiveOn = cancellation,
-					assignedAt = optionalInstant(seat, "created_at"),
-					lastActivityAt = optionalInstant(seat, "last_activity_at"),
-				)
-			}
-			if (responseHeaders.allValues("link").none { NEXT.containsMatchIn(it) }) return seats
-		}
-		throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
-	}
-
-	private companion object {
-		const val API_VERSION = "2022-11-28"
-		/** 문서의 최대값("per_page ... max 100"). */
-		const val PAGE_SIZE = 100
-		val NEXT = Regex("rel=\"next\"")
-	}
-}
-
-/**
- * Gemini Code Assist — Cloud Commerce Consumer Procurement API 의 `licensePool:enumerateLicensedUsers`(`pageSize`·`pageToken`, 응답 `nextPageToken`이 없으면 끝).
- * 헤더는 OAuth 액세스 토큰(`Authorization: Bearer`, scope `cloud-platform`)과 `X-Goog-User-Project`.
- * 자격증명은 **서비스 계정 키(JSON)** 다 — 액세스 토큰은 한 시간이면 끝나 저장해 둘 수 없다. 호출마다 키로 JWT(RS256)를 서명해 토큰 엔드포인트
- * (`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`)에서 토큰을 받는다(Google 서비스 계정 OAuth 문서).
- * 계정 키는 `username`(이메일)이고, `assignTime`은 배정 시각, `recentUsageTime`은 마지막 사용이다. 빈 목록은 `licensedUsers`가 없을 수 있다.
- */
-class GeminiConnector(
-	private val http: VendorHttp,
-	baseUrl: URI = URI("https://cloudcommerceconsumerprocurement.googleapis.com"),
-	private val tokenUrl: URI = URI(TOKEN_AUDIENCE),
-	private val clock: Clock = Clock.systemUTC(),
-) : SeatConnector {
-	override val descriptor = ConnectorDescriptors.GEMINI
-	private val base = base(baseUrl)
-	private val mapper = JsonMapper.builder().build()
-
-	override fun verify(target: ConnectionTarget) {
-		page(target, accessToken(target), 1, null)
-	}
-
-	override fun listSeats(target: ConnectionTarget): List<VendorSeat> {
-		val token = accessToken(target)
-		val seats = mutableListOf<VendorSeat>()
-		var pageToken: String? = null
-		repeat(VendorHttp.MAX_PAGES) {
-			val body = page(target, token, PAGE_SIZE, pageToken)
-			val users = body.path("licensedUsers")
-			if (!users.isMissingNode) array(body, "licensedUsers").forEach { user ->
-				val username = text(user, "username")
-				seats += VendorSeat(account = username, email = username, assignedAt = optionalInstant(user, "assignTime"),
-					lastActivityAt = optionalInstant(user, "recentUsageTime"))
-			}
-			val next = optionalText(body, "nextPageToken")?.takeIf { it.isNotEmpty() } ?: return seats
-			if (next == pageToken) throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
-			pageToken = next
-		}
-		throw ConnectorFailure(ConnectorFailure.Kind.INVALID_RESPONSE)
-	}
-
-	/** 해제(`licensePool:unassign`, 본문 `{"usernames": [...]}`) — 성공 응답은 빈 본문이다. 자동 배정 구독이면 벤더가 다시 배정할 수 있다(다음 동기화가 보인다). */
-	override val release = SeatRelease { target, account -> control(target, "unassign", account) }
-
-	/** 배정(`licensePool:assign`) — 요청·응답 형식은 해제와 같다. 남은 라이선스가 없으면 벤더가 거절한다. */
-	override val restore = SeatRestore { target, account -> control(target, "assign", account) }
-
-	private fun control(target: ConnectionTarget, verb: String, account: VendorAccount): ControlResult {
-		http.sendJson("POST", URI("$base/v1/${parent(target)}:$verb"), headers(target, accessToken(target)), mapOf("usernames" to listOf(account.account)))
-		return ControlResult(ControlStatus.COMPLETED)
-	}
-
-	private fun parent(target: ConnectionTarget) =
-		"billingAccounts/${segment(target.settings.getValue("billingAccount"))}/orders/${segment(target.settings.getValue("order"))}/licensePool"
-
-	private fun headers(target: ConnectionTarget, token: String) = mapOf("Authorization" to "Bearer $token", "X-Goog-User-Project" to target.settings.getValue("project"))
-
-	private fun page(target: ConnectionTarget, token: String, size: Int, pageToken: String?): JsonNode {
-		val uri = URI("$base/v1/${parent(target)}:enumerateLicensedUsers?pageSize=$size" + (pageToken?.let { "&pageToken=" + VendorHttp.encode(it) } ?: ""))
-		return http.getJson(uri, headers(target, token))
-	}
-
-	/** 서비스 계정 키로 서명한 JWT 를 액세스 토큰으로 바꾼다. 키가 서비스 계정 키 모양이 아니면 자격증명 무효다. */
-	private fun accessToken(target: ConnectionTarget): String {
-		val key = try { mapper.readTree(target.credential.reveal()) } catch (_: JacksonException) { null }
-			?.takeIf { it.isObject } ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_CREDENTIALS)
-		val email = key.path("client_email").takeIf { it.isString }?.asString() ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_CREDENTIALS)
-		val pem = key.path("private_key").takeIf { it.isString }?.asString() ?: throw ConnectorFailure(ConnectorFailure.Kind.INVALID_CREDENTIALS)
-		val privateKey = try {
-			val der = Base64.getMimeDecoder().decode(pem.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""))
-			KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(der))
-		} catch (_: Exception) {
-			throw ConnectorFailure(ConnectorFailure.Kind.INVALID_CREDENTIALS)
-		}
-		val now = clock.instant().epochSecond
-		val url = Base64.getUrlEncoder().withoutPadding()
-		val header = mapOf("alg" to "RS256", "typ" to "JWT") + (key.path("private_key_id").takeIf { it.isString }?.let { mapOf("kid" to it.asString()) } ?: emptyMap())
-		val claims = mapOf("iss" to email, "scope" to SCOPE, "aud" to TOKEN_AUDIENCE, "iat" to now, "exp" to now + TOKEN_LIFETIME_SECONDS)
-		val unsigned = url.encodeToString(mapper.writeValueAsBytes(header)) + "." + url.encodeToString(mapper.writeValueAsBytes(claims))
-		val signature = Signature.getInstance("SHA256withRSA").apply { initSign(privateKey); update(unsigned.toByteArray()) }.sign()
-		val response = try {
-			http.postFormJson(tokenUrl, emptyMap(),
-				mapOf("grant_type" to "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion" to unsigned + "." + url.encodeToString(signature)))
-		} catch (failure: ConnectorFailure) {
-			// 토큰 엔드포인트가 서명한 주장을 거절하면(지운 키·틀린 계정) 자격증명 문제다.
-			throw if (failure.kind == ConnectorFailure.Kind.VENDOR_REJECTED) ConnectorFailure(ConnectorFailure.Kind.INVALID_CREDENTIALS) else failure
-		}
-		return text(response, "access_token")
-	}
-
-	companion object {
-		/** 토큰 엔드포인트이자 JWT 의 `aud`("When making an access token request this value is always https://oauth2.googleapis.com/token"). */
-		const val TOKEN_AUDIENCE = "https://oauth2.googleapis.com/token"
-		const val SCOPE = "https://www.googleapis.com/auth/cloud-platform"
-		/** JWT 수명 상한("a maximum of 1 hour after the issued time"). */
-		private const val TOKEN_LIFETIME_SECONDS = 3600L
-		/** 문서에 최대값이 없다("The service may return fewer than this value"). */
-		private const val PAGE_SIZE = 100
 	}
 }

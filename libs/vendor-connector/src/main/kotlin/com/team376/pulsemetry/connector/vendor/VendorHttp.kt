@@ -63,11 +63,6 @@ class VendorHttp(
 	fun getPage(uri: URI, headers: Map<String, String>): Pair<JsonNode, java.net.http.HttpHeaders> =
 		send { HttpRequest.newBuilder(uri).GET().withHeaders(headers) }.let { json(it) to it.headers }
 
-	fun postFormJson(uri: URI, headers: Map<String, String>, form: Map<String, String>): JsonNode = json(send {
-		HttpRequest.newBuilder(uri).withHeaders(headers + ("Content-Type" to "application/x-www-form-urlencoded"))
-			.POST(HttpRequest.BodyPublishers.ofString(form.entries.joinToString("&") { (k, v) -> encode(k) + "=" + encode(v) }))
-	})
-
 	/**
 	 * 상태를 바꾸는 호출(해제·복원). [body] 는 JSON 으로 보내고(null 이면 본문 없음) 응답 본문은 JSON 객체여야 한다 — 빈 본문은 빈 객체로 읽는다.
 	 * 처분은 읽기와 같다. 같은 요청을 다시 보내는 재시도(일시 장애·한도 초과)도 같다 — 벤더 문서의 해제·복원은 같은 대상에 다시 불러도 상태가 같다.

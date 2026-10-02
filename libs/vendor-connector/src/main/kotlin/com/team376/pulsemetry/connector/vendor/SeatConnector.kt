@@ -77,7 +77,7 @@ enum class VendorSeatState { ASSIGNED, PENDING_ASSIGNMENT, PENDING_RELEASE }
  *
  * @property account 벤더 계정 키 — 설명의 [AccountKind] 로 정규화하기 전의 값이어도 된다(원장이 정규화한다).
  * @property vendorAccountRef 벤더 내부 ID(제어 호출에 쓴다). 계정 키가 곧 호출 식별자면 null.
- * @property email 벤더가 알려 준 이메일. 없으면 null(Copilot).
+ * @property email 벤더가 알려 준 이메일. 없으면 null.
  * @property releaseEffectiveOn [VendorSeatState.PENDING_RELEASE] 의 예정일.
  * @property tier 벤더가 준 등급. 주지 않으면 null — 추정하지 않는다.
  * @property assignedAt 벤더가 준 배정 시각. 없으면 null.

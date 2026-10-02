@@ -130,7 +130,7 @@ ClickHouse 이벤트·수신 기록은 이 ID를 참조한다. 기본 설치는 
 | OpenAI 계약 | Business, Standard 6석 × $25 + Premium 2석 × $125 = 월 $400. 최초 계약 미입력(v1) → 14일 전 관리자 입력(v2) 이력 |
 | Copilot 계약 | Business 5석 × $19 = 월 $95, 기준일 전날 만료 |
 | Cursor 등록 | 제품만 등록, 계약 없음 |
-| 좌석 원장 | 사람별 좌석(ADR 0048) — 구매 수량으로 채우지 않는다. Claude 수동 5석(member4·8·10 표준, admin 프리미엄, 구성원 없는 외부 계정 하나), OpenAI 수동 2석(member3·5), Copilot 연결 원천 3석(기준일 0시 동기화 — seed-dev-7·seed-dev-11 은 관리자가 member7·member11 에 이었고 seed-bot 은 구성원 없음). Cursor 는 좌석을 기록하지 않았다(`seat_source_not_recorded`). 연결 자격증명은 풀 수 없는 자리표시자다 — 로컬에서 벤더 연결을 켜면 그 연결의 동기화는 `credential_key_unavailable` 로 실패한다 |
+| 좌석 원장 | 사람별 좌석(ADR 0048) — 구매 수량으로 채우지 않는다. Claude 수동 5석(member4·8·10 표준, admin 프리미엄, 구성원 없는 외부 계정 하나), OpenAI 수동 2석(member3·5). 모두 관리자가 기록했고 계정은 이메일이다. Copilot·Cursor 는 좌석을 기록하지 않았다(`seat_source_not_recorded`) — Copilot 은 커넥터가 없는 플랜이다(ADR 0054). A 에는 벤더 연결이 없다 |
 | 알림 규칙 | 기준일 7일 전 관리자가 급증·비허용 모델·미승인 도구 규칙을 켰다(ADR 0051). 모델 허용 목록은 `claude-sonnet-*`·`claude-haiku-*`·`gpt-5`·`gpt-5-mini` 라 사용 기록의 Opus·o3 호출이 위반이다 — dashboard-api 의 주기 평가(local 1분)가 돌면 비허용 모델 알림이 생긴다(주말에 끊겨 묶음 넷). 급증은 기준일 −8일만 두 기간이 완전해 평가되고(비용 감소 — 알림 없음) 그 뒤 날은 `period_incomplete` 다. 도구 결과 행이 없어 미승인 도구 알림은 없다. 알림(평가 결과)은 시드가 넣지 않는다 |
 
 모든 단가는 합성 테스트 입력이며 공시 가격을 자동 적용한 것이 아니다. 계약 좌석 수는 실제 구성원 배정이나
@@ -222,8 +222,8 @@ fixture의 설치 행은 API와 같은 규칙이다 — 적용 판은 설치가 
 기간 약정과 좌석 계약을 연결·합산하지 않는다. 관리 벤더의 관측 지표는 카탈로그의 명시 매핑(`claude_code` → `claude_team`, `codex` → `openai_biz`)으로 잇는 관측만 쓴다(ADR 0044).
 C의 Cursor(Enterprise 계약 3석 × $40)는 벤더 연결이 있지만 기준일 0시 실행에서 좌석 목록이 일시 장애로 실패했고(좌석 없음 — `seat_sync_failing`),
 같은 실행의 청구 누계(이번 청구 주기 on-demand 지출 $137.42, 주기 시작 기준일 −12일)만 있다. 이 청구 행의 원천은 `seed`다 — **실제 청구의 증거가 아니다**(ADR 0050).
-fixture의 `seats`는 위 좌석 원장의 행이다(계정은 합성 이메일·로그인뿐). 기준일이 지나면 Copilot 동기화가 `seats.stale-after`(local 26시간)보다 오래되어
-그 제품 원장은 `seat_sync_outdated`이고, 설치 보고가 기준일 0시에 끝나므로 회수 후보는 관측 부족(`observation_incomplete`)으로 빠진다 — 정상으로 꾸미지 않는다.
+fixture의 `seats`는 위 좌석 원장의 행이다(계정은 합성 이메일뿐). 설치 보고가 기준일 0시에 끝나므로 기준일이 지나면 회수 후보는
+관측 부족(`observation_incomplete`)으로 빠진다 — 정상으로 꾸미지 않는다.
 A의 Claude·OpenAI 등록 제품은 관측이 있고, Cursor·Copilot은 매핑이 없어 `unobserved`·null이다. fixture는 기준일 0시를 기준 시각으로 쓰고 최근 7·30일은 기준일 전날까지다.
 fixture는 수집 구간으로 완전성을 판정하지 않는다 — 관측이 있으면 `partial`이고 창에서 센 0은 null이다. C의 설정에는 매핑 없는 관측(`unknown`)이 따로 보인다.
 

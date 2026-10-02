@@ -26,7 +26,6 @@ import tools.jackson.databind.JsonNode
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDate
 import java.util.UUID
 
 /**
@@ -53,7 +52,7 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
         val vendors = MockVendorServer()
 
         @JvmStatic @DynamicPropertySource fun vendorApis(registry: DynamicPropertyRegistry) {
-            listOf("copilot", "claude_enterprise", "cursor_enterprise", "gemini").forEach { id ->
+            listOf("claude_enterprise", "cursor_enterprise").forEach { id ->
                 registry.add("pulsemetry.vendor-connections.base-urls.$id") { vendors.base.toString() }
             }
         }
@@ -64,18 +63,19 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
     @Autowired private lateinit var connections: VendorConnectionStore
     @Autowired private lateinit var manager: PlatformTransactionManager
 
-    private val copilotSeats = "/orgs/octo-org/copilot/billing/seats"
+    private val cursorMembers = "/teams/members"
+    private val cursorSpend = "/teams/spend"
     private val secret = "fake-vendor-credential-" + "s".repeat(24)
+    private val basic = "Basic " + java.util.Base64.getEncoder().encodeToString("$secret:".toByteArray())
 
-    /** Copilot 두 페이지(문서 예시: octocat, 해제 예정 hubot), Claude 구성원 한 명과 대기 중 초대 하나. */
+    /** Cursor 구성원 둘(하나는 제거됨 — 좌석이 아니다)과 이번 주기 지출, Claude 구성원 한 명과 대기 중 초대 하나. 문서 예시를 재현한다. */
     @BeforeEach fun vendorReplies() {
         vendors.received.clear()
-        vendors.on("GET", copilotSeats,
-            reply(200, """{"total_seats":2,"seats":[{"assignee":{"login":"octocat","id":1,"type":"User"},"pending_cancellation_date":null,
-                "last_activity_at":"2026-09-01T10:00:00Z","created_at":"2024-10-01T19:32:20Z","plan_type":"business"}]}""",
-                "link" to "<${vendors.base}$copilotSeats?per_page=100&page=2>; rel=\"next\""),
-            reply(200, """{"total_seats":2,"seats":[{"assignee":{"login":"hubot","id":2,"type":"User"},"pending_cancellation_date":"2026-09-30",
-                "last_activity_at":null,"created_at":"2024-11-01T00:00:00Z","plan_type":"business"}]}"""))
+        vendors.on("GET", cursorMembers, reply(200, """{"teamMembers":[{"id":"user_c1","email":"Dev@Example.test","name":"Dev","role":"member","isRemoved":false},
+            {"id":"user_c2","email":"gone@example.test","name":"Gone","role":"member","isRemoved":true}]}"""))
+        // Cursor Enterprise 지출(ADR 0050) — 이번 주기(2026-09-01T00:00Z 시작) on-demand 1234.5 센트.
+        vendors.on("POST", cursorSpend, reply(200, """{"teamMemberSpend":[{"userId":"user_c1","spendCents":1234.5,"email":"dev@example.test"}],
+            "subscriptionCycleStart":1788220800000,"totalPages":1}"""))
         vendors.on("GET", "/v1/organizations/users", reply(200, """{"data":[{"type":"user","id":"user_01","email":"jane@example.test","name":"Jane","role":"user",
             "added_at":"2026-06-12T09:14:03Z"}],"has_more":false,"first_id":"user_01","last_id":"user_01"}"""))
         vendors.on("GET", "/v1/organizations/invites", reply(200, """{"data":[{"type":"invite","id":"invite_01","email":"newhire@example.test","role":"user",
@@ -105,16 +105,16 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
         assertThat(saved.statusCode()).withFailMessage(saved.body()).isEqualTo(200)
     }
 
-    private data class Setup(val token: String, val copilot: String, val claude: String)
+    private data class Setup(val token: String, val cursor: String, val claude: String)
 
     private fun connectTwo(): Setup {
         val token = adminToken()
         data.member(tenant, "jane@example.test")
-        val copilot = vendor("copilot", "copilot_business", token).path("vendorId").asString()
+        val cursor = vendor("cursor", "cursor_enterprise", token).path("vendorId").asString()
         val claude = vendor("claude_team", "enterprise", token).path("vendorId").asString()
-        connect(copilot, token, mapOf("organization" to "octo-org"))
+        connect(cursor, token, emptyMap())
         connect(claude, token, emptyMap())
-        return Setup(token, copilot, claude)
+        return Setup(token, cursor, claude)
     }
 
     private fun seats(vendorId: String) = ledger.seats(tenant, vendorId).associateBy { it.account }
@@ -125,40 +125,41 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
         val setup = connectTwo()
         assertThat(synchronizer.runOnce()).isEqualTo(SeatSynchronizer.Round(applied = 2, failed = 0))
 
-        with(seats(setup.copilot)) {
-            assertThat(keys).containsExactlyInAnyOrder("octocat", "hubot")
-            assertThat(getValue("octocat").let { Triple(it.state, it.memberId, it.vendorLastActivityAt) }).isEqualTo(Triple(SeatState.ASSIGNED, null, Instant.parse("2026-09-01T10:00:00Z")))
-            assertThat(getValue("hubot").let { it.state to it.releaseEffectiveOn }).isEqualTo(SeatState.PENDING_RELEASE to LocalDate.parse("2026-09-30"))
+        with(seats(setup.cursor)) {
+            // 제거된 구성원은 좌석이 아니다. 계정 키는 소문자 이메일, 벤더 내부 ID 는 따로 남는다. 활동 시각은 벤더가 주지 않는다(모름).
+            assertThat(keys).containsExactly("dev@example.test")
+            assertThat(getValue("dev@example.test").let { listOf(it.state, it.memberId, it.vendorAccountRef, it.vendorLastActivityAt) })
+                .containsExactly(SeatState.ASSIGNED, null, "user_c1", null)
         }
         with(seats(setup.claude)) {
             // 이메일이 정확히 한 구성원과 같으면 잇는다. 대기 중 초대는 배정 대기다.
             assertThat(getValue("jane@example.test").let { Triple(it.state, it.memberLink, it.vendorAccountRef) }).isEqualTo(Triple(SeatState.ASSIGNED, MemberLink.EMAIL_MATCH, "user_01"))
             assertThat(getValue("newhire@example.test").let { it.state to it.memberId }).isEqualTo(SeatState.PENDING_ASSIGNMENT to null)
         }
-        listOf(setup.copilot, setup.claude).forEach { vendorId ->
+        listOf(setup.cursor, setup.claude).forEach { vendorId ->
             val sync = connections.view(tenant, vendorId).connection!!.sync
             assertThat(listOf(sync.status, sync.lastSucceededAt)).containsExactly("succeeded", clock.now.toString())
         }
         assertThat(jdbc.sql("SELECT string_agg(status || ':' || listed_seats || ':' || trigger, ',' ORDER BY listed_seats) FROM enrollment.seat_sync_runs").query(String::class.java).single())
-            .isEqualTo("succeeded:2:schedule,succeeded:2:schedule")
-        assertThat(vendors.requests(copilotSeats).map { it.header("Authorization") }).containsOnly("Bearer $secret")
+            .isEqualTo("succeeded:1:schedule,succeeded:2:schedule")
+        assertThat(vendors.requests(cursorMembers).map { it.header("Authorization") }).containsOnly(basic)
     }
 
     @Test fun `한 연결의 실패가 다른 연결을 막지 않고, 실패한 연결의 원장은 그대로 낡은 값으로 남는다`() {
         val setup = connectTwo()
         synchronizer.runOnce()
-        val before = seats(setup.copilot)
+        val before = seats(setup.cursor)
 
-        // Copilot 이 계속 503 — 정한 횟수만큼 시도하고 실패로 남긴다. Claude 는 계속 동기화된다.
-        vendors.on("GET", copilotSeats, reply(503, "{}"))
+        // Cursor 가 계속 503 — 정한 횟수만큼 시도하고 실패로 남긴다. Claude 는 계속 동기화된다.
+        vendors.on("GET", cursorMembers, reply(503, "{}"))
         vendors.on("GET", "/v1/organizations/users", reply(200, """{"data":[],"has_more":false,"first_id":null,"last_id":null}"""))
         clock.now = clock.now.plus(Duration.ofHours(7))
-        val attempts = vendors.requests(copilotSeats).size
+        val attempts = vendors.requests(cursorMembers).size
         assertThat(synchronizer.runOnce()).isEqualTo(SeatSynchronizer.Round(applied = 1, failed = 1))
-        assertThat(vendors.requests(copilotSeats).size - attempts).isEqualTo(2)
+        assertThat(vendors.requests(cursorMembers).size - attempts).isEqualTo(2)
 
-        assertThat(seats(setup.copilot)).isEqualTo(before)
-        val failing = connections.view(tenant, setup.copilot).connection!!.sync
+        assertThat(seats(setup.cursor)).isEqualTo(before)
+        val failing = connections.view(tenant, setup.cursor).connection!!.sync
         assertThat(listOf(failing.status, failing.lastError, failing.lastFailedAt)).containsExactly("failing", "vendor_unavailable", clock.now.toString())
         // Claude 는 목록에서 사라진 구성원을 해제했다(초대는 그대로 대기).
         assertThat(seats(setup.claude).getValue("jane@example.test").state).isEqualTo(SeatState.RELEASED)
@@ -180,22 +181,22 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
         val setup = connectTwo()
         synchronizer.runOnce()
         val key = UUID.randomUUID().toString()
-        val accepted = manage("POST", "/vendors/${setup.copilot}/connection/sync", null, setup.token, key = key)
+        val accepted = manage("POST", "/vendors/${setup.cursor}/connection/sync", null, setup.token, key = key)
         assertThat(accepted.statusCode()).withFailMessage(accepted.body()).isEqualTo(202)
         val body = json(accepted)
         val operationId = body.path("operationId").asString()
         assertThat(listOf(body.path("kind").asString(), body.path("status").asString())).containsExactly("seat_sync", "pending")
         assertThat(accepted.headers().firstValue("Location")).hasValue("/api/v1/organizations/$tenant/operations/$operationId")
-        assertThat(json(manage("POST", "/vendors/${setup.copilot}/connection/sync", null, setup.token, key = key)).path("operationId").asString()).isEqualTo(operationId)
-        assertThat(json(manage("POST", "/vendors/${setup.copilot}/connection/sync", null, setup.token)).path("operationId").asString())
+        assertThat(json(manage("POST", "/vendors/${setup.cursor}/connection/sync", null, setup.token, key = key)).path("operationId").asString()).isEqualTo(operationId)
+        assertThat(json(manage("POST", "/vendors/${setup.cursor}/connection/sync", null, setup.token)).path("operationId").asString())
             .describedAs("끝나지 않은 요청이 있으면 새 키도 같은 작업").isEqualTo(operationId)
 
-        assertThat(synchronizer.runOnce()).describedAs("요청이 걸린 Copilot 만 — Claude 는 아직 차례가 아니다").isEqualTo(SeatSynchronizer.Round(1, 0))
+        assertThat(synchronizer.runOnce()).describedAs("요청이 걸린 Cursor 만 — Claude 는 아직 차례가 아니다").isEqualTo(SeatSynchronizer.Round(1, 0))
         assertThat(operation(operationId).let { it.status to it.targets.single().status.wire }).isEqualTo(OperationStatus.SUCCEEDED to "succeeded")
 
         // 실패한 요청은 사유를 남긴다.
-        vendors.on("GET", copilotSeats, reply(401, """{"message":"Bad credentials"}"""))
-        val failedId = json(manage("POST", "/vendors/${setup.copilot}/connection/sync", null, setup.token)).path("operationId").asString()
+        vendors.on("GET", cursorMembers, reply(401, """{"error":"unauthorized"}"""))
+        val failedId = json(manage("POST", "/vendors/${setup.cursor}/connection/sync", null, setup.token)).path("operationId").asString()
         synchronizer.runOnce()
         assertThat(operation(failedId).let { it.status to it.targets.single().reason }).isEqualTo(OperationStatus.FAILED to "invalid_credentials")
     }
@@ -205,29 +206,30 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
         val openai = vendor("openai_biz", "business", setup.token).path("vendorId").asString()
         assertThat(manage("POST", "/vendors/$openai/connection/sync", null, setup.token).statusCode()).isEqualTo(404)
 
-        assertThat(manage("DELETE", "/vendors/${setup.copilot}/contract", null, setup.token, etag = "\"vendor-${currentVersion(setup.copilot)}\"").statusCode()).isEqualTo(204)
+        assertThat(manage("DELETE", "/vendors/${setup.cursor}/contract", null, setup.token, etag = "\"vendor-${currentVersion(setup.cursor)}\"").statusCode()).isEqualTo(204)
         synchronizer.runOnce()
-        assertThat(connections.view(tenant, setup.copilot).connection!!.sync.lastError).isEqualTo("plan_mismatch")
-        assertThat(seats(setup.copilot)).isEmpty()
-        assertThat(vendors.requests(copilotSeats)).describedAs("플랜이 맞지 않으면 벤더를 부르지 않는다").isEmpty()
+        assertThat(connections.view(tenant, setup.cursor).connection!!.sync.lastError).isEqualTo("plan_mismatch")
+        assertThat(seats(setup.cursor)).isEmpty()
+        assertThat(vendors.requests(cursorMembers)).describedAs("플랜이 맞지 않으면 벤더를 부르지 않는다").isEmpty()
     }
 
     private fun currentVersion(vendorId: String): Long = jdbc.sql("SELECT max(version) FROM enrollment.vendor_contract_versions WHERE vendor_id = :id")
         .param("id", vendorId).query(Long::class.java).single()
 
-    @Test fun `청구 누계 — 같은 실행이 좌석 목록 뒤에 이번 달(서울) 사용 비용을 읽어 저장하고, 청구 API 가 없는 커넥터는 읽지 않는다`() {
+    @Test fun `청구 누계 — 같은 실행이 좌석 목록 뒤에 Claude 의 이번 달(서울) 사용 비용과 Cursor 의 이번 주기 지출을 읽어 저장한다`() {
         val setup = connectTwo()
         assertThat(synchronizer.runOnce()).isEqualTo(SeatSynchronizer.Round(applied = 2, failed = 0))
         // 시계 2026-09-09T12:00Z = 서울 9월 9일 → 기간은 서울 9월 1일 0시(= 8월 31일 15시 UTC)부터 지금까지.
         val monthStart = Instant.parse("2026-08-31T15:00:00Z")
         assertThat(billing(setup.claude)).containsExactly(listOf(monthStart, clock.now, "412.8", "usage_cost", false, "connector", clock.now))
-        assertThat(billing(setup.copilot)).describedAs("Copilot 은 청구 API 가 없다").isEmpty()
+        // Cursor 는 벤더가 정한 주기 시작부터의 on-demand 지출(센트 → 달러)이다.
+        assertThat(billing(setup.cursor)).containsExactly(listOf(Instant.parse("2026-09-01T00:00:00Z"), clock.now, "12.345", "usage_spend", false, "connector", clock.now))
         with(vendors.requests(costReport).single()) {
             assertThat(listOf(param("starting_at"), param("ending_at"), param("bucket_width"), header("x-api-key"))).containsExactly("2026-08-31T15:00:00Z", clock.now.toString(), "1h", secret)
         }
         val claude = connections.view(tenant, setup.claude).connection!!
         assertThat(claude.billing!!.let { it.status to it.lastSucceededAt }).isEqualTo("succeeded" to clock.now.toString())
-        assertThat(connections.view(tenant, setup.copilot).connection!!.billing).describedAs("청구를 구현하지 않은 커넥터에는 칸이 없다").isNull()
+        assertThat(connections.view(tenant, setup.cursor).connection!!.billing!!.status).isEqualTo("succeeded")
 
         // 같은 기간을 다시 읽으면 덮는다(벤더가 고칠 수 있는 값).
         vendors.on("GET", costReport, reply(200, """{"data":[{"results":[{"amount":"50000","currency":"USD"}]}],"has_more":false}"""))

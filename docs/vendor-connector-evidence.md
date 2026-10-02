@@ -1,7 +1,9 @@
 # 벤더 좌석·청구 API 근거
 
-확인일: 2026-09-30. 카탈로그의 등록 제품 여섯에 대해 좌석 조회, 좌석 회수, 좌석 복원, 실제 청구액 조회를
+확인일: 2026-09-30. 카탈로그의 등록 제품에 대해 좌석 조회, 좌석 회수, 좌석 복원, 실제 청구액 조회를
 공식 문서로 확인한 결과를 기록한다. 커넥터는 이 문서에 근거가 있는 벤더·기능만 구현한다.
+GitHub Copilot(`copilot`)·Gemini Code Assist(`gemini`)는 연동 대상이 아니다(ADR 0054) — 커넥터를 두지 않고 이 문서의 조사 대상에서 뺐다.
+두 제품의 카탈로그 플랜은 커넥터가 없는 플랜이라 수동 원천이다.
 
 가격·플랜·API는 바뀔 수 있다. 커넥터를 고치기 전에 해당 절의 문서를 다시 읽고 확인일을 갱신한다.
 제3자 글과 비공식 SDK는 근거로 쓰지 않았다. 읽지 못한 문서는 읽은 것으로 적지 않았다.
@@ -14,6 +16,7 @@
 | `플랜 제한` | 문서가 특정 플랜에만 제공한다고 적었다 |
 | `공개 API 없음` | 문서가 관리 화면 절차만 안내하거나, 해당 조직 유형을 API 대상에서 제외한다 |
 | `확인 불가` | 문서를 읽지 못했거나 서술로 판정할 수 없다. 구현 근거로 쓰지 않는다 |
+| `조사하지 않음` | 연동 대상이 아니라 문서를 확인하지 않았다(ADR 0054). 구현 근거로 쓰지 않는다 |
 
 인용한 영문은 확인일에 문서에서 읽은 문장이다. 엔드포인트 예시는 문서의 예시를 옮긴 것이며 실계정 응답이 아니다.
 실계정 검증은 하지 않았다.
@@ -28,10 +31,8 @@
 | `openai_biz` · `enterprise` | 확인 불가 | 확인 불가 | 확인 불가 | 확인 불가 |
 | `cursor` · `cursor_teams` | 플랜 제한 | 플랜 제한 | 공개 API 없음 | 플랜 제한 |
 | `cursor` · `cursor_enterprise` | 지원 | 지원 | 공개 API 없음 | 지원(사용 지출. 좌석 구독료 아님) |
-| `copilot` · `copilot_business` | 지원 | 지원 | 지원 | 확인 불가 |
-| `copilot` · `copilot_enterprise` | 지원 | 지원 | 지원 | 확인 불가 |
-| `gemini` · `gemini_standard` | 지원 | 지원 | 지원 | 확인 불가 |
-| `gemini` · `gemini_enterprise` | 지원 | 지원 | 지원 | 확인 불가 |
+| `copilot` · 전 플랜 | 조사하지 않음(ADR 0054) | 조사하지 않음 | 조사하지 않음 | 조사하지 않음 |
+| `gemini` · 전 플랜 | 조사하지 않음(ADR 0054) | 조사하지 않음 | 조사하지 않음 | 조사하지 않음 |
 | `other` · 전 플랜 | 해당 없음 | 해당 없음 | 해당 없음 | 해당 없음 |
 
 `other`는 특정 공급사가 아니라 조직이 직접 입력하는 계약이다. 공급사 API가 정의상 없다.
@@ -384,220 +385,6 @@ Admin API 문서에 구성원 초대·재추가 엔드포인트가 없다. 복�
 - 청구서와의 관계: "On June 4th, 2026 we added additional precision to the spendCents and overallSpendCents fields to avoid rounding errors when comparing results to invoice amounts."
 - 좌석 구독료(좌석 수 × 단가)를 돌려주는 필드는 문서에 없다. 이 값은 구성원별 사용 지출이다.
 
-## 4. GitHub Copilot (`copilot`)
-
-근거: [Copilot 사용자 관리 REST API](https://docs.github.com/en/rest/copilot/copilot-user-management?apiVersion=2022-11-28),
-[조직 구성원의 Copilot 접근 회수](https://docs.github.com/en/copilot/how-tos/administer-copilot/manage-for-organization/manage-access/revoke-access),
-[Copilot 라이선스 변경](https://docs.github.com/en/copilot/reference/copilot-billing/license-changes).
-
-- 대상: "an organization with a Copilot Business or Copilot Enterprise subscription". 두 플랜이 같은 엔드포인트를 쓴다.
-- 권한: "Only organization owners can view assigned seats." 조회는 "OAuth app tokens and personal access tokens (classic) need either the manage_billing:copilot or read:org scopes",
-  변경은 "either the manage_billing:copilot or admin:org scopes".
-- 페이지: `page`(기본 1), `per_page`(기본 50, 최대 100).
-- 한도는 이 문서들에서 확인하지 않았다.
-
-### 좌석 조회 — 지원
-
-`GET /orgs/{org}/copilot/billing/seats`. "Lists all Copilot seats for which an organization with a Copilot Business or Copilot Enterprise subscription is currently being billed."
-
-```bash
-curl -L \
-  -X GET \
-  https://api.github.com/orgs/ORG/copilot/billing/seats
-```
-
-```json
-{
-  "total_seats": 1,
-  "seats": [
-    {
-      "assignee": {
-        "login": "octocat",
-        "id": 1,
-        "type": "User"
-      },
-      "assigning_team": {
-        "id": 1,
-        "name": "Justice League",
-        "slug": "justice-league"
-      },
-      "pending_cancellation_date": "2025-02-15",
-      "last_activity_at": "2024-10-01T19:32:20Z",
-      "last_activity_editor": "Visual Studio Code",
-      "last_authenticated_at": "2024-10-01T19:32:20Z",
-      "created_at": "2024-10-01T19:32:20Z",
-      "plan_type": "business"
-    }
-  ]
-}
-```
-
-(문서 예시의 `assignee`·`organization`·`assigning_team`에는 URL 등 필드가 더 있다. 여기서는 쓰는 필드만 옮겼다.)
-
-- 식별자는 GitHub `login`이다. **이메일이 없다.** Pulsemetry 구성원(이메일)과 잇는 대응은 조직이 제공해야 한다.
-- 2026-10-01 재확인: 담당자는 "**assignee**: any of: **null** [or] **Simple User**"다 — null 인 좌석은 계정 키가 없어 원장에 넣지 않는다.
-  예시 curl은 표준 헤더를 "omit[s] these standard headers for brevity". 표준 헤더는
-  [REST 시작하기](https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api?apiVersion=2022-11-28)의
-  `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `Authorization: Bearer YOUR-TOKEN`이다.
-  페이지는 [페이지 문서](https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api?apiVersion=2022-11-28)대로
-  `link` 헤더의 `rel="next"`가 없으면 끝이다("Once the `link` header no longer includes a link to the next page, all of the results are returned").
-  응답 상태: 200·401·403·404·500.
-- 한도([REST 한도](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api?apiVersion=2022-11-28)):
-  "If you exceed your primary rate limit, you will receive a `403` or `429` response, and the `x-ratelimit-remaining` header will be `0`."
-  "If the `retry-after` response header is present, you should not retry your request until after that many seconds has elapsed."
-  "If the `x-ratelimit-remaining` header is `0`, you should not retry your request until after the time, in UTC epoch seconds, specified by the `x-ratelimit-reset` header."
-- 마지막 활동: "Users must have telemetry enabled in their IDE for Copilot in the IDE activity to be reflected in last_activity_at."
-  값이 비어 있다고 미사용으로 확정할 수 없다.
-- 조직 요약 `GET /orgs/{org}/copilot/billing`은 `seat_breakdown`(`total`·`added_this_cycle`·`pending_cancellation`·`pending_invitation`·`active_this_cycle`·`inactive_this_cycle`)과 `plan_type`을 준다. 금액은 없다.
-
-### 좌석 회수 — 지원
-
-`DELETE /orgs/{org}/copilot/billing/selected_users`.
-
-```bash
-curl -L \
-  -X DELETE \
-  https://api.github.com/orgs/ORG/copilot/billing/selected_users \
-  -d '{
-  "selected_usernames": [
-    "cooluser1",
-    "hacker2",
-    "octocat"
-  ]
-}'
-```
-
-```json
-{
-  "seats_cancelled": 1
-}
-```
-
-- 효력: "Sets seats for all users specified to 'pending cancellation'. This will cause the specified users to lose access to GitHub Copilot at the end of the current billing cycle unless they retain access through team membership."
-- "If you remove a seat during a cycle, the user will have access to Copilot for the remainder of the billing cycle."
-- 팀을 통해 배정된 좌석은 사용자 단위 회수로 끊기지 않는다(`assigning_team`이 있는 좌석). 팀 단위는 `DELETE /orgs/{org}/copilot/billing/selected_teams`다.
-- 요청 성공은 즉시 회수가 아니다. 좌석 조회의 `pending_cancellation_date`로 예정일을 확인한다.
-
-### 좌석 복원 — 지원
-
-`POST /orgs/{org}/copilot/billing/selected_users`. "Purchases a GitHub Copilot seat for each user specified."
-
-```bash
-curl -L \
-  -X POST \
-  https://api.github.com/orgs/ORG/copilot/billing/selected_users \
-  -d '{
-  "selected_usernames": [
-    "cooluser1",
-    "hacker2",
-    "octocat"
-  ]
-}'
-```
-
-```json
-{
-  "seats_created": 1
-}
-```
-
-- "The response contains the total number of new seats that were created and existing seats that were refreshed."
-- 과금: "Additional Copilot seats are billed for the remainder of the current billing cycle". 복원은 새 좌석 구매와 같다.
-- 회수 예정(`pending cancellation`) 상태의 좌석을 주기 안에 되살릴 때의 과금은 문서에서 확인하지 못했다.
-
-### 실제 청구액 — 확인 불가
-
-[청구 사용량 REST API](https://docs.github.com/en/rest/billing/usage?apiVersion=2022-11-28)에
-`GET /organizations/{org}/settings/billing/usage`("This endpoint is only available to organizations with access to the enhanced billing platform")와
-`GET /organizations/{org}/settings/billing/premium_request/usage`가 있다. 항목 필드는 `product`·`sku`·`quantity`·`unitType`·`pricePerUnit`·`grossAmount`·`discountAmount`·`netAmount`다.
-
-그러나 Copilot 좌석 요금이 이 보고서의 어떤 `product`·`sku`로 나오는지, 통화가 무엇인지 읽은 문서에서 확인하지 못했다.
-응답 예시도 얻지 못했다. 구현 근거로 쓰지 않는다.
-
-## 5. Gemini Code Assist (`gemini`)
-
-근거: [라이선스 관리](https://docs.cloud.google.com/gemini/docs/codeassist/manage-licenses),
-Cloud Commerce Consumer Procurement API의
-[enumerateLicensedUsers](https://docs.cloud.google.com/marketplace/docs/reference/consumerprocurement/rest/v1/billingAccounts.orders.licensePool/enumerateLicensedUsers)·
-[assign](https://docs.cloud.google.com/marketplace/docs/reference/consumerprocurement/rest/v1/billingAccounts.orders.licensePool/assign)·
-[unassign](https://docs.cloud.google.com/marketplace/docs/reference/consumerprocurement/rest/v1/billingAccounts.orders.licensePool/unassign).
-
-- Standard와 Enterprise 에디션이 같은 라이선스 풀 API를 쓴다. 자원 이름은 `billingAccounts/{청구 계정}/orders/{주문}/licensePool`이다.
-- 인증: OAuth 2.0 액세스 토큰(scope `https://www.googleapis.com/auth/cloud-platform`), 헤더 `X-Goog-User-Project`.
-- 역할: `roles/billing.admin` 또는 `roles/consumerprocurement.orderAdmin`. 권한은 조회 `consumerprocurement.licensePools.enumerateLicensedUsers`,
-  배정 `consumerprocurement.licensePools.assign`, 해제 `consumerprocurement.licensePools.unassign`.
-- 페이지: `pageSize`, `pageToken`(응답 `nextPageToken`). 한도는 확인하지 않았다.
-
-### 좌석 조회 — 지원
-
-```bash
-curl -X GET \
--H "Authorization: Bearer $(gcloud auth print-access-token)" \
--H "X-Goog-User-Project: PROJECT_ID" \
-"https://cloudcommerceconsumerprocurement.googleapis.com/v1/billingAccounts/BILLING_ACCOUNT_ID/orders/ORDER_ID/licensePool:enumerateLicensedUsers/"
-```
-
-```json
-{
-  "licensedUsers": [
-    {
-      "username": "dana@example.com",
-      "assignTime": "2024-09-26T16:24:40.559222Z"
-    }
-  ]
-}
-```
-
-2026-10-01 재확인: 요청은 `GET https://cloudcommerceconsumerprocurement.googleapis.com/v1/{parent=billingAccounts/*/orders/*/licensePool}:enumerateLicensedUsers`,
-`pageSize`("The maximum number of users to return. The service may return fewer than this value." — 최대값은 문서에 없다), `pageToken`.
-`nextPageToken`: "If this field is omitted, there are no subsequent pages."
-
-`LicensedUser` 필드: `username`("Format: `name@domain.com`"), `assignTime`("Timestamp when the license was assigned"),
-`recentUsageTime`("Timestamp when the license was recently used"). 응답 최상위에 `nextPageToken`이 있다.
-
-#### 인증 — 서비스 계정 키로 액세스 토큰 받기 (2026-10-01 확인)
-
-액세스 토큰은 한 시간이면 끝나 저장해 둘 수 없다. 서버 간 호출은 서비스 계정 키로 서명한 JWT 를 토큰으로 바꾼다
-([서비스 계정 OAuth](https://developers.google.com/identity/protocols/oauth2/service-account)).
-
-- JWT 헤더 `{"alg":"RS256","typ":"JWT", "kid":"…"}`(kid 선택). 서명은 "RSA using SHA-256 hashing algorithm".
-- 주장: `iss`("The email address of the service account."), `scope`, `aud`("When making an access token request this value is always `https://oauth2.googleapis.com/token`."),
-  `exp`("This value has a maximum of 1 hour after the issued time."), `iat`.
-- 요청: `POST https://oauth2.googleapis.com/token`, `Content-Type: application/x-www-form-urlencoded`, `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `assertion=<JWT>`.
-- 응답 예시: `{"access_token": "…", "scope": "…", "token_type": "Bearer", "expires_in": 3600}`.
-- 키 파일([키 만들기](https://docs.cloud.google.com/iam/docs/keys-create-delete))은 `type`·`project_id`·`private_key_id`·`private_key`(PKCS#8 PEM)·`client_email`·`client_id`·`auth_uri`·`token_uri` 등을 담는다.
-  커넥터의 자격증명은 이 JSON 전체이고, 쓰는 필드는 `client_email`·`private_key`·`private_key_id`다.
-
-### 좌석 회수 — 지원
-
-`POST https://cloudcommerceconsumerprocurement.googleapis.com/v1/{parent=billingAccounts/*/orders/*/licensePool}:unassign`
-
-```json
-{
-  "usernames": ["dana@example.com"]
-}
-```
-
-성공 응답은 빈 본문(`{}`)이다. 요청 본문의 형식은 문서의 `{"usernames": [USER_EMAILS]}`를 따랐다.
-
-### 좌석 복원 — 지원
-
-`POST https://cloudcommerceconsumerprocurement.googleapis.com/v1/{parent=billingAccounts/*/orders/*/licensePool}:assign`.
-요청·응답 형식은 회수와 같다.
-
-조건:
-
-- "By default, automatic license assignment is enabled for all subscriptions." 수동 방식은 "you can add and remove licenses for individual users"다.
-  자동 배정 방식에서 해제한 사용자가 다시 라이선스를 받는지는 확인하지 못했다. 회수 전에 구독의 배정 방식을 확인해야 한다.
-- 자동 해제: "Users with license assignments who haven't used any Gemini Code Assist Standard or Enterprise features are automatically de-provisioned at the end of the inactivity period set by the administrator."
-- "licenses cannot be transferred directly between users." 해제 후 다른 사용자에게 배정한다.
-
-### 실제 청구액 — 확인 불가
-
-라이선스 관리 문서에 청구액 조회는 없다. [Cloud Billing의 BigQuery 내보내기](https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery)는
-"export detailed Google Cloud billing data (such as usage, cost estimates, and pricing data) automatically throughout the day to a BigQuery dataset"라고 적는다.
-Gemini Code Assist 구독 요금이 이 내보내기에 어떻게 나오는지, REST로 청구 합계를 읽는 방법이 있는지 확인하지 못했다.
-
 ## 결론 — 구현 방식
 
 `커넥터`는 공식 문서 근거로 구현하고 모의 서버로 검증한다. `수동`은 관리자의 입력과 조치 확인으로 처리한다.
@@ -610,17 +397,15 @@ Gemini Code Assist 구독 요금이 이 내보내기에 어떻게 나오는지, 
 | `openai_biz` · 전 플랜 | 수동 | 수동 | 수동 | 미제공 |
 | `cursor` · `cursor_teams` | 수동 | 수동 | 수동 | 미제공 |
 | `cursor` · `cursor_enterprise` | 커넥터 | 커넥터 | 수동 | 커넥터(현재 주기의 사용 지출) |
-| `copilot` · 전 플랜 | 커넥터 | 커넥터(주기 말 효력) | 커넥터 | 미제공 |
-| `gemini` · 전 플랜 | 커넥터 | 커넥터 | 커넥터 | 미제공 |
+| `copilot` · 전 플랜 | 수동 | 수동 | 수동 | 미제공 |
+| `gemini` · 전 플랜 | 수동 | 수동 | 수동 | 미제공 |
 | `other` · 전 플랜 | 수동 | 수동 | 수동 | 미제공 |
 
 커넥터가 지켜야 할 제약:
 
-- **요청 성공과 회수 완료는 다르다.** Copilot은 주기 말에 효력이 생기고(`pending_cancellation_date`), Claude Enterprise의 복원은 초대 수락 뒤에 끝난다.
-  커넥터는 벤더가 돌려준 상태를 그대로 원장에 남긴다.
-- **식별자가 다르다.** Copilot 좌석은 GitHub `login`으로만 식별된다. 이메일 대응이 없는 좌석은 구성원에 잇지 않는다.
-- **활동 근거가 다르다.** Copilot `last_activity_at`은 IDE 텔레메트리가 켜져 있을 때만 채워진다. Claude Enterprise와 Cursor는 일별 활동만 준다.
-  Gemini는 `recentUsageTime`을 준다. 값이 없다는 것을 미사용으로 확정하지 않는다.
+- **요청 성공과 회수 완료는 다르다.** Claude Enterprise의 복원(재초대)은 초대 수락 뒤에 끝난다. 커넥터는 벤더가 돌려준 상태를 그대로 원장에 남긴다.
+- **식별자가 다르다.** Claude Enterprise·Cursor는 이메일과 벤더 내부 ID를 준다. 원장의 계정 키는 이메일이고 제어 호출은 내부 ID로 한다.
+- **활동 근거가 다르다.** Claude Enterprise와 Cursor는 구성원 응답에 마지막 활동이 없고 일별 활동만 준다. 값이 없다는 것을 미사용으로 확정하지 않는다.
 - **좌석 등급을 API로 알 수 없는 벤더가 있다.** Claude Enterprise와 Cursor의 구성원 응답에는 등급이 없다.
 - **청구 커넥터의 금액은 좌석 구독료가 아니다.** Claude Enterprise는 사용량 기반 계약의 사용 비용, Cursor는 현재 주기의 사용 지출이다.
   좌석 계약액과 더하거나 대체하지 않는다. 좌석 구독 청구액을 주는 API는 어느 벤더에서도 확인하지 못했다.
@@ -629,7 +414,5 @@ Gemini Code Assist 구독 요금이 이 내보내기에 어떻게 나오는지, 
 ## 다시 확인할 것
 
 - OpenAI 도움말(`help.openai.com`)과 API reference(`platform.openai.com`)는 조회 시 403이었고, ChatGPT 워크스페이스의 Admin API reference는 인증이 필요하다. 좌석 관리 API 유무는 열려 있다.
-- GitHub 청구 사용량 보고서에 Copilot 좌석 요금이 나오는지, 어떤 `product`·`sku`인지.
-- Gemini Code Assist 구독 요금의 조회 경로.
 - Cursor Teams 플랜에서 Admin API를 쓸 수 없다는 판정은 API 개요의 가용성 표에 근거한다. Admin API 문서 자체는 전체 제공 범위를 적지 않았다.
-- 각 벤더의 레이트 리밋 중 이 문서에 수치가 없는 것(GitHub, Google).
+- 각 벤더의 레이트 리밋 중 이 문서에 수치가 없는 것.

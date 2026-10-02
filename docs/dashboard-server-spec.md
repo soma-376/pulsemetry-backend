@@ -353,7 +353,7 @@ type Alert = {
 ```ts
 type VendorSeatsResponse = { meta: CurrentMeta; vendorId: string; ledgerAvailability: Availability; ledgerReason: string | null; seats: Page<VendorSeatItem> };
 type VendorSeatItem = {
-  seatAssignmentId: string; version: number; account: string; accountKind: "email" | "github_login";
+  seatAssignmentId: string; version: number; account: string; accountKind: "email";
   state: "assigned" | "pending_assignment" | "pending_release" | "released"; source: string;
   memberId: string | null; memberAccount: string | null; memberLink: "email_match" | "admin" | null;
   tierId: string | null; tierLabel: string | null; vendorTier: string | null; assignedAt: string; releaseEffectiveOn: string | null; releasedAt: string | null; note: string | null;
@@ -364,7 +364,7 @@ type MemberSeatsResponse = { meta: CurrentMeta; memberId: string; policy: { idle
 type MemberSeat = {
   seatAssignmentId: string; version: number; vendorId: string; vendorName: string; kind: string;
   contractVersion: number | null; tierId: string | null; tierLabel: string | null; vendorTier: string | null;
-  account: string; accountKind: "email" | "github_login";
+  account: string; accountKind: "email";
   state: "assigned" | "pending_assignment" | "pending_release" | "released"; source: string; memberLink: "email_match" | "admin" | null;
   assignedAt: string; releaseEffectiveOn: string | null; releasedAt: string | null;
   ledgerAvailability: "available" | "partial" | "unavailable"; ledgerReason: string | null;

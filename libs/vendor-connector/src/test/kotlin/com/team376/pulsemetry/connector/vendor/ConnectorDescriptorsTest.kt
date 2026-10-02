@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test
 /**
  * 커넥터 설명과 조립 규칙 (ADR 0048 §8). 기대값은 벤더 문서의 "결론 — 구현 방식" 표에서 쓴다 — `커넥터` 칸만 capability 가 되고,
  * `수동`·`미제공` 칸은 커넥터가 없다. 복원이 `수동`인 Cursor Enterprise 는 복원 capability 가 없다.
+ * GitHub Copilot·Gemini Code Assist 는 연동 대상이 아니다(ADR 0054) — 카탈로그 플랜은 있어도 커넥터가 없다.
  */
 class ConnectorDescriptorsTest {
 
@@ -26,38 +27,37 @@ class ConnectorDescriptorsTest {
 		val expected = mapOf(
 			"claude_team" to "enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE, BILLING),
 			"cursor" to "cursor_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, BILLING),
-			"copilot" to "copilot_business" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE),
-			"copilot" to "copilot_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE),
-			"gemini" to "gemini_standard" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE),
-			"gemini" to "gemini_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE),
 		)
 		val actual = catalog.associateWith { (product, plan) -> ConnectorDescriptors.forPlan(product, plan)?.supported }.filterValues { it != null }
 		assertThat(actual).isEqualTo(expected)
-		assertThat(ConnectorDescriptors.forPlan("copilot", null)).isNull()
-		// 이 저장소가 구현한 기능(ADR 0049·0050): 해제는 넷, 복원은 Copilot·Gemini, 청구는 Claude Enterprise·Cursor Enterprise.
+		assertThat(ConnectorDescriptors.forPlan("cursor", null)).isNull()
+		// 연동 대상이 아닌 제품의 카탈로그 플랜에는 커넥터가 없다(ADR 0054).
+		for (plan in listOf("copilot" to "copilot_business", "copilot" to "copilot_enterprise", "gemini" to "gemini_standard", "gemini" to "gemini_enterprise")) {
+			assertThat(ConnectorDescriptors.forPlan(plan.first, plan.second)).describedAs("%s", plan).isNull()
+		}
+		assertThat(ConnectorDescriptors.ALL.map { it.id }).containsExactly("claude_enterprise", "cursor_enterprise")
+		// 이 저장소가 구현한 기능(ADR 0049·0050·0054): 해제·청구는 둘 다, 복원은 구현한 커넥터가 없다.
 		assertThat(ConnectorDescriptors.ALL.associate { it.id to it.capabilities }).isEqualTo(mapOf(
-			"claude_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, BILLING), "cursor_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, BILLING),
-			"copilot" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE), "gemini" to setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE)))
-		assertThatThrownBy { ConnectorDescriptor("x", "copilot", setOf("copilot_business"), AccountKind.GITHUB_LOGIN, emptyList(), setOf(SEAT_LIST), setOf(SEAT_LIST, BILLING)) }
+			"claude_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, BILLING), "cursor_enterprise" to setOf(SEAT_LIST, SEAT_RELEASE, BILLING)))
+		assertThatThrownBy { ConnectorDescriptor("x", "cursor", setOf("cursor_teams"), AccountKind.EMAIL, emptyList(), setOf(SEAT_LIST), setOf(SEAT_LIST, BILLING)) }
 			.describedAs("문서 근거가 없는 기능은 구현으로 선언하지 못한다").isInstanceOf(IllegalArgumentException::class.java)
 	}
 
 	@Test
-	fun `계정 종류는 Copilot 만 GitHub 로그인이고 커넥터가 없는 제품은 이메일이다`() {
+	fun `계정 종류는 모든 제품이 이메일이고 GitHub 로그인 계정 종류는 없다`() {
 		assertThat(listOf("claude_team", "openai_biz", "cursor", "copilot", "gemini", "other").map { ConnectorDescriptors.accountKind(it) })
-			.containsExactly(AccountKind.EMAIL, AccountKind.EMAIL, AccountKind.EMAIL, AccountKind.GITHUB_LOGIN, AccountKind.EMAIL, AccountKind.EMAIL)
-		assertThat(ConnectorDescriptors.COPILOT.settingKeys).containsExactly("organization")
-		assertThat(ConnectorDescriptors.GEMINI.settingKeys).containsExactly("billingAccount", "order", "project")
+			.containsOnly(AccountKind.EMAIL)
+		// API 가 만들거나 받는 계정 종류는 email 하나다(ADR 0054). 남은 커넥터는 비밀 아닌 설정이 없다.
+		assertThat(AccountKind.entries.map { it.wire }).containsExactly("email")
+		assertThat(ConnectorDescriptors.ALL.flatMap { it.settingKeys }).isEmpty()
 	}
 
 	@Test
 	fun `계정 키는 소문자로 정규화하고 형식이 맞지 않으면 받지 않는다`() {
 		assertThat(AccountKind.EMAIL.normalize("  Dana@Example.TEST ")).isEqualTo("dana@example.test")
 		assertThat(AccountKind.EMAIL.normalize("octocat")).isNull()
-		assertThat(AccountKind.GITHUB_LOGIN.normalize("OctoCat")).isEqualTo("octocat")
-		assertThat(AccountKind.GITHUB_LOGIN.normalize("-octo")).isNull()
-		assertThat(AccountKind.GITHUB_LOGIN.normalize("dana@example.test")).isNull()
-		assertThat(AccountKind.GITHUB_LOGIN.normalize("a".repeat(40))).isNull()
+		assertThat(AccountKind.EMAIL.normalize("dana@example")).isNull()
+		assertThat(AccountKind.EMAIL.normalize("a".repeat(309) + "@example.test")).isNull()
 	}
 
 	private class Fake(override val descriptor: ConnectorDescriptor, withRelease: Boolean, withRestore: Boolean, withBilling: Boolean) : SeatConnector {
@@ -80,11 +80,13 @@ class ConnectorDescriptorsTest {
 
 		assertThatThrownBy { SeatConnectors(listOf(Fake(controlled, withRelease = true, withRestore = true, withBilling = true))) }
 			.isInstanceOf(IllegalArgumentException::class.java).hasMessageContaining("cursor_enterprise")
-		assertThatThrownBy { SeatConnectors(listOf(Fake(ConnectorDescriptors.COPILOT, withRelease = false, withRestore = true, withBilling = false))) }
+		// 복원은 벤더 문서가 근거를 준 Claude Enterprise 재초대로 본다 — 구현한 커넥터는 아직 없지만 포트와 조립 규칙은 같다.
+		val restoring = ConnectorDescriptors.CLAUDE_ENTERPRISE.copy(capabilities = setOf(SEAT_LIST, SEAT_RELEASE, SEAT_RESTORE))
+		assertThatThrownBy { SeatConnectors(listOf(Fake(restoring, withRelease = false, withRestore = true, withBilling = false))) }
 			.describedAs("설명은 해제·복원인데 복원만 구현").isInstanceOf(IllegalArgumentException::class.java)
 		assertThatThrownBy { SeatConnectors(listOf(cursor, Fake(controlled, withRelease = true, withRestore = false, withBilling = true))) }
 			.isInstanceOf(IllegalArgumentException::class.java)
-		assertThat(SeatConnectors(listOf(Fake(ConnectorDescriptors.COPILOT, withRelease = true, withRestore = true, withBilling = false))).byId("copilot")).isNotNull()
+		assertThat(SeatConnectors(listOf(Fake(restoring, withRelease = true, withRestore = true, withBilling = false))).byId("claude_enterprise")).isNotNull()
 	}
 
 	@Test
@@ -98,7 +100,7 @@ class ConnectorDescriptorsTest {
 
 	@Test
 	fun `요청 성공과 완료를 나눈다 — 예정 결과만 효력일을 갖고 해제 예정 좌석만 예정일을 갖는다`() {
-		// 벤더가 날짜를 주지 않는 예정(Copilot 취소 응답)은 효력일을 모른다 — 다음 동기화가 채운다(ADR 0049).
+		// 벤더가 날짜를 주지 않는 예정은 효력일을 모른다 — 다음 동기화가 채운다(ADR 0049).
 		assertThat(ControlResult(ControlStatus.SCHEDULED).effectiveOn).isNull()
 		assertThatThrownBy { ControlResult(ControlStatus.AWAITING_ACCEPTANCE, java.time.LocalDate.parse("2026-10-31")) }.isInstanceOf(IllegalArgumentException::class.java)
 		// 청구 누계는 USD 만, 비어 있지 않은 구간만(ADR 0050 — 환율 원천이 없다).

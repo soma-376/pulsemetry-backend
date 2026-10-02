@@ -48,21 +48,21 @@ import java.util.UUID
 class VendorConnectionApiTest : AbstractUserAuthApiTest() {
 
     companion object {
-        /** Copilot·Claude 의 벤더 API 를 흉내 낸다. 클래스 하나가 같은 서버를 쓴다. */
+        /** Cursor·Claude 의 벤더 API 를 흉내 낸다. 클래스 하나가 같은 서버를 쓴다. */
         val vendors = MockVendorServer()
 
         @JvmStatic @DynamicPropertySource fun vendorApis(registry: DynamicPropertyRegistry) {
-            listOf("copilot", "claude_enterprise", "cursor_enterprise", "gemini").forEach { id ->
+            listOf("claude_enterprise", "cursor_enterprise").forEach { id ->
                 registry.add("pulsemetry.vendor-connections.base-urls.$id") { vendors.base.toString() }
             }
         }
     }
 
-    private val copilotSeats = "/orgs/octo-org/copilot/billing/seats"
+    private val cursorMembers = "/teams/members"
 
     @BeforeEach fun vendorReplies() {
         vendors.received.clear()
-        vendors.on("GET", copilotSeats, reply(200, """{"total_seats":0,"seats":[]}"""))
+        vendors.on("GET", cursorMembers, reply(200, """{"teamMembers":[]}"""))
         vendors.on("GET", "/v1/organizations/users", reply(200, """{"data":[],"has_more":false,"first_id":null,"last_id":null}"""))
     }
 
@@ -78,7 +78,7 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
         return json(created).path("vendor")
     }
 
-    private fun connect(vendorId: String, token: String, expectedVersion: Any? = 0, settings: Any? = mapOf("organization" to "octo-org"), credential: Any? = secret) =
+    private fun connect(vendorId: String, token: String, expectedVersion: Any? = 0, settings: Any? = emptyMap<String, String>(), credential: Any? = secret) =
         manage("PUT", "/vendors/$vendorId/connection", mapOf("expectedVersion" to expectedVersion, "settings" to settings, "credential" to credential), token)
 
     private fun verify(vendorId: String, token: String) = manage("POST", "/vendors/$vendorId/connection/verify", null, token)
@@ -97,18 +97,18 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
 
     @Test fun `연결을 만들면 권위가 커넥터가 되고 자격증명은 암호문으로만 남는다 — 응답·DB·로그·멱등 기록 어디에도 평문이 없다`(output: CapturedOutput) {
         val token = adminToken()
-        val copilot = vendor("copilot", "copilot_business", token)
+        val cursor = vendor("cursor", "cursor_enterprise", token)
         // 연결 전: 커넥터가 있는 플랜이라 수동 기록이 임시 권위다.
-        with(copilot.path("seatSource")) {
+        with(cursor.path("seatSource")) {
             assertThat(listOf(path("authority").asString(), path("provisional").asBoolean(), path("connector").path("connectorId").asString()))
-                .containsExactly("manual", true, "copilot")
-            // 구현한 기능은 ADR 0049 의 표(Copilot 은 목록·해제·복원)이고, 벤더가 지원하는 기능은 문서의 결론이다.
-            assertThat(path("connector").path("capabilities").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "seat_restore")
-            assertThat(path("connector").path("supported").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "seat_restore")
-            assertThat(path("connector").path("accountKind").asString()).isEqualTo("github_login")
+                .containsExactly("manual", true, "cursor_enterprise")
+            // 구현한 기능은 ADR 0049·0050 의 표(Cursor 는 목록·해제·청구)이고, 벤더가 지원하는 기능은 문서의 결론이다.
+            assertThat(path("connector").path("capabilities").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "billing")
+            assertThat(path("connector").path("supported").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "billing")
+            assertThat(path("connector").path("accountKind").asString()).isEqualTo("email")
             assertThat(path("connection").isNull).isTrue()
         }
-        val vendorId = copilot.path("vendorId").asString()
+        val vendorId = cursor.path("vendorId").asString()
 
         val created = connect(vendorId, token)
         assertThat(created.headers().firstValue("ETag")).hasValue("\"connection-1\"")
@@ -116,8 +116,8 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
             assertThat(listOf(path("authority").asString(), path("provisional").asBoolean())).containsExactly("connector", false)
             val connection = path("connection")
             assertThat(connection.path("version").asLong()).isEqualTo(1)
-            assertThat(connection.path("connectorId").asString()).isEqualTo("copilot")
-            assertThat(connection.path("settings").path("organization").asString()).isEqualTo("octo-org")
+            assertThat(connection.path("connectorId").asString()).isEqualTo("cursor_enterprise")
+            assertThat(connection.path("settings").let { it.isObject && it.isEmpty }).describedAs("Cursor 는 비밀 아닌 설정이 없다").isTrue()
             assertThat(connection.path("credential").propertyNames().toList()).containsExactlyInAnyOrder("configured", "updatedAt")
             assertThat(connection.path("credential").path("configured").asBoolean()).isTrue()
             assertThat(connection.path("credential").path("updatedAt").asString()).isEqualTo(clock.now.toString())
@@ -131,20 +131,19 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
         assertThat(keyId).isEqualTo("k1")
         assertThat(ciphertext).isNotBlank()
 
-        // 확인: 커넥터는 복호화한 같은 자격증명과 비밀 아닌 설정을 받는다.
+        // 확인: 커넥터는 복호화한 같은 자격증명을 문서의 헤더(Basic, 키가 사용자 이름)로 보낸다.
         clock.now = clock.now.plusSeconds(30)
         val verified = source(verify(vendorId, token))
-        // 커넥터는 복호화한 같은 자격증명을 문서의 헤더로 보내고, 비밀 아닌 설정(조직)을 경로에 쓴다.
-        assertThat(vendors.requests(copilotSeats).single().let { it.header("Authorization") to it.param("per_page") }).isEqualTo("Bearer $secret" to "1")
+        assertThat(vendors.requests(cursorMembers).single().header("Authorization")).isEqualTo("Basic " + Base64.getEncoder().encodeToString("$secret:".toByteArray()))
         assertThat(listOf(verified.at("/connection/check/status").asString(), verified.at("/connection/check/checkedAt").asString()))
             .containsExactly("verified", clock.now.toString())
         assertThat(verified.at("/connection/version").asLong()).describedAs("확인은 판을 올리지 않는다").isEqualTo(1)
 
-        val outcomes = listOf(reply(401, """{"message":"Bad credentials"}""") to "invalid_credentials",
-            reply(403, """{"message":"Must have admin rights"}""") to "insufficient_permission",
+        val outcomes = listOf(reply(401, """{"error":"unauthorized"}""") to "invalid_credentials",
+            reply(403, """{"error":"forbidden"}""") to "insufficient_permission",
             reply(503, "{}") to "unavailable", reply(429, "{}", "Retry-After" to "60") to "unavailable")
         outcomes.forEach { (answer, expected) ->
-            vendors.on("GET", copilotSeats, answer)
+            vendors.on("GET", cursorMembers, answer)
             assertThat(source(verify(vendorId, token)).at("/connection/check/status").asString()).isEqualTo(expected)
         }
 
@@ -156,9 +155,9 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
         }
     }
 
-    @Test fun `교체는 판을 올리고 확인 상태를 되돌리며 대상이 바뀌면 동기화 기록을 비운다 · 삭제는 암호문을 지운다`() {
+    @Test fun `교체는 판을 올리고 확인 상태를 되돌리며 같은 대상의 동기화 기록은 남긴다 · 삭제는 암호문을 지운다`() {
         val token = adminToken()
-        val vendorId = vendor("copilot", "copilot_enterprise", token).path("vendorId").asString()
+        val vendorId = vendor("cursor", "cursor_enterprise", token).path("vendorId").asString()
         assertThat(connect(vendorId, token).statusCode()).isEqualTo(200)
         assertThat(source(verify(vendorId, token)).at("/connection/check/status").asString()).isEqualTo("verified")
         val syncedAt = clock.now.minusSeconds(600)
@@ -166,18 +165,14 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
             .param("at", java.sql.Timestamp.from(syncedAt)).param("id", vendorId).update()
 
         assertThat(errorOf(connect(vendorId, token, expectedVersion = 0))).isEqualTo(409 to "version_conflict")
-        // 자격증명만 바꾸면(같은 커넥터·설정) 동기화 기록은 남는다.
+        // 자격증명만 바꾸면(같은 커넥터·설정) 동기화 기록은 남는다. 설정이 있는 커넥터가 없어(ADR 0054) 대상이 바뀌는 교체는 없다.
         val rotated = source(connect(vendorId, token, expectedVersion = 1, credential = "fake-vendor-credential-rotated-" + "a".repeat(20)))
         assertThat(listOf(rotated.at("/connection/version").asLong(), rotated.at("/connection/check/status").asString(), rotated.at("/connection/sync/lastSucceededAt").asString()))
             .containsExactly(2L, "unverified", syncedAt.toString())
-        // 설정이 바뀌면 다른 대상의 기록이라 비운다.
-        val retargeted = source(connect(vendorId, token, expectedVersion = 2, settings = mapOf("organization" to "other-org")))
-        assertThat(listOf(retargeted.at("/connection/version").asLong(), retargeted.at("/connection/sync/status").asString())).containsExactly(3L, "pending")
-        assertThat(retargeted.at("/connection/sync/lastSucceededAt").isNull).isTrue()
 
         assertThat(errorOf(manage("DELETE", "/vendors/$vendorId/connection", null, token))).isEqualTo(400 to "invalid_request")
         assertThat(errorOf(manage("DELETE", "/vendors/$vendorId/connection", null, token, etag = "\"connection-1\""))).isEqualTo(409 to "version_conflict")
-        assertThat(manage("DELETE", "/vendors/$vendorId/connection", null, token, etag = "\"connection-3\"").statusCode()).isEqualTo(204)
+        assertThat(manage("DELETE", "/vendors/$vendorId/connection", null, token, etag = "\"connection-2\"").statusCode()).isEqualTo(204)
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.vendor_connections WHERE vendor_id = :id AND deleted_at IS NOT NULL AND credential_ciphertext IS NULL AND credential_key_id IS NULL")
             .param("id", vendorId).query(Int::class.java).single()).isEqualTo(1)
         assertThat(errorOf(verify(vendorId, token))).isEqualTo(404 to "not_found")
@@ -195,27 +190,32 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
         assertThat(source(connect(cursor.path("vendorId").asString(), token, settings = emptyMap<String, String>())).at("/connection/connectorId").asString())
             .isEqualTo("cursor_enterprise")
 
-        val copilot = vendor("copilot", "copilot_business", token).path("vendorId").asString()
+        // 연동 대상이 아닌 제품(ADR 0054)은 카탈로그 플랜이 있어도 커넥터가 없는 플랜이다 — 연결을 거부한다.
+        for ((kind, plan) in listOf("copilot" to "copilot_business", "gemini" to "gemini_enterprise")) {
+            val unsupported = vendor(kind, plan, token)
+            assertThat(unsupported.at("/seatSource/connector").isNull).describedAs(kind).isTrue()
+            assertThat(errorOf(connect(unsupported.path("vendorId").asString(), token))).describedAs(kind).isEqualTo(422 to "connector_unavailable")
+            assertThat(errorOf(connect(unsupported.path("vendorId").asString(), token, settings = mapOf("organization" to "octo-org")))).describedAs(kind)
+                .isEqualTo(422 to "connector_unavailable")
+        }
+
+        // 설정이 없는 커넥터(Claude Enterprise)는 빈 설정이어야 한다. 설명에 없는 키·형식이 틀린 입력은 연결을 만들지 않는다.
+        val claudeVendor = vendor("claude_team", "enterprise", token)
+        val claude = claudeVendor.path("vendorId").asString()
         listOf(
-            mapOf("settings" to emptyMap<String, String>()),
-            mapOf("settings" to mapOf("organization" to "octo-org", "extra" to "x")),
-            mapOf("settings" to mapOf("organization" to " ")),
-            mapOf("settings" to mapOf("organization" to 1)),
+            mapOf("settings" to mapOf("organization" to "octo-org")),
+            mapOf("settings" to mapOf("extra" to 1)),
             mapOf("credential" to " "),
             mapOf("credential" to null),
             mapOf("expectedVersion" to null),
             mapOf("expectedVersion" to -1),
         ).forEach { change ->
-            val body = mutableMapOf<String, Any?>("expectedVersion" to 0, "settings" to mapOf("organization" to "octo-org"), "credential" to secret).apply { putAll(change) }
-            val response = manage("PUT", "/vendors/$copilot/connection", body, token)
+            val body = mutableMapOf<String, Any?>("expectedVersion" to 0, "settings" to emptyMap<String, String>(), "credential" to secret).apply { putAll(change) }
+            val response = manage("PUT", "/vendors/$claude/connection", body, token)
             assertThat(errorOf(response)).describedAs(change.toString()).isEqualTo(400 to "invalid_request")
             assertThat(json(response).at("/error/fieldErrors/0/field").asString()).isEqualTo(change.keys.single())
         }
-        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.vendor_connections WHERE vendor_id = :id").param("id", copilot).query(Int::class.java).single()).isZero()
-
-        // 설정이 없는 커넥터(Claude Enterprise)는 빈 설정이다.
-        val claudeVendor = vendor("claude_team", "enterprise", token)
-        val claude = claudeVendor.path("vendorId").asString()
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.vendor_connections WHERE vendor_id = :id").param("id", claude).query(Int::class.java).single()).isZero()
         assertThat(source(connect(claude, token, settings = emptyMap<String, String>())).at("/connection/connectorId").asString()).isEqualTo("claude_enterprise")
         // 계약을 Team 플랜으로 정정하면 그 플랜에는 커넥터가 없다 — 교체할 수 없다.
         val team = mapOf("planId" to "team", "effectiveFrom" to "2026-09-09", "tiers" to listOf(mapOf("label" to "표준", "seats" to 3, "monthlyFeePerSeatUsd" to "19")))
@@ -227,11 +227,11 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
 
     @Test fun `확인 호출 사이 연결이 바뀌면 결과를 쓰지 않고, 행의 키가 설정에 없으면 평문 없이 실패한다`() {
         val token = adminToken()
-        val vendorId = vendor("copilot", "copilot_business", token).path("vendorId").asString()
+        val vendorId = vendor("cursor", "cursor_enterprise", token).path("vendorId").asString()
         connect(vendorId, token)
-        vendors.on("GET", copilotSeats, {
+        vendors.on("GET", cursorMembers, {
             jdbc.sql("UPDATE enrollment.vendor_connections SET version = version + 1 WHERE vendor_id = :id AND deleted_at IS NULL").param("id", vendorId).update()
-            MockVendorServer.Reply(200, """{"total_seats":0,"seats":[]}""")
+            MockVendorServer.Reply(200, """{"teamMembers":[]}""")
         })
         assertThat(errorOf(verify(vendorId, token))).isEqualTo(409 to "version_conflict")
         assertThat(jdbc.sql("SELECT check_status::text FROM enrollment.vendor_connections WHERE vendor_id = :id").param("id", vendorId).query(String::class.java).single())
@@ -245,34 +245,34 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
 
     @Test fun `조직 경계와 권한 — 다른 조직의 경로·다른 조직의 등록 제품은 없는 것이고 토큰이 없으면 401 이다`() {
         val token = adminToken()
-        val vendorId = vendor("copilot", "copilot_business", token).path("vendorId").asString()
+        val vendorId = vendor("cursor", "cursor_enterprise", token).path("vendorId").asString()
         val other = data.tenant().id
         val otherAdmin = data.member(other, "admin@other.example.test").id
-        jdbc.sql("INSERT INTO enrollment.managed_vendors (tenant_id,vendor_id,kind,source,created_at) VALUES (:t,'other-copilot','copilot','manual',now())").param("t", other).update()
+        jdbc.sql("INSERT INTO enrollment.managed_vendors (tenant_id,vendor_id,kind,source,created_at) VALUES (:t,'other-cursor','cursor','manual',now())").param("t", other).update()
         jdbc.sql("""INSERT INTO enrollment.vendor_contract_versions (tenant_id,vendor_id,version,display_name,contract,recorded_at,recorded_by)
-            VALUES (:t,'other-copilot',1,'c',CAST('{"planId":"copilot_business","tiers":[]}' AS jsonb),now(),:a)""").param("t", other).param("a", otherAdmin).update()
+            VALUES (:t,'other-cursor',1,'c',CAST('{"planId":"cursor_enterprise","tiers":[]}' AS jsonb),now(),:a)""").param("t", other).param("a", otherAdmin).update()
 
         fun request(organization: UUID, path: String, auth: String?): HttpResponse<String> {
             val builder = HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/organizations/$organization$path")).header("Content-Type", "application/json")
             auth?.let { builder.header("Authorization", "Bearer $it") }
             return http.send(builder.PUT(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(
-                mapOf("expectedVersion" to 0, "settings" to mapOf("organization" to "octo-org"), "credential" to secret)))).build(), HttpResponse.BodyHandlers.ofString())
+                mapOf("expectedVersion" to 0, "settings" to emptyMap<String, String>(), "credential" to secret)))).build(), HttpResponse.BodyHandlers.ofString())
         }
-        assertThat(errorOf(request(other, "/vendors/other-copilot/connection", token))).isEqualTo(404 to "not_found")
-        assertThat(errorOf(request(tenant, "/vendors/other-copilot/connection", token))).isEqualTo(404 to "not_found")
+        assertThat(errorOf(request(other, "/vendors/other-cursor/connection", token))).isEqualTo(404 to "not_found")
+        assertThat(errorOf(request(tenant, "/vendors/other-cursor/connection", token))).isEqualTo(404 to "not_found")
         assertThat(request(tenant, "/vendors/$vendorId/connection", null).statusCode()).isEqualTo(401)
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.vendor_connections").query(Int::class.java).single()).isZero()
     }
 
     @Test fun `구성원(member)은 연결을 만들지 못한다`() {
         val token = tokens().path("access_token").asString()
-        jdbc.sql("INSERT INTO enrollment.managed_vendors (tenant_id,vendor_id,kind,source,created_at) VALUES (:t,'copilot-1','copilot','manual',now())").param("t", tenant).update()
-        assertThat(errorOf(connect("copilot-1", token))).isEqualTo(403 to "forbidden")
+        jdbc.sql("INSERT INTO enrollment.managed_vendors (tenant_id,vendor_id,kind,source,created_at) VALUES (:t,'cursor-1','cursor','manual',now())").param("t", tenant).update()
+        assertThat(errorOf(connect("cursor-1", token))).isEqualTo(403 to "forbidden")
     }
 
     @Test fun `등록 제품을 보관하면 그 제품의 연결과 암호문이 같이 지워진다`() {
         val token = adminToken()
-        val vendor = vendor("copilot", "copilot_business", token)
+        val vendor = vendor("cursor", "cursor_enterprise", token)
         val vendorId = vendor.path("vendorId").asString()
         connect(vendorId, token)
         val archived = manage("DELETE", "/vendors/$vendorId", null, token, etag = "\"vendor-${vendor.path("version").asLong()}\"")

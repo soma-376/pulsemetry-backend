@@ -32,8 +32,8 @@ import java.util.UUID
 /**
  * 좌석 원장 (ADR 0048). 기대값은 ADR 의 표와 문장에서 쓴다 — §2 상태·판·이력, §3 우선순위 표의 네 행, §4 구성원 연결, §5 등급, §7 중복 실행 방지.
  *
- * 조직 하나에 등록 제품 셋: OpenAI Business(커넥터 없는 플랜 — 1행), Copilot Business(커넥터 플랜, 로그인 계정 — 2·3·4행),
- * Claude Enterprise(커넥터 플랜, 이메일 계정). 계약의 구매 수량은 좌석이 아니다.
+ * 조직 하나에 등록 제품 셋: OpenAI Business(커넥터 없는 플랜 — 1행), Cursor Enterprise(커넥터 플랜 — 2·3·4행),
+ * Claude Enterprise(커넥터 플랜, 벤더 내부 ID). 계정은 모두 이메일이다(ADR 0054). 계약의 구매 수량은 좌석이 아니다.
  */
 class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 	@Autowired private lateinit var jdbc: JdbcClient
@@ -55,7 +55,7 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 	private lateinit var admin: UUID
 	private lateinit var dana: UUID
 	private val openai = "vendor-openai"
-	private val copilot = "vendor-copilot"
+	private val cursor = "vendor-cursor"
 	private val claude = "vendor-claude"
 	private val every: (String, String?) -> ConnectorDescriptor? = ConnectorDescriptors::forPlan
 
@@ -67,7 +67,7 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 		admin = member(tenant, "admin@seat.example.test", "admin")
 		dana = member(tenant, "dana@seat.example.test", "member")
 		register(tenant, openai, "openai_biz", "business", 5)
-		register(tenant, copilot, "copilot", "copilot_business", 3)
+		register(tenant, cursor, "cursor", "cursor_enterprise", 3)
 		register(tenant, claude, "claude_team", "enterprise", 2)
 	}
 
@@ -102,7 +102,7 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 			.param("t", tenantId).param("id", vendorId).param("kind", kind).param("c", contract).param("admin", admin).update()
 	}
 
-	private fun connect(vendorId: String, settings: Map<String, String> = mapOf("organization" to "octo-org")) =
+	private fun connect(vendorId: String, settings: Map<String, String> = emptyMap()) =
 		connections.save(tenant, admin, vendorId, settings, "fake-vendor-credential-" + "s".repeat(36), 0, every)
 
 	private fun code(block: () -> Unit): Pair<String, Int> = try { block(); "ok" to 200 } catch (e: ManagementException) { e.code to e.status }
@@ -112,7 +112,7 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 
 	@Test
 	fun `구매 수량은 좌석이 아니다 — 계약만 있는 제품의 원장은 비어 있다`() {
-		assertThat(listOf(openai, copilot, claude).flatMap { ledger.seats(tenant, it) }).isEmpty()
+		assertThat(listOf(openai, cursor, claude).flatMap { ledger.seats(tenant, it) }).isEmpty()
 	}
 
 	@Test
@@ -154,7 +154,10 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 	@Test
 	fun `입력 검증 — 계정 형식·계약 등급·메모·구성원의 조직`() {
 		assertThat(code { ledger.assign(tenant, openai, admin, SeatSource.MANUAL, "not-an-email") }).isEqualTo("invalid_request" to 400)
-		assertThat(code { ledger.assign(tenant, copilot, admin, SeatSource.MANUAL, "dana@seat.example.test") }).describedAs("Copilot 은 로그인").isEqualTo("invalid_request" to 400)
+		// 연동 대상이 아닌 제품(ADR 0054)도 계정은 이메일이다 — GitHub 로그인은 받지 않는다.
+		register(tenant, "vendor-copilot", "copilot", "copilot_business", 1)
+		assertThat(code { ledger.assign(tenant, "vendor-copilot", admin, SeatSource.MANUAL, "octocat") }).describedAs("로그인은 계정이 아니다").isEqualTo("invalid_request" to 400)
+		assertThat(ledger.seats(tenant, "vendor-copilot")).isEmpty()
 		assertThat(code { ledger.assign(tenant, openai, admin, SeatSource.MANUAL, "dana@seat.example.test", tierId = "tier-other") }).isEqualTo("invalid_tier" to 422)
 		assertThat(code { ledger.assign(tenant, openai, admin, SeatSource.MANUAL, "dana@seat.example.test", note = " ") }).isEqualTo("invalid_request" to 400)
 		val stranger = member(tenant(), "stranger@seat.example.test", "member")
@@ -178,61 +181,63 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 	}
 
 	@Test
-	fun `2행 — 커넥터 플랜이지만 연결이 없으면 수동 기록이 임시 권위다 · 로그인 계정은 자동으로 잇지 않는다`() {
-		val seat = ledger.assign(tenant, copilot, admin, SeatSource.MANUAL, "OctoCat")
-		assertThat(listOf(seat.account, seat.memberId, seat.memberLink, seat.accountEmail)).containsExactly("octocat", null, null, null)
-		assertThat(SeatSourceView.of("copilot", "copilot_business", null).let { Triple(it.authority, it.provisional, it.connector?.connectorId) })
-			.isEqualTo(Triple("manual", true, "copilot"))
+	fun `2행 — 커넥터 플랜이지만 연결이 없으면 수동 기록이 임시 권위다`() {
+		val seat = ledger.assign(tenant, cursor, admin, SeatSource.MANUAL, "Dana@Seat.Example.TEST")
+		assertThat(listOf(seat.account, seat.memberId, seat.memberLink, seat.accountEmail)).containsExactly("dana@seat.example.test", dana, MemberLink.EMAIL_MATCH, "dana@seat.example.test")
+		assertThat(SeatSourceView.of("cursor", "cursor_enterprise", null).let { Triple(it.authority, it.provisional, it.connector?.connectorId) })
+			.isEqualTo(Triple("manual", true, "cursor_enterprise"))
+		// 연동 대상이 아닌 제품은 커넥터가 없는 플랜이라 수동이 주 원천이다(1행, ADR 0054).
+		assertThat(SeatSourceView.of("copilot", "copilot_business", null).let { Triple(it.authority, it.provisional, it.connector) }).isEqualTo(Triple("manual", false, null))
 	}
 
 	@Test
 	fun `3행 — 연결이 있으면 수동 배정·해제는 거부되고 보정만 된다 · 성공한 동기화가 목록 전체로 수동 행까지 맞춘다`() {
-		val kept = ledger.assign(tenant, copilot, admin, SeatSource.MANUAL, "octocat", member = MemberChoice.Member(dana), tierId = tier(copilot), note = "수동 기록")
-		val gone = ledger.assign(tenant, copilot, admin, SeatSource.CSV, "hubot")
-		val connection = connect(copilot)
-		assertThat(SeatSourceView.of("copilot", "copilot_business", connection).let { it.authority to it.provisional }).isEqualTo("connector" to false)
+		val kept = ledger.assign(tenant, cursor, admin, SeatSource.MANUAL, "octo@seat.example.test", member = MemberChoice.Member(dana), tierId = tier(cursor), note = "수동 기록")
+		val gone = ledger.assign(tenant, cursor, admin, SeatSource.CSV, "hubot@seat.example.test")
+		val connection = connect(cursor)
+		assertThat(SeatSourceView.of("cursor", "cursor_enterprise", connection).let { it.authority to it.provisional }).isEqualTo("connector" to false)
 
-		assertThat(code { ledger.assign(tenant, copilot, admin, SeatSource.MANUAL, "monalisa") }).isEqualTo("connector_managed" to 409)
+		assertThat(code { ledger.assign(tenant, cursor, admin, SeatSource.MANUAL, "mona@seat.example.test") }).isEqualTo("connector_managed" to 409)
 		assertThat(code { ledger.release(tenant, kept.id, admin, SeatSource.MANUAL, 1) }).isEqualTo("connector_managed" to 409)
 		// 보정은 된다 — 상태·원천은 그대로, 판은 오른다.
 		val noted = ledger.correct(tenant, gone.id, admin, 1, note = Change("확인 필요"))
 		assertThat(listOf(noted.state, noted.source, noted.version, noted.note)).containsExactly(SeatState.ASSIGNED, SeatSource.CSV, 2L, "확인 필요")
 
 		clock.now = clock.now.plusSeconds(3600)
-		val sync = run(copilot)
+		val sync = run(cursor)
 		val result = ledger.applyListing(sync, listOf(
-			VendorSeat("OctoCat", state = VendorSeatState.PENDING_RELEASE, releaseEffectiveOn = LocalDate.parse("2026-10-31"),
+			VendorSeat("Octo@Seat.Example.TEST", state = VendorSeatState.PENDING_RELEASE, releaseEffectiveOn = LocalDate.parse("2026-10-31"),
 				assignedAt = Instant.parse("2024-10-01T19:32:20Z"), lastActivityAt = Instant.parse("2026-09-30T01:02:03.456789123Z")),
-			VendorSeat("monalisa"),
+			VendorSeat("mona@seat.example.test"),
 		))
 		assertThat(result).isEqualTo(SeatLedger.SyncResult.Applied(listed = 2, changed = 3))
 
-		val byAccount = ledger.seats(tenant, copilot).associateBy { it.account }
+		val byAccount = ledger.seats(tenant, cursor).associateBy { it.account }
 		// 같은 계정의 수동 행은 원천이 connector 가 되고 벤더 상태를 받는다. 관리자가 정한 연결·계약 등급·메모는 덮지 않는다.
-		with(byAccount.getValue("octocat")) {
+		with(byAccount.getValue("octo@seat.example.test")) {
 			assertThat(listOf(id, state, source, version, releaseEffectiveOn)).containsExactly(kept.id, SeatState.PENDING_RELEASE, SeatSource.CONNECTOR, 2L, LocalDate.parse("2026-10-31"))
-			assertThat(listOf(memberId, memberLink, tierId, note)).containsExactly(dana, MemberLink.ADMIN, tier(copilot), "수동 기록")
+			assertThat(listOf(memberId, memberLink, tierId, note)).containsExactly(dana, MemberLink.ADMIN, tier(cursor), "수동 기록")
 			assertThat(assignedAt).describedAs("원천이 커넥터로 바뀌면 벤더의 배정 시각").isEqualTo(Instant.parse("2024-10-01T19:32:20Z"))
 		}
 		// 목록에 없는 보유 좌석은 수동 원천이어도 해제된다.
-		with(byAccount.getValue("hubot")) {
+		with(byAccount.getValue("hubot@seat.example.test")) {
 			assertThat(listOf(state, source, version, releasedAt)).containsExactly(SeatState.RELEASED, SeatSource.CONNECTOR, 3L, clock.now)
 		}
-		with(byAccount.getValue("monalisa")) {
+		with(byAccount.getValue("mona@seat.example.test")) {
 			assertThat(listOf(state, source, version, memberId, memberLink, assignedAt)).containsExactly(SeatState.ASSIGNED, SeatSource.CONNECTOR, 1L, null, null, clock.now)
 		}
 		assertThat(ledger.history(tenant, kept.id).last().let { it.syncRunId to it.actorId }).isEqualTo(sync.id to null)
-		val after = connections.find(tenant, copilot)!!
+		val after = connections.find(tenant, cursor)!!
 		assertThat(listOf(after.lastSyncSucceededAt, after.lastSyncFailedAt, after.syncStatus)).containsExactly(clock.now, null, SyncStatus.SUCCEEDED)
 		assertThat(jdbc.sql("SELECT status, listed_seats, changed_seats FROM enrollment.seat_sync_runs WHERE id = :id").param("id", sync.id)
 			.query { rs, _ -> Triple(rs.getString(1), rs.getInt(2), rs.getInt(3)) }.single()).isEqualTo(Triple("succeeded", 2, 3))
 
 		// 같은 목록을 다시 받으면 판이 오르지 않는다. 활동 시각만 바뀌어도 판·이력은 그대로다(관측).
 		clock.now = clock.now.plusSeconds(3600)
-		val again = ledger.applyListing(run(copilot), listOf(
-			VendorSeat("octocat", state = VendorSeatState.PENDING_RELEASE, releaseEffectiveOn = LocalDate.parse("2026-10-31"),
+		val again = ledger.applyListing(run(cursor), listOf(
+			VendorSeat("octo@seat.example.test", state = VendorSeatState.PENDING_RELEASE, releaseEffectiveOn = LocalDate.parse("2026-10-31"),
 				assignedAt = Instant.parse("2024-10-01T19:32:20Z"), lastActivityAt = Instant.parse("2026-10-01T00:30:00Z")),
-			VendorSeat("monalisa"),
+			VendorSeat("mona@seat.example.test"),
 		))
 		assertThat(again).isEqualTo(SeatLedger.SyncResult.Applied(listed = 2, changed = 0))
 		assertThat(ledger.seat(tenant, kept.id)!!.let { it.version to it.vendorLastActivityAt }).isEqualTo(2L to Instant.parse("2026-10-01T00:30:00Z"))
@@ -240,22 +245,22 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 
 	@Test
 	fun `4행 — 실패한 동기화는 원장을 바꾸지 않고 연결을 실패 중으로 남긴다 · 형식이 맞지 않는 목록도 반영하지 않는다`() {
-		connect(copilot)
-		ledger.applyListing(run(copilot), listOf(VendorSeat("octocat")))
-		val before = ledger.seats(tenant, copilot)
+		connect(cursor)
+		ledger.applyListing(run(cursor), listOf(VendorSeat("octo@seat.example.test")))
+		val before = ledger.seats(tenant, cursor)
 
 		clock.now = clock.now.plusSeconds(600)
-		assertThat(ledger.failRun(run(copilot), "vendor_unavailable")).isTrue()
-		assertThat(ledger.seats(tenant, copilot)).isEqualTo(before)
-		val failing = connections.find(tenant, copilot)!!
+		assertThat(ledger.failRun(run(cursor), "vendor_unavailable")).isTrue()
+		assertThat(ledger.seats(tenant, cursor)).isEqualTo(before)
+		val failing = connections.find(tenant, cursor)!!
 		assertThat(listOf(failing.syncStatus, failing.lastSyncError, failing.lastSyncFailedAt)).containsExactly(SyncStatus.FAILING, "vendor_unavailable", clock.now)
-		assertThat(SeatSourceView.of("copilot", "copilot_business", failing).let { it.authority to it.connection!!.sync.status }).isEqualTo("connector" to "failing")
+		assertThat(SeatSourceView.of("cursor", "cursor_enterprise", failing).let { it.authority to it.connection!!.sync.status }).isEqualTo("connector" to "failing")
 
 		clock.now = clock.now.plusSeconds(600)
-		assertThat(ledger.applyListing(run(copilot), listOf(VendorSeat("octocat"), VendorSeat("OCTOCAT")))).isEqualTo(SeatLedger.SyncResult.Rejected("invalid_listing"))
-		assertThat(ledger.applyListing(run(copilot), listOf(VendorSeat("bad login!")))).isEqualTo(SeatLedger.SyncResult.Rejected("invalid_listing"))
-		assertThat(ledger.seats(tenant, copilot)).isEqualTo(before)
-		assertThat(connections.find(tenant, copilot)!!.lastSyncError).isEqualTo("invalid_listing")
+		assertThat(ledger.applyListing(run(cursor), listOf(VendorSeat("octo@seat.example.test"), VendorSeat("OCTO@SEAT.EXAMPLE.TEST")))).isEqualTo(SeatLedger.SyncResult.Rejected("invalid_listing"))
+		assertThat(ledger.applyListing(run(cursor), listOf(VendorSeat("not an email")))).isEqualTo(SeatLedger.SyncResult.Rejected("invalid_listing"))
+		assertThat(ledger.seats(tenant, cursor)).isEqualTo(before)
+		assertThat(connections.find(tenant, cursor)!!.lastSyncError).isEqualTo("invalid_listing")
 	}
 
 	@Test
@@ -292,10 +297,10 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 
 	@Test
 	fun `연결을 지우면 원장은 남고 권위가 수동으로 돌아간다 — 커넥터 원천 행을 수동으로 고칠 수 있다`() {
-		val connection = connect(copilot)
-		ledger.applyListing(run(copilot), listOf(VendorSeat("octocat")))
-		connections.delete(tenant, admin, copilot, connection.version)
-		val seat = ledger.seats(tenant, copilot).single()
+		val connection = connect(cursor)
+		ledger.applyListing(run(cursor), listOf(VendorSeat("octo@seat.example.test")))
+		connections.delete(tenant, admin, cursor, connection.version)
+		val seat = ledger.seats(tenant, cursor).single()
 		assertThat(seat.source).isEqualTo(SeatSource.CONNECTOR)
 		val released = ledger.release(tenant, seat.id, admin, SeatSource.MANUAL, seat.version)
 		assertThat(released.source to released.state).isEqualTo(SeatSource.MANUAL to SeatState.RELEASED)
@@ -303,29 +308,29 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 
 	@Test
 	fun `중복 실행 방지 — 선점 중인 연결은 다시 잡히지 않고 기한이 지나면 다른 실행이 가져가며 앞선 실행은 아무것도 쓰지 못한다`() {
-		connect(copilot)
-		val first = run(copilot, worker = "worker-a", lease = Duration.ofMinutes(5))
+		connect(cursor)
+		val first = run(cursor, worker = "worker-a", lease = Duration.ofMinutes(5))
 		assertThat(ledger.startRun(tenant, first.connectionId, "worker-b", Duration.ofMinutes(5))).isNull()
 
 		clock.now = clock.now.plus(Duration.ofMinutes(6))
 		val second = ledger.startRun(tenant, first.connectionId, "worker-b", Duration.ofMinutes(5))!!
 		assertThat(jdbc.sql("SELECT status || ':' || error FROM enrollment.seat_sync_runs WHERE id = :id").param("id", first.id).query(String::class.java).single())
 			.isEqualTo("failed:abandoned")
-		assertThat(ledger.applyListing(first, listOf(VendorSeat("octocat")))).isEqualTo(SeatLedger.SyncResult.Lost)
+		assertThat(ledger.applyListing(first, listOf(VendorSeat("octo@seat.example.test")))).isEqualTo(SeatLedger.SyncResult.Lost)
 		assertThat(ledger.failRun(first, "vendor_unavailable")).isFalse()
-		assertThat(ledger.seats(tenant, copilot)).isEmpty()
-		assertThat(ledger.applyListing(second, listOf(VendorSeat("octocat")))).isEqualTo(SeatLedger.SyncResult.Applied(1, 1))
+		assertThat(ledger.seats(tenant, cursor)).isEmpty()
+		assertThat(ledger.applyListing(second, listOf(VendorSeat("octo@seat.example.test")))).isEqualTo(SeatLedger.SyncResult.Applied(1, 1))
 		// 다른 조직의 ID 로는 잡히지 않는다.
 		assertThat(ledger.startRun(tenant(), second.connectionId, "worker-c", Duration.ofMinutes(5))).isNull()
 	}
 
 	@Test
 	fun `연결을 지우는 사이 끝난 실행은 원장을 바꾸지 않는다`() {
-		val connection = connect(copilot)
-		val sync = run(copilot)
-		connections.delete(tenant, admin, copilot, connection.version)
-		assertThat(ledger.applyListing(sync, listOf(VendorSeat("octocat")))).isEqualTo(SeatLedger.SyncResult.Lost)
-		assertThat(ledger.seats(tenant, copilot)).isEmpty()
+		val connection = connect(cursor)
+		val sync = run(cursor)
+		connections.delete(tenant, admin, cursor, connection.version)
+		assertThat(ledger.applyListing(sync, listOf(VendorSeat("octo@seat.example.test")))).isEqualTo(SeatLedger.SyncResult.Lost)
+		assertThat(ledger.seats(tenant, cursor)).isEmpty()
 		assertThat(jdbc.sql("SELECT error FROM enrollment.seat_sync_runs WHERE id = :id").param("id", sync.id).query(String::class.java).single()).isEqualTo("claim_lost")
 	}
 
@@ -333,29 +338,29 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 
 	@Test
 	fun `동기화 요청 — 걸어 둔 요청은 주기와 무관하게 다음 실행이 가져가 결과를 작업에 옮기고, 끝나기 전의 요청은 쌓지 않는다`() {
-		connect(copilot)
-		ledger.applyListing(run(copilot), listOf(VendorSeat("octocat")))
+		connect(cursor)
+		ledger.applyListing(run(cursor), listOf(VendorSeat("octo@seat.example.test")))
 		val interval = Duration.ofHours(1)
-		assertThat(ledger.dueConnections(interval)).describedAs("방금 동기화했다").doesNotContain(tenant to connections.find(tenant, copilot)!!.id)
+		assertThat(ledger.dueConnections(interval)).describedAs("방금 동기화했다").doesNotContain(tenant to connections.find(tenant, cursor)!!.id)
 
-		val requested = ledger.requestSync(tenant, admin, copilot)
+		val requested = ledger.requestSync(tenant, admin, cursor)
 		assertThat(listOf(requested.kind, requested.status)).containsExactly(OperationKind.SEAT_SYNC, OperationStatus.PENDING)
-		assertThat(requested.targets.map { it.targetId }).containsExactly(connections.find(tenant, copilot)!!.id.toString())
-		assertThat(ledger.requestSync(tenant, admin, copilot).id).describedAs("끝나지 않은 요청을 돌려준다").isEqualTo(requested.id)
-		assertThat(ledger.dueConnections(interval).first()).isEqualTo(tenant to connections.find(tenant, copilot)!!.id)
+		assertThat(requested.targets.map { it.targetId }).containsExactly(connections.find(tenant, cursor)!!.id.toString())
+		assertThat(ledger.requestSync(tenant, admin, cursor).id).describedAs("끝나지 않은 요청을 돌려준다").isEqualTo(requested.id)
+		assertThat(ledger.dueConnections(interval).first()).isEqualTo(tenant to connections.find(tenant, cursor)!!.id)
 
-		val sync = run(copilot)
+		val sync = run(cursor)
 		assertThat(sync.operationId).isEqualTo(requested.id)
 		assertThat(operation(requested.id).status).isEqualTo(OperationStatus.RUNNING)
 		assertThat(jdbc.sql("SELECT trigger FROM enrollment.seat_sync_runs WHERE id = :id").param("id", sync.id).query(String::class.java).single()).isEqualTo("request")
-		ledger.applyListing(sync, listOf(VendorSeat("octocat"), VendorSeat("hubot")))
+		ledger.applyListing(sync, listOf(VendorSeat("octo@seat.example.test"), VendorSeat("hubot@seat.example.test")))
 		assertThat(operation(requested.id).status).isEqualTo(OperationStatus.SUCCEEDED)
 		assertThat(ledger.dueConnections(interval)).doesNotContain(tenant to sync.connectionId)
 
 		// 끝난 요청 뒤에는 새 요청이다. 실패하면 사유가 작업에 남는다.
-		val second = ledger.requestSync(tenant, admin, copilot)
+		val second = ledger.requestSync(tenant, admin, cursor)
 		assertThat(second.id).isNotEqualTo(requested.id)
-		ledger.failRun(run(copilot), "invalid_credentials")
+		ledger.failRun(run(cursor), "invalid_credentials")
 		assertThat(operation(second.id).let { it.status to it.targets.single().reason }).isEqualTo(OperationStatus.FAILED to "invalid_credentials")
 		clock.now = clock.now.plus(interval).plusSeconds(1)
 		assertThat(ledger.dueConnections(interval)).contains(tenant to sync.connectionId)
@@ -363,38 +368,38 @@ class SeatLedgerTest : AbstractPersistenceIntegrationTest() {
 
 	@Test
 	fun `동기화 요청 — 선점을 잃은 실행의 요청은 다음 실행이 이어받고, 지운 연결의 요청은 connection_removed 로 끝난다`() {
-		connect(copilot)
-		val requested = ledger.requestSync(tenant, admin, copilot)
-		val first = run(copilot, worker = "worker-a", lease = Duration.ofMinutes(5))
+		connect(cursor)
+		val requested = ledger.requestSync(tenant, admin, cursor)
+		val first = run(cursor, worker = "worker-a", lease = Duration.ofMinutes(5))
 		clock.now = clock.now.plus(Duration.ofMinutes(6))
-		val second = run(copilot, worker = "worker-b")
+		val second = run(cursor, worker = "worker-b")
 		assertThat(second.operationId).isEqualTo(requested.id)
-		assertThat(ledger.applyListing(first, listOf(VendorSeat("octocat")))).isEqualTo(SeatLedger.SyncResult.Lost)
+		assertThat(ledger.applyListing(first, listOf(VendorSeat("octo@seat.example.test")))).isEqualTo(SeatLedger.SyncResult.Lost)
 		assertThat(operation(requested.id).status).isEqualTo(OperationStatus.RUNNING)
-		ledger.applyListing(second, listOf(VendorSeat("octocat")))
+		ledger.applyListing(second, listOf(VendorSeat("octo@seat.example.test")))
 		assertThat(operation(requested.id).status).isEqualTo(OperationStatus.SUCCEEDED)
 
-		val pending = ledger.requestSync(tenant, admin, copilot)
-		connections.delete(tenant, admin, copilot, connections.find(tenant, copilot)!!.version)
+		val pending = ledger.requestSync(tenant, admin, cursor)
+		connections.delete(tenant, admin, cursor, connections.find(tenant, cursor)!!.version)
 		assertThat(ledger.abandonRemovedRequests()).isEqualTo(1)
 		assertThat(operation(pending.id).let { it.status to it.targets.single().reason }).isEqualTo(OperationStatus.FAILED to "connection_removed")
 		assertThat(ledger.abandonRemovedRequests()).isZero()
 
 		// 실행 중에 연결을 지우면 그 실행의 요청도 끝난다.
-		connect(copilot)
-		val third = ledger.requestSync(tenant, admin, copilot)
-		val running = run(copilot)
-		connections.delete(tenant, admin, copilot, connections.find(tenant, copilot)!!.version)
-		assertThat(ledger.applyListing(running, listOf(VendorSeat("octocat")))).isEqualTo(SeatLedger.SyncResult.Lost)
+		connect(cursor)
+		val third = ledger.requestSync(tenant, admin, cursor)
+		val running = run(cursor)
+		connections.delete(tenant, admin, cursor, connections.find(tenant, cursor)!!.version)
+		assertThat(ledger.applyListing(running, listOf(VendorSeat("octo@seat.example.test")))).isEqualTo(SeatLedger.SyncResult.Lost)
 		assertThat(operation(third.id).let { it.status to it.targets.single().reason }).isEqualTo(OperationStatus.FAILED to "connection_removed")
 	}
 
 	@Test
 	fun `동기화 요청 — 연결이 없거나 다른 조직·구성원(member)이면 걸지 못한다`() {
-		assertThat(code { ledger.requestSync(tenant, admin, copilot) }).isEqualTo("not_found" to 404)
-		connect(copilot)
-		assertThat(code { ledger.requestSync(tenant, dana, copilot) }).isEqualTo("forbidden" to 403)
+		assertThat(code { ledger.requestSync(tenant, admin, cursor) }).isEqualTo("not_found" to 404)
+		connect(cursor)
+		assertThat(code { ledger.requestSync(tenant, dana, cursor) }).isEqualTo("forbidden" to 403)
 		val other = tenant()
-		assertThat(code { ledger.requestSync(other, member(other, "admin@other.example.test", "admin"), copilot) }).isEqualTo("not_found" to 404)
+		assertThat(code { ledger.requestSync(other, member(other, "admin@other.example.test", "admin"), cursor) }).isEqualTo("not_found" to 404)
 	}
 }

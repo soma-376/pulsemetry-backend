@@ -35,7 +35,7 @@ data class MemberSummary(
 )
 
 /**
- * 회수 후보 (ADR 0048 §7). `account` 는 구성원의 계정(이메일), `vendorAccount` 는 좌석의 벤더 계정(가산 — Copilot 은 GitHub 로그인).
+ * 회수 후보 (ADR 0048 §7). `account` 는 구성원의 계정(이메일), `vendorAccount` 는 좌석의 벤더 계정(가산).
  * `tierId` 는 모르면 null 이다(요청서는 문자열 — 등급을 주지 않는 벤더의 좌석은 등급을 모른다). 절감액은 계약의 해지·감액 조건 원천이 없어 null 이다.
  */
 data class ReclaimCandidate(

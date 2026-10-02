@@ -81,23 +81,23 @@ class SeatSourceApiTest : AbstractDashboardApiTest() {
 	@DisplayName("우선순위 표대로 권위를 낸다 — 연결 있음은 커넥터, 커넥터 플랜에 연결 없음은 수동 임시, 커넥터 없는 플랜은 수동")
 	fun authority() {
 		val org = organization()
-		val copilot = register(org, "copilot", "copilot_business")
+		val cursor = register(org, "cursor", "cursor_enterprise")
 		val claude = register(org, "claude_team", "enterprise")
 		val openai = register(org, "openai_biz", "business")
 		val succeeded = Instant.parse("2026-09-21T00:00:00Z")
 		val failed = Instant.parse("2026-09-22T00:00:00Z")
-		val connectionId = connect(org, copilot, "copilot", """{"organization":"octo-org"}""", succeeded = succeeded, failed = failed)
+		val connectionId = connect(org, cursor, "cursor_enterprise", "{}", succeeded = succeeded, failed = failed)
 		// 지운 연결은 보이지 않는다.
 		connect(org, claude, "claude_enterprise", "{}", deleted = true)
 
 		val settings = ok(org.tenant, "/settings")
-		with(sourceOf(settings, copilot)) {
+		with(sourceOf(settings, cursor)) {
 			assertThat(listOf(path("authority").asString(), path("provisional").asBoolean())).containsExactly("connector", false)
-			assertThat(path("connector").path("capabilities").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "seat_restore")
-			assertThat(path("connector").path("supported").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "seat_restore")
+			assertThat(path("connector").path("capabilities").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "billing")
+			assertThat(path("connector").path("supported").toList().map { it.asString() }).containsExactly("seat_list", "seat_release", "billing")
 			val connection = path("connection")
 			assertThat(connection.path("connectionId").asString()).isEqualTo(connectionId.toString())
-			assertThat(connection.path("settings").path("organization").asString()).isEqualTo("octo-org")
+			assertThat(connection.path("settings").let { it.isObject && it.isEmpty }).describedAs("Cursor 는 비밀 아닌 설정이 없다").isTrue()
 			assertThat(connection.path("credential").propertyNames().toList()).containsExactlyInAnyOrder("configured", "updatedAt")
 			assertThat(connection.at("/check/status").asString()).isEqualTo("verified")
 			// 마지막 시도가 실패면 failing — 마지막 성공 값은 남는다.
@@ -118,8 +118,8 @@ class SeatSourceApiTest : AbstractDashboardApiTest() {
 
 		// 목록·상세도 같은 값이다.
 		val snapshot = settings.at("/meta/snapshotId").asString()
-		assertThat(sourceOf(ok(org.tenant, "/vendors?snapshotId=$snapshot"), copilot)).isEqualTo(sourceOf(settings, copilot))
-		assertThat(ok(org.tenant, "/vendors/$copilot?snapshotId=$snapshot").at("/vendor/seatSource")).isEqualTo(sourceOf(settings, copilot))
+		assertThat(sourceOf(ok(org.tenant, "/vendors?snapshotId=$snapshot"), cursor)).isEqualTo(sourceOf(settings, cursor))
+		assertThat(ok(org.tenant, "/vendors/$cursor?snapshotId=$snapshot").at("/vendor/seatSource")).isEqualTo(sourceOf(settings, cursor))
 	}
 
 	@Test
@@ -127,14 +127,14 @@ class SeatSourceApiTest : AbstractDashboardApiTest() {
 	fun boundary() {
 		val org = organization()
 		val other = organization()
-		val mine = register(org, "gemini", "gemini_standard")
-		val theirs = register(other, "gemini", "gemini_enterprise")
-		connect(other, theirs, "gemini", """{"billingAccount":"b","order":"o","project":"p"}""")
+		val mine = register(org, "claude_team", "enterprise")
+		val theirs = register(other, "claude_team", "enterprise")
+		connect(other, theirs, "claude_enterprise", "{}")
 		assertThat(sourceOf(ok(org.tenant, "/settings"), mine).let { it.path("authority").asString() to it.path("connection").isNull }).isEqualTo("manual" to true)
 		with(sourceOf(ok(other.tenant, "/settings"), theirs)) {
 			assertThat(path("authority").asString()).isEqualTo("connector")
 			assertThat(path("connection").at("/sync/status").asString()).isEqualTo("pending")
-			assertThat(path("connection").path("settings").propertyNames().toList()).containsExactly("billingAccount", "order", "project")
+			assertThat(path("connection").path("settings").propertyNames().toList()).isEmpty()
 		}
 	}
 }

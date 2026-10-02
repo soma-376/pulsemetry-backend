@@ -7,7 +7,7 @@ import com.team376.pulsemetry.persistence.enrollment.management.ManagementExcept
  *
  * | 열 | 필수 | 값 |
  * | --- | --- | --- |
- * | `account` | 예 | 벤더 계정 — 이메일(Copilot 은 GitHub 로그인) |
+ * | `account` | 예 | 벤더 계정 — 이메일 |
  * | `status` | 아니오 | `assigned`(기본)·`released` |
  * | `tier` | 아니오 | 현재 계약의 등급 ID 또는 표시 이름. 비우면 새 좌석은 등급 없음, 있는 좌석은 그대로 |
  * | `member_email` | 아니오 | 이 좌석을 잇는 구성원의 이메일(관리자 연결). 비우면 새 좌석은 이메일 일치 규칙, 있는 좌석은 그대로 |

@@ -5,19 +5,15 @@ import org.assertj.core.api.Assertions.catchThrowableOfType
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import tools.jackson.databind.json.JsonMapper
-import java.security.KeyPairGenerator
-import java.security.Signature
-import java.security.interfaces.RSAPublicKey
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneOffset
 import java.util.Base64
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * 커넥터 넷을 모의 벤더 서버로 검증한다. 모의 응답은 `docs/vendor-connector-evidence.md` 의 요청·응답 예시를 그대로 재현한다(이메일만 `@example.test`로).
+ * 커넥터 둘(ADR 0054)을 모의 벤더 서버로 검증한다. 모의 응답은 `docs/vendor-connector-evidence.md` 의 요청·응답 예시를 그대로 재현한다(이메일만 `@example.test`로).
  * 기대값은 그 문서와 ADR 0048 §8(실패 분류·요청 성공 ≠ 완료)에서 쓴다 — 여러 페이지, 429 뒤 재시도, 401·403, 5xx, 빈 목록, 알 수 없는 필드.
  */
 class VendorConnectorsTest {
@@ -124,126 +120,14 @@ class VendorConnectorsTest {
 		assertThat(failure { CursorEnterpriseConnector(http, server.base).listSeats(target()) }.kind).isEqualTo(ConnectorFailure.Kind.INVALID_RESPONSE)
 	}
 
-	// ---- GitHub Copilot (evidence §4) ----
-
-	private val octocat = """{"assignee":{"login":"octocat","id":1,"type":"User"},"assigning_team":{"id":1,"name":"Justice League","slug":"justice-league"},
-		"pending_cancellation_date":null,"last_activity_at":"2024-10-01T19:32:20Z","last_activity_editor":"Visual Studio Code",
-		"last_authenticated_at":"2024-10-01T19:32:20Z","created_at":"2024-10-01T19:32:20Z","plan_type":"business"}"""
-
-	@Test
-	fun `Copilot — link 헤더의 다음 페이지까지 읽고 해제 예정·로그인 계정·null 담당자를 문서대로 다룬다`() {
-		server.on("GET", "/orgs/octo-org/copilot/billing/seats",
-			reply(200, """{"total_seats":3,"seats":[$octocat]}""", "link" to "<${server.base}/orgs/octo-org/copilot/billing/seats?per_page=100&page=2>; rel=\"next\", <x>; rel=\"last\""),
-			reply(200, """{"total_seats":3,"seats":[
-				{"assignee":{"login":"Hubot","id":2,"type":"User"},"pending_cancellation_date":"2025-02-15","last_activity_at":null,"created_at":"2024-11-01T00:00:00Z","plan_type":"business"},
-				{"assignee":null,"pending_cancellation_date":null,"last_activity_at":null,"created_at":"2024-11-02T00:00:00Z","plan_type":"business"}
-			]}""", "link" to "<x>; rel=\"prev\", <y>; rel=\"first\""))
-
-		val seats = CopilotConnector(http, server.base).listSeats(target(mapOf("organization" to "octo-org")))
-
-		assertThat(seats).containsExactly(
-			VendorSeat("octocat", assignedAt = Instant.parse("2024-10-01T19:32:20Z"), lastActivityAt = Instant.parse("2024-10-01T19:32:20Z")),
-			// 요청 성공은 즉시 회수가 아니다 — 벤더가 보고한 예정일을 그대로 둔다. 활동이 없다는 것은 모름이다.
-			VendorSeat("Hubot", state = VendorSeatState.PENDING_RELEASE, releaseEffectiveOn = LocalDate.parse("2025-02-15"), assignedAt = Instant.parse("2024-11-01T00:00:00Z")),
-		)
-		assertThat(seats.map { it.email }).describedAs("Copilot 좌석에는 이메일이 없다").containsOnly(null)
-		val requests = server.requests("/orgs/octo-org/copilot/billing/seats")
-		assertThat(requests.map { it.param("page") to it.param("per_page") }).containsExactly("1" to "100", "2" to "100")
-		assertThat(requests.map { Triple(it.header("Accept"), it.header("Authorization"), it.header("X-GitHub-Api-Version")) })
-			.containsOnly(Triple("application/vnd.github+json", "Bearer $secret", "2022-11-28"))
-	}
-
-	@Test
-	fun `Copilot — 한도 신호가 있는 403 은 한도 초과, 없는 조직(404)은 벤더 거절, 조직 이름은 경로에서 인코딩한다`() {
-		server.on("GET", "/orgs/octo-org/copilot/billing/seats",
-			reply(403, """{"message":"API rate limit exceeded"}""", "x-ratelimit-remaining" to "0", "x-ratelimit-reset" to (Instant.parse("2026-10-01T00:00:05Z").epochSecond).toString()),
-			reply(200, """{"total_seats":0,"seats":[]}"""))
-		assertThat(CopilotConnector(http, server.base).listSeats(target(mapOf("organization" to "octo-org")))).isEmpty()
-		assertThat(waits).containsExactly(Duration.ofSeconds(5))
-
-		server.on("GET", "/orgs/octo-org/copilot/billing/seats", reply(403, """{"message":"Must have admin rights to Repository."}"""))
-		assertThat(failure { CopilotConnector(http, server.base).verify(target(mapOf("organization" to "octo-org"))) }.kind).isEqualTo(ConnectorFailure.Kind.INSUFFICIENT_PERMISSION)
-		assertThat(server.requests("/orgs/octo-org/copilot/billing/seats").last().param("per_page")).isEqualTo("1")
-		assertThat(failure { CopilotConnector(http, server.base).verify(target(mapOf("organization" to "other org/x"))) }.kind).isEqualTo(ConnectorFailure.Kind.VENDOR_REJECTED)
-		assertThat(server.received.last().path).isEqualTo("/orgs/other%20org%2Fx/copilot/billing/seats")
-	}
-
-	// ---- Gemini Code Assist (evidence §5, Google 서비스 계정 OAuth) ----
-
-	private val keys = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
-	private val serviceAccount = JsonMapper.builder().build().writeValueAsString(mapOf(
-		"type" to "service_account", "project_id" to "demo-project", "private_key_id" to "kid-1",
-		"private_key" to "-----BEGIN PRIVATE KEY-----\n" + Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(keys.private.encoded) + "\n-----END PRIVATE KEY-----\n",
-		"client_email" to "seat-sync@demo-project.example.test", "client_id" to "1", "token_uri" to "https://oauth2.googleapis.com/token"))
-
-	/** 모의 토큰 엔드포인트 — 문서의 형식대로 서명한 JWT 인지 공개키로 확인하고 토큰을 준다. */
-	private fun tokenEndpoint(): (MockVendorServer.Received) -> MockVendorServer.Reply = { request ->
-		val form = request.body.split('&').associate { it.substringBefore('=') to java.net.URLDecoder.decode(it.substringAfter('='), Charsets.UTF_8) }
-		val (header, claims, signature) = form.getValue("assertion").split('.')
-		val valid = Signature.getInstance("SHA256withRSA").apply { initVerify(keys.public as RSAPublicKey); update("$header.$claims".toByteArray()) }
-			.verify(Base64.getUrlDecoder().decode(signature))
-		val mapper = JsonMapper.builder().build()
-		val h = mapper.readTree(Base64.getUrlDecoder().decode(header))
-		val c = mapper.readTree(Base64.getUrlDecoder().decode(claims))
-		val ok = valid && form["grant_type"] == "urn:ietf:params:oauth:grant-type:jwt-bearer" && h.path("alg").asString() == "RS256" && h.path("kid").asString() == "kid-1" &&
-			c.path("iss").asString() == "seat-sync@demo-project.example.test" && c.path("aud").asString() == "https://oauth2.googleapis.com/token" &&
-			c.path("scope").asString() == "https://www.googleapis.com/auth/cloud-platform" && c.path("iat").asLong() == clock.instant().epochSecond &&
-			c.path("exp").asLong() - c.path("iat").asLong() == 3600L
-		if (ok) MockVendorServer.Reply(200, """{"access_token":"ya29.fake-access","scope":"https://www.googleapis.com/auth/cloud-platform","token_type":"Bearer","expires_in":3600}""")
-		else MockVendorServer.Reply(400, """{"error":"invalid_grant"}""")
-	}
-
-	private val pool = "/v1/billingAccounts/0123-ABCD/orders/order-9/licensePool:enumerateLicensedUsers"
-	private fun gemini() = GeminiConnector(http, server.base, server.base.resolve("/token"), clock)
-	private val geminiSettings = mapOf("billingAccount" to "0123-ABCD", "order" to "order-9", "project" to "demo-project")
-
-	@Test
-	fun `Gemini — 서비스 계정 키로 서명한 JWT 를 토큰으로 바꾸고 nextPageToken 이 없을 때까지 라이선스 사용자를 읽는다`() {
-		server.on("POST", "/token", tokenEndpoint())
-		server.on("GET", pool,
-			reply(200, """{"licensedUsers":[{"username":"dana@example.test","assignTime":"2024-09-26T16:24:40.559222Z"}],"nextPageToken":"p2"}"""),
-			reply(200, """{"licensedUsers":[{"username":"eli@example.test","assignTime":"2024-09-27T00:00:00Z","recentUsageTime":"2026-09-30T10:00:00Z","unknown":"x"}]}"""))
-
-		val seats = gemini().listSeats(target(geminiSettings, serviceAccount))
-
-		assertThat(seats).containsExactly(
-			VendorSeat("dana@example.test", email = "dana@example.test", assignedAt = Instant.parse("2024-09-26T16:24:40.559222Z")),
-			VendorSeat("eli@example.test", email = "eli@example.test", assignedAt = Instant.parse("2024-09-27T00:00:00Z"), lastActivityAt = Instant.parse("2026-09-30T10:00:00Z")),
-		)
-		val listed = server.requests(pool)
-		assertThat(listed.map { it.param("pageToken") }).containsExactly(null, "p2")
-		assertThat(listed.map { it.header("Authorization") to it.header("X-Goog-User-Project") }).containsOnly("Bearer ya29.fake-access" to "demo-project")
-		assertThat(server.requests("/token").single().header("Content-Type")).isEqualTo("application/x-www-form-urlencoded")
-	}
-
-	@Test
-	fun `Gemini — 빈 풀은 licensedUsers 가 없어도 빈 목록이고, 키가 서비스 계정 키가 아니거나 토큰 엔드포인트가 거절하면 자격증명 무효다`() {
-		server.on("POST", "/token", tokenEndpoint())
-		server.on("GET", pool, reply(200, "{}"))
-		assertThat(gemini().listSeats(target(geminiSettings, serviceAccount))).isEmpty()
-		gemini().verify(target(geminiSettings, serviceAccount))
-		assertThat(server.requests(pool).last().param("pageSize")).isEqualTo("1")
-
-		val before = server.received.size
-		assertThat(failure { gemini().verify(target(geminiSettings, "not-json")) }.kind).isEqualTo(ConnectorFailure.Kind.INVALID_CREDENTIALS)
-		assertThat(server.received).describedAs("형식이 틀린 키로 벤더를 부르지 않는다").hasSize(before)
-		val otherKey = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
-		val forged = serviceAccount.replace(Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(keys.private.encoded).replace("\n", "\\n"),
-			Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(otherKey.private.encoded).replace("\n", "\\n"))
-		assertThat(forged).isNotEqualTo(serviceAccount)
-		assertThat(failure { gemini().listSeats(target(geminiSettings, forged)) }.kind).isEqualTo(ConnectorFailure.Kind.INVALID_CREDENTIALS)
-	}
-
 	@Test
 	fun `구현한 커넥터는 설명과 맞아 조립되고, 설명의 기능은 벤더 문서 근거 안이다`() {
-		val connectors = SeatConnectors(listOf(ClaudeEnterpriseConnector(http), CursorEnterpriseConnector(http), CopilotConnector(http), GeminiConnector(http)))
-		// ADR 0049: 해제는 넷 모두, 복원은 요청·응답이 문서에 다 있는 Copilot·Gemini 만(Claude 재초대는 역할을 정해야 하고 Cursor 는 API 가 없다).
+		val connectors = SeatConnectors(listOf(ClaudeEnterpriseConnector(http), CursorEnterpriseConnector(http)))
+		// ADR 0049·0054: 해제는 둘 다, 복원을 구현한 커넥터는 없다(Claude 재초대는 역할을 정해야 하고 Cursor 는 API 가 없다).
 		// ADR 0050: 청구는 문서가 비용·지출 API 를 준 Claude Enterprise·Cursor Enterprise 만.
 		assertThat(ConnectorDescriptors.ALL.associate { it.id to connectors.byId(it.id)?.implemented() }).isEqualTo(mapOf(
 			"claude_enterprise" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.BILLING),
 			"cursor_enterprise" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.BILLING),
-			"copilot" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE),
-			"gemini" to setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE),
 		))
 		assertThat(ConnectorDescriptors.CLAUDE_ENTERPRISE.accountRefRequired).containsExactly(Capability.SEAT_RELEASE)
 	}
@@ -283,44 +167,6 @@ class VendorConnectorsTest {
 			.containsExactly(listOf("userId") to "user_PDSPmvukpYgZEDXsoNirw3CFhy", listOf("email") to "other@example.test", listOf("email") to "last@example.test")
 		assertThat(server.received.map { it.header("Content-Type") }).containsOnly("application/json")
 		assertThat(cursor.restore).isNull()
-	}
-
-	@Test
-	fun `Copilot — 취소는 주기 말 효력의 예정이고 재배정은 끝났다, 0 석이면 벤더 거절이고 일시 장애는 다시 시도한다`() {
-		val users = "/orgs/octo-org/copilot/billing/selected_users"
-		server.on("DELETE", users, reply(503, "{}"), reply(200, """{"seats_cancelled":1}"""))
-		val copilot = CopilotConnector(http, server.base)
-		val settings = target(mapOf("organization" to "octo-org"))
-		// 응답에 날짜가 없다 — 예정일은 다음 동기화가 목록의 pending_cancellation_date 로 채운다.
-		assertThat(copilot.release!!.release(settings, VendorAccount("octocat", null))).isEqualTo(ControlResult(ControlStatus.SCHEDULED, null))
-		assertThat(waits).containsExactly(Duration.ofSeconds(2))
-		server.on("POST", users, reply(201, """{"seats_created":1}"""))
-		assertThat(copilot.restore!!.restore(settings, VendorAccount("octocat", null))).isEqualTo(ControlResult(ControlStatus.COMPLETED))
-		val mapper = JsonMapper.builder().build()
-		assertThat(server.requests(users).map { it.method to mapper.readTree(it.body).path("selected_usernames").toList().map { n -> n.asString() } })
-			.containsExactly("DELETE" to listOf("octocat"), "DELETE" to listOf("octocat"), "POST" to listOf("octocat"))
-		assertThat(server.requests(users).map { it.header("X-GitHub-Api-Version") }).containsOnly("2022-11-28")
-		server.on("DELETE", users, reply(200, """{"seats_cancelled":0}"""))
-		assertThat(failure { copilot.release!!.release(settings, VendorAccount("team-seat", null)) }.kind).describedAs("팀으로 배정된 좌석").isEqualTo(ConnectorFailure.Kind.VENDOR_REJECTED)
-		server.on("POST", users, reply(201, """{"seats_created":"1"}"""))
-		assertThat(failure { copilot.restore!!.restore(settings, VendorAccount("octocat", null)) }.kind).isEqualTo(ConnectorFailure.Kind.INVALID_RESPONSE)
-	}
-
-	@Test
-	fun `Gemini — 해제와 배정은 라이선스 풀에 usernames 를 보내고 빈 응답이면 끝났다, 권한이 없으면 권한 부족이다`() {
-		server.on("POST", "/token", tokenEndpoint())
-		val unassign = "/v1/billingAccounts/0123-ABCD/orders/order-9/licensePool:unassign"
-		val assign = "/v1/billingAccounts/0123-ABCD/orders/order-9/licensePool:assign"
-		server.on("POST", unassign, reply(200, ""), reply(403, """{"error":{"code":403,"status":"PERMISSION_DENIED"}}"""))
-		server.on("POST", assign, reply(200, "{}"))
-		val connector = gemini()
-		val settings = target(geminiSettings, serviceAccount)
-		assertThat(connector.release!!.release(settings, VendorAccount("dana@example.test", null))).isEqualTo(ControlResult(ControlStatus.COMPLETED))
-		assertThat(connector.restore!!.restore(settings, VendorAccount("dana@example.test", null))).isEqualTo(ControlResult(ControlStatus.COMPLETED))
-		val mapper = JsonMapper.builder().build()
-		assertThat((server.requests(unassign) + server.requests(assign)).map { Triple(it.path, mapper.readTree(it.body).path("usernames").toList().map { n -> n.asString() }, it.header("Authorization")) })
-			.containsExactly(Triple(unassign, listOf("dana@example.test"), "Bearer ya29.fake-access"), Triple(assign, listOf("dana@example.test"), "Bearer ya29.fake-access"))
-		assertThat(failure { connector.release!!.release(settings, VendorAccount("dana@example.test", null)) }.kind).isEqualTo(ConnectorFailure.Kind.INSUFFICIENT_PERMISSION)
 	}
 
 	// ---- 청구 누계 (ADR 0050 — 좌석 구독료가 아니다) ----

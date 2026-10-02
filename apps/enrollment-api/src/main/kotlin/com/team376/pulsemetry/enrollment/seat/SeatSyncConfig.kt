@@ -4,9 +4,7 @@ import com.team376.pulsemetry.connector.vendor.ClaudeEnterpriseConnector
 import com.team376.pulsemetry.connector.vendor.ConnectionTarget
 import com.team376.pulsemetry.connector.vendor.ConnectorDescriptors
 import com.team376.pulsemetry.connector.vendor.ConnectorFailure
-import com.team376.pulsemetry.connector.vendor.CopilotConnector
 import com.team376.pulsemetry.connector.vendor.CursorEnterpriseConnector
-import com.team376.pulsemetry.connector.vendor.GeminiConnector
 import com.team376.pulsemetry.connector.vendor.HttpPolicy
 import com.team376.pulsemetry.connector.vendor.SeatConnector
 import com.team376.pulsemetry.connector.vendor.SeatConnectors
@@ -51,8 +49,6 @@ class VendorConnectionProperties {
     var http = Http()
     /** 커넥터 ID → 벤더 API 기준 주소. 비우면 벤더 문서의 공식 주소다(모의 서버·스테이징에서만 바꾼다) */
     var baseUrls: Map<String, String> = emptyMap()
-    /** Gemini 의 토큰 엔드포인트. 비우면 `https://oauth2.googleapis.com/token` */
-    var geminiTokenUrl = ""
 
     class Sync {
         /** 연결 하나를 다시 동기화하는 간격(마지막 시도부터) */
@@ -103,9 +99,6 @@ class SeatSyncConfig {
         return SeatConnectors(listOf(
             ClaudeEnterpriseConnector(vendorHttp, base(ConnectorDescriptors.CLAUDE_ENTERPRISE.id, "https://api.anthropic.com")),
             CursorEnterpriseConnector(vendorHttp, base(ConnectorDescriptors.CURSOR_ENTERPRISE.id, "https://api.cursor.com")),
-            CopilotConnector(vendorHttp, base(ConnectorDescriptors.COPILOT.id, "https://api.github.com")),
-            GeminiConnector(vendorHttp, base(ConnectorDescriptors.GEMINI.id, "https://cloudcommerceconsumerprocurement.googleapis.com"),
-                URI(properties.geminiTokenUrl.takeIf { it.isNotBlank() } ?: GeminiConnector.TOKEN_AUDIENCE), clock),
         ))
     }
 

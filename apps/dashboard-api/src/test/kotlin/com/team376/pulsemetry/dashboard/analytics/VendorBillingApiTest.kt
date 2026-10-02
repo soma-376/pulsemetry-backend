@@ -90,7 +90,6 @@ class VendorBillingApiTest : AbstractDashboardApiTest() {
 		val cursor = register(tenant, admin, "cursor", "cursor_enterprise")
 		val openai = register(tenant, admin, "openai_biz", "business")
 		val connection = connect(tenant, admin, claude, "claude_enterprise", billedAt = now.minus(Duration.ofHours(1)))
-		connect(tenant, admin, copilot, "copilot")
 		// 환산 비용(이번 달 claude_code 사용 7달러)·월 계약액(150달러)과 다른 청구 누계 412.8달러.
 		val member = SourceFixtures.insertMember(tenant, "dev-${UUID.randomUUID()}@example.test")
 		SourceFixtures.insertEvents(tenant, Event("$tenant-cost", maxOf(monthStart, now.minus(Duration.ofHours(2))), memberId = member, sessionId = "s",
@@ -105,7 +104,7 @@ class VendorBillingApiTest : AbstractDashboardApiTest() {
 			assertThat(listOf(path("data").path("startDate").asString(), path("data").path("billingKind").asString(), path("data").path("finalized").asBoolean(), path("data").path("source").asString()))
 				.containsExactly(monthStart.atZone(QueryReader.SEOUL).toLocalDate().toString(), "usage_cost", false, "connector")
 		}
-		assertThat(section(metered(settings, copilot))).describedAs("Copilot 은 청구 API 가 없다").isEqualTo("unavailable" to "billing_not_supported")
+		assertThat(section(metered(settings, copilot))).describedAs("연동 대상이 아닌 제품(ADR 0054)은 커넥터가 없는 플랜이다").isEqualTo("unavailable" to "billing_not_supported")
 		assertThat(section(metered(settings, openai))).describedAs("커넥터 없는 플랜").isEqualTo("unavailable" to "billing_not_supported")
 		assertThat(section(metered(settings, cursor))).describedAs("청구를 구현했지만 연결이 없다").isEqualTo("unavailable" to "billing_source_not_connected")
 		// 한 제품이라도 없으면 합계를 부분합으로 내지 않는다.

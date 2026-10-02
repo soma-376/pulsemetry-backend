@@ -72,7 +72,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		DashboardHttp.json(it)
 	}
 
-	private data class Org(val tenant: UUID, val admin: UUID, val members: Map<String, UUID>, val claude: String, val copilot: String?, val seats: Map<String, UUID>)
+	private data class Org(val tenant: UUID, val admin: UUID, val members: Map<String, UUID>, val claude: String, val cursor: String?, val seats: Map<String, UUID>)
 
 	private fun register(tenant: UUID, admin: UUID, kind: String, plan: String, seats: Int, effectiveFrom: String = "2026-01-01"): String {
 		val id = "$kind-${UUID.randomUUID()}"
@@ -97,9 +97,9 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 
 	/**
 	 * Claude Team(수동 원천) 10석에 dana(사용 없음 — 후보), eli(2일 전 사용), fox(설치 없음), hana(14일 1시간 전 사용 — 경계 안), ivy(13일 23시간 전 — 경계 밖),
-	 * 구성원이 없는 외부 계정, gil(관리자 조치로 해제). [withCopilot] 이면 Copilot Business(연결·2시간 전 성공) 5석에 admin 이 이은 octocat.
+	 * 구성원이 없는 외부 계정, gil(관리자 조치로 해제). [withCursor] 이면 Cursor Enterprise(연결·2시간 전 성공) 5석에 admin 이 이은 octo.
 	 */
-	private fun organization(withCopilot: Boolean = true): Org {
+	private fun organization(withCursor: Boolean = true): Org {
 		val tenant = DashboardTestStores.insertTenant()
 		SourceFixtures.setSummary(tenant, firstReceivedAt = ago(90))
 		val admin = SourceFixtures.insertMember(tenant, "admin-${UUID.randomUUID()}@example.test", role = "admin")
@@ -124,23 +124,23 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 			used(tenant, members.getValue("hana"), ago(14, 1), "hana"),
 			used(tenant, members.getValue("ivy"), ago(13, 23), "ivy"),
 		)
-		var copilot: String? = null
-		if (withCopilot) {
-			copilot = register(tenant, admin, "copilot", "copilot_business", 5)
+		var cursor: String? = null
+		if (withCursor) {
+			cursor = register(tenant, admin, "cursor", "cursor_enterprise", 5)
 			val connection = UUID.randomUUID()
 			DashboardTestStores.writer.sql("""INSERT INTO enrollment.vendor_connections (id, tenant_id, vendor_id, connector, settings, credential_ciphertext, credential_key_id,
 					credential_updated_at, check_status, version, created_at, created_by, updated_at, updated_by)
-				VALUES (:id, :t, :v, 'copilot', '{"organization":"octo-org"}', 'opaque', 'k1', :at, 'verified', 1, :at, :admin, :at, :admin)""")
-				.param("id", connection).param("t", tenant).param("v", copilot).param("at", Timestamp.from(ago(61))).param("admin", admin).update()
+				VALUES (:id, :t, :v, 'cursor_enterprise', '{}', 'opaque', 'k1', :at, 'verified', 1, :at, :admin, :at, :admin)""")
+				.param("id", connection).param("t", tenant).param("v", cursor).param("at", Timestamp.from(ago(61))).param("admin", admin).update()
 			val sync = ledger(ago(60)).startRun(tenant, connection, "worker-test", Duration.ofMinutes(5))!!
-			ledger(ago(60)).applyListing(sync, listOf(VendorSeat("octocat")))
-			val octocat = ledger(ago(60)).seats(tenant, copilot).single()
-			ledger(ago(59)).correct(tenant, octocat.id, admin, octocat.version, member = SeatLedger.MemberChoice.Member(admin))
-			seats["octocat"] = octocat.id
+			ledger(ago(60)).applyListing(sync, listOf(VendorSeat("octo@example.test", vendorAccountRef = "user_octo")))
+			val octo = ledger(ago(60)).seats(tenant, cursor).single()
+			ledger(ago(59)).correct(tenant, octo.id, admin, octo.version, member = SeatLedger.MemberChoice.Member(admin))
+			seats["octo"] = octo.id
 			DashboardTestStores.writer.sql("UPDATE enrollment.vendor_connections SET last_sync_succeeded_at = :at WHERE id = :id")
 				.param("at", Timestamp.from(ago(0, 2))).param("id", connection).update()
 		}
-		return Org(tenant, admin, members + ("admin" to admin), claude, copilot, seats)
+		return Org(tenant, admin, members + ("admin" to admin), claude, cursor, seats)
 	}
 
 	private val period: String get() {
@@ -153,7 +153,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 	fun candidates() {
 		val org = organization()
 		val first = ok(org.tenant, "/seat-reclaim-candidates?limit=1")
-		// 설치가 없는 fox·구성원이 없는 좌석·관측 매핑이 없는 Copilot 은 판정하지 못했다 — 목록에서 빼고 partial 이다.
+		// 설치가 없는 fox·구성원이 없는 좌석·관측 매핑이 없는 Cursor 은 판정하지 못했다 — 목록에서 빼고 partial 이다.
 		assertThat(first.at("/candidates/availability").asString() to first.at("/candidates/reason").asString()).isEqualTo("partial" to "observation_incomplete")
 		assertThat(first.at("/candidates/data/totalCount").asInt()).isEqualTo(2)
 		val dana = first.at("/candidates/data/items/0")
@@ -169,13 +169,13 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 			.containsExactly(org.members.getValue("hana").toString() to 14L)
 		assertThat(second.at("/candidates/data/nextCursor").isNull).isTrue()
 		// 다른 조직에서 이 토큰은 409, 남의 cursor 는 400.
-		assertThat(get(organization(withCopilot = false).tenant, "/seat-reclaim-candidates?snapshotId=$snapshotId").statusCode()).isEqualTo(409)
+		assertThat(get(organization(withCursor = false).tenant, "/seat-reclaim-candidates?snapshotId=$snapshotId").statusCode()).isEqualTo(409)
 	}
 
 	@Test
 	@DisplayName("검토 창에 완전하지 않은 날이 있으면 아무도 후보가 아니다 — 수집이 끊긴 설치 하나가 그날의 관측을 깨뜨린다")
 	fun incompleteWindow() {
-		val org = organization(withCopilot = false)
+		val org = organization(withCursor = false)
 		assertThat(ok(org.tenant, "/seat-reclaim-candidates").at("/candidates/data/totalCount").asInt()).isEqualTo(2)
 		// 좌석이 없는 구성원의 설치가 5일 전부터 보고하지 않는다 — 그 뒤의 날은 조직 전체가 완전하지 않다.
 		val quiet = SourceFixtures.insertInstallation(org.tenant, org.members.getValue("nobody"))
@@ -204,13 +204,13 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 			.isEqualTo(Triple("released", "admin_action", "not_assigned"))
 		with(seats("admin").single()) {
 			assertThat(listOf(path("kind").asString(), path("memberLink").asString(), path("reviewReason").asString(), path("idleDays").isNull))
-				.containsExactly("copilot", "admin", "product_unobservable", true)
+				.containsExactly("cursor", "admin", "product_unobservable", true)
 		}
 		assertThat(seats("nobody")).isEmpty()
 		assertThat(get(org.tenant, "/members/${UUID.randomUUID()}/seats").statusCode()).isEqualTo(404)
 		assertThat(get(org.tenant, "/members/not-a-uuid/seats").statusCode()).isEqualTo(404)
 		assertThat(get(org.tenant, "/members/${org.members.getValue("dana")}/seats", Role.MEMBER).statusCode()).isEqualTo(403)
-		assertThat(get(organization(withCopilot = false).tenant, "/members/${org.members.getValue("dana")}/seats").statusCode()).describedAs("다른 조직의 구성원").isEqualTo(404)
+		assertThat(get(organization(withCursor = false).tenant, "/members/${org.members.getValue("dana")}/seats").statusCode()).describedAs("다른 조직의 구성원").isEqualTo(404)
 	}
 
 	@Test
@@ -220,7 +220,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		val body = ok(org.tenant, "/members/dashboard?$period")
 		with(body.at("/summary/seats")) {
 			assertThat(path("availability").asString()).isEqualTo("available")
-			// 계약 10 + 5, 보유 = Claude 6(해제된 gil 제외) + Copilot 1, 미배정 = (10-6) + (5-1). 미연결·관측 불가 좌석이 있어 기간 중 사용은 판정하지 않는다.
+			// 계약 10 + 5, 보유 = Claude 6(해제된 gil 제외) + Cursor 1, 미배정 = (10-6) + (5-1). 미연결·관측 불가 좌석이 있어 기간 중 사용은 판정하지 않는다.
 			assertThat(listOf(at("/data/contracted").asLong(), at("/data/assigned").asLong(), at("/data/unallocated").asLong(), at("/data/reclaimCandidates").asLong()))
 				.containsExactly(15L, 7L, 8L, 2L)
 			assertThat(listOf(at("/data/activeInPeriod").isNull, at("/data/inactiveAssigned").isNull, at("/data/estimatedMonthlySavingsUsd").isNull)).containsOnly(true)
@@ -242,7 +242,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 	@Test
 	@DisplayName("기간 중 사용·비활성 — 모든 보유 좌석이 구성원에 이어지고 관측 가능한 제품이며 기간이 완전할 때만 센다")
 	fun periodActivity() {
-		val org = organization(withCopilot = false)
+		val org = organization(withCursor = false)
 		// 판정할 수 없는 좌석(미연결 외부 계정·설치 없는 fox)을 해제해 둔다.
 		listOf("outside", "fox").forEach { name ->
 			val seat = ledger(ago(1)).seat(org.tenant, org.seats.getValue(name))!!
@@ -261,15 +261,15 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		val org = organization()
 		fun seatSection() = ok(org.tenant, "/members/dashboard?$period").at("/summary/seats").let { it.path("availability").asString() to it.path("reason").asString() }
 		fun connection(sql: String, at: Instant? = null) = DashboardTestStores.writer.sql("UPDATE enrollment.vendor_connections SET $sql WHERE vendor_id = :v")
-			.param("v", org.copilot!!).also { if (at != null) it.param("at", Timestamp.from(at)) }.update()
+			.param("v", org.cursor!!).also { if (at != null) it.param("at", Timestamp.from(at)) }.update()
 		connection("last_sync_failed_at = :at, last_sync_error = 'vendor_unavailable'", ago(0, 1))
 		assertThat(seatSection()).isEqualTo("partial" to "seat_sync_failing")
 		connection("last_sync_failed_at = NULL, last_sync_error = NULL, last_sync_succeeded_at = :at", ago(2))
 		assertThat(seatSection()).isEqualTo("partial" to "seat_sync_outdated")
 		connection("last_sync_succeeded_at = NULL")
 		assertThat(seatSection()).describedAs("Claude 는 여전히 쓸 수 있다").isEqualTo("partial" to "seat_sync_pending")
-		val copilotSeat = ok(org.tenant, "/members/${org.members.getValue("admin")}/seats").at("/seats/0")
-		assertThat(copilotSeat.path("ledgerAvailability").asString() to copilotSeat.path("ledgerReason").asString()).isEqualTo("unavailable" to "seat_sync_pending")
+		val cursorSeat = ok(org.tenant, "/members/${org.members.getValue("admin")}/seats").at("/seats/0")
+		assertThat(cursorSeat.path("ledgerAvailability").asString() to cursorSeat.path("ledgerReason").asString()).isEqualTo("unavailable" to "seat_sync_pending")
 	}
 
 	@Test
@@ -283,12 +283,12 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		val vendors = settings.at("/vendors/items").toList().associateBy { it.path("vendorId").asString() }
 		assertThat(vendors.getValue(org.claude).path("seats").let { listOf(it.path("availability").asString(), it.at("/data/assigned").asLong(), it.at("/data/contracted").asLong(), it.at("/data/unallocated").asLong()) })
 			.containsExactly("available", 6L, 10L, 4L)
-		assertThat(vendors.getValue(org.copilot!!).path("seats").let { listOf(it.path("availability").asString(), it.at("/data/assigned").asLong(), it.at("/data/unallocated").asLong()) })
+		assertThat(vendors.getValue(org.cursor!!).path("seats").let { listOf(it.path("availability").asString(), it.at("/data/assigned").asLong(), it.at("/data/unallocated").asLong()) })
 			.containsExactly("available", 1L, 4L)
 		JsonStructure.assertMatches("settings-response.example.json", settings)
 
 		// 관측 가능한 제품뿐이어도 구성원에 잇지 않은 좌석(외부 계정)이 있으면 판정할 수 없다.
-		val only = organization(withCopilot = false)
+		val only = organization(withCursor = false)
 		fun activeSeats7d() = ok(only.tenant, "/settings").at("/summary/activeSeats7d")
 		fun release(name: String) {
 			val seat = ledger(ago(1)).seat(only.tenant, only.seats.getValue(name))!!
@@ -331,7 +331,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 	fun overviewSeats() {
 		val org = organization()
 		val seats = ok(org.tenant, "/analytics/overview?$period").path("seats")
-		// Copilot 은 관측 매핑이 없어 범위 밖 — partial.
+		// Cursor 은 관측 매핑이 없어 범위 밖 — partial.
 		assertThat(listOf(seats.path("availability").asString(), seats.path("reason").asString(), seats.path("allocationMethod").asString()))
 			.containsExactly("partial", "product_unobservable", "estimated_30_day")
 		assertThat(seats.path("scopeVendorIds").toList().map { it.asString() }).containsExactly(org.claude)
@@ -396,7 +396,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 			assertThat(listOf(path("state").asString(), path("source").asString(), path("memberAccount").asString().startsWith("gil-"))).containsExactly("released", "admin_action", true)
 		}
 		assertThat(get(org.tenant, "/vendors/no-such-vendor/seats").statusCode()).isEqualTo(404)
-		assertThat(get(organization(withCopilot = false).tenant, "/vendors/${org.claude}/seats").statusCode()).describedAs("다른 조직의 제품").isEqualTo(404)
+		assertThat(get(organization(withCursor = false).tenant, "/vendors/${org.claude}/seats").statusCode()).describedAs("다른 조직의 제품").isEqualTo(404)
 	}
 
 	@Test
@@ -408,7 +408,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		val organization = requireNotNull(organizations.find(org.tenant))
 		fun seat(name: String) = service.memberSeats(organization, org.members.getValue(name), null).seats.single()
 		assertThat(seat("dana").let { Triple(it.canReclaim, it.reclaimReason, it.reclaimMethod) }).describedAs("Team 플랜 수동 원장").isEqualTo(Triple(true, null, "admin_action"))
-		assertThat(seat("admin").let { Triple(it.canReclaim, it.reclaimReason, it.reclaimMethod) }).describedAs("Copilot 활성 연결").isEqualTo(Triple(true, null, "vendor_control"))
+		assertThat(seat("admin").let { Triple(it.canReclaim, it.reclaimReason, it.reclaimMethod) }).describedAs("Cursor 활성 연결").isEqualTo(Triple(true, null, "vendor_control"))
 		assertThat(seat("gil").let { Triple(it.canReclaim, it.reclaimReason, it.reclaimMethod) }).isEqualTo(Triple(false, "not_assigned", null))
 		val candidates = service.reclaimCandidates(organization, PageRequest(10, null), null).candidates.data!!.items
 		assertThat(candidates.map { Triple(it.canReclaim, it.reason, it.reclaimMethod) }).containsOnly(Triple(true, null, "admin_action"))

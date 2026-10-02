@@ -1,25 +1,17 @@
 package com.team376.pulsemetry.connector.vendor
 
-/** 벤더 계정의 식별 방식 (ADR 0048 §1). 원장의 계정 키는 이 방식으로 정규화한 문자열이다. */
+/** 벤더 계정의 식별 방식 (ADR 0048 §1). 원장의 계정 키는 이 방식으로 정규화한 문자열이다. 지금 커넥터는 모두 이메일이다(ADR 0054). */
 enum class AccountKind(val wire: String) {
-	EMAIL("email"),
-	GITHUB_LOGIN("github_login");
+	EMAIL("email");
 
 	/** 계정 키 정규화. 형식이 맞지 않으면 null. */
 	fun normalize(raw: String): String? {
 		val value = raw.trim().lowercase()
-		return value.takeIf {
-			when (this) {
-				EMAIL -> value.length <= 320 && EMAIL_FORMAT.matches(value)
-				GITHUB_LOGIN -> LOGIN_FORMAT.matches(value)
-			}
-		}
+		return value.takeIf { value.length <= 320 && EMAIL_FORMAT.matches(value) }
 	}
 
 	private companion object {
 		val EMAIL_FORMAT = Regex("[^\\s@]+@[^\\s@]+\\.[^\\s@]+")
-		// GitHub 사용자 이름: 영숫자와 하이픈, 39자 이하, 하이픈으로 시작하지 않는다.
-		val LOGIN_FORMAT = Regex("[a-z0-9](?:[a-z0-9-]{0,38})")
 	}
 }
 
@@ -60,12 +52,11 @@ data class ConnectorDescriptor(
 }
 
 /**
- * 벤더 문서가 근거를 준 커넥터들 (`docs/vendor-connector-evidence.md` "결론 — 구현 방식"). 문서가 `수동`·`미제공`으로 판정한 제품·플랜은 없다 —
- * 그 제품은 커넥터가 없는 플랜이다(ADR 0048 §3의 1행).
+ * 벤더 문서가 근거를 준 커넥터들 (`docs/vendor-connector-evidence.md` "결론 — 구현 방식"). 문서가 `수동`·`미제공`으로 판정한 제품·플랜과
+ * 연동 대상이 아닌 제품(GitHub Copilot·Gemini Code Assist — ADR 0054)은 없다 — 그 제품은 커넥터가 없는 플랜이다(ADR 0048 §3의 1행).
  */
 object ConnectorDescriptors {
 	private val LIST_RELEASE = setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE)
-	private val LIST_RELEASE_RESTORE = setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE)
 
 	/**
 	 * Claude Enterprise: 구성원 조회·제거·재초대(수락 대기), 사용량 기반 계약의 사용 비용. 등급·활동 시각은 주지 않는다.
@@ -79,15 +70,7 @@ object ConnectorDescriptors {
 	val CURSOR_ENTERPRISE = ConnectorDescriptor("cursor_enterprise", "cursor", setOf("cursor_enterprise"), AccountKind.EMAIL, emptyList(),
 		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.BILLING), LIST_RELEASE + Capability.BILLING)
 
-	/** GitHub Copilot: 좌석 조회·취소(주기 말 효력)·재배정. 계정은 GitHub 로그인이고 조직 이름이 설정이다. */
-	val COPILOT = ConnectorDescriptor("copilot", "copilot", setOf("copilot_business", "copilot_enterprise"), AccountKind.GITHUB_LOGIN, listOf("organization"),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE), LIST_RELEASE_RESTORE)
-
-	/** Gemini Code Assist: 라이선스 풀 조회·해제·배정. 청구 계정·주문·요청 프로젝트가 설정이다. 자격증명은 서비스 계정 키(JSON)다. */
-	val GEMINI = ConnectorDescriptor("gemini", "gemini", setOf("gemini_standard", "gemini_enterprise"), AccountKind.EMAIL, listOf("billingAccount", "order", "project"),
-		setOf(Capability.SEAT_LIST, Capability.SEAT_RELEASE, Capability.SEAT_RESTORE), LIST_RELEASE_RESTORE)
-
-	val ALL: List<ConnectorDescriptor> = listOf(CLAUDE_ENTERPRISE, CURSOR_ENTERPRISE, COPILOT, GEMINI)
+	val ALL: List<ConnectorDescriptor> = listOf(CLAUDE_ENTERPRISE, CURSOR_ENTERPRISE)
 
 	init {
 		require(ALL.map { it.id }.toSet().size == ALL.size) { "커넥터 ID 가 겹친다" }

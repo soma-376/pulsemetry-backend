@@ -56,8 +56,6 @@ class VendorAccountCheck(private val env: Map<String, String>, private val out: 
 	private fun connector(descriptor: ConnectorDescriptor, base: URI?): SeatConnector = when (descriptor) {
 		ConnectorDescriptors.CLAUDE_ENTERPRISE -> base?.let { ClaudeEnterpriseConnector(http, it) } ?: ClaudeEnterpriseConnector(http)
 		ConnectorDescriptors.CURSOR_ENTERPRISE -> base?.let { CursorEnterpriseConnector(http, it) } ?: CursorEnterpriseConnector(http)
-		ConnectorDescriptors.COPILOT -> base?.let { CopilotConnector(http, it) } ?: CopilotConnector(http)
-		ConnectorDescriptors.GEMINI -> base?.let { GeminiConnector(http, it, it.resolve("/token")) } ?: GeminiConnector(http)
 		else -> error("모르는 커넥터 ${descriptor.id}")
 	}
 
