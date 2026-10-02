@@ -134,6 +134,8 @@ type ProductRef = { kind: string | null; displayName: string | null };
 설치마다 **지금 집행하는 판**을 둔다. 설치 보고가 있으면 마지막 보고가 말한 판(`installation_heartbeats.applied_manifest_id`)이고,
 그 조직이 모르는 판을 보고했으면 없다. 보고가 없으면 적용 확인 기록(`installation_manifest_assignments.applied_at`) 중 가장 높은 판이다.
 적용 확인은 그 판을 적용한 **적이 있다**는 이력이라, 보고하는 설치에서 가장 높은 확인 판을 지금 판으로 쓰지 않는다(뒤로 돌아간 설치를 놓친다).
+판정과 함께 그 근거(설치 보고·적용 확인 기록·없음)를 내고, 화면은 근거를 구분해 말한다. telemetryctl 기본 브랜치는 설치 보고를 보내지 않으므로(ADR 0053)
+지금 배포된 설치의 판정은 대부분 적용 확인 기록이 근거다 — 그 설치가 지금도 그 판을 집행한다는 최근 확인이 아니다.
 
 | 값 | 규칙 |
 | --- | --- |
@@ -141,6 +143,9 @@ type ProductRef = { kind: string | null; displayName: string | null };
 | `policyRollout` | 활성 설치 전체(`eligibleInstallations`)를 위 셋으로 나눈 수 |
 | `/installations?policyStatus=` | `applied`·`outdated`·`unknown` 중 하나로 거른다. 그 밖의 값은 400. 필터마다 cursor 의 범위가 다르다 |
 | `appliedPolicyVersion` | 지금 판. 없으면 null |
+| `appliedEvidence` | 지금 판의 근거(가산). `heartbeat`는 마지막 설치 보고(보고한 판을 조직이 모르면 판은 null), `applied_confirmation`은 보고가 없어 적용 확인 기록, `none`은 둘 다 없음(판 null·`unknown`) |
+| `appliedConfirmedAt` | 근거가 `applied_confirmation`일 때 고른 판(가장 높은 판)의 적용 확인 시각(가산). 더 낮은 판을 나중에 확인한 기록이 있어도 고른 판의 시각이다. 그 밖에는 null |
+| `policyRollout.evidence` | 같은 근거별 설치 수 `{heartbeat, appliedConfirmation, none}`(가산). 합은 `eligibleInstallations` |
 | `lastHeartbeatAt` | 마지막 설치 보고를 받은 서버 시각. 보고가 없으면 null — 데이터 수신 시각을 넣지 않는다 |
 | `capabilities.notifyInstallations` | 안내 채널이 있는 배포(`pulsemetry.management.enabled`와 `pulsemetry.mail.enabled`가 모두 true)면 true |
 | `canNotify` | 채널이 있고, 구성원이 활성이고, 적용 상태가 `applied`가 아닌 설치만 true |

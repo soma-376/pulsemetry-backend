@@ -207,6 +207,8 @@ class SettingsService(
 						appliedPolicyVersion = it.appliedVersion,
 						lastHeartbeatAt = it.lastHeartbeatAt?.toString(),
 						canNotify = notificationsEnabled && it.memberActive && it.status(manifest.version) != PolicyStatus.APPLIED,
+						appliedEvidence = it.evidence,
+						appliedConfirmedAt = it.confirmedAt?.toString(),
 					)
 				},
 				rows.size,
@@ -302,7 +304,10 @@ class SettingsService(
 		val rows = installationRows(tenantId, clock.instant(), desired)
 		val applied = rows.count { it.status(desired) == PolicyStatus.APPLIED }.toLong()
 		val outdated = rows.count { it.status(desired) == PolicyStatus.OUTDATED }.toLong()
-		return PolicyRollout(desired, rows.size.toLong(), applied, outdated, rows.size - applied - outdated)
+		val evidence = rows.groupingBy { it.evidence }.eachCount()
+		return PolicyRollout(desired, rows.size.toLong(), applied, outdated, rows.size - applied - outdated,
+			RolloutEvidence((evidence[AppliedPolicyVersion.HEARTBEAT] ?: 0).toLong(), (evidence[AppliedPolicyVersion.APPLIED_CONFIRMATION] ?: 0).toLong(),
+				(evidence[AppliedPolicyVersion.NONE] ?: 0).toLong()))
 	}
 
 	private data class Installation(
@@ -314,6 +319,9 @@ class SettingsService(
 		val team: TeamRef,
 		val lastHeartbeatAt: Instant?,
 		val memberActive: Boolean,
+		/** 지금 판의 근거([AppliedPolicyVersion.EVIDENCE_SQL]). */
+		val evidence: String,
+		val confirmedAt: Instant?,
 	) {
 		/** 적용이 확인된 판이 없으면 unknown — 적용 완료나 미적용으로 추정하지 않는다. */
 		fun status(desired: Long): PolicyStatus = when {
@@ -330,6 +338,8 @@ class SettingsService(
 			SELECT i.id, i.member_id, m.email, i.client_version, (m.status = 'active') AS member_active,
 			       (SELECT h.received_at FROM enrollment.installation_heartbeats h WHERE h.installation_id = i.id) AS last_heartbeat_at,
 			       ${AppliedPolicyVersion.SQL} AS applied_version,
+			       ${AppliedPolicyVersion.EVIDENCE_SQL} AS applied_evidence,
+			       ${AppliedPolicyVersion.CONFIRMED_AT_SQL} AS applied_confirmed_at,
 			       ARRAY(SELECT DISTINCT t.name FROM enrollment.team_memberships tm JOIN enrollment.teams t ON t.id = tm.team_id
 			              WHERE tm.member_id = i.member_id AND tm.joined_at <= :as_of AND (tm.left_at IS NULL OR tm.left_at > :as_of)
 			              ORDER BY t.name) AS team_names,
@@ -352,6 +362,8 @@ class SettingsService(
 					appliedVersion = rs.getLong("applied_version").takeUnless { rs.wasNull() },
 					lastHeartbeatAt = rs.getTimestamp("last_heartbeat_at")?.toInstant(),
 					memberActive = rs.getBoolean("member_active"),
+					evidence = rs.getString("applied_evidence"),
+					confirmedAt = rs.getTimestamp("applied_confirmed_at")?.toInstant(),
 					// 현재 소속이 여럿이면 하나를 고르지 않는다(구성원 화면과 같은 규칙).
 					team = when (ids.size) {
 						0 -> TeamRef(null, TeamsService.UNASSIGNED_NAME)

@@ -31,6 +31,8 @@ object JsonStructure {
 			"/summary" to setOf("detectedProducts", "unmappedObservations", "assignedSeats"),
 			// 등록 제품의 좌석 원천(권위·커넥터 설명·활성 연결) — ADR 0048.
 			"/vendors/items/0" to setOf("seatSource", "seats"),
+			// 정책 적용 판정의 근거별 수 — 대시보드 명세 "정책 적용 현황과 업데이트 안내".
+			"/policyRollout" to setOf("evidence"),
 		),
 	)
 

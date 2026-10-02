@@ -149,7 +149,12 @@ data class PolicyRollout(
 	val appliedInstallations: Long,
 	val outdatedInstallations: Long,
 	val unknownInstallations: Long,
+	/** 판정 근거별 설치 수(가산) — 설치 목록의 [InstallationRow.appliedEvidence] 와 같은 식이다. */
+	val evidence: RolloutEvidence,
 )
+
+/** 적용 판정의 근거별 수. 셋의 합은 [PolicyRollout.eligibleInstallations] 다. */
+data class RolloutEvidence(val heartbeat: Long, val appliedConfirmation: Long, val none: Long)
 
 data class SettingsResponse(
 	val meta: CurrentMeta,
@@ -183,6 +188,10 @@ data class InstallationRow(
 	val appliedPolicyVersion: Long?,
 	val lastHeartbeatAt: String?,
 	val canNotify: Boolean,
+	/** 지금 판의 근거(가산): `heartbeat`(마지막 설치 보고) · `applied_confirmation`(보고가 없어 적용 확인 기록) · `none`. */
+	val appliedEvidence: String,
+	/** 근거가 적용 확인 기록일 때 그 판을 확인한 시각(가산). 그 밖에는 null. */
+	val appliedConfirmedAt: String?,
 )
 
 data class InstallationsResponse(val meta: CurrentMeta, val desiredPolicyVersion: Long, val installations: Page<InstallationRow>)

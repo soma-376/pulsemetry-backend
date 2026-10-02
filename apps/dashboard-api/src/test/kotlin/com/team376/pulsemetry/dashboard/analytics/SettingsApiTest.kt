@@ -290,6 +290,39 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
+	@DisplayName("적용 판의 근거 — 보고가 있으면 heartbeat·확인 시각 null, 보고 없이 확인 기록만 있으면 applied_confirmation·고른 판의 확인 시각, 둘 다 없으면 none. 요약도 같은 근거로 센다")
+	fun appliedEvidence() {
+		val org = seed()
+		val admin = SourceFixtures.insertMember(org.tenant, "evidence@example.test")
+		// 확인 기록이 있지만 보고하는 설치 — 근거는 보고다(서버가 모르는 판을 보고해도).
+		val reported = SourceFixtures.insertInstallation(org.tenant, admin)
+		SourceFixtures.insertAssignment(reported, org.v3, kst("2026-09-10T00:00:00"))
+		SourceFixtures.setHeartbeat(reported, kst("2026-09-28T10:00:00"))
+		// 더 낮은 판(v2)을 나중에 확인한 기록이 있는 설치 — 고른 판(v3)의 확인 시각이다.
+		val confirmedTwice = SourceFixtures.insertInstallation(org.tenant, admin)
+		SourceFixtures.insertAssignment(confirmedTwice, org.v3, kst("2026-09-11T00:00:00"))
+		SourceFixtures.insertAssignment(confirmedTwice, org.v2, kst("2026-09-20T00:00:00"))
+
+		val rows = ok(org.tenant, "/installations").at("/installations/items").list().associateBy { it.path("installationId").asString() }
+		fun evidence(id: UUID) = rows.getValue(id.toString()).let { it.path("appliedEvidence").asString() to it.path("appliedConfirmedAt").let { at -> if (at.isNull) null else at.asString() } }
+		assertThat(evidence(reported)).isEqualTo("heartbeat" to null)
+		assertThat(rows.getValue(reported.toString()).path("appliedPolicyVersion").isNull).isTrue()
+		assertThat(evidence(org.applied)).isEqualTo("applied_confirmation" to kst("2026-09-10T00:00:00").toString())
+		// v3 은 확인 시각이 없는 기록뿐이라 고른 판은 v2 이고 그 확인 시각이다.
+		assertThat(evidence(org.outdated)).isEqualTo("applied_confirmation" to kst("2026-08-10T00:00:00").toString())
+		assertThat(evidence(org.unknown)).isEqualTo("none" to null)
+		assertThat(evidence(confirmedTwice)).isEqualTo("applied_confirmation" to kst("2026-09-11T00:00:00").toString())
+		assertThat(rows.getValue(confirmedTwice.toString()).path("appliedPolicyVersion").asLong()).isEqualTo(3)
+
+		val rollout = ok(org.tenant, "/settings").at("/policyRollout")
+		assertThat(listOf("heartbeat", "appliedConfirmation", "none").map { rollout.at("/evidence/$it").asLong() }).containsExactly(1L, 3L, 1L)
+		assertThat(rollout.path("eligibleInstallations").asLong()).isEqualTo(5)
+		// 목록의 근거와 요약의 근거별 수가 같다.
+		assertThat(rows.values.groupingBy { it.path("appliedEvidence").asString() }.eachCount())
+			.isEqualTo(mapOf("heartbeat" to 1, "applied_confirmation" to 3, "none" to 1))
+	}
+
+	@Test
 	@DisplayName("적용 판은 설치가 지금 집행하는 판이다 — 보고가 있으면 마지막 보고의 판, 적용한 적이 있는 가장 높은 판이 아니다")
 	fun appliedVersionIsTheReportedOne() {
 		val org = seed()
