@@ -298,9 +298,16 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		// 판정할 수 없는 좌석을 해제하면 지난 7일 안에 쓴 보유 좌석(eli)만 센다.
 		listOf("outside", "fox").forEach(::release)
 		assertThat(activeSeats7d().asLong()).isEqualTo(1)
-		// eli 의 좌석도 해제하면 7일 안에 쓴 보유 좌석이 없다 — 창이 모두 완전하므로 모름이 아니라 0 이다.
+		// eli 의 좌석도 해제하면 7일 안에 쓴 보유 좌석이 없다 — 창(기준일 전 7일)이 모두 완전하면 모름이 아니라 0 이다.
+		// 창의 마지막 날(어제)은 그날 끝 + 확정 대기(테스트 설정 1시간, ADR 0042)가 지나야 완전하다 — 기준 시각이 서울 0시부터 1시간 안이면
+		// 창이 아직 완전하지 않아 센 좌석이 없으니 null 이다. 같은 응답의 기준 시각으로 어느 쪽인지 정한다.
 		release("eli")
-		assertThat(activeSeats7d().let { it.isNumber && it.asLong() == 0L }).describedAs(activeSeats7d().toString()).isTrue()
+		val released = ok(only.tenant, "/settings")
+		val asOf = Instant.parse(released.at("/meta/asOf").asString())
+		val yesterdaySettled = !asOf.isBefore(asOf.atZone(QueryReader.SEOUL).toLocalDate().atStartOfDay(QueryReader.SEOUL).toInstant().plus(Duration.ofHours(1)))
+		val zero = released.at("/summary/activeSeats7d")
+		if (yesterdaySettled) assertThat(zero.isNumber && zero.asLong() == 0L).describedAs(zero.toString()).isTrue()
+		else assertThat(zero.isNull).describedAs("어제가 확정 대기 안 — $asOf").isTrue()
 		// 좌석 없는 구성원의 설치가 5일 전부터 보고하지 않으면 창이 완전하지 않다 — 센 좌석이 없으니 0 이라고 말할 수 없다.
 		val quiet = SourceFixtures.insertInstallation(only.tenant, only.members.getValue("nobody"))
 		SourceFixtures.setInstallationTimes(quiet, ago(60))

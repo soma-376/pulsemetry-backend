@@ -286,4 +286,20 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
             .content("{\"refresh_token\":\"invalid\"}")).andExpect(status().isTooManyRequests)
     }
 
+    @Test fun `AT 는 HTTP 에서도 발급 330초부터 거절되고 같은 세션의 RT 로 회복한다`() {
+        val issued = tokens()
+        val start = clock.now
+        fun me(token: String) = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/me")).header("Authorization", "Bearer $token").GET().build(),
+            HttpResponse.BodyHandlers.ofString())
+        // exp − iat = 300(명세 §2.2 토큰 표)에 시계 차이 허용 30초 — 329초는 받고 330초부터 거절한다.
+        clock.now = start.plusSeconds(329)
+        assertThat(me(issued.path("access_token").asString()).statusCode()).isEqualTo(200)
+        clock.now = start.plusSeconds(330)
+        val expired = me(issued.path("access_token").asString())
+        assertThat(expired.statusCode()).isEqualTo(401)
+        assertThat(mapper.readTree(expired.body()).path("error").asString()).isEqualTo("invalid_credentials")
+        val renewed = refresh(issued.path("refresh_token").asString())
+        assertThat(renewed.statusCode()).withFailMessage(renewed.body()).isEqualTo(200)
+        assertThat(me(mapper.readTree(renewed.body()).path("access_token").asString()).statusCode()).isEqualTo(200)
+    }
 }

@@ -28,6 +28,9 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * 알림 평가와 조회 (ADR 0051 §5·§6). 기대값은 ADR 의 규칙에서 쓴다 — 급증은 두 기간이 모두 완전할 때만 증가율 ≥ 임계값(0.4)이면 그날의 알림,
@@ -276,5 +279,102 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		assertThat(get(stranger.tenant, "/alerts/${opus.alertId}").statusCode()).isEqualTo(404)
 		assertThat(ok(stranger.tenant, "/alerts?status=all").at("/alerts/totalCount").asInt()).isZero()
 		assertThat(get(org.tenant, "/alerts?status=closed").statusCode()).isEqualTo(400)
+	}
+
+	@Test
+	@DisplayName("가용성 — 켠 규칙 가운데 지금 판의 평가가 없는 것이 있으면 evaluation_pending 이고, 모두 평가되면 available, 다시 켠 규칙은 평가될 때까지 pending, 모두 끄면 남은 기록으로 판단한다")
+	fun availabilityWaitsForEveryEnabledRule() {
+		val org = organization()
+		list(org, "allowed_models", "claude-sonnet-*")
+		list(org, "approved_tools", "Bash")
+		SourceFixtures.insertEvents(org.tenant, model(org, "opus", "2026-09-10T12:00:00", "claude-opus-4"))
+		enable(org, "model_not_allowed", kst("2026-09-10T00:00:00"))
+		enable(org, "tool_unapproved", kst("2026-09-10T00:00:00"))
+		val clock = MutableClock(kst("2026-09-14T01:30:00"))
+		fun overview() = ok(org.tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").at("/alerts")
+		fun evaluation() = ok(org.tenant, "/alerts?status=all").at("/evaluation")
+
+		// 첫 회차 도중 — 한 규칙만 기록됐다. 아직 평가하지 않은 규칙을 0건으로 읽히게 두지 않는다(ADR 0051 §6).
+		store.record(org.tenant, Evaluation("model_not_allowed", 1, null, null, kst("2026-09-14T01:00:00"), "evaluated", null, null, null))
+		with(overview()) {
+			assertThat(listOf(path("availability").asString(), path("reason").asString())).containsExactly("unavailable", "evaluation_pending")
+			assertThat(path("unacknowledgedTotal").isNull).isTrue()
+			assertThat(Instant.parse(path("asOf").asString())).describedAs("평가 기록이 있으면 마지막 평가 시각").isEqualTo(kst("2026-09-14T01:00:00"))
+		}
+		with(evaluation()) {
+			assertThat(path("availability").asString() to path("reason").asString()).isEqualTo("unavailable" to "evaluation_pending")
+			assertThat(Instant.parse(path("asOf").asString())).describedAs("앞선 평가의 시각은 남긴다").isEqualTo(kst("2026-09-14T01:00:00"))
+		}
+
+		evaluator(clock).evaluate(org.tenant)
+		with(overview()) {
+			assertThat(listOf(path("availability").asString(), path("unacknowledgedTotal").asLong())).containsExactly("available", 1L)
+			assertThat(path("reason").isNull).isTrue()
+		}
+
+		// 규칙을 다시 켜 판이 바뀌었다 — 그 판이 평가될 때까지 앞 판의 기록으로 0건을 말하지 않는다.
+		enable(org, "tool_unapproved", kst("2026-09-14T01:40:00"), version = 3)
+		assertThat(overview().path("reason").asString()).isEqualTo("evaluation_pending")
+		assertThat(evaluation().path("rules").toList().single { it.path("ruleId").asString() == "tool_unapproved" }.path("evaluatedAt").isNull).isTrue()
+		clock.advance(Duration.ofMinutes(15))
+		evaluator(clock).evaluate(org.tenant)
+		assertThat(overview().path("availability").asString()).isEqualTo("available")
+
+		// 모두 끄면 켠 규칙이 없다 — 남은 평가 기록과 알림이 있으므로 미설정으로 숨기지 않는다.
+		DashboardTestStores.writer.sql("UPDATE enrollment.organization_alert_rules SET enabled = false, version = version + 1 WHERE tenant_id = :t").param("t", org.tenant).update()
+		with(overview()) {
+			assertThat(listOf(path("availability").asString(), path("unacknowledgedTotal").asLong())).containsExactly("available", 1L)
+		}
+	}
+
+	@Test
+	@DisplayName("선점 — 다른 인스턴스가 기한 안에 잡은 조직은 평가하지 않고 기한이 지나면 가져가며, 같은 시각에 여럿이 잡으면 하나만 잡는다")
+	fun evaluationLease() {
+		val org = organization()
+		list(org, "allowed_models", "claude-sonnet-*")
+		enable(org, "model_not_allowed", kst("2026-09-10T00:00:00"))
+		val clock = MutableClock(kst("2026-09-14T01:30:00"))
+		val lease = Duration.ofMinutes(10)
+		val mine = AlertEvaluator(source, reader, store, frames, aggregator, organizations, boundaries, Duration.ofHours(1), lease, clock, owner = "this-instance")
+
+		assertThat(store.claim(org.tenant, "other-instance", clock.instant(), clock.instant().plus(lease))).isTrue()
+		mine.runOnce()
+		assertThat(store.evaluations(org.tenant)).describedAs("다른 인스턴스가 평가 중인 조직").isEmpty()
+		clock.advance(lease)
+		mine.runOnce()
+		assertThat(store.evaluations(org.tenant)).describedAs("기한 시각에는 아직 그 인스턴스의 것").isEmpty()
+		clock.advance(Duration.ofMillis(1))
+		mine.runOnce()
+		assertThat(store.evaluations(org.tenant).map { it.ruleId }).containsExactly("model_not_allowed")
+		assertThat(store.claim(org.tenant, "other-instance", clock.instant(), clock.instant().plus(lease))).describedAs("평가가 끝나면 선점을 놓는다").isTrue()
+
+		// 같은 회차를 여러 인스턴스가 동시에 잡는다 — 정확히 하나만 잡는다.
+		val contested = organization()
+		val now = clock.instant()
+		val start = CountDownLatch(1)
+		val pool = Executors.newFixedThreadPool(8)
+		try {
+			val claims = (1..8).map { index -> pool.submit<Boolean> { start.await(); store.claim(contested.tenant, "instance-$index", now, now.plus(lease)) } }
+			start.countDown()
+			assertThat(claims.count { it.get(30, TimeUnit.SECONDS) }).isEqualTo(1)
+		} finally {
+			pool.shutdownNow()
+		}
+	}
+
+	@Test
+	@DisplayName("허용 목록 패턴 — 대소문자를 구분하는 정확 일치와 끝의 * 접두사뿐이다. 부정 문법은 없다 — ! 로 시작하는 항목은 그 글자 그대로다")
+	fun allowListPatternBoundaries() {
+		val org = organization()
+		list(org, "allowed_models", "!claude-opus-*", "gpt-5")
+		SourceFixtures.insertEvents(org.tenant,
+			model(org, "allowed", "2026-09-10T09:00:00", "gpt-5"),
+			model(org, "literal", "2026-09-10T09:30:00", "!claude-opus-x"),
+			model(org, "negated", "2026-09-10T10:00:00", "claude-opus-4"),
+			model(org, "upper", "2026-09-10T11:00:00", "GPT-5"),
+		)
+		enable(org, "model_not_allowed", kst("2026-09-10T00:00:00"))
+		evaluator(MutableClock(kst("2026-09-14T01:30:00"))).evaluate(org.tenant)
+		assertThat(alerts(org).map { it.subject }).containsExactlyInAnyOrder("claude-opus-4", "GPT-5")
 	}
 }

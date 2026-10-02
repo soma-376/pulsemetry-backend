@@ -466,4 +466,37 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         assertThat(manage("GET", "/onboarding", null, token).statusCode()).isEqualTo(404)
     }
 
+    @Test fun `일괄 팀 배정은 한 사람의 판이 어긋나면 아무도 옮기지 않고, 같은 이름의 팀과 빈 이름은 거절한다`() {
+        val token = adminToken()
+        fun body(response: HttpResponse<String>) = mapper.readTree(response.body())
+        fun error(response: HttpResponse<String>) = response.statusCode() to body(response).path("error").path("code").asString()
+        fun version(id: UUID) = jdbc.sql("SELECT updated_at FROM enrollment.members WHERE id=:id").param("id", id).query { r, _ -> r.getTimestamp(1).toInstant().toEpochMilli() }.single()
+        fun openTeams() = jdbc.sql("SELECT count(*) FROM enrollment.team_memberships WHERE left_at IS NULL").query(Int::class.java).single()
+        val created = manage("POST", "/teams", mapOf("teamName" to "플랫폼"), token)
+        assertThat(created.statusCode()).isEqualTo(201)
+        val team = body(created).path("teamId").asString()
+        val first = data.member(tenant, "first@example.test", role = MemberRole.member).id
+        val second = data.member(tenant, "second@example.test", role = MemberRole.member).id
+        val before = listOf(version(first), version(second))
+
+        // 배정은 전체를 검증한 뒤 한 트랜잭션이다(명세 §12) — 두 번째의 낡은 판이 첫 번째의 배정까지 막는다.
+        val stale = mapOf("assignments" to listOf(mapOf("memberId" to first, "teamId" to team, "expectedVersion" to before[0]),
+            mapOf("memberId" to second, "teamId" to team, "expectedVersion" to before[1] - 1)))
+        assertThat(error(manage("POST", "/member-team-assignments", stale, token))).isEqualTo(409 to "version_conflict")
+        assertThat(openTeams()).isZero()
+        assertThat(listOf(version(first), version(second))).isEqualTo(before)
+
+        // 같은 이름은 다른 요청(새 멱등 키)이어도 409 team_name_conflict, 다른 팀을 그 이름으로 바꾸어도 같다.
+        assertThat(error(manage("POST", "/teams", mapOf("teamName" to "플랫폼"), token))).isEqualTo(409 to "team_name_conflict")
+        val other = body(manage("POST", "/teams", mapOf("teamName" to "데이터"), token))
+        val rename = manage("PATCH", "/teams/${other.path("teamId").asString()}", mapOf("teamName" to "플랫폼", "expectedVersion" to other.path("version").asLong()), token)
+        assertThat(error(rename)).isEqualTo(409 to "team_name_conflict")
+        // 빈 이름·공백뿐인 이름은 필드 오류다.
+        for (blank in listOf("", "   ")) {
+            val rejected = manage("POST", "/teams", mapOf("teamName" to blank), token)
+            assertThat(error(rejected)).isEqualTo(400 to "invalid_request")
+            assertThat(body(rejected).at("/error/fieldErrors/0/field").asString()).isEqualTo("teamName")
+        }
+        assertThat(jdbc.sql("SELECT name FROM enrollment.teams ORDER BY name").query(String::class.java).list()).containsExactly("데이터", "플랫폼")
+    }
 }

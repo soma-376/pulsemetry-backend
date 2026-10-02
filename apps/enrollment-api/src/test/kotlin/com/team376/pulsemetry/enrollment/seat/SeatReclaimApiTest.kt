@@ -324,4 +324,30 @@ class SeatReclaimApiTest : AbstractUserAuthApiTest() {
         assertThat(ledger.seat(tenant, UUID.fromString(dana))!!.let { it.state to it.version }).isEqualTo(SeatState.ASSIGNED to 1L)
         assertThat(errorOf(manage("POST", "/operations/$reclaimId/targets/$dana/confirm", null, token))).isEqualTo(409 to "not_awaiting_admin_action")
     }
+
+    @Test fun `경계 — 미리보기는 4분 59초에도 실행되고, 복원은 기한 직전까지 되며 기한 시각부터 422 다`() {
+        var token = adminToken()
+        val claude = vendor("claude_team", "team", token)
+        val dana = assign(claude, "dana@example.test", token).path("seatAssignmentId").asString()
+        val eli = assign(claude, "eli@example.test", token).path("seatAssignmentId").asString()
+
+        // 미리보기는 5분(ADR 0049 §1) — 4분 59초에는 아직 유효하다.
+        val danaPreview = ok(preview(token, dana to 1L)).path("previewId").asString()
+        val eliPreview = ok(preview(token, eli to 1L)).path("previewId").asString()
+        clock.now = clock.now.plus(Duration.ofMinutes(5)).minusSeconds(1)
+        val first = ok(manage("POST", "/seat-reclaims", mapOf("previewId" to danaPreview), token), 202).path("operationId").asString()
+        val second = ok(manage("POST", "/seat-reclaims", mapOf("previewId" to eliPreview), token), 202).path("operationId").asString()
+        ok(manage("POST", "/operations/$first/targets/$dana/confirm", null, token))
+        ok(manage("POST", "/operations/$second/targets/$eli/confirm", null, token))
+        val until = operation(first).restoreUntil!!
+        assertThat(operation(second).restoreUntil).isEqualTo(until)
+
+        // 복원 기한(만든 시각 + 30일, ADR 0049 §5) — 직전에는 되고, 그 시각부터는 되돌릴 수 없는 회수다. 사이에 토큰이 만료되니 다시 로그인한다.
+        clock.now = until.minusMillis(1)
+        token = mapper.readTree(login().body()).path("access_token").asString()
+        assertThat(ok(manage("POST", "/seat-reclaims/$first/restore", emptyMap<String, Any>(), token), 202).path("kind").asString()).isEqualTo("seat_restore")
+        clock.now = until
+        assertThat(errorOf(manage("POST", "/seat-reclaims/$second/restore", emptyMap<String, Any>(), token))).isEqualTo(422 to "restore_not_available")
+        assertThat(seat(claude.path("vendorId").asString(), "eli@example.test").state).isEqualTo(SeatState.RELEASED)
+    }
 }

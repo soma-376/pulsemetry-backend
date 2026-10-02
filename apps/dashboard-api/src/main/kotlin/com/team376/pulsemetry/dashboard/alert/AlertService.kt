@@ -42,7 +42,8 @@ class AlertService(
 	/** 개요의 "보안 경보 및 알림". 평가한 적이 없으면 unavailable 과 사유다(켜진 규칙이 없거나 아직 평가 전). */
 	fun overview(tenant: UUID, now: Instant): OverviewResponse.Alerts {
 		val state = state(tenant)
-		if (state.availability != Availability.AVAILABLE) return OverviewResponse.Alerts(state.availability, state.reason, now.toString(), null, null, null)
+		// asOf 는 마지막 평가 시각이고, 평가 기록이 없을 때만 응답 시각이다.
+		if (state.availability != Availability.AVAILABLE) return OverviewResponse.Alerts(state.availability, state.reason, (state.asOf ?: now).toString(), null, null, null)
 		val open = unacknowledged(tenant)
 		return OverviewResponse.Alerts(Availability.AVAILABLE, null, state.asOf!!.toString(), open.size.toLong(),
 			open.count { it.category == SECURITY }.toLong(), open.count { it.category == COST }.toLong())
@@ -93,11 +94,18 @@ class AlertService(
 
 	private data class State(val availability: String, val reason: String?, val asOf: Instant?)
 
+	/**
+	 * 켠 규칙마다 지금 판의 평가 기록이 있어야 available 이다(ADR 0051 §6 — 켰지만 아직 평가 전이면 `evaluation_pending`). 평가하지 않은 규칙을
+	 * 0건으로 읽히게 두지 않는다 — 첫 회차 도중이나 규칙을 다시 켠 직후에도 그 규칙이 평가될 때까지 pending 이다. 켠 규칙이 없으면 남은 기록으로 판단한다.
+	 */
 	private fun state(tenant: UUID): State {
 		val evaluations = store.evaluations(tenant)
-		if (evaluations.isNotEmpty()) return State(Availability.AVAILABLE, null, evaluations.maxOf { it.evaluatedAt })
-		val enabled = AlertRules.rules(source, tenant).any { it.enabled }
-		return State(Availability.UNAVAILABLE, if (enabled) EVALUATION_PENDING else Availability.EVALUATION_NOT_CONFIGURED, null)
+		val asOf = evaluations.maxOfOrNull { it.evaluatedAt }
+		val evaluated = evaluations.map { it.ruleId to it.ruleVersion }.toSet()
+		val enabled = AlertRules.rules(source, tenant).filter { it.enabled }
+		if (enabled.any { (it.ruleId to it.version) !in evaluated }) return State(Availability.UNAVAILABLE, EVALUATION_PENDING, asOf)
+		if (evaluations.isNotEmpty()) return State(Availability.AVAILABLE, null, asOf)
+		return State(Availability.UNAVAILABLE, Availability.EVALUATION_NOT_CONFIGURED, null)
 	}
 
 	private fun unacknowledged(tenant: UUID): List<StoredAlert> {

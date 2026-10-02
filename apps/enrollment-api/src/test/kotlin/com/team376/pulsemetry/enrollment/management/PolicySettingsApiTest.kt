@@ -11,6 +11,9 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.context.annotation.Import
 import tools.jackson.databind.JsonNode
 import java.net.http.HttpResponse
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * 조직 정책 설정(회수 기준·집계 보존)의 저장 (ADR 0046) — 수집 정책 저장 명령(`PUT O/collection-policy`)의 확장.
@@ -125,5 +128,28 @@ class PolicySettingsApiTest : AbstractUserAuthApiTest() {
         }
         assertThat(stored()).isNull()
         assertThat(manifests()).containsExactly(3 to true)
+    }
+
+    @Test fun `같은 판을 본 두 저장이 동시에 오면 하나만 저장되고 나머지는 409 이며 판은 한 번만 오른다`() {
+        val token = adminToken()
+        fun race(bodies: List<Map<String, Any?>>): List<Int> {
+            val start = CountDownLatch(1)
+            val pool = Executors.newFixedThreadPool(bodies.size)
+            try {
+                val calls = bodies.map { body -> pool.submit<Int> { start.await(); save(body, token).statusCode() } }
+                start.countDown()
+                return calls.map { it.get(60, TimeUnit.SECONDS) }.sorted()
+            } finally {
+                pool.shutdownNow()
+            }
+        }
+        // 설정의 판(ADR 0046) — 둘 다 판 0 을 보고 다른 값을 보냈다.
+        assertThat(race(listOf(14, 30).map { mapOf("expectedVersion" to 3, "expectedSettingsVersion" to 0, "reclaimIdleDays" to it) })).containsExactly(200, 409)
+        assertThat(stored()!![2]).isEqualTo(1L)
+        assertThat(manifests()).containsExactly(3 to true)
+        // manifest 판 — 둘 다 판 3 을 보고 원문 선택을 바꿨다. 새 판은 하나뿐이다.
+        assertThat(race(List(2) { mapOf("expectedVersion" to 3, "collectRawContent" to true) })).containsExactly(200, 409)
+        assertThat(manifests()).containsExactly(3 to false, 4 to true)
+        assertThat(stored()!![2]).describedAs("원문 선택만 보낸 저장은 설정 판을 올리지 않는다").isEqualTo(1L)
     }
 }

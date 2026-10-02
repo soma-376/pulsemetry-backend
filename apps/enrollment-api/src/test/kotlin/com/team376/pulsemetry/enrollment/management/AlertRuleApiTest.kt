@@ -182,4 +182,16 @@ class AlertRuleApiTest : AbstractUserAuthApiTest() {
         assertThat(errorOf(rule("spend_spike", 0, false, memberToken))).isEqualTo(403 to "forbidden")
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.organization_alert_lists").query(Int::class.java).single()).isZero()
     }
+
+    @Test fun `패턴 경계 — 앞자리의 * 와 끝의 ** 는 거부하고, 부정 문법은 없어 ! 로 시작하는 항목은 그 글자 그대로 저장한다`() {
+        val token = adminToken()
+        // ADR 0051 §2: 끝의 * 하나만 접두사 일치다. 그 밖의 자리의 * 는 거부한다.
+        for (entries in listOf(listOf("*claude"), listOf("claude**"), listOf("claude-*", "*"))) {
+            val response = list("allowed_models", 0, entries, token)
+            assertThat(errorOf(response)).withFailMessage("$entries → ${response.body()}").isEqualTo(400 to "invalid_request")
+            assertThat(fieldOf(response)).containsExactly("entries")
+        }
+        val saved = ok(list("allowed_models", 0, listOf("!claude-opus-*", "claude-sonnet-*"), token))
+        assertThat(saved.at("/list/entries").toList().map { it.asString() }).containsExactlyInAnyOrder("!claude-opus-*", "claude-sonnet-*")
+    }
 }

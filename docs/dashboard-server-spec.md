@@ -223,7 +223,7 @@ type ProductRef = { kind: string | null; displayName: string | null };
 
 | 값 | 규칙 |
 | --- | --- |
-| `availability`·`reason` | 평가 기록이 있으면 `available`·null. 없으면 `unavailable` 과 `evaluation_not_configured`(켠 규칙 없음) 또는 `evaluation_pending`(켰지만 평가 전) |
+| `availability`·`reason` | 켠 규칙마다 지금 판의 평가 기록이 있으면 `available`·null. 켠 규칙 가운데 지금 판의 평가 기록이 없는 것이 있으면 `unavailable`·`evaluation_pending` — 첫 평가 회차 도중이나 규칙을 다시 켠 직후도 그 규칙이 평가될 때까지다(평가하지 않은 규칙을 0건으로 읽히게 하지 않는다). 켠 규칙이 없고 평가 기록도 없으면 `unavailable`·`evaluation_not_configured`, 켠 규칙이 없어도 앞의 평가 기록이 있으면 `available` |
 | `asOf` | 마지막 평가 시각. 평가 기록이 없으면 응답 시각 |
 | `unacknowledgedTotal`·`security`·`cost` | 미확인 수. `security` = 모델·도구, `cost` = 급증·한도. `total = security + cost`. unavailable 이면 null |
 
@@ -233,7 +233,8 @@ type ProductRef = { kind: string | null; displayName: string | null };
 // GET O/alerts?status=unacknowledged(기본)|acknowledged|all&category=security|cost&limit=20(최대 100)&cursor&snapshotId
 type AlertsResponse = {
   meta: CurrentMeta;                       // snapshotId 는 현재 상태 토큰
-  evaluation: { availability: "available" | "unavailable"; reason: string | null; asOf: string | null;
+  evaluation: { availability: "available" | "unavailable"; reason: string | null;  // 개요 alerts 와 같은 판정
+    asOf: string | null;                   // 마지막 평가 시각. 평가 기록이 없으면 null — evaluation_pending 이어도 앞선 평가가 있으면 그 시각
     rules: { ruleId: string; enabled: boolean; evaluatedAt: string | null; status: "evaluated" | "not_evaluated" | "failed" | null;
       reason: string | null; windowStart: string | null; windowEnd: string | null }[] };
   alerts: Page<Alert>;                     // 최근 발생 순(occurredAt 내림차순)

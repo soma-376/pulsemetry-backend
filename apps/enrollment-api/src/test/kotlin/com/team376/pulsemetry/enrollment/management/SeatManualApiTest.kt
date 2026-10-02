@@ -216,4 +216,22 @@ class SeatManualApiTest : AbstractUserAuthApiTest() {
         assertThat(errorOf(response)).isEqualTo(404 to "not_found")
         assertThat(seatCount()).isZero()
     }
+
+    @Test fun `CSV — 최대 5000행은 받고, 미리보기 뒤 대상이 바뀌면 적용은 그때의 원장으로 다시 계산한다`() {
+        val token = adminToken()
+        val vendorId = vendor("openai_biz", "business", token).path("vendorId").asString()
+        fun import(mode: String, csv: String) = ok(manage("POST", "/vendors/$vendorId/seats/import", mapOf("mode" to mode, "csv" to csv), token)).path("import")
+        // 명세 §12: 최대 5,000행 — 그 경계는 받는다(5,001행은 too_many_rows, 위 시험).
+        val largest = import("preview", "account\n" + (1..5000).joinToString("\n") { "u$it@example.test" })
+        assertThat(largest.path("rows").size()).isEqualTo(5000)
+        assertThat(largest.at("/summary/errors").asInt()).isZero()
+        assertThat(seatCount()).describedAs("미리보기는 쓰지 않는다").isZero()
+
+        // 미리보기 뒤 다른 관리자가 같은 계정을 배정했다 — 적용은 지금 원장으로 계산해 새 좌석을 만들지 않는다.
+        val csv = "account\nlate@example.test\n"
+        assertThat(import("preview", csv).path("rows").toList().map { it.path("action").asString() }).containsExactly("create")
+        ok(manage("POST", "/vendors/$vendorId/seats", mapOf("account" to "late@example.test"), token), 201)
+        assertThat(import("apply", csv).path("rows").toList().map { it.path("action").asString() }).containsExactly("unchanged")
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.seat_assignments WHERE account = 'late@example.test'").query(Int::class.java).single()).isEqualTo(1)
+    }
 }
