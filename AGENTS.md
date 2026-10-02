@@ -60,7 +60,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | 항목 | 소유 레포 |
 |---|---|
 | AWS 리소스, 태스크 정의, **현행 파이프라인의** 배포 collector 설정 | `infra` |
-| 로컬 수신기·데몬·벤더 도구 배선, manifest **계약 스키마 파일** | `telemetryctl` |
+| 로컬 수신기·데몬·벤더 도구 배선, enroll 봉투·manifest **계약 스키마 파일**(`enrollment-envelope`·`enrollment-manifest`) | `telemetryctl` |
 | 스키마 다이어그램(dbml) | `rdb-schema` — 단 **마이그레이션 진실원은 이 레포의 Flyway**다 |
 
 `ai-telemetry-pipeline`의 `sql/rds/*`는 dev 편의용이며 이 레포의 Flyway가 진실원이다.
@@ -199,6 +199,13 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   그 앱은 JPA·Flyway 자동설정을 `spring.autoconfigure.exclude` 로 끈다 — 분석 테이블 모듈이 enrollment-persistence 를 끌어온다.
   조직이 집계 보존을 줄이면 저장 명령이 보존 정리 요청을 남기고, 그 앱의 요청 모드(`--requests`)가 같은 순서로 실행한다(ADR 0047) —
   enrollment-api·dashboard-api 에서 원본을 지우지 마라. 요청 모드는 기존 인자 모드와 종료 코드를 바꾸지 않는다.
+- **계약 테스트는 원격 telemetryctl 기본 브랜치에 있는 스키마만 원본으로 읽는다.** PR CI 는 그 브랜치의 `contracts` 를 체크아웃해
+  `PULSEMETRY_CONTRACTS_DIR` 로 넘긴다(`.github/workflows/build.yml` — 이 워크플로를 고쳐 맞추지 않는다). 지금 그곳에는
+  `enrollment-envelope`·`enrollment-manifest` 둘뿐이고 `ContractSchemas` 는 그 둘만 등록한다. 원격에 스키마가 없는 API 는
+  명세가 오라클이다 — 설치 보고는 `docs/enrollment-server-spec.md` §4.5 의 표, 재조회 봉투와 AT 클레임은 §11·§11.1 의 표,
+  업데이트 확인은 원격 telemetryctl 의 `internal/updatecheck/client.go` 가 읽는 것. 원격에 없는 스키마를 로컬 체크아웃에서 읽거나
+  저장소로 복사해 오라클로 쓰지 마라 — 로컬에서 녹색이고 CI 에서 죽는다. Gradle 의 기본 계약 경로는 형제 `../telemetryctl/contracts` 이므로,
+  CI 와 같은 조건으로 돌리려면 `PULSEMETRY_CONTRACTS_DIR` 을 원격 기본 브랜치의 `contracts` 로 둔다.
 - **`GET /v1/manifest`는 사용자 RT만 받고 한 서버 트랜잭션에서 정책과 토큰을 회전한다**(ADR 0019 · 허브 ADR 0008).
   AT·`pit_`·`ptt_`는 받지 않는다. 로컬 적용 완료를 보장하지 않으며 OTLP는 여전히 `ptt_`다. 상태를 바꾸는 GET이라
   캐시·프리페치·자동 재시도를 걸지 않는다. 저장된 정책은 빌드 때 jar에 넣은 telemetryctl 원본 스키마로 검증한다 —

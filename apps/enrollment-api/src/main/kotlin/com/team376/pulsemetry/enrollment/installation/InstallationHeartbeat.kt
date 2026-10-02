@@ -162,7 +162,7 @@ class HeartbeatErrors(private val service: HeartbeatService) {
 }
 
 /**
- * 요청 본문의 해석. 계약의 기계 판독 원본(`installation-heartbeat.schema.json` 의 `request`)과 같은 것을 받고 같은 것을 거부한다.
+ * 요청 본문의 해석. 명세(`docs/enrollment-server-spec.md` §4.5)의 요청 표가 받는 것을 받고 거부하는 것을 거부한다.
  * 모르는 키는 무시한다. 타입을 바꿔 읽지 않는다 — 문자열 `"3"` 은 정수 3 이 아니다.
  */
 internal object HeartbeatRequests {

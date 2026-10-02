@@ -257,18 +257,47 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 
 ### 4.5 설치 보고 — `POST /v1/installations/{installation_id}/heartbeat`
 
-데몬이 생존, 적용한 manifest 판, 수집 경로의 상태를 주기적으로 보고한다. 요청·응답의 필드와 데몬의 동작은
-허브 `contracts/enrollment-api.md` §7이 정하고, 기계 판독 원본은 telemetryctl `contracts/installation-heartbeat.schema.json`이다.
+데몬이 생존, 적용한 manifest 판, 수집 경로의 상태를 주기적으로 보고한다. 데몬의 동작은
+허브 `contracts/enrollment-api.md` §7이 정하고, 서버가 받는 요청·응답의 필드는 아래 두 표가 정한다 — 서버의 계약 테스트(`HeartbeatApiTest`)가 이 표를 오라클로 쓴다.
+원격 telemetryctl develop에는 이 경로의 JSON Schema도 송신 클라이언트도 아직 없다.
 서버의 검증과 저장은 [ADR 0040](adr/0040-설치-보고는-최신-상태-한-행과-수집-구간-이력으로-저장한다.md)을 따른다.
 `pulsemetry.heartbeat.enabled`로 켠다. 꺼져 있으면 이 경로는 404다.
 
 **처리 순서**
 
 1. 자격증명을 본다. 판정은 토큰 재발급(§4.3)과 같다 — 없거나 무효면 401 `unauthorized`. `ptt_`와 사용자 토큰은 받지 않는다. **인증되지 않은 요청의 본문은 읽지 않는다.**
-2. 본문을 읽는다(16 KiB까지, `Content-Type: application/json`). 계약 스키마가 받는 본문을 받고 거부하는 본문을 400 `invalid_request`로 거부한다.
-   이 경로는 모르는 키를 무시한다. `receiving_since`·`last_delivered_at`이 `sent_at`보다 뒤면 400이다.
+2. 본문을 읽는다(16 KiB까지, `Content-Type: application/json`). 아래 요청 표를 어기는 본문을 400 `invalid_request`로 거부한다.
+   이 경로는 모르는 키를 무시한다(중첩 객체 안에서도). `receiving_since`·`last_delivered_at`이 `sent_at`보다 뒤면 400이다.
 3. 설치 행을 잠근다. 폐기된 설치면 403 `installation_revoked`, 경로의 `installation_id`가 자격증명의 설치와 다르면 403 `forbidden`이다.
 4. 한 트랜잭션으로 기록하고 200으로 답한다(`Cache-Control: no-store`).
+
+**요청**
+
+```json
+{"sent_at": "2026-09-30T01:05:00Z",
+ "daemon": {"version": "0.2.0", "platform": "darwin", "architecture": "arm64", "run_id": "b3f1c2a49d5e4f60a1b2c3d4e5f60718"},
+ "applied_config_revision": 3,
+ "collection": {"mode": "local", "receiving_since": "2026-09-30T00:00:01Z", "forwarding": true,
+                "delivered": 120, "lost": 0, "pending": 2, "last_delivered_at": "2026-09-30T01:04:30Z"}}
+```
+
+표의 키는 **모두 필수**다. null은 "또는 null"이라고 적은 두 칸만 받는다. 시각은 UTC RFC 3339(`Z`, 소수 초 허용)다 — 오프셋 표기·공백 구분·숫자는 받지 않는다.
+
+| 필드 | 타입 |
+|---|---|
+| `sent_at` | 시각 |
+| `daemon` | 객체 |
+| `daemon.version` | 문자열 1~64자 |
+| `daemon.platform` | `darwin` · `linux` · `windows` |
+| `daemon.architecture` | 문자열 1~32자 |
+| `daemon.run_id` | 문자열 16~64자, `[A-Za-z0-9_-]` |
+| `applied_config_revision` | 정수 ≥ 1 (JSON 수 `3.0`은 정수 3이다) |
+| `collection` | 객체 |
+| `collection.mode` | `local` · `direct` |
+| `collection.receiving_since` | 시각 또는 null |
+| `collection.forwarding` | 불리언 |
+| `collection.delivered` · `lost` · `pending` | 정수 ≥ 0 |
+| `collection.last_delivered_at` | 시각 또는 null |
 
 **기록하는 것**
 
@@ -295,6 +324,13 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 ```json
 {"received_at": "2026-09-30T01:05:00.412Z", "expected_config_revision": 4, "acknowledged_config_revision": 3, "report_interval_seconds": 300}
 ```
+
+| 필드 | 타입 |
+|---|---|
+| `received_at` | 시각(UTC RFC 3339, `Z`) |
+| `expected_config_revision` | 정수 ≥ 1 또는 null |
+| `acknowledged_config_revision` | 정수 ≥ 1 또는 null |
+| `report_interval_seconds` | 정수 60~3600 |
 
 `expected_config_revision`은 그 조직의 활성 manifest 판(없으면 null), `report_interval_seconds`는 `pulsemetry.heartbeat.report-interval`이다.
 응답은 manifest를 싣지 않는다 — 재조회는 §11.1이다.
@@ -396,8 +432,10 @@ pulsemetry_linux_amd64         pulsemetry_linux_arm64
 
 ### 6.3 `GET /api/v1/check-updates` — 데몬 업데이트 확인
 
-데몬이 기동 직후와 24시간마다 "내 버전보다 새 데몬이 있는가"를 묻는다. 계약은 허브 `contracts/daemon-updates.md`(허브 ADR 0011)이고
-기계 판독 원본은 telemetryctl `contracts/daemon-updates.schema.json`이다. 인증이 없다 — 데몬이 인증 정보를 보내지 않는다.
+데몬이 기동 직후와 24시간마다 "내 버전보다 새 데몬이 있는가"를 묻는다. 계약은 허브 `contracts/daemon-updates.md`(허브 ADR 0011)이고,
+실제 호출자는 원격 telemetryctl develop의 `internal/updatecheck/client.go`다 — 서버의 계약 테스트(`UpdateCheckApiTest`)는 그 클라이언트가 보내는 쿼리와
+읽는 응답(JSON 문서 하나, 공백이 아닌 `latest_version`, 빠지면 안 되는 불리언 `update_available`, 404는 미지원)을 오라클로 쓴다.
+이 경로의 JSON Schema는 원격에 없다. 인증이 없다 — 데몬이 인증 정보를 보내지 않는다.
 알려 주기만 한다. 내려받기와 설치는 하지 않는다.
 
 쿼리는 셋 다 필수다: `current_version`(SemVer, `v` 없음) · `platform`(`darwin`·`linux`·`windows`) · `architecture`(`amd64`·`arm64`). 그 밖의 쿼리는 무시한다.
@@ -408,7 +446,8 @@ pulsemetry_linux_amd64         pulsemetry_linux_arm64
 
 - **최신 버전은 이 서버가 §6.2로 배포하는 바이너리의 판이다.** 외부 릴리스 목록을 보지 않는다.
   판은 `pulsemetry.binaries.dir`의 `pulsemetry_release.json`이 말한다 — `{"version": "0.2.0", "sha256": {"<파일명>": "<소문자 hex 64자>", …}}`.
-  `sha256`의 키는 §6.2의 여섯 이름뿐이다. 모르는 최상위 키는 무시한다. 이 파일은 `/bin`으로 서빙하지 않는다.
+  `version`은 SemVer(`v` 없음)이고 `sha256`은 비어 있지 않은 객체다. `sha256`의 키는 §6.2의 여섯 이름뿐이다. 모르는 최상위 키는 무시한다.
+  이 파일은 `/bin`으로 서빙하지 않는다.
 - 요청의 `platform`·`architecture`로 파일명(`pulsemetry_{platform}_{architecture}`, Windows만 `.exe`)을 정한다. 허용 목록과의 동등 비교뿐이다.
   **그 파일이 있고 SHA-256이 메타데이터와 같을 때만** 그 버전을 답한다. 해시는 파일의 크기·수정 시각이 바뀔 때만 다시 계산한다.
 - `update_available`은 `current_version` < `latest_version`일 때만 true다. 순서는 SemVer 2.0.0의 우선순위 규칙이다 —
@@ -758,6 +797,20 @@ type CurrentUser = {
 };
 ```
 
+`token_type`은 `Bearer`, `expires_in`은 300이다. `refresh_token`은 `urt_` 뒤에 32바이트 난수의 base64url(패딩 없음, 43자)이다.
+`access_token`은 RS256 JWT다(헤더 `typ: JWT`, `kid`). 클레임은 아래 열 개뿐이다 — 서버의 계약 테스트(`ManifestResyncApiTest`)가 이 표를 오라클로 쓴다.
+
+| 클레임 | 값 |
+| --- | --- |
+| `iss` · `aud` | 설정의 `pulsemetry.user-auth.issuer` · `audience` |
+| `sub` | 구성원 ID(UUID) |
+| `tenant_id` | 조직 ID(UUID) |
+| `role` | `owner` · `admin` · `member` |
+| `sid` | 세션 ID(UUID) |
+| `manifest_revision` | 세션이 기억하는 manifest 판(정수 ≥ 0, 활성 manifest가 없으면 0) |
+| `iat` · `exp` | 발급·만료 시각(초). `exp − iat`는 300 |
+| `jti` | 토큰마다 다른 ID |
+
 인증 오류는 `{error: string, message: string}`이다.
 400 `invalid_request`, 401 `invalid_credentials`, 409 `signup_unavailable`,
 429 `rate_limited`, 503 `auth_unavailable`. 429·503의 `Retry-After`를 따른다.
@@ -771,7 +824,8 @@ type CurrentUser = {
 
 `GET /v1/manifest`는 `Authorization: Bearer <사용자 RT>`를 받고 정책과 토큰의 5키 봉투
 (`manifest`·`access_token`·`refresh_token`·`token_type`·`expires_in`)를 반환한다.
-허브 `contracts/user-auth.md`와 `telemetryctl/contracts/manifest-resync.schema.json`이 계약이다.
+허브 `contracts/user-auth.md`가 계약이다. 봉투 안의 `manifest`는 원격 telemetryctl의 `contracts/enrollment-manifest.schema.json`을 만족하고,
+나머지 네 키는 §11의 TokenResponse와 같다. 원격 telemetryctl develop에는 이 봉투의 JSON Schema도 재조회 클라이언트도 아직 없다.
 AT와 설치 `pit_`·`ptt_`는 401 `invalid_credentials`다.
 활성 정책과 RT 회전을 한 트랜잭션으로 묶으며 실패 시 전부 롤백한다(ADR 0019).
 활성 manifest가 없거나 저장된 정책이 계약 스키마를 어기면 409 `manifest_not_configured`이고 RT는 소비되지 않는다.

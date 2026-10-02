@@ -3,7 +3,6 @@ package com.team376.pulsemetry.enrollment.api
 import com.team376.pulsemetry.enrollment.auth.AuthClockConfig
 import com.team376.pulsemetry.enrollment.auth.AuthTestClock
 import com.team376.pulsemetry.enrollment.secret.InvitationCode
-import com.team376.pulsemetry.enrollment.support.ContractSchemas
 import com.team376.pulsemetry.enrollment.support.EnrollmentTestData
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationStatus
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
@@ -32,8 +31,9 @@ import java.util.concurrent.TimeUnit
 private const val RUN = "b3f1c2a49d5e4f60a1b2c3d4e5f60718"
 
 /**
- * `POST /v1/installations/{installation_id}/heartbeat` (허브 `contracts/enrollment-api.md` §7, ADR 0040). 실제 HTTP 와 PostgreSQL 로 본다.
- * 기대값은 계약에서 온다 — 요청·응답은 telemetryctl 의 스키마 원본과 대조한다. 주기 5분, `Retry-After` 7초, 이력 보존 30일.
+ * `POST /v1/installations/{installation_id}/heartbeat` (명세 §4.5, 허브 `contracts/enrollment-api.md` §7, ADR 0040). 실제 HTTP 와 PostgreSQL 로 본다.
+ * 기대값은 명세에서 온다 — 요청·응답의 필드·타입·필수성은 명세 §4.5 의 두 표다. 이 경로는 서버가 소유한 API 이고 원격 telemetryctl develop 에는
+ * 이 경로의 JSON Schema 도 송신 클라이언트도 없다. 그래서 각 본문이 받아들여지는지는 그 표에서 손으로 정한 값을 쓴다. 주기 5분, `Retry-After` 7초, 이력 보존 30일.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = ["pulsemetry.heartbeat.enabled=true", "pulsemetry.heartbeat.report-interval=PT5M", "pulsemetry.heartbeat.retry-after=PT7S",
@@ -116,17 +116,29 @@ class HeartbeatApiTest {
 
     // ── 계약 ─────────────────────────────────────────────────────────────────
 
-    @Test fun `응답은 계약의 네 키이고 스키마를 만족하며 캐시하지 않는다`() {
+    @Test fun `응답은 명세의 네 키와 타입이고 캐시하지 않는다`() {
         data.activeManifest(tenant, member, version = 3)
         val body = report()
-        assertThat(ContractSchemas.validate(ContractSchemas.heartbeatRequestSchema(), body)).isEmpty()
+        // 테스트가 보내는 본문이 명세 요청 표의 키를 빠짐없이, 그것만 담는다.
+        val sent = mapper.readTree(body)
+        assertThat(sent.propertyNames()).containsExactlyInAnyOrder("sent_at", "daemon", "applied_config_revision", "collection")
+        assertThat(sent.path("daemon").propertyNames()).containsExactlyInAnyOrder("version", "platform", "architecture", "run_id")
+        assertThat(sent.path("collection").propertyNames()).containsExactlyInAnyOrder(
+            "mode", "receiving_since", "forwarding", "delivered", "lost", "pending", "last_delivered_at")
 
         val response = post(body)
         val json = ok(response)
-        val errors = ContractSchemas.validate(ContractSchemas.heartbeatResponseSchema(), response.body())
-        assertThat(errors).describedAs(ContractSchemas.describe(errors)).isEmpty()
         assertThat(json.propertyNames()).containsExactlyInAnyOrder(
             "received_at", "expected_config_revision", "acknowledged_config_revision", "report_interval_seconds")
+        // 명세 응답 표: 시각은 UTC RFC 3339(`Z`), 판은 1 이상의 정수 또는 null, 주기는 60~3600 의 정수.
+        assertThat(json.path("received_at").isString).isTrue()
+        assertThat(json.path("received_at").asString()).endsWith("Z")
+        for (name in listOf("expected_config_revision", "acknowledged_config_revision")) {
+            assertThat(json.path(name).isIntegralNumber).describedAs(name).isTrue()
+            assertThat(json.path(name).asLong()).describedAs(name).isGreaterThanOrEqualTo(1)
+        }
+        assertThat(json.path("report_interval_seconds").isIntegralNumber).isTrue()
+        assertThat(json.path("report_interval_seconds").asLong()).isBetween(60, 3600)
         assertThat(Instant.parse(json.path("received_at").asString())).isEqualTo(start)
         assertThat(json.path("expected_config_revision").asInt()).isEqualTo(3)
         assertThat(json.path("acknowledged_config_revision").asInt()).isEqualTo(3)
@@ -134,7 +146,8 @@ class HeartbeatApiTest {
         assertThat(response.headers().firstValue("Cache-Control")).hasValue("no-store")
     }
 
-    @Test fun `계약 스키마가 받는 본문은 받고 거부하는 본문은 400이다`() {
+    /** 명세 §4.5 요청 표가 받는 본문과 거부하는 본문. 판정은 표의 한 칸씩에서 손으로 정했다(구현을 돌려 얻은 값이 아니다). */
+    @Test fun `명세의 요청 표가 받는 본문은 받고 거부하는 본문은 400이다`() {
         val baseDaemon = """{"version":"0.2.0","platform":"darwin","architecture":"arm64","run_id":"$RUN"}"""
         val baseCollection = """{"mode":"local","receiving_since":"2026-09-09T11:50:00Z","forwarding":true,"delivered":120,"lost":0,"pending":2,"last_delivered_at":"2026-09-09T11:59:30Z"}"""
         val daemon = baseDaemon
@@ -143,45 +156,44 @@ class HeartbeatApiTest {
             """{"sent_at":$sent,"daemon":$daemon,"applied_config_revision":$revision,"collection":$collection$extra}"""
         fun collecting(change: String) = collection.replace(change.substringBefore("=>"), change.substringAfter("=>"))
         val bodies = listOf(
-            body(),
-            body(extra = ""","future_field":{"x":1}"""),
-            body(daemon = daemon.replace("\"arm64\"", "\"arm64\",\"hostname\":\"ignored\"")),
-            body(collection = """{"mode":"direct","receiving_since":null,"forwarding":false,"delivered":0,"lost":0,"pending":0,"last_delivered_at":null}"""),
-            body(revision = "3.0"),
-            body(sent = "\"2026-09-09T12:00:00.123456789Z\""),
-            body(daemon = daemon.replace("darwin", "linux").replace("arm64", "amd64")),
-            body(daemon = """{"version":"0.2.0","platform":"darwin","architecture":"arm64"}"""),
-            body(daemon = daemon.replace("darwin", "macos")),
-            body(daemon = daemon.replace("\"0.2.0\"", "\"\"")),
-            body(daemon = daemon.replace("\"0.2.0\"", "\"${"9".repeat(65)}\"")),
-            body(daemon = daemon.replace(RUN, "short")),
-            body(daemon = daemon.replace(RUN, "has space in it 0123456789")),
-            body(daemon = daemon.replace("\"arm64\"", "64")),
-            body(daemon = "[]"),
-            body(revision = "0"),
-            body(revision = "\"3\""),
-            body(revision = "3.5"),
-            body(revision = "null"),
-            body(sent = "\"2026-09-09 12:00:00\""),
-            body(sent = "\"2026-09-09T21:00:00+09:00\""),
-            body(sent = "1757419200"),
-            body(collection = collecting("\"local\"=>\"proxy\"")),
-            body(collection = collecting("\"forwarding\":true=>\"forwarding\":\"true\"")),
-            body(collection = collecting("\"delivered\":120=>\"delivered\":-1")),
-            body(collection = collecting("\"lost\":0=>\"lost\":\"0\"")),
-            body(collection = collecting("\"pending\":2,=>")),
-            body(collection = collecting("\"receiving_since\":\"2026-09-09T11:50:00Z\",=>")),
-            body(collection = collecting("\"2026-09-09T11:50:00Z\"=>\"yesterday\"")),
-            body(collection = collecting(",\"last_delivered_at\":\"2026-09-09T11:59:30Z\"=>")),
-            """{"daemon":$daemon,"applied_config_revision":3,"collection":$collection}""",
-            """{"sent_at":"2026-09-09T12:00:00Z","applied_config_revision":3,"collection":$collection}""",
-            """{"sent_at":"2026-09-09T12:00:00Z","daemon":$daemon,"applied_config_revision":3}""",
-            "[]",
-            "null",
+            body() to true,
+            body(extra = ""","future_field":{"x":1}""") to true,                                             // 모르는 키는 무시한다
+            body(daemon = daemon.replace("\"arm64\"", "\"arm64\",\"hostname\":\"ignored\"")) to true,        // 중첩 객체의 모르는 키도
+            body(collection = """{"mode":"direct","receiving_since":null,"forwarding":false,"delivered":0,"lost":0,"pending":0,"last_delivered_at":null}""") to true,
+            body(revision = "3.0") to true,                                                                   // JSON 수로 정수 3
+            body(sent = "\"2026-09-09T12:00:00.123456789Z\"") to true,                                         // 소수 초가 있는 UTC RFC 3339
+            body(daemon = daemon.replace("darwin", "linux").replace("arm64", "amd64")) to true,
+            body(daemon = """{"version":"0.2.0","platform":"darwin","architecture":"arm64"}""") to false,   // run_id 필수
+            body(daemon = daemon.replace("darwin", "macos")) to false,                                         // platform 은 darwin·linux·windows
+            body(daemon = daemon.replace("\"0.2.0\"", "\"\"")) to false,                                         // version 1~64자
+            body(daemon = daemon.replace("\"0.2.0\"", "\"${"9".repeat(65)}\"")) to false,
+            body(daemon = daemon.replace(RUN, "short")) to false,                                              // run_id 16~64자
+            body(daemon = daemon.replace(RUN, "has space in it 0123456789")) to false,                         // run_id 는 [A-Za-z0-9_-]
+            body(daemon = daemon.replace("\"arm64\"", "64")) to false,                                         // architecture 는 문자열
+            body(daemon = "[]") to false,
+            body(revision = "0") to false,                                                                    // applied_config_revision ≥ 1
+            body(revision = "\"3\"") to false,
+            body(revision = "3.5") to false,
+            body(revision = "null") to false,                                                                 // null 을 받지 않는다
+            body(sent = "\"2026-09-09 12:00:00\"") to false,                                                   // 시각은 UTC RFC 3339(`Z`)
+            body(sent = "\"2026-09-09T21:00:00+09:00\"") to false,
+            body(sent = "1757419200") to false,
+            body(collection = collecting("\"local\"=>\"proxy\"")) to false,                                   // mode 는 local·direct
+            body(collection = collecting("\"forwarding\":true=>\"forwarding\":\"true\"")) to false,             // 불리언
+            body(collection = collecting("\"delivered\":120=>\"delivered\":-1")) to false,                    // 개수 ≥ 0
+            body(collection = collecting("\"lost\":0=>\"lost\":\"0\"")) to false,
+            body(collection = collecting("\"pending\":2,=>")) to false,                                       // 모든 키가 필수다
+            body(collection = collecting("\"receiving_since\":\"2026-09-09T11:50:00Z\",=>")) to false,        // null 은 되지만 빠지면 안 된다
+            body(collection = collecting("\"2026-09-09T11:50:00Z\"=>\"yesterday\"")) to false,
+            body(collection = collecting(",\"last_delivered_at\":\"2026-09-09T11:59:30Z\"=>")) to false,
+            """{"daemon":$daemon,"applied_config_revision":3,"collection":$collection}""" to false,
+            """{"sent_at":"2026-09-09T12:00:00Z","applied_config_revision":3,"collection":$collection}""" to false,
+            """{"sent_at":"2026-09-09T12:00:00Z","daemon":$daemon,"applied_config_revision":3}""" to false,
+            "[]" to false,
+            "null" to false,
         )
         var accepted = 0
-        for (body in bodies) {
-            val valid = ContractSchemas.validate(ContractSchemas.heartbeatRequestSchema(), body).isEmpty()
+        for ((body, valid) in bodies) {
             val response = post(body)
             assertThat(response.statusCode()).describedAs("%s → %s", body, response.body()).isEqualTo(if (valid) 200 else 400)
             if (valid) accepted++ else rejected(response, 400, "invalid_request")

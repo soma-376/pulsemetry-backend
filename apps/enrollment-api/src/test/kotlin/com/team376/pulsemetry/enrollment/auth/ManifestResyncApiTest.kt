@@ -39,6 +39,11 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
+/**
+ * `GET /v1/manifest` 재동기화(명세 §11.1, ADR 0019). 봉투의 오라클은 명세다 — 5키, 나머지 네 키는 §11 의 TokenResponse,
+ * AT 클레임은 §11 의 클레임 표. 봉투 안의 `manifest` 만 원격 telemetryctl develop 의 `enrollment-manifest` 스키마 원본으로 본다
+ * (원격에는 재조회 봉투·클레임의 스키마가 없다).
+ */
 @SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,properties=["pulsemetry.user-auth.enabled=true"])
 @Import(PostgresContainerConfig::class,EnrollmentTestData::class,AuthClockConfig::class)
 class ManifestResyncApiTest {
@@ -85,14 +90,34 @@ class ManifestResyncApiTest {
         assertThat(r.headers().firstValue("Cache-Control").orElse("")).contains("no-store")
         assertThat(r.headers().firstValue("Pragma").orElse("")).isEqualTo("no-cache")
         assertThat(r.headers().firstValue("ETag")).isEmpty()
-        assertThat(ContractSchemas.validate(ContractSchemas.manifestResyncSchema(),r.body())).isEmpty()
         val body=mapper.readTree(r.body())
+        assertThat(body.propertyNames()).containsExactlyInAnyOrder("manifest","access_token","refresh_token","token_type","expires_in")
+        val manifestErrors=ContractSchemas.validate(ContractSchemas.manifestSchema(),mapper.writeValueAsString(body["manifest"]))
+        assertThat(manifestErrors).describedAs(ContractSchemas.describe(manifestErrors)).isEmpty()
+        assertThat(body["token_type"].asString()).isEqualTo("Bearer")
+        assertThat(body["expires_in"].isIntegralNumber).isTrue()
+        assertThat(body["expires_in"].asInt()).isEqualTo(300)
+        assertThat(body["refresh_token"].asString()).matches("urt_[A-Za-z0-9_-]{43}")
+        assertThat(body["access_token"].isString).isTrue()
         assertThat(body["manifest"]["config_revision"].asInt()).isEqualTo(4)
         val identity=auth.verifyCurrentRevision(body["access_token"].asString())
         assertThat(identity.revision).isEqualTo(4)
         assertThat(identity.memberId).isEqualTo(member)
-        val claims=String(Base64.getUrlDecoder().decode(body["access_token"].asString().split('.')[1]))
-        assertThat(ContractSchemas.validate(ContractSchemas.userClaimsSchema(),claims)).isEmpty()
+        val parts=body["access_token"].asString().split('.')
+        val header=mapper.readTree(String(Base64.getUrlDecoder().decode(parts[0])))
+        assertThat(header["alg"].asString()).isEqualTo("RS256")
+        assertThat(header["typ"].asString()).isEqualTo("JWT")
+        assertThat(header["kid"].asString()).isNotBlank()
+        val claims=mapper.readTree(String(Base64.getUrlDecoder().decode(parts[1])))
+        assertThat(claims.propertyNames()).containsExactlyInAnyOrder("iss","aud","sub","tenant_id","role","sid","manifest_revision","iat","exp","jti")
+        assertThat(claims["sub"].asString()).isEqualTo(member.toString())
+        assertThat(claims["tenant_id"].asString()).isEqualTo(tenant.toString())
+        assertThat(claims["role"].asString()).isIn("owner","admin","member")
+        assertThat(UUID.fromString(claims["sid"].asString())).isNotNull()
+        assertThat(claims["manifest_revision"].isIntegralNumber).isTrue()
+        assertThat(claims["manifest_revision"].asInt()).isEqualTo(4)
+        assertThat(claims["exp"].asLong()-claims["iat"].asLong()).isEqualTo(300)
+        assertThat(claims["jti"].asString()).isNotBlank()
         assertThatThrownBy { auth.verifyCurrentRevision(old["access_token"].asString()) }
             .isInstanceOfSatisfying(UserAuthException::class.java) { assertThat(it.code).isEqualTo("manifest_revision_mismatch") }
         assertThat(revision()).isEqualTo(4)

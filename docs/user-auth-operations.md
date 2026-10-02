@@ -100,4 +100,5 @@ docker buildx build --target enrollment-api \
 ```
 
 CI의 PR 검증과 develop 배포는 telemetryctl 기본 브랜치를 체크아웃해 그 `contracts`를 쓴다(ref를 고정하지 않는다).
-계약 테스트가 `user-auth.schema.json`·`manifest-resync.schema.json`을 읽으므로, 두 스키마가 telemetryctl 기본 브랜치에 먼저 있어야 CI가 통과한다.
+계약 테스트는 telemetryctl 기본 브랜치에 있는 `enrollment-envelope`·`enrollment-manifest` 두 스키마만 원본으로 읽는다. 사용자 토큰 봉투·AT 클레임·재조회 봉투의 오라클은
+[명세](enrollment-server-spec.md) §11·§11.1의 표다 — 원격 기본 브랜치에 없는 스키마를 읽게 하면 CI가 죽는다.

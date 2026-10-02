@@ -1,7 +1,6 @@
 package com.team376.pulsemetry.enrollment.api
 
 import com.team376.pulsemetry.enrollment.config.PulsemetryProperties
-import com.team376.pulsemetry.enrollment.support.ContractSchemas
 import com.team376.pulsemetry.enrollment.update.SemanticVersion
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
 import org.assertj.core.api.Assertions.assertThat
@@ -25,9 +24,16 @@ import java.security.MessageDigest
 import java.util.HexFormat
 
 /**
- * `GET /api/v1/check-updates` (허브 `contracts/daemon-updates.md`, 허브 ADR 0011). 기대값은 계약에서 온다.
+ * `GET /api/v1/check-updates` (명세 §6.3, 허브 `contracts/daemon-updates.md`·허브 ADR 0011). 기대값은 명세와 실제 호출자에서 온다.
  *
- * 최신 버전은 서버가 배포하는 바이너리의 판이고, 그 판은 바이너리 옆의 `pulsemetry_release.json` 이 말한다.
+ * 응답의 오라클은 **원격 telemetryctl develop 의 데몬 클라이언트**다 — `internal/updatecheck/client.go`(스냅샷 `1741b2a`).
+ * 그 클라이언트는 `current_version`·`platform`·`architecture` 쿼리와 `Accept: application/json` 으로 묻고, 404 는 미지원,
+ * 200 이 아닌 그 밖의 상태는 오류로 본다. 200 본문은 JSON 문서 하나여야 하고(뒤따르는 값이 있으면 무효), `latest_version` 은
+ * 공백이 아닌 문자열, `update_available` 은 빠지면 안 되는 불리언이다. 본문은 64 KiB 를 넘으면 무효다.
+ * 원격에는 이 경로의 JSON Schema 가 없다. 버전 형식은 SemVer 2.0.0(semver.org 가 권하는 정규식, [SEMVER])으로 본다.
+ *
+ * 최신 버전은 서버가 배포하는 바이너리의 판이고, 그 판은 바이너리 옆의 `pulsemetry_release.json` 이 말한다(명세 §6.3 — 형식은
+ * [specValidMetadata] 가 명세 문장을 옮긴 것이다).
  * 바이너리 디렉터리는 [BinaryApiTest] 와 같은 곳이다 — 테스트마다 비우고 채운다.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -47,11 +53,24 @@ class UpdateCheckApiTest {
 
     private fun sha256(content: String) = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content.toByteArray()))
 
-    /** 바이너리들을 놓고 그 해시를 담은 메타데이터를 쓴다. 메타데이터는 계약 스키마로 확인한다. */
+    /**
+     * 명세 §6.3 의 메타데이터 형식: 객체이고, `version` 은 SemVer(`v` 없음), `sha256` 은 비어 있지 않은 객체이며 그 키는 §6.2 의 여섯 이름,
+     * 값은 소문자 hex 64자다. 모르는 최상위 키는 무시한다. 테스트가 쓰는 "맞는/틀린 메타데이터"가 명세로도 그런지 확인하는 데만 쓴다.
+     */
+    private fun specValidMetadata(json: String): Boolean {
+        val node = runCatching { mapper.readTree(json) }.getOrNull() ?: return false
+        if (!node.isObject) return false
+        val version = node.path("version")
+        val hashes = node.path("sha256")
+        return version.isString && SEMVER.matches(version.asString()) && hashes.isObject && hashes.size() > 0 &&
+            hashes.propertyNames().all { it in SPEC_BINARIES && hashes.path(it).isString && HEX64.matches(hashes.path(it).asString()) }
+    }
+
+    /** 바이너리들을 놓고 그 해시를 담은 메타데이터를 쓴다. 메타데이터는 명세의 형식으로 확인한다. */
     private fun release(version: String, vararg binaries: Pair<String, String>) {
         binaries.forEach { (name, content) -> Files.writeString(directory.resolve(name), content) }
         val metadata = mapper.writeValueAsString(mapOf("version" to version, "sha256" to binaries.associate { (name, content) -> name to sha256(content) }))
-        assertThat(ContractSchemas.validate(ContractSchemas.releaseMetadataSchema(), metadata)).describedAs(metadata).isEmpty()
+        assertThat(specValidMetadata(metadata)).describedAs(metadata).isTrue()
         metadata(metadata)
     }
 
@@ -83,16 +102,18 @@ class UpdateCheckApiTest {
 
     // ── 응답 계약 ────────────────────────────────────────────────────────────
 
-    @Test fun `응답은 데몬이 읽는 두 키의 JSON 문서 하나이고 계약 스키마를 만족한다`() {
+    @Test fun `응답은 데몬이 읽는 두 키의 JSON 문서 하나이고 원격 데몬 클라이언트가 받아들인다`() {
         release("0.2.0", "pulsemetry_darwin_arm64" to "darwin-arm64-0.2.0")
         val response = check("0.1.0")
 
         assertThat(response.statusCode()).isEqualTo(200)
-        val errors = ContractSchemas.validate(ContractSchemas.checkUpdatesResponseSchema(), response.body())
-        assertThat(errors).describedAs(ContractSchemas.describe(errors)).isEmpty()
         val json = mapper.readTree(response.body())
+        assertThat(json.isObject).isTrue()
         assertThat(json.propertyNames()).containsExactlyInAnyOrder("latest_version", "update_available")
         assertThat(json.path("latest_version").isString).isTrue()
+        // 원격 클라이언트는 공백뿐인 latest_version 을 무효로 본다. 명세는 그 값이 SemVer 라고 한다.
+        assertThat(json.path("latest_version").asString().trim()).isNotEmpty()
+        assertThat(SEMVER.matches(json.path("latest_version").asString())).isTrue()
         assertThat(json.path("latest_version").asString()).isEqualTo("0.2.0")
         assertThat(json.path("update_available").isBoolean).isTrue()
         assertThat(json.path("update_available").booleanValue()).isTrue()
@@ -162,10 +183,9 @@ class UpdateCheckApiTest {
         for (invalid in listOf("v1.0.0", "1.0", "1", "01.0.0", "1.0.0-", "1.0.0-01", "1.0.0-a..b", "1.0.0+", " 1.0.0", "1.0.0 ", "dev", "", "1.0.0.0", "1.0.0-β")) {
             assertThat(SemanticVersion.parse(invalid)).describedAs(invalid).isNull()
         }
-        // 계약 스키마의 버전 형식과 같은 것을 받는다.
+        // SemVer 2.0.0 의 권장 정규식과 같은 것을 받는다.
         for (version in ordered + listOf("v1.0.0", "01.0.0", "1.0.0-01", "1.0.0+build.5", "dev", "1.0")) {
-            val schemaValid = ContractSchemas.validate(ContractSchemas.checkUpdatesResponseSchema(), """{"latest_version":"$version","update_available":true}""").isEmpty()
-            assertThat(SemanticVersion.parse(version) != null).describedAs(version).isEqualTo(schemaValid)
+            assertThat(SemanticVersion.parse(version) != null).describedAs(version).isEqualTo(SEMVER.matches(version))
         }
     }
 
@@ -214,13 +234,15 @@ class UpdateCheckApiTest {
             """{"version":"0.2.0","sha256":{"pulsemetry_darwin_arm64":"$hash","pulsemetry_freebsd_amd64":"$hash"}}""",
         )
         for (json in broken) {
-            // 테스트의 "틀린 형식"이 계약 스키마로도 틀린 것인지 확인한다(JSON 이 아닌 것은 스키마 이전에 틀렸다).
-            if (json.startsWith("{")) assertThat(ContractSchemas.validate(ContractSchemas.releaseMetadataSchema(), json)).describedAs(json).isNotEmpty()
+            // 테스트의 "틀린 형식"이 명세로도 틀린 것인지 확인한다.
+            assertThat(specValidMetadata(json)).describedAs(json).isFalse()
             metadata(json)
             rejected(check(), 404, "not_found")
         }
         // 모르는 키는 무시한다.
-        metadata("""{"version":"0.2.0","sha256":{"pulsemetry_darwin_arm64":"$hash"},"built_at":"2026-09-30T00:00:00Z","notes":{"url":"x"}}""")
+        val unknownKeys = """{"version":"0.2.0","sha256":{"pulsemetry_darwin_arm64":"$hash"},"built_at":"2026-09-30T00:00:00Z","notes":{"url":"x"}}"""
+        assertThat(specValidMetadata(unknownKeys)).isTrue()
+        metadata(unknownKeys)
         assertThat(available(check())).isTrue()
     }
 
@@ -277,5 +299,14 @@ class UpdateCheckApiTest {
         val post = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/check-updates?current_version=0.1.0&platform=darwin&architecture=arm64"))
             .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString())
         assertThat(post.statusCode()).isEqualTo(405)
+    }
+
+    companion object {
+        /** semver.org "Is there a suggested regular expression (RegEx) to check a SemVer string?" 의 정규식. Java 의 `\d` 는 ASCII 숫자뿐이다. */
+        private val SEMVER = Regex("""^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$""")
+        private val HEX64 = Regex("^[0-9a-f]{64}$")
+        /** 명세 §6.2 의 여섯 파일명. */
+        private val SPEC_BINARIES = setOf("pulsemetry_windows_amd64.exe", "pulsemetry_windows_arm64.exe", "pulsemetry_darwin_amd64",
+            "pulsemetry_darwin_arm64", "pulsemetry_linux_amd64", "pulsemetry_linux_arm64")
     }
 }

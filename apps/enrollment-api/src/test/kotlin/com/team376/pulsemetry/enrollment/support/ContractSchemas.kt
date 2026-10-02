@@ -19,6 +19,12 @@ import java.nio.file.Path
  *
  * 스키마의 `$id` 는 `https://get.your-service.com/contracts/...` 인데, 그 주소로 나가지 않도록
  * 두 파일의 내용을 `$id` 에 직접 등록한다. 그러면 envelope 의 상대 `$ref` 도 로컬에서 풀린다.
+ *
+ * **원격 telemetryctl develop 에 있는 파일만 등록한다** — `enrollment-envelope` 와 `enrollment-manifest` 둘이다.
+ * CI 는 telemetryctl 기본 브랜치의 `contracts` 를 체크아웃해 이 디렉터리로 넘긴다(`.github/workflows/build.yml`).
+ * 그곳에 없는 파일을 미리 읽으면 계약을 쓰는 첫 테스트부터 전부 죽는다. 원격에 스키마가 없는 서버 소유 API(설치 보고,
+ * `GET /v1/manifest` 재조회, 사용자 토큰)와 업데이트 확인은 `docs/enrollment-server-spec.md` 의 표와 원격 데몬 코드를 오라클로 쓴다 —
+ * 각 테스트의 KDoc 이 근거를 적는다.
  */
 object ContractSchemas {
 
@@ -26,8 +32,6 @@ object ContractSchemas {
 
 	const val ENVELOPE_ID: String = BASE_IRI + "enrollment-envelope.schema.json"
 	const val MANIFEST_ID: String = BASE_IRI + "enrollment-manifest.schema.json"
-	const val HEARTBEAT_ID: String = BASE_IRI + "installation-heartbeat.schema.json"
-	const val UPDATES_ID: String = BASE_IRI + "daemon-updates.schema.json"
 
 	private val contractsDir: Path by lazy {
 		val configured = System.getProperty("pulsemetry.contracts.dir")
@@ -43,10 +47,6 @@ object ContractSchemas {
 				mapOf(
 					ENVELOPE_ID to read("enrollment-envelope.schema.json"),
 					MANIFEST_ID to read("enrollment-manifest.schema.json"),
-					BASE_IRI + "user-auth.schema.json" to read("user-auth.schema.json"),
-					BASE_IRI + "manifest-resync.schema.json" to read("manifest-resync.schema.json"),
-					HEARTBEAT_ID to read("installation-heartbeat.schema.json"),
-					UPDATES_ID to read("daemon-updates.schema.json"),
 				),
 			)
 		}
@@ -67,25 +67,6 @@ object ContractSchemas {
 
 	/** 봉투 안에 실리는 순수 설정 manifest. */
 	fun manifestSchema(): Schema = registry.getSchema(SchemaLocation.of(MANIFEST_ID))
-
-	/** `GET /v1/manifest` 응답 봉투(5키). */
-	fun manifestResyncSchema(): Schema = registry.getSchema(SchemaLocation.of(BASE_IRI + "manifest-resync.schema.json"))
-
-	/** 사용자 AT 의 클레임. */
-	fun userClaimsSchema(): Schema =
-		registry.getSchema(SchemaLocation.of(BASE_IRI + "user-auth.schema.json#/\$defs/access_token_claims"))
-
-	/** `POST /v1/installations/{installation_id}/heartbeat` 요청 본문. */
-	fun heartbeatRequestSchema(): Schema = registry.getSchema(SchemaLocation.of("$HEARTBEAT_ID#/\$defs/request"))
-
-	/** 같은 경로의 200 응답. */
-	fun heartbeatResponseSchema(): Schema = registry.getSchema(SchemaLocation.of("$HEARTBEAT_ID#/\$defs/response"))
-
-	/** `GET /api/v1/check-updates` 의 200 응답. */
-	fun checkUpdatesResponseSchema(): Schema = registry.getSchema(SchemaLocation.of("$UPDATES_ID#/\$defs/check_updates_response"))
-
-	/** 서버가 최신 버전의 근거로 읽는 `pulsemetry_release.json`. */
-	fun releaseMetadataSchema(): Schema = registry.getSchema(SchemaLocation.of("$UPDATES_ID#/\$defs/release_metadata"))
 
 	fun validate(schema: Schema, json: String): List<Error> = schema.validate(json, InputFormat.JSON)
 
