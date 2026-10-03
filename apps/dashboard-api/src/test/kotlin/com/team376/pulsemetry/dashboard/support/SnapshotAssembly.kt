@@ -5,6 +5,7 @@ import com.team376.pulsemetry.dashboard.snapshot.ModelResolution
 import com.team376.pulsemetry.dashboard.snapshot.RetentionBoundaryReader
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotBuilder
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotCleaner
+import com.team376.pulsemetry.dashboard.snapshot.SnapshotCompleteness
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotCopySql
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotReferenceCopier
@@ -30,6 +31,8 @@ class SnapshotAssembly(
 	sourceDatabase: String = "default",
 	source: JdbcClient = DashboardTestStores.writer,
 	httpClient: HttpClient = HttpClient.newHttpClient(),
+	/** 완전성 판정의 확정 대기 시간(ADR 0042). 앱 테스트 설정과 같은 값이다. */
+	settle: Duration = Duration.ofHours(1),
 ) {
 	private val cacheDataSource = DriverManagerDataSource(
 		DashboardTestStores.postgres.jdbcUrl, DashboardTestStores.postgres.username, DashboardTestStores.postgres.password,
@@ -48,6 +51,7 @@ class SnapshotAssembly(
 		boundaries = boundaries,
 		manifests = manifests,
 		references = SnapshotReferenceCopier(source, JdbcClient.create(cacheDataSource)),
+		completeness = SnapshotCompleteness(source, JdbcClient.create(cacheDataSource), settle),
 		clickHouse = clickHouse,
 		sql = SnapshotCopySql(sourceDatabase, resolution),
 		resolution = resolution,

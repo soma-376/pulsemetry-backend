@@ -30,18 +30,31 @@ class UsageAggregator(
 		TEAM_MODEL(listOf("team_id_as_of", "model_id")),
 		TEAM_DAY(listOf("team_id_as_of", "toString(toDate(source_time, {tz:String}))")),
 		MEMBER_MODEL(listOf("member_id", "model_id")),
+
+		/** 카탈로그 제품(ADR 0045). 키는 snapshot 에 복제한 매핑으로 잇고 매핑 없는 관측은 [UNMAPPED_PRODUCT] 다. */
+		PRODUCT(listOf(PRODUCT_KEY)),
+		TEAM_PRODUCT(listOf("team_id_as_of", PRODUCT_KEY)),
+
+		/** 구성원 × 카탈로그 제품 — 좌석의 기간 중 사용(ADR 0048). */
+		MEMBER_PRODUCT(listOf("member_id", PRODUCT_KEY)),
 	}
 
 	/** 한 팀으로 좁히는 조건. [teamId] 가 null 이면 미배분(`team_id_as_of IS NULL`)이다. */
 	data class TeamScope(val teamId: String?)
 
+	/**
+	 * [products] 는 제품 축의 매핑이다(snapshot 에 복제한 것 — [SnapshotReferences.products]). 제품 축이 아니면 쓰지 않는다.
+	 */
 	fun totals(
 		snapshot: SnapshotManifestStore.Manifest,
 		side: Side,
 		axis: Axis,
 		team: TeamScope? = null,
+		products: List<SnapshotReferences.Product> = emptyList(),
 	): Map<List<String?>, UsageTotals> {
-		val keys = axis.expressions.mapIndexed { index, expression -> "$expression AS k$index" }
+		// 매핑이 비면 모든 관측이 매핑 없는 관측이다.
+		val productKey = if (products.isEmpty()) "'$UNMAPPED_PRODUCT'" else "transform(product, {observed:Array(String)}, {catalog:Array(String)}, '$UNMAPPED_PRODUCT')"
+		val keys = axis.expressions.mapIndexed { index, expression -> "${expression.replace(PRODUCT_KEY, productKey)} AS k$index" }
 		val select = (keys + COUNTERS).joinToString(",\n    ")
 		val groupBy = if (axis.expressions.isEmpty()) "" else "GROUP BY " + axis.expressions.indices.joinToString(", ") { "k$it" }
 		val sql = """
@@ -57,8 +70,37 @@ class UsageAggregator(
 			put("build", ClickHouseParam.string(snapshot.buildId.toString()))
 			put("tz", ClickHouseParam.string(snapshot.current.zone.id))
 			team?.teamId?.let { put("team", ClickHouseParam.string(it)) }
+			if (PRODUCT_KEY in axis.expressions && products.isNotEmpty()) {
+				put("observed", ClickHouseParam.stringArray(products.map { it.observed }))
+				put("catalog", ClickHouseParam.stringArray(products.map { it.kind }))
+			}
 		}
 		return clickHouse.query(sql, params) { row -> axis.expressions.indices.map { text(row, "k$it") } to totals(row) }.toMap()
+	}
+
+	/**
+	 * 팀별로 세션이 **처음 관측된 날**마다 새 세션 수를 센다 — `(팀, 날짜) → 그날 처음 본 세션 수`. 세션 키는 [UsageTotals.sessionCount] 와 같은
+	 * `(product, session_id_namespace, session_id)` 다. 여러 날에 걸친 세션은 처음 본 날에 한 번만 더하고, 두 팀의 이벤트로 나뉜 세션은 팀마다 따로 센다.
+	 * 세션이 없는 행은 세지 않는다 — 그런 행이 있는 날부터 누적을 내지 않는 것은 호출자의 규칙이다. 날짜는 snapshot 의 조회 시간대다.
+	 */
+	fun firstSessionDays(snapshot: SnapshotManifestStore.Manifest, side: Side): Map<Pair<String?, String>, Long> {
+		val sql = """
+			SELECT team AS k0, toString(first_day) AS k1, count() AS sessions
+			FROM (
+			    SELECT team_id_as_of AS team, min(toDate(source_time, {tz:String})) AS first_day
+			    FROM snapshot_usage
+			    WHERE tenant_id = {tenant:String} AND snapshot_id = {snapshot:String} AND build_id = {build:String} AND ${side.column} AND isNotNull(session_id)
+			    GROUP BY team, product, session_id_namespace, session_id
+			)
+			GROUP BY k0, k1
+		""".trimIndent()
+		val params = mapOf(
+			"tenant" to ClickHouseParam.string(snapshot.tenantId.toString()),
+			"snapshot" to ClickHouseParam.string(snapshot.snapshotId),
+			"build" to ClickHouseParam.string(snapshot.buildId.toString()),
+			"tz" to ClickHouseParam.string(snapshot.current.zone.id),
+		)
+		return clickHouse.query(sql, params) { row -> (text(row, "k0") to text(row, "k1")!!) to long(row, "sessions") }.toMap()
 	}
 
 	private fun teamCondition(team: TeamScope?): String = when {
@@ -93,9 +135,13 @@ class UsageAggregator(
 
 	private fun text(row: JsonNode, name: String): String? = row.get(name)?.takeUnless { it.isNull }?.asString()
 
-	private companion object {
+	companion object {
+		/** 제품 축에서 매핑 없는 관측의 키. 카탈로그 제품 ID 와 겹치지 않는다. */
+		const val UNMAPPED_PRODUCT = ""
+		private const val PRODUCT_KEY = "{product}"
+
 		/** 조회 골격의 카운터. 합은 `sumOrNull` — 값이 전부 없으면 0 이 아니라 NULL 이다. */
-		val COUNTERS = listOf(
+		private val COUNTERS = listOf(
 			"count() AS usage_rows",
 			"uniqExact(member_id) AS identified_users",
 			"countIf(isNull(member_id)) AS unidentified_rows",

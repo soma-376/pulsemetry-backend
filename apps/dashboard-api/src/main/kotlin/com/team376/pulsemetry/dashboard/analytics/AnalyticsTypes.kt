@@ -1,17 +1,31 @@
 package com.team376.pulsemetry.dashboard.analytics
 
+import java.math.BigDecimal
+import java.time.LocalDate
+
 /**
  * 화면 요청서의 공통 타입(개요 명세 3절). 이름·타입·nullable 은 요청서의 TypeScript 타입과 같다 — 필드를 더하거나 의미를 바꾸지 않는다.
  * `Money` 는 [Money.format] 의 문자열이다.
  */
 data class Coverage(
-	/** `complete` · `partial` · `none`. v1 은 완전성의 근거가 없어 `complete` 를 내지 않는다. */
+	/** `complete` · `partial` · `none`. `complete` 는 기간의 모든 날짜가 완전 관측일 때뿐이다(ADR 0042). */
 	val status: String,
+	/** 관측이 있었거나 완전한 날짜 수. 이 숫자만으로 완전성을 판정하지 않는다. */
 	val observedDays: Int,
 ) {
 	companion object {
-		fun of(observedDays: Int) = Coverage(if (observedDays > 0) PARTIAL else NONE, observedDays)
+		/** [dates] 가 기간의 날짜, [observed] 가 관측이 있는 날짜, [complete] 가 완전 관측으로 판정한 날짜다. */
+		fun of(dates: List<LocalDate>, observed: Set<LocalDate>, complete: Set<LocalDate>): Coverage {
+			val seen = dates.count { it in observed || it in complete }
+			val status = when {
+				dates.isNotEmpty() && dates.all { it in complete } -> COMPLETE
+				seen > 0 -> PARTIAL
+				else -> NONE
+			}
+			return Coverage(status, seen)
+		}
 
+		const val COMPLETE = "complete"
 		const val PARTIAL = "partial"
 		const val NONE = "none"
 	}
@@ -32,8 +46,14 @@ data class Usage(
 	val equivalentCostUsd: String?,
 ) {
 	companion object {
-		/** 공통 계산기의 null 규칙을 거친 값. */
-		fun of(totals: UsageTotals, pricingMixed: Boolean) = Usage(
+		/** 완전 관측인데 사용이 없었다 — 실제 0 이다(ADR 0042). */
+		val ZERO = Usage(0, 0, Tokens(0, 0, 0, 0, 0), Money.format(BigDecimal.ZERO))
+
+		/**
+		 * 공통 계산기의 null 규칙을 거친 값. [complete] 는 이 값의 기간이 완전 관측이라는 뜻이다 — 그때 사용이 없으면 null 이 아니라 0 이다.
+		 * 사용이 있으면 [complete] 와 무관하게 같은 규칙이다(의미가 섞인 토큰·가격 없는 행은 완전해도 null).
+		 */
+		fun of(totals: UsageTotals, pricingMixed: Boolean, complete: Boolean = false) = if (complete && !totals.hasUsage) ZERO else Usage(
 			activeUsers = totals.activeUsers(),
 			sessionCount = totals.sessionCount(),
 			tokens = Tokens(
@@ -53,8 +73,10 @@ data class TeamPeriod(
 	val equivalentCostUsd: String?,
 ) {
 	companion object {
-		fun of(totals: UsageTotals, pricingMixed: Boolean) =
-			TeamPeriod(totals.activeUsers(), totals.equivalentCost(pricingMixed)?.let(Money::format))
+		/** [complete] 인 기간에 사용이 없으면 0 이다([Usage.of] 와 같은 규칙). */
+		fun of(totals: UsageTotals, pricingMixed: Boolean, complete: Boolean = false) =
+			if (complete && !totals.hasUsage) TeamPeriod(0, Money.format(BigDecimal.ZERO))
+			else TeamPeriod(totals.activeUsers(), totals.equivalentCost(pricingMixed)?.let(Money::format))
 	}
 }
 

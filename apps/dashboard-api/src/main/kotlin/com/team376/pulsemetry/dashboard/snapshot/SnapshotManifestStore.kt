@@ -230,7 +230,7 @@ class SnapshotManifestStore(
 
 	companion object {
 		/** 조회 계약의 판. 응답 의미를 바꾸면 올린다 — 다른 판의 snapshot 은 재사용하지 않는다. */
-		const val QUERY_CONTRACT = "dashboard-v1"
+		const val QUERY_CONTRACT = "dashboard-v4"
 
 		/** 합의 전 재사용 범위 — 조직 전체(ADR 0022 §3 의 기본 인가 정책). */
 		const val ACCESS_SCOPE = "organization"

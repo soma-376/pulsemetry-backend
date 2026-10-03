@@ -6,6 +6,7 @@ import com.team376.pulsemetry.dashboard.request.QueryReader
 import com.team376.pulsemetry.dashboard.support.AbstractDashboardApiTest
 import com.team376.pulsemetry.dashboard.support.DashboardHttp
 import com.team376.pulsemetry.dashboard.support.DashboardTestStores
+import com.team376.pulsemetry.dashboard.support.JsonStructure
 import com.team376.pulsemetry.dashboard.support.SourceFixtures
 import com.team376.pulsemetry.dashboard.support.SourceFixtures.Event
 import com.team376.pulsemetry.dashboard.support.TestDashboardAuthenticator
@@ -14,10 +15,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import tools.jackson.databind.JsonNode
-import tools.jackson.databind.json.JsonMapper
 import java.math.BigDecimal
-import java.nio.file.Files
-import java.nio.file.Path
 import java.time.Instant
 import java.time.LocalDateTime
 import java.util.UUID
@@ -356,25 +354,8 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 			Event("$tenant-a", kst("2026-09-08T10:00:00"), teamId = team, memberId = UUID.randomUUID(), costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"),
 		)
 		val body = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
-		val example = JsonMapper.builder().build().readTree(Files.readString(EXAMPLE))
 
-		assertSameKeys("", example, body)
+		JsonStructure.assertMatches("overview-response.example.json", body)
 	}
 
-	/** 두 쪽이 모두 객체면 키 집합이 같아야 하고 재귀한다. 배열은 첫 원소끼리. 한쪽이 null 이면(nullable 필드) 거기서 멈춘다. */
-	private fun assertSameKeys(path: String, expected: JsonNode, actual: JsonNode) {
-		if (expected.isNull || actual.isNull) return
-		if (expected.isObject) {
-			assertThat(actual.isObject).describedAs(path).isTrue()
-			assertThat(actual.propertyNames().asSequence().toSet()).describedAs(path).isEqualTo(expected.propertyNames().asSequence().toSet())
-			for (name in expected.propertyNames()) assertSameKeys("$path/$name", expected.get(name), actual.get(name))
-		} else if (expected.isArray && expected.size() > 0 && actual.size() > 0) {
-			assertSameKeys("$path/0", expected.get(0), actual.get(0))
-		}
-	}
-
-	private companion object {
-		/** 요청서의 예시 JSON 사본 — 테스트 리소스. */
-		val EXAMPLE: Path = Path.of("src/test/resources/frontend-api/overview-response.example.json")
-	}
 }

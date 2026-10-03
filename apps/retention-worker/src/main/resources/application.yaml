@@ -38,3 +38,8 @@ pulsemetry:
       poll-interval: ${PULSEMETRY_RETENTION_DRAIN_POLL_INTERVAL:}
     # drain → DELETE → 검증을 몇 번까지 되풀이하는가. 남은 행이 있으면 다음 회차다.
     max-passes: ${PULSEMETRY_RETENTION_MAX_PASSES:}
+    requests:
+      # 요청 모드(--requests)의 선점 기한 (ADR 0047). 한 요청의 삭제 실행 전체보다 길게. 비어 있으면 요청 모드가 종료 코드 2 로 끝난다.
+      lease: ${PULSEMETRY_RETENTION_REQUESTS_LEASE:}
+      # 한 요청을 몇 번까지 실행하는가(미완·실패는 다음 실행이 이어서 끝낸다). 그 안에 끝내지 못하면 작업을 실패로 닫는다. 비어 있으면 요청 모드가 2 로 끝난다.
+      max-runs: ${PULSEMETRY_RETENTION_REQUESTS_MAX_RUNS:}

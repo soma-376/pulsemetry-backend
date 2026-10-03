@@ -270,10 +270,8 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 	fun structureMatchesExamples() {
 		val org = seed()
 
-		JsonStructure.assertSameKeys("", JsonStructure.example("teams-response.example.json"), ok(org.tenant, "/analytics/teams?$week"))
-		JsonStructure.assertSameKeys(
-			"", JsonStructure.example("team-users-response.example.json"), ok(org.tenant, "/analytics/teams/${org.teams.getValue("A")}/users?$week"),
-		)
+		JsonStructure.assertMatches("teams-response.example.json", ok(org.tenant, "/analytics/teams?$week"))
+		JsonStructure.assertMatches("team-users-response.example.json", ok(org.tenant, "/analytics/teams/${org.teams.getValue("A")}/users?$week"))
 	}
 
 	@Test

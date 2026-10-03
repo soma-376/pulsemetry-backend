@@ -1,7 +1,10 @@
 # 0007. 인증 계층을 백엔드의 Spring Security 로 두고 토큰을 직접 발급한다.
 
 ## Status
-Accepted
+Accepted — 부분 대체: 허브 ADR 0007이 CLI 코드 교환·가입 소비를, 허브 ADR 0008이 서버 원자성 한계와 ptt_ 유지를 확정한다. 자체 Spring Security 인증 결정은 유지한다.
+
+부분 대체: [허브 ADR 0008](../../../docs/adr/0008-keycloak-oidc-user-authentication.md)이 사람의
+비밀번호 저장·가입을 Keycloak OIDC로 대체한다. 서비스 AT·RT 직접 발급과 앱 계층 인가는 유지한다.
 
 ## Context
 
@@ -124,8 +127,8 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
   클레임이 없다. 재동기화는 별도 엔드포인트가 담당한다.
 - **manifest 재동기화 응답이 새 AT·RT 를 함께 내려준다.** manifest 갱신과 토큰 재발급을 한 응답, 한 트랜잭션으로 묶는다.
   Context 의 Dream State 가 그대로 성립한다 — 발급자가 우리이므로 호환성 문제가 없다.
-  이로써 "AT 를 누가 바꿔 주나" 라는 딜레마가 사라진다. 새 토큰은 **manifest 적용이 끝났다는 증거**이고,
-  적용에 실패한 클라이언트는 낡은 토큰을 그대로 들고 있으므로 계속 거부된다(fail-closed).
+  응답의 manifest와 새 AT는 **서버가 선택한 같은 revision**을 담는다. 로컬 적용 완료의 증거는 아니다.
+  허브 ADR 0008에 따라 fail-closed 보장은 서버의 낡은 revision 거부에 한정하며, 클라이언트 적용·OTLP에는 확장하지 않는다.
 - **manifest 변경을 push 로 알리지 않는다.** FCM 도, 오프라인 데몬용 메시지함도 두지 않는다.
   동기화는 다음 요청 또는 데몬 기동 시의 대조(pull)로 수렴시킨다.
 - 사용자 비밀번호는 우리 DB 에 두고 Spring Security 의 `PasswordEncoder`(bcrypt·Argon2 같은 salted KDF)로 해싱한다.
@@ -159,7 +162,7 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
 ### Positive
 - 인증 판단이 애플리케이션 필터 체인 한 곳에 모인다. 통과·거부의 근거를 한 코드베이스에서 읽을 수 있고, 통합 테스트로 검증할 수 있다.
 - 우리 DB 가 사용자의 유일한 진실원이다. 초대·member·installation·manifest 가 같은 트랜잭션 안에 있으므로 IdP 동기화 코드가 아예 필요 없다.
-- manifest 갱신과 토큰 재발급이 한 응답으로 묶여 fail-closed 다. 갱신에 실패하면 낡은 토큰이 남고, 낡은 토큰은 계속 거부된다. 프라이버시 정책이 클라이언트의 성실함에 의존하지 않는다.
+- manifest와 토큰 발급의 서버 트랜잭션은 원자적이다. 로컬 반영과 응답 유실은 그 범위 밖이며, 사용자 API의 revision 거부와 OTLP 정책 집행은 별개다(허브 ADR 0008).
 - 푸시 인프라(FCM), Pre Token Generation Lambda, user pool 동기화 Lambda 가 전부 필요 없어진다. 외부 의존성과 그 각각의 장애 모드가 사라진다.
 - 클레임에 tenant·role 이 들어오므로 대시보드의 tenant 격리와 역할 검사를 `@PreAuthorize` 같은 표준 수단으로 쓸 수 있다. 관리자 API 의 정적 키를 대체할 자리도 여기서 생긴다.
 - 로그인·갱신·거부 경로를 Testcontainers + MockMvc 로 전부 재현할 수 있다. Cognito 스텁이나 테스트용 user pool 이 필요 없다.
@@ -188,25 +191,12 @@ manifest 는 프롬프트·응답을 수집할지 말지를 정하는 프라이�
   dbml(`rdb-schema/dbdiagram.dbml`)과 허브 `contracts/data-model.md` 를 같은 라운드에서 뒤따라 맞췄다 —
   그래서 기록할 **의도적 차이는 남지 않았다.** 비밀번호를 실제로 읽고 쓰는 로그인 경로는 아직 없다.
   구성원 식별은 이제 `(tenant_id, email)` 유니크 하나뿐이다.
-- AT 클레임 스키마(발급자, 수명, manifest revision 필드명)와 재동기화 응답 봉투는 CLI 계약이므로 `telemetryctl` 쪽과 함께 확정한다.
-  봉투 분리(ADR 0003)를 유지해 manifest 안에 토큰을 넣지 않는다.
-- 서명 키의 보관과 회전 절차(`kid` 를 통한 무중단 교체)를 정해야 한다. 키가 하나뿐이면 유출 시 전 사용자 재로그인이다.
-- `GET /v1/manifest` 같은 재동기화 API 는 현재 enrollment 서버 명세의 범위 밖이다(§1).
-  이 결정을 구현할 때 명세의 범위와 §2 엔드포인트 표를 함께 갱신한다.
-- CLI 로그인(웹에서 로그인하고 콜백 URL 로 AT·RT 전달)의 콜백 주소 규칙과 PKCE 적용 여부는 별도 ADR 로 다룬다.
-- 데몬 → 서버 구간이 어떤 자격증명을 싣는지(사용자 AT 인지 installation 자격증명인지)를 확정해 명세 §4 에 반영한다.
-  현재 이 구간은 installation 에 귀속된 `telemetry_token` 을 쓴다 — `telemetryctl` 의 상위 전달 경로가
-  그 토큰을 OTLP 헤더에 실어 보내고, 401/403 을 받으면 토큰을 무효화한 뒤 한 번 재시도한다.
-  (클로드 코드 → 데몬 구간의 로컬 토큰은 이것과 별개인 **로컬 ingest 토큰**이다 — 위 「인증 흐름」 1번 참고.)
-  이 인증 계층이 서면 데몬 → 서버 구간을 사용자 세션 AT 로 바꿀지, installation 귀속 `telemetry_token`
-  을 유지할지 결정해 명세 §4 에 반영해야 한다.
-- **fail-closed 주장의 한계 (미결)**: 재동기화 응답은 새 AT 와 manifest 를 한 응답으로 내려주지만,
-  클라이언트에서 **새 AT 저장과 manifest 반영은 별개 동작이라 원자적이지 않다.**
-  AT 는 저장됐는데 반영이 실패하면 낡은 설정인 채로 유효한 토큰을 들게 되어
-  "적용에 실패한 클라이언트는 계속 거부된다" 가 성립하지 않는다. 채택 논의 때
-  구현에 착수하기 전에 클라이언트의 원자 적용 프로토콜(반영 완료 후에만 새 AT 를 저장)을 계약으로
-  정의하거나, fail-closed 문구를 서버 관점(서버는 낡은 revision 의 AT 를 거부한다)으로 한정해야 한다.
-  **`telemetryctl` 과 함께 정하는 계약이다.**
-- **보안 통제의 수용 기준 (미결)**: 직접 운영으로 떠안은 로그인 시도 제한(rate limit)·계정
-  잠금(lockout)·서명 키 회전은 Negative 와 위 서명 키 항목이 존재만 언급할 뿐 수용 기준이
-  결정문에 없다. 각 통제의 기준치와 담당을 구현 착수 전에 명시한다.
+- **구현(PROJ-108), 계약 리뷰 대기** — 클레임·봉투의 원본은 명세 §11·§11.1의 표다(telemetryctl 기본 브랜치에 스키마 파일도 재조회 클라이언트도 없다 — ADR 0053). manifest 안에 토큰을 넣지 않는다.
+- **완료(PROJ-107)** — ADR 0018이 secret 파일과 kid 중첩 교체를 정한다.
+- **완료(PROJ-108)** — GET /v1/manifest를 구현하고 명세 §1·§2·§11.1을 갱신했다.
+- **완료(PROJ-107)** — CLI 콜백은 허브 ADR 0007의 loopback 일회용 code와 S256 PKCE를 사용한다. AT/RT를 콜백 URL에 직접 넣지 않는다.
+- **완료(PROJ-108)** — 허브 ADR 0008은 데몬 → 서버 OTLP의 installation 귀속 ptt_를 유지한다.
+  사용자 AT/RT는 사용자 API 전용이다. PROJ-102와 데몬의 401/403 복구는 바꾸지 않는다.
+- **완료(PROJ-108)** — 원자성은 서버 트랜잭션으로 한정한다(허브 ADR 0008, backend ADR 0019).
+  클라이언트 적용 완료를 증명하지 않으며, 응답 유실은 재로그인을 요구한다.
+- **완료(PROJ-107)** — 로그인 제한·잠금·서명키 회전의 수용 기준은 ADR 0018과 user-auth-operations.md에 기록했다.

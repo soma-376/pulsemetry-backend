@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.devseed
 
+import tools.jackson.databind.JsonNode
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
@@ -12,6 +13,14 @@ import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
 
 class SeedScenarioTest {
+    @Test fun `SSO 시드에는 비밀번호와 사전 연결한 subject가 없다`() {
+        for (name in SCENARIOS) {
+            val members = scenario(name, LocalDate.parse("2026-09-28")).rows.getValue("enrollment.members")
+            assertTrue(members.all { "password_hash" !in it && "oidc_issuer" !in it })
+            assertTrue(members.all { it.containsKey("oidc_subject") && it["oidc_subject"] == null })
+        }
+    }
+
     private val date = LocalDate.of(2026, 9, 28)
     private val a = scenario("A", date)
     private val b = scenario("B", date)
@@ -54,17 +63,71 @@ class SeedScenarioTest {
         assertEquals("needs_review", copilot.path("state").asString())
         assertEquals("2026-09-27", copilot.path("contract").path("effectiveTo").asString())
         assertEquals("95", copilot.path("contract").path("monthlySeatFeeUsd").asString())
-        assertTrue(vendors.all { it.path("activeUsers7d").isNull && it.path("observation").asString() == "unobserved" })
+        // 관측은 명시 매핑으로만 붙는다(ADR 0044): claude_code → claude_team, codex → openai_biz. Cursor·Copilot 은 매핑이 없어 관측할 수 없다.
+        for (observed in listOf(claude, openai)) {
+            assertEquals("partial", observed.path("observation").asString())
+            assertTrue(observed.path("firstSeenAt").asString() < observed.path("lastSeenAt").asString())
+            assertTrue(observed.path("lastSeenAt").asString() < "2026-09-27T15:00:00Z")
+            assertTrue(observed.path("activeUsers7d").asInt() in 1..8 && observed.path("activeUsers30d").asInt() in observed.path("activeUsers7d").asInt()..8)
+        }
+        for (unmapped in listOf(cursor, copilot)) {
+            assertEquals("unobserved", unmapped.path("observation").asString())
+            assertTrue(listOf("activeUsers7d", "activeUsers30d", "firstSeenAt", "lastSeenAt").all { unmapped.path(it).isNull })
+        }
         assertEquals(8, fixture.path("usage").path("activeUsers").asInt())
-        assertEquals(10, fixture.path("policyRollout").path("applied").asInt())
+        // 판 2를 주 설치 2~8이 적용했고 9~11은 판 1에 머물며 두 번째 설치는 확인된 판이 없다.
+        assertEquals(2, fixture.path("policyRollout").path("desiredVersion").asInt())
+        assertEquals(7, fixture.path("policyRollout").path("applied").asInt())
         assertEquals(11, fixture.path("policyRollout").path("eligible").asInt())
         assertEquals(1, fixture.path("policyRollout").path("unknown").asInt())
-        assertEquals(0, fixture.path("policyRollout").path("outdated").asInt())
+        assertEquals(3, fixture.path("policyRollout").path("outdated").asInt())
+        assertEquals(2, fixture.path("onboarding").path("policy").path("version").asInt())
+        val notifiable = fixture.path("installations").toList().filter { it.path("canNotify").asBoolean() }.map { it.path("installationId").asString() }
+        assertEquals((9..11).map { id("A/installation/$it") } + id("A/installation/2/secondary"), notifiable)
+        val reported = fixture.path("installations").toList().associate { it.path("installationId").asString() to it.path("lastHeartbeatAt") }
+        assertTrue((2..11).all { reported.getValue(id("A/installation/$it")).asString() == "2026-09-27T15:00:00Z" })
+        assertTrue(reported.getValue(id("A/installation/2/secondary")).isNull)
         val serialized = encode(fixture)
-        for (secret in listOf("password_hash", "development_password", "code_hash", "invitation_codes", SEED_PASSWORD)) {
+        for (secret in listOf("password_hash", "development_password", "code_hash", "invitation_codes", "client_secret")) {
             assertFalse(serialized.contains(secret))
         }
         assertEquals(encode(frontendFixture(a)), encode(frontendFixture(scenario("A", date))))
+    }
+
+    @Test fun `A의 좌석은 사람별 원장이다 — 관리자가 기록한 수동 원천과 미연결 좌석이 있고 구매 수량으로 채우지 않는다`() {
+        val seats = a.rows.getValue("enrollment.seat_assignments")
+        val events = a.rows.getValue("enrollment.seat_assignment_events")
+        val vendor = { kind: String -> id("A/vendor/$kind") }
+        assertEquals<Map<Any?, Int>>(mapOf("manual" to 7), seats.groupingBy { it["source"] }.eachCount())
+        assertEquals<Map<String, Int>>(mapOf(vendor("claude_team") to 5, vendor("openai_biz") to 2), seats.groupingBy { it["vendor_id"] as String }.eachCount())
+        // Copilot 은 커넥터가 없는 플랜(ADR 0054)이고 Cursor 와 함께 좌석을 기록하지 않았다. 계정은 모두 이메일이다.
+        assertTrue(seats.none { it["vendor_id"] in setOf(vendor("cursor"), vendor("copilot")) }, "Copilot·Cursor 는 좌석을 기록하지 않았다")
+        assertEquals(setOf("email"), seats.map { it["account_kind"] }.toSet())
+        assertEquals<List<Any?>>(listOf("contractor@partner.example.test"), seats.filter { it["member_id"] == null }.map { it["account"] })
+        // 계약의 구매 수량(Claude 10석)과 좌석 수(5)는 다르다 — 수량에서 만들지 않았다.
+        assertNotEquals<Int>(10, seats.count { it["vendor_id"] == vendor("claude_team") })
+        // 판마다 이력 한 행. 수동은 관리자가 행위자다.
+        assertEquals(seats.map { it["id"] }.toSet(), events.map { it["seat_assignment_id"] }.toSet())
+        events.forEach { event -> assertEquals(listOf(null, id("A/member/0")), listOf(event["sync_run_id"], event["actor_id"])) }
+        // A 에는 벤더 연결이 없다(커넥터 플랜의 연결은 C 의 Cursor Enterprise 하나).
+        assertNull(a.rows["enrollment.vendor_connections"])
+        assertNull(a.rows["enrollment.seat_sync_runs"])
+        // A 만 좌석이 있다.
+        assertNull(c.rows["enrollment.seat_assignments"])
+    }
+
+    @Test fun `C의 청구 누계는 시드 원천이고 계약액과 다르며, 같은 실행의 좌석 목록은 실패해 좌석이 없다`() {
+        val billing = c.rows.getValue("enrollment.vendor_billing_periods").single()
+        val connection = c.rows.getValue("enrollment.vendor_connections").single()
+        val contract = c.rows.getValue("enrollment.vendor_contract_versions").single()["contract"].toString()
+        assertEquals(listOf("seed", null, "usage_spend", false), listOf(billing["source"], billing["connection_id"], billing["kind"], billing["finalized"]))
+        assertTrue(billing["period_start"].toString() < billing["period_end"].toString())
+        assertEquals(connection["last_billing_succeeded_at"], billing["fetched_at"])
+        // 청구 누계는 계약의 월 요금(120)과 다른 값이다 — 계약액을 복사하지 않는다.
+        assertTrue("\"monthlySeatFeeUsd\":\"120\"" in contract && billing["amount_usd"] != "120")
+        assertEquals(listOf("cursor_enterprise", null, "vendor_unavailable"), listOf(connection["connector"], connection["last_sync_succeeded_at"], connection["last_sync_error"]))
+        assertNull(c.rows["enrollment.seat_assignments"])
+        assertNull(a.rows["enrollment.vendor_billing_periods"])
     }
 
     @Test fun `같은 기준일은 동일하고 조직과 다른 기준일은 구분된다`() {
@@ -101,10 +164,68 @@ class SeedScenarioTest {
         assertEquals("owner@seed-b.example.test", owner["email"])
         assertEquals("owner", owner["role"])
         assertEquals("active", owner["status"])
-        assertFalse(owner["password_hash"]?.toString().isNullOrBlank())
+        assertFalse(owner.containsKey("password_hash"))
+        assertEquals(false, owner.containsKey("oidc_issuer"))
+        assertEquals(null, owner["oidc_subject"])
         assertNull(b.rows.getValue("enrollment.tenants").single()["onboarding_completed_at"])
         assertTrue(b.invitationCodes.isEmpty())
         assertTrue(b.events.isEmpty()); assertTrue(b.ledger.isEmpty())
+    }
+
+    @Test fun `수신 주소만 바꾸면 지문은 동일하다 — 업무 데이터 변경은 다른 지문이다`() {
+        for (day in listOf("2026-09-28", "2026-10-01")) for (name in SCENARIOS) {
+            val original = scenario(name, LocalDate.parse(day))
+            assertEquals(original.fingerprint, scenario(name, LocalDate.parse(day), "http://localhost:24316").fingerprint, "$day $name")
+            val rows = LinkedHashMap(original.rows)
+            rows["enrollment.members"] = original.rows.getValue("enrollment.members").map { row ->
+                LinkedHashMap(row).apply { put("display_name", "변경한 이름") }
+            }.toMutableList()
+            assertNotEquals(original.fingerprint, original.copy(rows = rows).fingerprint)
+        }
+        val moved = scenario("A", date, "http://localhost:24316")
+        val endpoints = moved.rows.getValue("enrollment.manifests").map { json.readTree(it["manifest"].toString()).at("/otlp/endpoint").asString() }
+        assertEquals(listOf("http://localhost:24316", "http://localhost:24316"), endpoints)
+        assertEquals(a.rows.getValue("enrollment.manifests").map { json.readTree(it["manifest"].toString()).at("/otlp/endpoint").asString() }.toSet(), setOf("http://localhost:4316"))
+        // 주소 밖의 내용은 같다.
+        assertEquals(a.rows.keys, moved.rows.keys); assertEquals(a.events, moved.events)
+        // plan 출력이 실제로 쓴 주소를 말한다.
+        assertEquals("http://localhost:24316", moved.summary()["otlp_endpoint"])
+        assertEquals("http://localhost:4316", a.summary()["otlp_endpoint"])
+    }
+
+    @Test fun `D 는 B 처럼 조직과 오너만 있는 빈 조직이다`() {
+        val d = scenario("D", date)
+        assertEquals(setOf("enrollment.tenants", "enrollment.members"), d.rows.keys)
+        assertEquals("owner@seed-d.example.test", d.rows.getValue("enrollment.members").single()["email"])
+        assertEquals("pulsemetry-seed-d", d.rows.getValue("enrollment.tenants").single()["slug"])
+        assertTrue(d.invitationCodes.isEmpty() && d.events.isEmpty() && d.ledger.isEmpty())
+        assertEquals(id("D"), d.tenantId)
+        assertTrue(setOf(a, b, c).none { it.tenantId == d.tenantId })
+    }
+
+    @Test fun `E 는 정책 1판과 설치 초대 코드가 있고 설치·수신이 없는 데몬 등록용 조직이다`() {
+        val e = scenario("E", date, "http://localhost:24316")
+        assertEquals(setOf("enrollment.tenants", "enrollment.members", "enrollment.manifests", "enrollment.organization_onboarding", "enrollment.invitations"), e.rows.keys)
+        val manifest = e.rows.getValue("enrollment.manifests").single()
+        assertEquals(listOf(1, true), listOf(manifest["version"], manifest["is_active"]))
+        val body = json.readTree(manifest["manifest"].toString())
+        assertEquals(listOf("http://localhost:24316", "1"), listOf(body.at("/otlp/endpoint").asString(), body.at("/config_revision").asString()))
+        // 정책은 확인했지만 온보딩은 끝나지 않았다(벤더·팀 없음).
+        assertNull(e.rows.getValue("enrollment.organization_onboarding").single()["completed_by"])
+        assertNull(e.rows.getValue("enrollment.tenants").single()["onboarding_completed_at"])
+        val members = e.rows.getValue("enrollment.members").associateBy { it["email"] }
+        assertEquals(listOf("owner", "active"), listOf(members.getValue("owner@seed-e.example.test")["role"], members.getValue("owner@seed-e.example.test")["status"]))
+        assertEquals("invited", members.getValue("member1@seed-e.example.test")["status"])
+        // 초대 코드는 원본이 plan 에만 나오고 행에는 해시만 있다. 아직 쓰지 않았고 기준일 뒤에 끝난다.
+        val code = e.invitationCodes.getValue("pending")
+        val invitation = e.rows.getValue("enrollment.invitations").single()
+        assertEquals(listOf(hash(code), null, members.getValue("member1@seed-e.example.test")["id"]), listOf(invitation["code_hash"], invitation["used_at"], invitation["target_member_id"]))
+        assertTrue(Instant.parse(invitation["expires_at"].toString()) > date.atStartOfDay(seoul).toInstant())
+        assertTrue(Regex("[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}").matches(code))
+        assertTrue(e.events.isEmpty() && e.ledger.isEmpty() && "enrollment.installations" !in e.rows)
+        assertEquals(mapOf("pending" to code), e.summary()["invitation_codes"])
+        // E 의 지문도 주소에 따라 바뀌지 않는다.
+        assertEquals(scenario("E", date).fingerprint, e.fingerprint)
     }
 
     @Test fun `알 수 없는 비용과 무료 계약을 구분한다`() {
@@ -192,6 +313,122 @@ class SeedScenarioTest {
             .path("appliedPolicyVersion").isNull)
     }
 
+    @Test fun `A의 주 설치는 기준 시각까지 손실 없이 수집했다고 보고했고 보고한 적 없는 설치와 C는 그대로 둔다`() {
+        val installations = a.rows.getValue("enrollment.installations").associateBy { it["id"] }
+        val heartbeats = a.rows.getValue("enrollment.installation_heartbeats")
+        val segments = a.rows.getValue("enrollment.installation_collection_segments")
+        val primaries = (2 until 12).map { id("A/installation/$it") }
+        assertEquals(primaries, heartbeats.map { it["installation_id"] })
+        assertEquals(primaries, segments.map { it["installation_id"] })
+        // 기준 시각은 기준일의 서울 자정이다.
+        val reportedAt = "2026-09-27T15:00:00Z"
+        for (report in heartbeats) {
+            val installation = installations.getValue(report["installation_id"])
+            assertEquals(reportedAt, report["received_at"])
+            // 수집 중(로컬 배선·전달·수신)이고 잃거나 밀린 것이 없다.
+            assertEquals(listOf("local", true, 0, 0, null), listOf(report["mode"], report["forwarding"], report["lost"], report["pending"], report["pending_since"]))
+            assertEquals(installation["created_at"], report["receiving_since"])
+            // 전달한 개수와 마지막 전달 시각은 그 설치의 수신 기록과 같다. 보고 시각보다 뒤가 아니다.
+            val receipts = a.ledger.filter { it["installation_id"] == report["installation_id"] }.map { it["received_time"].toString() }
+            assertTrue(receipts.isNotEmpty())
+            assertEquals(receipts.size, report["delivered"])
+            assertEquals(receipts.max(), report["last_delivered_at"])
+            assertTrue(Instant.parse(report["last_delivered_at"].toString()) <= Instant.parse(reportedAt))
+            // 적용한 판은 그 설치가 적용을 확인받은 가장 높은 판이다 — 2~8은 판 2, 9~11은 판 1.
+            val adopted = report["installation_id"] in (2..8).map { id("A/installation/$it") }
+            assertEquals(if (adopted) 2 else 1, report["applied_config_revision"])
+            assertEquals(id(if (adopted) "A/manifest/2" else "A/manifest"), report["applied_manifest_id"])
+            assertEquals(installation["architecture"], report["architecture"])
+            // 설치의 생존 시각은 마지막 보고를 받은 시각이다.
+            assertEquals(reportedAt, installation["last_seen_at"])
+            // 구간은 그 프로세스가 등록 뒤로 끊김 없이 수집한 하나다.
+            val segment = segments.single { it["installation_id"] == report["installation_id"] }
+            assertEquals(listOf(report["run_id"], installation["created_at"], reportedAt, 0), listOf(segment["run_id"], segment["from_at"], segment["to_at"], segment["lost"]))
+        }
+        assertEquals(10, heartbeats.map { it["run_id"] }.distinct().size)
+        assertTrue(heartbeats.all { Regex("[0-9a-f]{32}").matches(it["run_id"].toString()) })
+        // 두 번째 설치는 보고한 적이 없다. C는 설치 보고라는 근거가 없는 조직으로 남긴다(수집 상태 확인 불가).
+        assertNull(installations.getValue(id("A/installation/2/secondary"))["last_seen_at"])
+        for (table in listOf("enrollment.installation_heartbeats", "enrollment.installation_collection_segments")) {
+            assertFalse(c.rows.containsKey(table))
+            assertFalse(b.rows.containsKey(table))
+        }
+    }
+
+    @Test fun `A는 일주일 전 정책을 바꿨고 설치 일부만 새 판 적용을 보고했다`() {
+        val manifests = a.rows.getValue("enrollment.manifests").sortedBy { it["version"] as Int }
+        assertEquals(listOf(1 to false, 2 to true), manifests.map { it["version"] to it["is_active"] })
+        assertEquals(listOf("2026-07-29T15:00:00Z", "2026-09-20T15:00:00Z"), manifests.map { it["activated_at"] })
+        val (v1, v2) = manifests.map { json.readTree(it["manifest"].toString()) }
+        // 바뀐 것은 판 번호와 도구 세부 수집뿐이다. 사용량 시그널과 원문(프롬프트·응답) 선택은 그대로다.
+        assertEquals(listOf(1, 2), listOf(v1, v2).map { it.path("config_revision").asInt() })
+        assertEquals(v1.path("signals"), v2.path("signals"))
+        assertEquals(listOf(false, true), listOf(v1, v2).map { it.at("/privacy/collect_tool_details").asBoolean() })
+        fun others(manifest: JsonNode) = manifest.path("privacy").properties().filter { it.key != "collect_tool_details" }.map { it.key to it.value.asBoolean() }
+        assertEquals(others(v1), others(v2))
+        assertEquals(listOf(false, false), listOf(v2.at("/privacy/collect_user_prompts"), v2.at("/privacy/collect_assistant_responses")).map { it.asBoolean() })
+        // 새 판의 적용 확인은 적용한 설치에만 있다. 두 번째 설치는 새 판으로 등록했으나 적용을 보고하지 않았다.
+        val onV2 = a.rows.getValue("enrollment.installation_manifest_assignments").filter { it["manifest_id"] == id("A/manifest/2") }
+        assertEquals((2..8).map { id("A/installation/$it") }, onV2.filter { it["applied_at"] != null }.map { it["installation_id"] })
+        assertEquals(listOf(id("A/installation/2/secondary")), onV2.filter { it["applied_at"] == null }.map { it["installation_id"] })
+        assertTrue(onV2.filter { it["applied_at"] != null }.all { it["applied_at"].toString() >= "2026-09-20T15:00:00Z" })
+        // C는 판 하나만 있다.
+        assertEquals(listOf(1 to true), c.rows.getValue("enrollment.manifests").map { it["version"] to it["is_active"] })
+    }
+
+    @Test fun `A만 회수 기준과 집계 보존을 저장했고 그 판은 manifest 판과 따로다`() {
+        // ADR 0046: 저장값은 허용 목록 안이고 판 1, 저장한 사람은 정책을 바꾼 관리자, 저장 시각은 정책을 바꾼 날이다.
+        val stored = a.rows.getValue("enrollment.organization_policy_settings").single()
+        assertEquals(listOf<Any?>(id("A"), 30, 24, 1, "2026-09-20T15:00:00Z", id("A/member/1")),
+            listOf("tenant_id", "reclaim_idle_days", "aggregate_retention_months", "version", "updated_at", "updated_by").map { stored[it] })
+        assertTrue(listOf(b, c).none { it.rows.containsKey("enrollment.organization_policy_settings") })
+    }
+
+    @Test fun `A만 알림 규칙 셋을 켰고 사용 기록에는 허용 목록 밖 모델의 호출이 있다`() {
+        // ADR 0051: 켠 규칙은 근거가 있어야 한다 — 급증은 수집 구간 보고(A 에 있다), 모델·도구는 비지 않은 목록. 한도 초과는 켜지 않는다.
+        val rules = a.rows.getValue("enrollment.organization_alert_rules")
+        assertEquals(setOf("spend_spike", "model_not_allowed", "tool_unapproved"), rules.map { it["rule_id"] }.toSet())
+        assertTrue(rules.all { it["enabled"] == true && it["updated_at"] == "2026-09-20T15:00:00Z" })
+        assertTrue(a.rows.getValue("enrollment.installation_collection_segments").isNotEmpty())
+        val allowed = a.rows.getValue("enrollment.organization_alert_list_entries").filter { it["list_id"] == "allowed_models" }.map { it["entry"].toString() }
+        fun allowedModel(model: String) = allowed.any { if (it.endsWith("*")) model.startsWith(it.dropLast(1)) else model == it }
+        // 켠 시각 24시간 전부터의 사용 대표 행 중 허용 목록 밖 모델이 있어야 평가가 알림을 만든다.
+        val since = "2026-09-19T15:00:00Z"
+        val violating = a.events.filter { it["event_type"] == "model.response.usage" && it["source_time"].toString() >= since && !allowedModel(it["model"].toString()) }
+            .map { it["model"] }.toSet()
+        assertEquals(setOf("claude-opus-4", "o3"), violating)
+        assertTrue(listOf(b, c).none { it.rows.containsKey("enrollment.organization_alert_rules") })
+        // 프론트 fixture 도 같은 규칙·목록을 싣는다.
+        val fixture = json.readTree(encode(frontendFixture(a)))
+        assertEquals(setOf("spend_spike", "model_not_allowed", "tool_unapproved"), fixture.path("alertRules").toList().map { it.path("ruleId").asString() }.toSet())
+        assertEquals(allowed.sorted(), fixture.path("alertLists").path("allowed_models").toList().map { it.asString() })
+    }
+
+    @Test fun `fixture 의 관측 매핑은 enrollment 마이그레이션의 매핑과 같다`() {
+        val sql = requireNotNull(javaClass.getResourceAsStream("/db/migration/V18__vendor_catalog_observed_products.sql")).use { it.readBytes().decodeToString() }
+        val pairs = Regex("""\('([a-z_]+)', '([a-z_]+)'\)""").findAll(sql).associate { it.groupValues[1] to it.groupValues[2] }
+        assertEquals(pairs, OBSERVED_PRODUCTS)
+    }
+
+    @Test fun `C는 어느 카탈로그 제품에도 매핑되지 않는 관측을 하나 갖고 그것은 사용량 행이 아니다`() {
+        val unmapped = c.events.filter { it["product"] !in OBSERVED_PRODUCTS.keys }
+        assertEquals(listOf("unknown"), unmapped.map { it["product"] })
+        val row = unmapped.single()
+        assertEquals(listOf("generic", "vendor.unknown", "none"), listOf(row["mapping_status"], row["event_type"], row["usage_role"]))
+        assertTrue(listOf("tokens_input", "cost_estimated_usd", "session_id", "model").all { row[it] == null })
+        // A의 관측은 모두 매핑된 제품이다.
+        assertTrue(a.events.all { it["product"] in OBSERVED_PRODUCTS.keys })
+    }
+
+    @Test fun `A는 제품이 섞인 팀과 한 제품만 쓰는 팀을 모두 갖는다`() {
+        // 팀별 제품 집계(대시보드 ADR 0045)가 섞인 팀·단일 제품 팀을 모두 보여 줄 수 있어야 한다. 최근 28일 기준.
+        val start = date.minusDays(28).atStartOfDay(seoul).toInstant().toString()
+        val byTeam = a.events.filter { it["source_time"].toString() >= start && it["team_id_as_of"] != null }
+            .groupBy { it["team_id_as_of"] }.mapValues { (_, rows) -> rows.map { it["product"] }.toSet() }
+        assertTrue(byTeam.values.any { it == setOf("claude_code", "codex") })
+        assertTrue(byTeam.values.any { it.size == 1 })
+    }
+
     @Test fun `A 계약 이력의 합계와 확인자가 일치하고 초기 미입력 버전을 보존한다`() {
         val versions = a.rows.getValue("enrollment.vendor_contract_versions")
         val registered = a.rows.getValue("enrollment.managed_vendors").map { it["vendor_id"] }.toSet()
@@ -220,5 +457,28 @@ class SeedScenarioTest {
         assertEquals(tables.size, statements.size)
         assertTrue(statements.all { "WHERE" in it && id("A") in it && id("B") !in it && "TRUNCATE" !in it })
         assertFailsWith<IllegalArgumentException> { resetStatements("real-tenant", tables) }
+        // 빈 조직 D·E 도 자기 조직만 지운다.
+        for (name in listOf("D", "E")) assertTrue(resetStatements(name, tables).all { id(name) in it && id("A") !in it })
+        // 작업 기록은 구성원을 가리킨다. 대상 → 작업 → 구성원 순서로 지운다.
+        val order = resetStatements("A", tables + setOf("operations", "operation_targets", "retention_cleanup_requests")).map { it.substringAfter("enrollment.").substringBefore(" ") }
+        assertTrue(order.indexOf("operation_targets") < order.indexOf("operations") && order.indexOf("operations") < order.indexOf("members"))
+        // 보존 정리 요청은 작업을 가리킨다(ADR 0047). 작업보다 먼저 지운다.
+        assertTrue(order.indexOf("retention_cleanup_requests") in 0 until order.indexOf("operations"))
+        // 설치 보고는 설치를 가리킨다. 설치보다 먼저 지운다.
+        val reports = resetStatements("A", tables + setOf("installation_heartbeats", "installation_collection_segments")).map { it.substringAfter("enrollment.").substringBefore(" ") }
+        assertTrue(listOf("installation_heartbeats", "installation_collection_segments").all { it in reports && reports.indexOf(it) < reports.indexOf("installations") })
+        // 조직 정책 설정은 조직과 저장한 구성원을 가리킨다. 구성원보다 먼저 지운다.
+        val policies = resetStatements("A", tables + "organization_policy_settings")
+        assertTrue(policies.single { "organization_policy_settings" in it }.let { policies.indexOf(it) < policies.indexOfFirst { s -> "enrollment.members " in s } })
+        // 알림 규칙·목록·확인(ADR 0051)은 구성원을 가리킨다. 항목은 목록보다, 모두 구성원보다 먼저 지운다.
+        val alerts = resetStatements("A", tables + setOf("alert_acknowledgements", "organization_alert_list_entries", "organization_alert_lists", "organization_alert_rules"))
+            .map { it.substringAfter("enrollment.").substringBefore(" ") }
+        assertTrue(alerts.indexOf("organization_alert_list_entries") < alerts.indexOf("organization_alert_lists"))
+        assertTrue(listOf("alert_acknowledgements", "organization_alert_list_entries", "organization_alert_lists", "organization_alert_rules")
+            .all { alerts.indexOf(it) in 0 until alerts.indexOf("members") })
+        // 회수·복원 기록(ADR 0049)은 작업·좌석을 가리킨다. 좌석·작업보다 먼저 지운다.
+        val controls = resetStatements("A", tables + setOf("seat_controls", "seat_reclaim_previews", "seat_assignments", "operations"))
+            .map { it.substringAfter("enrollment.").substringBefore(" ") }
+        assertTrue(listOf("seat_controls", "seat_reclaim_previews").all { controls.indexOf(it) in 0 until minOf(controls.indexOf("seat_assignments"), controls.indexOf("operations")) })
     }
 }

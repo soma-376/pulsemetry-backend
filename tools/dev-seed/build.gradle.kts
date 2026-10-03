@@ -9,6 +9,8 @@ dependencies {
     implementation(libs.flyway.core)
     implementation(libs.jackson.module.kotlin)
     runtimeOnly(libs.postgresql)
+    testImplementation(libs.testcontainers.postgresql)
+    testImplementation(libs.testcontainers.junit.jupiter)
 }
 
 application {

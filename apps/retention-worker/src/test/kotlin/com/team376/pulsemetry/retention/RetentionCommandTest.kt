@@ -75,5 +75,17 @@ class RetentionCommandTest {
 		assertThatThrownBy { parse(*args) }.isInstanceOf(IllegalArgumentException::class.java)
 	}
 
+	@Test
+	@DisplayName("요청 모드(ADR 0047)는 값 없는 --requests 하나다 — 명령 인자·값·위치 인자와 섞지 않는다. 없으면 지금처럼 명령 하나다")
+	fun invocation() {
+		fun of(vararg args: String) = RetentionCommand.invocation(DefaultApplicationArguments(*args))
+		assertThat(of("--requests", "--spring.main.banner-mode=off")).isEqualTo(RetentionInvocation.Requests)
+		assertThat(of("--tenant=$tenant", "--retention-months=12", "--as-of=2026-09-24T10:00:00+09:00"))
+			.isEqualTo(RetentionInvocation.Single(RetentionCommand(tenant, 12, Instant.parse("2026-09-24T01:00:00Z"))))
+		for (bad in listOf(arrayOf("--requests=yes"), arrayOf("--requests", "--tenant=$tenant"), arrayOf("--requests", "--as-of=2026-09-24T10:00:00+09:00"), arrayOf("--requests", "stray"))) {
+			assertThatThrownBy { of(*bad) }.describedAs(bad.joinToString(" ")).isInstanceOf(IllegalArgumentException::class.java)
+		}
+	}
+
 	private fun parse(vararg args: String): RetentionCommand = RetentionCommand.parse(DefaultApplicationArguments(*args))
 }

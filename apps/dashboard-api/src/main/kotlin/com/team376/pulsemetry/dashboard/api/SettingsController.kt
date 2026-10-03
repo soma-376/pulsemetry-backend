@@ -17,8 +17,8 @@ import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * 설정 명세의 조회 넷. 선택 기간이 없다. 받는 파라미터: 벤더 목록 `limit`(기본 20, 최대 100)·`cursor`·`snapshotId`, 설치 `policyStatus`(`outdated`)·
- * `limit`·`cursor`·`snapshotId`.
+ * 설정 명세의 조회 넷. 선택 기간이 없다. 받는 파라미터: 벤더 목록 `limit`(기본 20, 최대 100)·`cursor`·`snapshotId`, 벤더 상세 `snapshotId`(선택 — 주면 그 기준 시각의
+ * 관측 고정을 쓴다, ADR 0044), 설치 `policyStatus`(`applied`·`outdated`·`unknown`)·`limit`·`cursor`·`snapshotId`.
  */
 @RestController
 class SettingsController(
@@ -43,7 +43,8 @@ class SettingsController(
 		@AuthenticationPrincipal principal: DashboardPrincipal,
 		@PathVariable organizationId: String,
 		@PathVariable vendorId: String,
-	): VendorResponse = settings.vendor(access.require(principal, organizationId, DashboardAction.ORGANIZATION_SETTINGS), vendorId)
+		request: HttpServletRequest,
+	): VendorResponse = settings.vendor(access.require(principal, organizationId, DashboardAction.ORGANIZATION_SETTINGS), vendorId, request.getParameter(SNAPSHOT_ID))
 
 	@GetMapping("/api/v1/organizations/{organizationId}/installations")
 	fun installations(
@@ -55,13 +56,12 @@ class SettingsController(
 		val (status, page) = QueryReader(request::getParameter).read {
 			(if (request.getParameter(POLICY_STATUS) == null) null else choice(POLICY_STATUS, POLICY_STATUSES, null)) to page(default = 20, max = 100, codec = codec)
 		}
-		return settings.installations(organization, outdatedOnly = status == OUTDATED, page, request.getParameter(SNAPSHOT_ID))
+		return settings.installations(organization, status, page, request.getParameter(SNAPSHOT_ID))
 	}
 
 	private companion object {
 		const val SNAPSHOT_ID = "snapshotId"
 		const val POLICY_STATUS = "policyStatus"
-		const val OUTDATED = "outdated"
-		val POLICY_STATUSES = mapOf(OUTDATED to OUTDATED)
+		val POLICY_STATUSES = SettingsService.PolicyStatus.BY_WIRE
 	}
 }

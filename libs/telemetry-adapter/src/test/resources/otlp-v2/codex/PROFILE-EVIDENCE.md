@@ -219,6 +219,25 @@ verified 가 되려면 필요한 것: (a) cache write 필드의 API 의미(`inpu
 | provider 근거 없는 행·세션 시작 값 전파 금지 | `synthetic/acceptance` 문서 3, `synthetic/tools-and-events` 문서 4, `real/logs-*-sse`(전 사용량 행 `provider_unresolved`) | provider 미상 그대로, 파생·가격 null |
 | 범위 밖 버전 | `synthetic/acceptance` 문서 4, `synthetic/profile-scope` | 매핑·파생 없음 |
 
+## 한도·쿼터 소진 근거 조사 — 근거 없음 (조사일 2026-10-03)
+
+알림 규칙 `quota_exceeded`(backend ADR 0051 §1)를 켤 근거, 곧 **쿼터·사용 한도 소진을 속도 제한과 구분해 나타내는 OTel 이벤트·속성**이
+공식 문서에 있는지 봤다. 조사 범위는 OpenAI 공식 문서 도메인(developers.openai.com·platform.openai.com·help.openai.com)이다.
+
+- `developers.openai.com/codex/config-advanced`·`/codex/config-reference`·`/codex/enterprise/governance` 는 모두 다른 도메인
+  (`learn.chatgpt.com/docs/…`)으로 308 이동해 조사 범위 안에서 본문을 읽지 못했다. 검색 색인의 요약은 `codex.api_request`(attempt·
+  status/success·duration·오류 상세)와 `codex.sse_event` 를 들 뿐 한도 속성을 말하지 않는다 — 요약이라 근거로 쓰지 않는다.
+- `help.openai.com` 의 Codex 사용 한도 안내는 이 환경에서 HTTP 403 이었다(위 요약의 Responses API 문서와 같다).
+- `developers.openai.com/api/docs/guides/error-codes`(platform.openai.com 에서 이동) — API 응답 본문의 429 는 "Rate limit reached for
+  requests"("You are sending requests too quickly.")와 지출·사용 한도 코드(`organization_spend_limit_exceeded`·
+  `project_spend_limit_exceeded`·`organization_usage_limit_exceeded`)로 나뉜다. 이것은 **API 응답 본문**의 구분이다. Codex 의
+  `codex.api_request` 가 싣는 것은 `http.response.status_code` 와 자유 문자열 `error.message` 이고(`CodexLogs` 의 `codex.api_request` 매핑), 그 문자열에 오류
+  코드가 들어가는지는 확인하지 못했다.
+- 실캡처: `http.response.status_code` 값은 200·401 뿐이고 429 가 없다. `error.message` 는 익명화로 가려져 있다(`<redacted len=…>`).
+
+결론: Codex OTel 에서 한도 소진을 속도 제한과 구분하는 정의된 속성·값을 찾지 못했다. `error.message` 의 문구 매칭은 계약이 아니라
+쓰지 않는다 — `codex.api_request` 매핑(`error_type = unknown`, `http_status`)은 그대로다. 해소 조건은 Claude Code 와 같다.
+
 ## 8. 스팬과 메트릭
 
 소스는 메트릭이 캡처된 0.153.4·0.154.0-alpha.6.2 와, 스팬이 캡처된 0.154.0-alpha.6.2·0.155.0-alpha.9.2 를 읽었다.

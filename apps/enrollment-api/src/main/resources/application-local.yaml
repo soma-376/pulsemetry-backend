@@ -1,7 +1,8 @@
 # Docker Compose가 DB·시드·인증 키를 준비한다. 서버는 시드를 실행하지 않는다(ADR 0031).
 spring:
   config:
-    import: "file:${PULSEMETRY_DEV_AUTH_DIR:../../build/dev-auth}/local-auth.properties"
+    import:
+      - "file:${PULSEMETRY_DEV_AUTH_DIR:../../build/dev-auth}/local-auth.properties"
 
 server:
   address: 127.0.0.1
@@ -16,9 +17,49 @@ pulsemetry:
     public-key-files:
       local: ${PULSEMETRY_DEV_AUTH_DIR:../../build/dev-auth}/public.pem
     allowed-origins: http://localhost:3000,http://localhost:3107
+    allowed-redirect-uris: ${PULSEMETRY_USER_AUTH_ALLOWED_REDIRECT_URIS:http://localhost:3000/auth/callback,http://localhost:3107/auth/callback}
+  oidc:
+    enabled: ${PULSEMETRY_OIDC_ENABLED:true}
+    allow-insecure-localhost: true
+    callback-base-url: ${PULSEMETRY_OIDC_CALLBACK_BASE_URL:http://localhost:8080}
+    failure-redirect-uri: ${PULSEMETRY_OIDC_FAILURE_REDIRECT_URI:http://localhost:3000/auth/callback}
+    # 회사 연결은 tenants에 저장한다. 비밀 원문만 서버 설정으로 주입한다.
+    callback-registration-id: cognito
+    client-secrets:
+      cognito-a: ${PULSEMETRY_COGNITO_A_CLIENT_SECRET:}
+      cognito-b: ${PULSEMETRY_COGNITO_B_CLIENT_SECRET:}
   management:
     enabled: true
     onboarding-otlp-endpoint: ${PULSEMETRY_ONBOARDING_OTLP_ENDPOINT:http://localhost:4316}
+    invitation-accept-url: ${PULSEMETRY_INVITATION_ACCEPT_URL:http://localhost:3000/login}
+  # Compose의 메일 수신 컨테이너(Mailpit)로 보낸다. 받은 메일은 http://localhost:8025 에서 본다.
+  # 암호화 키는 Compose가 만든 local-auth.properties에 있다. 계정은 수신 컨테이너가 아무 값이나 받는다.
+  mail:
+    enabled: true
+    from: ${PULSEMETRY_MAIL_FROM:no-reply@pulsemetry.example.test}
+    dispatch-interval: ${PULSEMETRY_MAIL_DISPATCH_INTERVAL:PT5S}
+    retry-interval: ${PULSEMETRY_MAIL_RETRY_INTERVAL:PT1M}
+    max-attempts: ${PULSEMETRY_MAIL_MAX_ATTEMPTS:3}
+    send-timeout: ${PULSEMETRY_MAIL_SEND_TIMEOUT:PT10S}
+    smtp:
+      host: ${PULSEMETRY_MAIL_SMTP_HOST:localhost}
+      port: ${PULSEMETRY_MAIL_SMTP_PORT:1025}
+      username: ${PULSEMETRY_MAIL_SMTP_USERNAME:local}
+      password: ${PULSEMETRY_MAIL_SMTP_PASSWORD:local}
+      starttls: false
+  inquiries:
+    enabled: true
+    duplicate-window: ${PULSEMETRY_INQUIRIES_DUPLICATE_WINDOW:PT10M}
+    rate-limit:
+      requests: ${PULSEMETRY_INQUIRIES_RATE_LIMIT_REQUESTS:10}
+      window: ${PULSEMETRY_INQUIRIES_RATE_LIMIT_WINDOW:PT1M}
+    allowed-origins: http://localhost:3000,http://localhost:3107
+    notification-recipient: ${PULSEMETRY_INQUIRIES_NOTIFICATION_RECIPIENT:sales@pulsemetry.example.test}
+  heartbeat:
+    enabled: true
+    report-interval: ${PULSEMETRY_HEARTBEAT_REPORT_INTERVAL:PT1M}
+    retry-after: ${PULSEMETRY_HEARTBEAT_RETRY_AFTER:PT5S}
+    history-retention: ${PULSEMETRY_HEARTBEAT_HISTORY_RETENTION:P400D}
   admin:
     api-token: ${PULSEMETRY_ADMIN_API_TOKEN:local-development-admin-token}
   token-hash-secret: ${PULSEMETRY_TOKEN_HASH_SECRET:local-development-token-hash-secret}
