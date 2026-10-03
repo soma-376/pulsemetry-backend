@@ -5,12 +5,12 @@ import java.time.LocalDate
 /** Compose 초기화는 ready 기록을 존중한다. 내용 비교와 초기화는 수동 명령의 책임이다. */
 object StartupSeed {
     /** Compose 초기화는 완료 기록을 존중하며 기존 데이터는 보존한다. */
-    fun run(store: SeedStore, selection: String, date: String): List<String> {
+    fun run(store: SeedStore, selection: String, date: String, otlpEndpoint: String = DEFAULT_OTLP_ENDPOINT): List<String> {
         val selected = selection.split(',').map(String::trim).distinct()
-        require(selected.isNotEmpty() && selected.all { it in listOf("A", "B", "C") }) { "시나리오는 A,B,C 중 선택하세요." }
+        require(selected.isNotEmpty() && selected.all { it in SCENARIOS }) { "시나리오는 $SCENARIO_CHOICES 중 선택하세요." }
         val asOf = if (date.isBlank()) LocalDate.now(seoul) else LocalDate.parse(date)
         store.prepare(initializeClickHouse = true)
-        return selected.map { name -> "$name: ${store.ensureOnStartup(name, asOf)}" }
+        return selected.map { name -> "$name: ${store.ensureOnStartup(name, asOf, otlpEndpoint)}" }
     }
 }
 

@@ -65,6 +65,17 @@ class UserAuthRepository(private val jdbc: JdbcClient) {
         WHERE id=:member AND oidc_subject IS NULL AND status IN ('invited','active')
     """).param("member", member).param("subject", subject).update() == 1
 
+    /** 선택한 활성 행의 해제를 회전 트랜잭션 끝까지 막는다. 부분 유니크 인덱스가 새 활성 행과의 경합을 제한한다. */
+    fun lockActiveManifest(tenant: UUID): AuthManifest? = jdbc.sql("""
+        SELECT version, manifest::text FROM enrollment.manifests
+        WHERE tenant_id=:id AND is_active=true FOR SHARE
+    """).param("id", tenant).query { r, _ -> AuthManifest(r.getInt("version"), r.getString("manifest")) }.optional().orElse(null)
+
+    fun updateRevision(session: UUID, revision: Int) {
+        check(jdbc.sql("UPDATE enrollment.user_sessions SET manifest_revision=:revision WHERE id=:id")
+            .param("revision", revision).param("id", session).update() == 1)
+    }
+
     fun activeRevision(tenant: UUID): Int? = jdbc.sql("""
         SELECT version FROM enrollment.manifests WHERE tenant_id=:id AND is_active=true
     """).param("id", tenant).query(Int::class.javaObjectType).optional().orElse(null)
@@ -159,3 +170,5 @@ data class LoginOrganization(val id: UUID, val name: String, val issuer: String)
 /** 비밀 원문은 포함하지 않는다. 로그인 왕복 중 설정 변경 검증에도 사용한다. */
 data class TenantOidcConfiguration(val tenantId: UUID, val issuer: String, val clientId: String,
     val secretRef: String, val requireVerifiedEmail: Boolean) : java.io.Serializable
+
+data class AuthManifest(val revision: Int, val json: String)

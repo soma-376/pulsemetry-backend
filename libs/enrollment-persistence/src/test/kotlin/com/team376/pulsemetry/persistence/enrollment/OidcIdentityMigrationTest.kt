@@ -42,7 +42,7 @@ class OidcIdentityMigrationTest : AbstractPersistenceIntegrationTest() {
             sql("INSERT INTO enrollment.user_refresh_tokens(token_hash,session_id,issued_at) VALUES('${"r".repeat(64)}','$session',now())")
             sql("INSERT INTO enrollment.user_authorization_codes(code_hash,member_id,redirect_uri,code_challenge,expires_at) VALUES('${"c".repeat(64)}','$member','http://127.0.0.1:12345/callback','${"p".repeat(43)}',now()+interval '1 minute')")
             val before = jdbc.sql("SELECT id,tenant_id,email,role,status,created_at,updated_at FROM enrollment.members").query().singleRow()
-            migrate("12")
+            migrate("28")
             assertThat(jdbc.sql("SELECT id,tenant_id,email,role,status,created_at,updated_at FROM enrollment.members").query().singleRow()).isEqualTo(before)
             assertThat(jdbc.sql("SELECT id FROM enrollment.installations").query(UUID::class.java).single()).isEqualTo(installation)
             assertThat(jdbc.sql("SELECT count(*) FROM enrollment.user_sessions WHERE revoked_at IS NOT NULL").query(Long::class.java).single()).isEqualTo(1)

@@ -30,7 +30,7 @@ true이면 검증된 ID Token의 비어 있지 않은 email과 boolean email_ver
    사용하지 않는 가입·password grant·implicit flow는 비활성화한다.
 3. 회사에 접근을 허용할 회원의 이메일·역할을 사전 등록한다. 신규 회원 sub는 NULL로 두며 미리 수집하지 않는다.
    최초 연결은 회사가 검증한 이메일의 현재 소유자를 이 회원으로 인정한다. 이미 연결된 sub는 자동 교체하지 않는다.
-4. DB를 백업하고 구/신 앱 혼합 운영을 중지한 뒤 Flyway를 적용한다. V13은 회원 issuer를 회사로 옮기고 sub를 유지한다.
+4. DB를 백업하고 구/신 앱 혼합 운영을 중지한 뒤 Flyway를 적용한다. V29은 회원 issuer를 회사로 옮기고 sub를 유지한다.
    한 회사에 여러 issuer가 있으면 중단한다. client ID·비밀 참조는 추측하지 않으며 회사 SSO는 비활성으로 시작한다.
 5. 회사에 검증한 OIDC 설정을 넣고 SSO를 활성화한다. 비밀 원문은 서버 비밀 맵에 주입한다.
 6. enrollment·dashboard를 새 코드로 실행하고 로그인·갱신·로그아웃을 확인한다.
@@ -68,6 +68,13 @@ pulsemetry:
       key-2026-09: /run/secrets/user-auth-public.pem
     allowed-origins:
       - https://dashboard.example.com
+    rate-limit:          # 생략하면 둘 다 60초 30회
+      entry:
+        requests: 30
+        window: 60s
+      session:
+        requests: 30
+        window: 60s
     allowed-redirect-uris:
       - https://dashboard.example.com/auth/callback
   oidc:
@@ -125,6 +132,26 @@ OIDC callback의 정상적인 실패 안내는302로 신뢰된 UI에 복귀하�
 만료된 서비스 세션/code/제한 행은 운영 유지보수에서 삭제할 수 있다.
 RT 이력은 세션 만료 전 지우지 않는다.
 
+요청 제한은 둘로 나뉘며 상태는 PostgreSQL `enrollment.auth_attempts`에 공유한다(ADR 0052).
+
+| 범주 | 요청 | 단위 | 설정 키(기본) |
+| --- | --- | --- | --- |
+| 진입 | 회사 탐색·OIDC 인가·콜백·코드 교환, 아래 자격 보유가 아닌 `/v1/auth/*` 전부 | remoteAddr | `rate-limit.entry.requests`·`window`(30회·60초) |
+| 자격 보유 | RT 갱신·로그아웃·`GET /v1/manifest`·`GET /v1/auth/me` | 세션 | `rate-limit.session.requests`·`window`(30회·60초) |
+
+토큰이 없거나 형식이 틀렸거나 모르는 토큰은 진입 한도로 센다. 자격 보유 요청의 429는 RT를 소비하기 전에 나므로
+클라이언트는 `Retry-After` 뒤에 같은 RT로 다시 요청한다. 한도는 고정 창이며 요청 수는 1 이상, 창은 1초 이상이어야 기동한다.
+
+조정 기준:
+- 진입 한도는 회사 탐색·인가 코드 추측을 막는 값이다. 올리기 전에 서버가 프록시 주소만 보는지 확인한다 —
+  그렇다면 배포 전체가 한 버킷이다. 정상 로그인이 창마다 한도를 넘는 것이 확인될 때만 올리고.
+- 세션 한도는 클라이언트 하나(브라우저 탭·CLI)의 요청량이다. 대시보드는 AT 수명(5분)마다 갱신하고 화면마다 현재 사용자를 읽는다.
+  정상 클라이언트가 이 한도를 넘으면 한도보다 먼저 클라이언트의 중복 요청(동시 갱신·반복 조회)을 줄인다.
+- 낮추면 같은 창 안의 정상 요청도 429가 된다. 실서버 E2E처럼 한 주소에서 로그인을 반복하는 작업은 진입 한도를 존중해 간격을 둔다.
+
+인증 실패 401, 제한 429, 인프라/서명 오류 503을 구분하고 429/503의 Retry-After를 따른다.
+로그·APM의 request body와 Authorization 수집은 인증 경로에서 비활성화한다.
+
 ```sql
 DELETE FROM enrollment.user_sessions WHERE expires_at < now() - interval '1 day';
 DELETE FROM enrollment.user_authorization_codes WHERE expires_at < now() - interval '1 day';
@@ -135,7 +162,7 @@ DELETE FROM enrollment.auth_attempts
 
 ## 롤백
 
-V12의 비밀번호 삭제는 비가역이다. **구 비밀번호 버전 앱만 다시 배포하면 안 된다.**
+V28의 비밀번호 삭제는 비가역이다. **구 비밀번호 버전 앱만 다시 배포하면 안 된다.**
 장애 시 신규 OIDC 시작을 닫고 SSO 버전으로 전진 수정하는 것이 기본이다.
 정말 구 버전 복귀가 필요하면 별도 승인 아래 백업 복구·신규 쓰기 영향·세션 폐기까지 계획한다.
 이 문서는 운영 전환 완료를 뜻하지 않는다.
@@ -143,3 +170,28 @@ V12의 비밀번호 삭제는 비가역이다. **구 비밀번호 버전 앱만 
 ## 근거
 
 - [Spring Security OIDC 설정](https://docs.spring.io/spring-security/reference/servlet/oauth2/login/core.html)
+
+## manifest 재동기화
+
+`GET /v1/manifest`는 사용자 RT를 회전한다. CDN/API Gateway에서 이 경로를 캐시하거나 재시도하지 않도록 한다.
+503/409로 트랜잭션이 실패하면 RT 소비는 롤백된다. 연결 종료 등 응답 유실은 성공 여부를 알 수 없으므로 재로그인한다.
+로컬 파일·키링의 적용 완료를 서버 성공과 동일시하지 않는다. OTLP `ptt_` 갱신과 사용자 RT 회전은 별개다.
+
+### 빌드에 필요한 계약
+
+enrollment-api 빌드는 telemetryctl의 `contracts/enrollment-manifest.schema.json`을 jar에 넣는다(ADR 0019).
+`PULSEMETRY_CONTRACTS_DIR`은 원본 `contracts` 디렉터리의 절대 경로이고, 생략하면 형제 `../telemetryctl/contracts`를 읽는다.
+파일이 없으면 `:apps:enrollment-api:processResources`가 실패한다.
+런타임에는 jar에 포함된 스키마를 쓰므로 telemetryctl 체크아웃이나 네트워크가 필요 없다.
+
+이미지 빌드는 `enrollment-api` target에만 named context를 전달한다.
+나머지 target은 그 빌드 스테이지를 거치지 않으므로 컨텍스트가 필요 없다.
+
+```sh
+docker buildx build --target enrollment-api \
+  --build-context telemetry-contracts=../telemetryctl/contracts -t <repo>:<tag> --load .
+```
+
+CI의 PR 검증과 develop 배포는 telemetryctl 기본 브랜치를 체크아웃해 그 `contracts`를 쓴다(ref를 고정하지 않는다).
+계약 테스트는 telemetryctl 기본 브랜치에 있는 `enrollment-envelope`·`enrollment-manifest` 두 스키마만 원본으로 읽는다. 사용자 토큰 봉투·AT 클레임·재조회 봉투의 오라클은
+[명세](enrollment-server-spec.md) §11·§11.1의 표다 — 원격 기본 브랜치에 없는 스키마를 읽게 하면 CI가 죽는다.

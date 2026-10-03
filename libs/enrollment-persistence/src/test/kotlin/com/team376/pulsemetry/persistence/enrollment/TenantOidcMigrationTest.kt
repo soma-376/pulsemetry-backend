@@ -17,7 +17,7 @@ class TenantOidcMigrationTest : AbstractPersistenceIntegrationTest() {
     @Autowired lateinit var postgres: PostgreSQLContainer
 
     @ParameterizedTest @ValueSource(booleans = [false, true])
-    fun `V13은 회사 issuer와 회원 sub를 보존하고 혼재된 issuer는 거부한다`(mixed: Boolean) {
+    fun `V29은 회사 issuer와 회원 sub를 보존하고 혼재된 issuer는 거부한다`(mixed: Boolean) {
         val database = "v13_probe_" + UUID.randomUUID().toString().replace("-", "")
         fun admin(sql: String) = DriverManager.getConnection(postgres.jdbcUrl, postgres.username, postgres.password).use {
             it.createStatement().use { statement -> statement.execute(sql) }
@@ -30,17 +30,17 @@ class TenantOidcMigrationTest : AbstractPersistenceIntegrationTest() {
                 .schemas("enrollment").defaultSchema("enrollment").target(version).load().migrate()
             fun sql(statement: String) { jdbc.sql(statement).update() }
             val tenant = UUID.randomUUID()
-            migrate("12")
+            migrate("28")
             sql("INSERT INTO enrollment.tenants(id,name) VALUES('$tenant','기존 회사')")
             sql("INSERT INTO enrollment.members(tenant_id,email,role,oidc_issuer,oidc_subject) VALUES('$tenant','a@example.test','owner','https://idp.example.test','sub-a')")
             sql("INSERT INTO enrollment.members(tenant_id,email,oidc_issuer,oidc_subject) VALUES('$tenant','b@example.test','${if (mixed) "https://other.example.test" else "https://idp.example.test"}','sub-b')")
             val before = jdbc.sql("SELECT id,tenant_id,email,role,oidc_subject FROM enrollment.members ORDER BY id").query().listOfRows()
             if (mixed) {
-                assertThatThrownBy { migrate("13") }.hasStackTraceContaining("여러 OIDC issuer")
+                assertThatThrownBy { migrate("29") }.hasStackTraceContaining("여러 OIDC issuer")
                 assertThat(jdbc.sql("SELECT count(*) FROM enrollment.members WHERE oidc_issuer IS NOT NULL").query(Long::class.java).single()).isEqualTo(2)
                 return
             }
-            migrate("13")
+            migrate("29")
             assertThat(jdbc.sql("SELECT id,tenant_id,email,role,oidc_subject FROM enrollment.members ORDER BY id").query().listOfRows()).isEqualTo(before)
             assertThat(jdbc.sql("SELECT oidc_issuer FROM enrollment.tenants").query(String::class.java).single()).isEqualTo("https://idp.example.test")
             assertThat(jdbc.sql("SELECT sso_enabled FROM enrollment.tenants").query(Boolean::class.java).single()).isFalse()

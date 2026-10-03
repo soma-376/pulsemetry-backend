@@ -19,12 +19,17 @@ internal fun prepareAuthKeys(directory: Path) {
         Files.writeString(publicKey, pem("PUBLIC KEY", pair.public.encoded), StandardOpenOption.CREATE_NEW)
     }
     check(Files.exists(privateKey) && Files.exists(publicKey)) { "키 파일이 일부만 있습니다. 기존 키를 확인하세요." }
-    val encryptionKey = directory.resolve("response-key.txt")
-    if (!Files.exists(encryptionKey)) Files.writeString(encryptionKey,
-        Base64.getEncoder().encodeToString(ByteArray(32).also(SecureRandom()::nextBytes)), StandardOpenOption.CREATE_NEW)
-    val responseKey = Files.readString(encryptionKey).trim()
-    check(Base64.getDecoder().decode(responseKey).size == 32) { "응답 암호화 키는 Base64 32바이트여야 합니다." }
-    // 기존 response-key.txt를 그대로 사용해 이전 개발 환경의 암호화 응답도 계속 읽는다.
-    Files.writeString(directory.resolve("local-auth.properties"), "pulsemetry.management.response-encryption-key=$responseKey\n")
+    // 기존 키 파일을 그대로 사용해 이전 개발 환경의 암호화 응답과 대기 중인 메일 본문도 계속 읽는다.
+    fun aesKey(name: String, label: String): String {
+        val file = directory.resolve(name)
+        if (!Files.exists(file)) Files.writeString(file,
+            Base64.getEncoder().encodeToString(ByteArray(32).also(SecureRandom()::nextBytes)), StandardOpenOption.CREATE_NEW)
+        return Files.readString(file).trim().also { check(Base64.getDecoder().decode(it).size == 32) { "$label 암호화 키는 Base64 32바이트여야 합니다." } }
+    }
+    val responseKey = aesKey("response-key.txt", "응답")
+    // 메일 키는 나중에 생겼다. 기존 디렉터리에는 이 실행에서 새로 만든다.
+    val mailKey = aesKey("mail-key.txt", "메일")
+    Files.writeString(directory.resolve("local-auth.properties"),
+        "pulsemetry.management.response-encryption-key=$responseKey\npulsemetry.mail.encryption-key=$mailKey\n")
     println("개발용 인증 키 준비 완료")
 }

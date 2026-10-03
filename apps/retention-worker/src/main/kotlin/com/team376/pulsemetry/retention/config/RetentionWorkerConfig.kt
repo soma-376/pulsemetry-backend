@@ -6,10 +6,15 @@ import com.team376.pulsemetry.persistence.telemetry.RetentionFence
 import com.team376.pulsemetry.persistence.telemetry.RetentionPurge
 import com.team376.pulsemetry.persistence.telemetryops.RetentionOperationStore
 import com.team376.pulsemetry.persistence.telemetryops.TenantRetentionBoundaryStore
+import com.team376.pulsemetry.persistence.enrollment.operation.OperationStore
+import com.team376.pulsemetry.persistence.enrollment.operation.RetentionCleanupRequests
 import com.team376.pulsemetry.retention.RetentionCommandRunner
 import com.team376.pulsemetry.retention.RetentionJob
+import com.team376.pulsemetry.retention.RetentionRequestProcessor
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.transaction.PlatformTransactionManager
 import java.time.Clock
 import javax.sql.DataSource
 
@@ -52,6 +57,20 @@ class RetentionWorkerConfig {
 		clock = clock,
 	)
 
+	/** 요청 모드(ADR 0047) — enrollment 의 보존 정리 요청과 공통 작업 기록을 같은 DB 에서 쓴다. */
 	@Bean
-	fun retentionCommandRunner(job: RetentionJob): RetentionCommandRunner = RetentionCommandRunner(job)
+	fun retentionRequestProcessor(
+		dataSource: DataSource,
+		transactionManager: PlatformTransactionManager,
+		job: RetentionJob,
+		properties: RetentionWorkerProperties,
+		clock: Clock,
+	): RetentionRequestProcessor {
+		val jdbc = JdbcClient.create(dataSource)
+		return RetentionRequestProcessor(RetentionCleanupRequests(jdbc, transactionManager, OperationStore(jdbc, transactionManager, clock)), job, clock,
+			properties.requests?.lease, properties.requests?.maxRuns)
+	}
+
+	@Bean
+	fun retentionCommandRunner(job: RetentionJob, requests: RetentionRequestProcessor): RetentionCommandRunner = RetentionCommandRunner(job, requests)
 }

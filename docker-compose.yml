@@ -1,4 +1,4 @@
-# 로컬 개발용 DB와 일회성 Kotlin 시드. Spring 서버는 호스트에서 Gradle로 실행한다.
+# 로컬 개발용 DB·메일 수신 컨테이너와 일회성 Kotlin 시드. Spring 서버는 호스트에서 Gradle로 실행한다.
 # dev-seed가 기존 마이그레이션과 A/B/C 시드를 준비한다(ADR 0032).
 # 테스트는 이 컨테이너들을 쓰지 않는다 — Testcontainers 가 매번 격리된 인스턴스를 띄운다.
 services:
@@ -50,6 +50,19 @@ services:
       timeout: 3s
       retries: 10
 
+  # 메일 수신 컨테이너. local 프로필의 서버가 보낸 메일을 밖으로 내보내지 않고 받아 둔다(ADR 0037).
+  # SMTP 1025, 받은 메일의 화면·조회 API 8025. 컨테이너를 지우면 받은 메일도 사라진다.
+  mailpit:
+    image: axllent/mailpit:v1.27
+    container_name: pulsemetry-mailpit
+    environment:
+      # 서버 설정은 SMTP 계정을 요구한다. 수신 컨테이너는 아무 계정이나 받는다.
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
   dev-seed:
     build:
       context: .
@@ -71,6 +84,8 @@ services:
       # 빈 날짜는 서울 기준 오늘. 완료된 시드는 날짜가 달라져도 보존한다.
       PULSEMETRY_LOCAL_SEED_DATE: ${PULSEMETRY_LOCAL_SEED_DATE:-}
       PULSEMETRY_LOCAL_SEED_SCENARIOS: ${PULSEMETRY_LOCAL_SEED_SCENARIOS:-A,B,C}
+      # 시드 manifest 의 수신 주소. 비우면 http://localhost:4316. 지문에 들지 않는다(tools/dev-seed/README.md).
+      PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT: ${PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT:-}
 
 volumes:
   pulsemetry-postgres-data:

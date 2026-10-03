@@ -44,7 +44,7 @@ class BinaryApiTest {
 	fun setUp() {
 		binariesDir = Path.of(properties.binaries.dir)
 		Files.createDirectories(binariesDir)
-		Files.list(binariesDir).use { paths -> paths.forEach(Files::delete) }
+		Files.walk(binariesDir).use { paths -> paths.sorted(java.util.Comparator.reverseOrder()).filter { it != binariesDir }.forEach(Files::delete) }
 	}
 
 	private fun place(filename: String, content: String = "fake-binary") {
@@ -89,6 +89,52 @@ class BinaryApiTest {
 			"pulsemetry_linux_amd64",
 			"pulsemetry_linux_arm64",
 		)
+	}
+
+	// ── 릴리스 산출물 (ADR 0053) ─────────────────────────────────────────────
+
+	private fun sha256(content: String) = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(content.toByteArray()))
+
+	/**
+	 * telemetryctl 릴리스 `v<version>` 을 받아 둔 모양으로 놓는다 — 데몬 자산 `pulsemetry_cli_{os}_{arch}[.exe]` 와
+	 * 원격 `scripts/release.mjs` 의 `checksums` 모양(이름 순, `<해시>  <이름>\n`)의 `SHA256SUMS`. [sums] 로 목록의 해시를 바꿔 넣을 수 있다.
+	 */
+	private fun release(version: String, assets: Map<String, String>, sums: Map<String, String> = assets) {
+		val dir = Files.createDirectories(binariesDir.resolve("v$version"))
+		assets.forEach { (name, content) -> Files.writeString(dir.resolve(name), content) }
+		Files.writeString(dir.resolve("SHA256SUMS"), sums.toSortedMap().entries.joinToString("") { (name, content) -> "${sha256(content)}  $name\n" })
+	}
+
+	@Test
+	@DisplayName("릴리스 디렉터리가 있으면 공개 이름으로 그 릴리스의 데몬 자산을 내려준다")
+	fun servesReleaseAssetUnderPublicName() {
+		release("0.2.0", mapOf("pulsemetry_cli_darwin_arm64" to "darwin-0.2.0", "pulsemetry_cli_windows_amd64.exe" to "windows-0.2.0",
+			"pulsemetry_gui_darwin_arm64.dmg" to "gui"))
+
+		val darwin = get("/bin/pulsemetry_darwin_arm64")
+		assertThat(darwin.statusCode()).isEqualTo(200)
+		assertThat(darwin.body()).isEqualTo("darwin-0.2.0")
+		assertThat(darwin.headers().firstValue("Content-Disposition")).hasValue("attachment; filename=\"pulsemetry_darwin_arm64\"")
+		assertThat(get("/bin/pulsemetry_windows_amd64.exe").body()).isEqualTo("windows-0.2.0")
+		// 릴리스에 없는 대상, 릴리스 자산 이름, SHA256SUMS·GUI 패키지는 내려주지 않는다.
+		for (path in listOf("/bin/pulsemetry_linux_amd64", "/bin/pulsemetry_cli_darwin_arm64", "/bin/SHA256SUMS", "/bin/pulsemetry_gui_darwin_arm64.dmg")) {
+			assertThat(get(path).statusCode()).describedAs(path).isEqualTo(404)
+		}
+	}
+
+	@Test
+	@DisplayName("릴리스가 있으면 SHA256SUMS 로 확인한 파일만 내려주고 평면 파일로 물러나지 않는다")
+	fun releaseServesOnlyVerifiedAssets() {
+		place("pulsemetry_darwin_arm64", "flat")
+		place("pulsemetry_linux_amd64", "flat")
+		// 자산의 내용이 SHA256SUMS 와 다르다.
+		release("0.2.0", mapOf("pulsemetry_cli_darwin_arm64" to "tampered"), sums = mapOf("pulsemetry_cli_darwin_arm64" to "darwin-0.2.0"))
+		assertThat(get("/bin/pulsemetry_darwin_arm64").statusCode()).isEqualTo(404)
+		// 릴리스에 없는 대상의 평면 파일도 내려주지 않는다 — 이 서버가 판을 말할 수 없는 파일이다.
+		assertThat(get("/bin/pulsemetry_linux_amd64").statusCode()).isEqualTo(404)
+		// 판이 가장 높은 릴리스가 이 서버의 릴리스다.
+		release("0.10.0", mapOf("pulsemetry_cli_darwin_arm64" to "darwin-0.10.0"))
+		assertThat(get("/bin/pulsemetry_darwin_arm64").body()).isEqualTo("darwin-0.10.0")
 	}
 
 	// ── 404 ──────────────────────────────────────────────────────────────────

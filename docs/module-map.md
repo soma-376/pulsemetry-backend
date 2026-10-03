@@ -28,6 +28,7 @@ V9의 활성 제품 유일 제약과 계약 정정 규칙은 Enrollment 명세 �
 [ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) ·
 [ADR 0023](adr/0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md) ·
 [ADR 0024](adr/0024-조직별-보존-삭제-경계는-RDS-가-진실원이고-분석-INSERT-는-ClickHouse-fence-를-서버에서-다시-검사한다.md) ·
+[ADR 0048](adr/0048-좌석-원장은-벤더-계정별-배정-이력이고-연결된-등록-제품에서는-커넥터-동기화가-권위를-갖는다.md) ·
 [허브 ADR 0004](../../docs/adr/0004-telemetry-pipeline-repo-merge.md) ·
 [허브 ADR 0005](../../docs/adr/0005-single-app-telemetry-topology.md) ·
 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)
@@ -46,11 +47,16 @@ pulsemetry-backend
 ├── apps/
 │   ├── enrollment-api/              com.team376.pulsemetry.enrollment
 │   │                                ├ auth/           사용자 인증 HTTP·필터·키 설정
-│   │                                └ management/     온보딩·정책·팀·초대·제품·계약 관리 HTTP
+│   │                                ├ inquiry/        로그인 전 도입 문의 접수 HTTP·출처별 제한 필터
+│   │                                ├ installation/   설치 보고(heartbeat) 수신 — 본문 해석·적용 확인·기록 (ADR 0040). telemetryctl 기본 브랜치에 송신 없음 (ADR 0053)
+│   │                                ├ mail/           메일 설정 바인딩·SMTP 발송 구현·발송 작업의 주기 실행 (ADR 0037)
+│   │                                ├ update/         데몬 업데이트 확인 — 릴리스 디렉터리의 판과 SHA256SUMS 확인·SemVer 비교, /bin 서빙과 같은 확인 (허브 ADR 0011, ADR 0053)
+│   │                                ├ seat/           벤더 연결 설정·커넥터 조립·좌석 동기화와 회수·복원 벤더 제어의 주기 실행 (ADR 0048·0049·0050)
+│   │                                └ management/     온보딩·정책·팀·초대·제품·계약·좌석·벤더 연결·알림 규칙·알림 확인 관리 HTTP
 │   ├── telemetry-ingest/            com.team376.pulsemetry.telemetry
 │   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
 │   ├── dashboard-api/               com.team376.pulsemetry.dashboard
-│   │                                분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐 (ADR 0022)
+│   │                                분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시와 알림 평가 기록뿐 (ADR 0022·0051)
 │   │                                ├ api/            HTTP 표현 계층 — 화면별 컨트롤러
 │   │                                ├ analytics/      공통 계산기(축별 합계·null 규칙) · 화면별 응답 조립
 │   │                                ├ authentication/ 인증 포트 · 기본 거부 구현 · 필터 · 역할 대응
@@ -60,6 +66,7 @@ pulsemetry-backend
 │   │                                ├ source/         원천 읽기 — ClickHouse 읽기 전용 클라이언트
 │   │                                ├ cache/          dashboard_cache — 캐시 클라이언트 · 두 캐시 스키마 적용 (ADR 0023)
 │   │                                ├ snapshot/       snapshot — build(원본 한 번 선택·참조 복제·공급자·모델 해석) · 공개 CAS · 만료 · 정리
+│   │                                ├ alert/          알림 평가 주기 작업·평가 기록(자기 스키마)·알림 조회 (ADR 0051)
 │   │                                ├ store/          ClickHouse 연결 · 파라미터 · 저장소 실패 분류(원천·캐시 공용)
 │   │                                ├ error/          오류 본문 · 코드 · 예외 매핑
 │   │                                └ config/
@@ -71,7 +78,9 @@ pulsemetry-backend
 │                                    Docker 전용 개발 데이터·인증 키 초기화와 시드 관리
 └── libs/
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
-    │                                └ enrollment 엔티티·사용자 인증 저장소·관리 명령·DB 카탈로그 · Flyway 마이그레이션
+    │                                └ enrollment 엔티티·사용자 인증 저장소·관리 명령·문의 접수·메일 outbox·공통 작업 기록·설치 보고·설치 업데이트 안내(ADR 0043)·DB 카탈로그 · Flyway 마이그레이션
+    │                                  ├ seat/  좌석 원장·벤더 연결(자격증명 암호화)·동기화 실행 기록 (ADR 0048)
+    │                                  └ alert/ 알림 규칙의 켜짐·모델·도구 목록과 켜기 판정 (ADR 0051)
     ├── security/                    com.team376.pulsemetry.security
     │                                └ 사용자 JWT·세션·OIDC 신원 연결과 OTLP 경로의 ptt_ 검증 · telemetry token 해시
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
@@ -91,13 +100,19 @@ pulsemetry-backend
     │                                └ observation/ 관측 보강 (ADR 0020 §5)
     ├── telemetry-persistence/       com.team376.pulsemetry.persistence.telemetry
     │                                ClickHouse 스키마 · 분석 테이블 sink · 수신 ledger sink · 보존 fence·삭제 — 쓰기 소유 모듈
-    └── telemetry-ops-persistence/   com.team376.pulsemetry.persistence.telemetryops
-                                     RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필 · 삭제 경계 · 보존 작업 기록
+    ├── telemetry-ops-persistence/   com.team376.pulsemetry.persistence.telemetryops
+    │                                RDS telemetry_ops 스키마(수집 운영 기록) · 생애 요약 · 백필 · 삭제 경계 · 보존 작업 기록
+    └── vendor-connector/            com.team376.pulsemetry.connector.vendor
+                                     벤더 좌석 커넥터 — 포트·커넥터 설명·조립 검사·벤더 넷의 구현(JDK HTTP)·실계정 검증 태스크 (ADR 0048). Spring 없음
 ```
 
 `settings.gradle.kts`의 `include`는 위 모듈들이다. **5절이 예고한 모듈이 전부 섰다.**
 `:libs:telemetry-ops-persistence`는 5절 밖에서 더해졌다 — 수집 운영 기록의 RDS 쪽이 ClickHouse와 아웃바운드
 기술이 달라 나뉜다([ADR 0021](adr/0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md)).
+
+`:libs:vendor-connector`도 5절 밖이다. 아웃바운드 기술(벤더 HTTP)이 영속성(JDBC)과 다르고, 소비자가 처음부터 둘이다 — enrollment-api(연결 확인·동기화)와
+dashboard-api(커넥터 설명의 capability 표시). 역할 이름은 `connector`로 정했다(`<역할>.<컨텍스트>` = `connector.vendor`). Spring에 의존하지 않고
+구현의 조립은 앱이 한다(ADR 0011). `:libs:enrollment-persistence`가 이 모듈을 `api()`로 쓴다 — 좌석 원장의 공개 함수가 벤더 목록 타입(`VendorSeat`)을 받는다.
 
 `:apps:telemetry-ingest`는 조립 앱이다(PROJ-105). 도메인 로직을 담지 않는다 — 빈 등록·필터 체인
 배선·설정 바인딩과 단계 호출이 전부이고, 그것이 ADR 0011이 라이브러리에서 걷어낸 몫이다.
@@ -114,20 +129,34 @@ pulsemetry-backend
 `dashboard_cache`의 쓰는 주체는 이 앱 하나라 쓰기 소유가 앱에 있고, DDL도 이 앱이 기동 때 캐시 계정으로 적용한다 — ClickHouse는
 `clickhouse/dashboard-cache/`의 멱등 파일 전량(ADR 0015 규약), RDS는 `db/dashboard-cache/`의 별도 Flyway 인스턴스(이력
 `dashboard_cache.flyway_schema_history`)다([ADR 0023](adr/0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md)).
+같은 RDS 스키마에 알림 평가 기록(`alerts`·`alert_evaluations`·`alert_evaluation_leases`)도 이 앱이 쓴다([ADR 0051](adr/0051-알림-규칙은-근거가-있을-때만-켜고-평가는-dashboard-api-의-주기-작업이-자기-스키마에-남긴다.md) — ADR 0022 §2 개정).
+snapshot 이 아니라서 snapshot 정리 작업은 지우지 않는다.
+
+**백그라운드 작업의 위치** — 새 배포 단위를 만들지 않는다. 여러 인스턴스는 DB 선점으로 나눈다.
+
+| 작업 | 앱·패키지 | 근거 |
+| --- | --- | --- |
+| 메일 발송(초대·문의 통지·설치 업데이트 안내) | enrollment-api `mail/` | ADR 0037·0043 |
+| 좌석 동기화·청구 누계 읽기·회수·복원의 벤더 제어 | enrollment-api `seat/`(한 주기 작업, 제어가 먼저) | ADR 0048·0049·0050 |
+| snapshot 정리 | dashboard-api `snapshot/` | ADR 0023 |
+| 알림 평가 | dashboard-api `alert/` | ADR 0051 |
+| 보존 정리 요청 실행 | retention-worker `--requests`(일회성 실행 — 스케줄은 infra) | ADR 0047 |
 
 `:apps:retention-worker`는 조직별 보존 삭제 작업이다([ADR 0024](adr/0024-조직별-보존-삭제-경계는-RDS-가-진실원이고-분석-INSERT-는-ClickHouse-fence-를-서버에서-다시-검사한다.md), Proposed).
 서버가 아니라 명령 하나(`--tenant --retention-months --as-of`)를 실행하고 종료 코드로 끝난다. 쓰는 대상 — 경계·작업 기록(RDS `telemetry_ops`),
 fence·두 분석 테이블의 DELETE(ClickHouse) — 의 코드는 각 쓰기 소유 모듈(`:libs:telemetry-ops-persistence`·`:libs:telemetry-persistence`)에
 있고 이 앱은 조립만 한다. DDL 은 적용하지 않는다. 분석 테이블 모듈이 보강 단계를 타고 `:libs:enrollment-persistence`를 끌어오므로
 JPA·Flyway 자동설정을 끈다 — 켜 두면 대상 DB 의 `public`에 Flyway 이력 테이블이 생긴다.
+요청 모드(`--requests`, [ADR 0047](adr/0047-집계-보존-단축은-보존-정리-요청으로-남기고-보존-작업의-요청-모드가-실행한다.md))는 enrollment 의 보존 정리 요청을 선점해 같은 삭제를 실행하고
+결과를 공통 작업 기록에 옮긴다 — 그 코드는 `:libs:enrollment-persistence`(`operation`)에 있고 이 앱은 그 모듈에 직접 의존한다.
 두 번째 쓰는 주체가 생기면 `:libs:dashboard-persistence`로 내린다.
 원천 연결은 앱이 직접 세운다 — RDS는 `pulsemetry.dashboard.rds.source`로 만든 읽기 전용 주 DataSource(JPA·`JdbcClient`가 쓴다, Flyway는 끈다),
 ClickHouse는 `source/`의 읽기 전용 클라이언트다. 적재 모듈의 `ClickHouseHttpClient`와 따로 두는 것은 요구가 반대라서다(계정 인증·요청마다의
 `readonly`·결과 상한·행 해석이 필요하고 쓰기가 없다).
 
-`:libs:security`에는 아직 **OTLP 경로의 `ptt_` 검증만** 있다(PROJ-102). 관리자 API 경로의 AT 검증은
-PROJ-107이 같은 모듈에 얹는다. 하위 패키지는 그때 나눈다 — 지금은 내용물 묶음이 하나뿐이라
-3절의 판정 기준이 나눌 근거를 주지 않는다.
+`:libs:security`는 두 묶음이다 — OTLP 경로의 `ptt_` 검증·telemetry token 해시(PROJ-102)와 사용자 인증(JWT 발급·검증,
+세션·RT 회전, 암호 검증 — `user/`, ADR 0018·0026). enrollment-api 가 사용자 인증 경로를, dashboard-api 가 인증 어댑터(AT·현재 세션 검증)를,
+telemetry-ingest 가 `ptt_` 필터를 조립한다.
 
 `:libs:telemetry-collector`는 5절이 예고한 단계 모듈 중 첫 번째다(PROJ-114). 하위 패키지는 5절이
 정한 대로 `masking/`·`archive/` 둘이고, 수신 관련 타입은 모듈 루트 패키지에 둔다.
@@ -175,14 +204,20 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 |---|---|---|
 | directory | `tenants` · `members` · `teams` · `team_memberships` | `enrollment-api`가 진입, `:libs:enrollment-persistence`에 사용자·팀 관리 저장 구현 |
 | enrollment | `invitations` · `installations` · `installation_credentials` · `telemetry_tokens` · `installation_manifest_assignments` | `enrollment-api` |
-| policy / onboarding | `manifests` · `organization_onboarding` · tenants의 완료 시각 | `:libs:enrollment-persistence` — enrollment-api의 최초 정책·정책 수정·완료 명령 |
+| policy / onboarding | `manifests` · `organization_onboarding` · `organization_policy_settings` · tenants의 완료 시각 | `:libs:enrollment-persistence` — enrollment-api의 최초 정책·정책 수정·완료 명령. 조직 정책 설정(회수 기준·집계 보존)은 같은 수집 정책 저장이 manifest와 따로 쓰고, dashboard-api는 읽기 전용 계정으로 읽는다 (ADR 0046) |
 | legacy contract | `contracts` · `contract_term_commitments` · `contract_token_discounts` · `contract_memberships` | 기존 기간 약정. 좌석 계약 관리 API에서 수정·환산하지 않음 |
 | registered product / seat contract | `managed_vendors` · `vendor_contract_versions` · `management_commands` | `:libs:enrollment-persistence` — 등록·정정·이름 변경·보관·멱등 명령 저장 |
+| seat ledger / vendor connection | `vendor_connections` · `seat_sync_runs` · `seat_assignments` · `seat_assignment_events` · `seat_reclaim_previews` · `seat_controls` · `vendor_billing_periods` | `:libs:enrollment-persistence`의 좌석 원장(`seat`) — enrollment-api의 연결 명령(추가·교체·삭제·확인)과 등록 제품 보관이 연결을, 원장 연산(수동·CSV 기록, enrollment-api `seat/`의 주기 동기화가 선점·반영·실패 기록)이 좌석·실행·이력을 쓴다. "지금 동기화"는 공통 작업(`seat_sync`)으로 접수한다. 회수·복원(`SeatControl`, ADR 0049)이 미리보기와 대상별 실행 방식을 쓰고, 같은 주기 작업이 벤더 제어 대상을 선점해 커넥터를 부른다. 청구 누계(`VendorBillingStore`, ADR 0050)는 같은 동기화 실행이 쓴다. 구매 수량(`tiers[].seats`)으로 채우지 않고 구 `contracts`·`contract_memberships`와 무관하다. dashboard-api는 읽기 전용 계정으로 연결의 비밀 아닌 열만 읽는다 (ADR 0048) |
 | user authentication | `user_sessions` · `user_refresh_tokens` · `user_authorization_codes` · `auth_attempts` | `:libs:enrollment-persistence`의 인증 저장소. 정책·검증은 `:libs:security`, HTTP 조립은 enrollment-api |
-| vendor catalog | `vendor_catalog_vendors` · `vendor_catalog_products` · `vendor_catalog_plans` | `:libs:enrollment-persistence`의 Flyway가 초기화. 관리자 편집 API는 없음 |
+| vendor catalog | `vendor_catalog_vendors` · `vendor_catalog_products` · `vendor_catalog_plans` · `vendor_catalog_observed_products` | `:libs:enrollment-persistence`의 Flyway가 초기화. 관리자 편집 API는 없음. 관측 제품 매핑(`vendor_catalog_observed_products`)은 dashboard-api가 읽기 전용 계정으로 읽는다 (ADR 0044) |
+| alert rule | `alert_rule_definitions` · `organization_alert_rules` · `organization_alert_lists` · `organization_alert_list_entries` · `alert_acknowledgements` | `:libs:enrollment-persistence`의 알림 규칙 저장(`alert`) — enrollment-api의 규칙 켜기·끄기·목록 교체·알림 확인 명령. 확인 명령은 알림이 그 조직의 것인지 `dashboard_cache.alerts`를 읽어 본다. 규칙 정의는 Flyway가 넣는 기준 데이터다. 켜기 판정(`AlertRules`)은 dashboard-api 설정 조회가 읽기 전용 계정으로 같이 쓴다. 평가 기록은 이 도메인이 아니다 — dashboard-api가 자기 스키마에 쓴다 (ADR 0051) |
+| mail | `mail_outbox` | `:libs:enrollment-persistence`의 메일 outbox(`mail`) — 업무 쓰기가 같은 트랜잭션에서 적재하고, enrollment-api의 발송 작업이 선점해 결과를 기록 (ADR 0037) |
+| inquiry | `inquiries` · `inquiry_attempts` | `:libs:enrollment-persistence`의 문의 저장소(`inquiry`) — enrollment-api의 공개 접수 명령. 조직에 속하지 않으며 조직·계정·초대를 만들지 않음 |
+| installation report | `installation_heartbeats` · `installation_collection_segments` | `:libs:enrollment-persistence`의 설치 보고 저장소(`installation`) — enrollment-api가 데몬 heartbeat를 받아 기록. `installations.last_seen_at`·`installation_manifest_assignments.applied_at`은 enrollment 도메인 그대로 enrollment-api가 씀 (ADR 0040). dashboard-api는 읽기 전용 계정으로 읽어 수집 상태를 판정함 (ADR 0041) |
+| operation | `operations` · `operation_targets` · `retention_cleanup_requests` | `:libs:enrollment-persistence`의 공통 작업 기록(`operation`) — 작업을 만드는 명령과 그 실행 주체가 생성·전이를 기록하고, dashboard-api는 읽기 전용 계정으로 조회만 함 (ADR 0039). 생산자는 enrollment-api의 설치 업데이트 안내(`installation`의 `InstallationNotifier` — 메일 발송 결과를 대상 결과로 옮김, ADR 0043)와 수집 정책 저장의 보존 정리 요청(`RetentionCleanupRequests` — 집계 보존 단축이 요청과 작업을 만들고, `:apps:retention-worker`의 요청 모드가 선점·결과 기록, ADR 0047), 좌석 동기화 요청(`SeatLedger.requestSync` — 주기 동기화가 가져가 결과 기록, ADR 0048), 좌석 회수·복원(`SeatControl` — 벤더 제어는 주기 작업이, 관리자 조치는 확인 명령이 결과 기록, ADR 0049) |
 | telemetry | ClickHouse `enriched_events` · `telemetry_events` · `telemetry_metric_points` · `telemetry_ingest_ledger` · `telemetry_retention_fence` | `:libs:telemetry-persistence` |
 | telemetry ops | RDS `telemetry_ops.tenant_ingest_summary` · `tenant_summary_backfill` · `tenant_retention_boundary` · `retention_operations` | `:libs:telemetry-ops-persistence` |
-| dashboard cache | RDS `dashboard_cache.snapshots` · `snapshot_teams` · `snapshot_members`, ClickHouse `dashboard_cache.snapshot_usage` · `snapshot_observed_days` · `snapshot_member_activity`(+ 입구 `snapshot_intake`·뷰 둘) | `:apps:dashboard-api` |
+| dashboard cache | RDS `dashboard_cache.snapshots` · `snapshot_teams` · `snapshot_members` · `snapshot_complete_days`(ADR 0042) · `snapshot_products`(관측 제품 매핑 복제, ADR 0045) · `vendor_observation_sets` · `vendor_observations`(설정의 벤더 관측 고정, ADR 0044) · `alerts` · `alert_evaluations` · `alert_evaluation_leases`(알림 평가 기록 — snapshot 정리 대상이 아니다, ADR 0051), ClickHouse `dashboard_cache.snapshot_usage` · `snapshot_observed_days` · `snapshot_member_activity`(+ 입구 `snapshot_intake`·뷰 둘) | `:apps:dashboard-api` |
 
 **쓰기 소유는 모듈이다**(ADR 0008 규칙 1). 표가 앱 이름을 적은 행은 그 도메인의 쓰기가 아직 앱에
 직접 있다는 뜻이고, 규칙 5의 승격 트리거가 당겨지면 모듈로 내려간다. telemetry는 새 도메인이라
@@ -287,7 +322,7 @@ apps/
                                      앱은 조립만 한다 — 필터 체인 배선 · 단계 호출
 libs/
 ├── security/                        com.team376.pulsemetry.security          ← 있다 (1절)
-│                                    OTLP 경로의 ptt_ 검증 · 관리자 API 경로의 AT 검증 (ADR 0007)
+│                                    OTLP 경로의 ptt_ 검증 · 사용자 JWT·세션 검증 (ADR 0018·0026)
 ├── telemetry-collector/             com.team376.pulsemetry.telemetry.collector   ← 있다 (1절)
 │                                    OTLP 수신
 │                                    ├ masking/    서버 마스킹 — 허브 Masker 노드의 소재

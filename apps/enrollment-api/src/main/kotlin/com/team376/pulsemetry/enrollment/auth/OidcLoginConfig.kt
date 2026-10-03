@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.enrollment.auth
 
 import com.team376.pulsemetry.security.user.UserAuthException
+import com.team376.pulsemetry.security.user.AuthRateLimiter
 import com.team376.pulsemetry.security.user.UserAuthService
 import com.team376.pulsemetry.persistence.enrollment.repository.UserAuthRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TenantOidcConfiguration
@@ -84,7 +85,7 @@ class OidcLoginConfig {
     @Bean
     @Order(1)
     fun oidcSecurity(http: HttpSecurity, p: OidcProperties, clients: TenantOidcClients,
-        auth: UserAuthService): SecurityFilterChain {
+        auth: UserAuthService, limiter: AuthRateLimiter): SecurityFilterChain {
         val resolver = LoginRequestResolver(clients, auth)
         http.securityMatcher("/v1/auth/oidc/**")
             .authorizeHttpRequests { it.anyRequest().permitAll() }
@@ -149,7 +150,7 @@ class OidcLoginConfig {
                             if (unavailable) "auth_unavailable" else if (code == "access_denied") "login_cancelled" else "invalid_credentials")
                     }
             }
-        http.addFilterBefore(OidcRequestGuard(auth, clients), OAuth2AuthorizationRequestRedirectFilter::class.java)
+        http.addFilterBefore(OidcRequestGuard(limiter, clients), OAuth2AuthorizationRequestRedirectFilter::class.java)
         return http.build()
     }
 
@@ -213,13 +214,13 @@ private class LoginRequestResolver(private val clients: TenantOidcClients,
     override fun resolve(request: HttpServletRequest, clientRegistrationId: String): OAuth2AuthorizationRequest? = resolve(request)
 }
 
-private class OidcRequestGuard(private val auth: UserAuthService, private val clients: TenantOidcClients) : OncePerRequestFilter() {
+private class OidcRequestGuard(private val limiter: AuthRateLimiter, private val clients: TenantOidcClients) : OncePerRequestFilter() {
     override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
         response.setHeader("Cache-Control", "no-store")
         response.setHeader("Pragma", "no-cache")
         response.setHeader("Referrer-Policy", "no-referrer")
         try {
-            auth.limitIp(request.remoteAddr)
+            limiter.entry(request.remoteAddr)
             if (request.requestURI.removePrefix(request.contextPath).startsWith("/v1/auth/oidc/callback/")) {
                 val session = request.getSession(false)
                 val flow = session?.getAttribute(FLOW_KEY) as? LoginFlow

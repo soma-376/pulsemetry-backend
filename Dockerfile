@@ -6,10 +6,13 @@
 # arm64 이미지를 만들 때도 Gradle 빌드는 러너의 네이티브 아키텍처에서 그대로 돌면 된다.
 # QEMU 에뮬레이션 위에서 Gradle 을 돌리면 빌드가 몇 배로 느려진다.
 #
-#   docker buildx build --platform linux/arm64 --target enrollment-api -t <repo>:<tag> --load .
+#   docker buildx build --platform linux/arm64 --target enrollment-api --build-context telemetry-contracts=../telemetryctl/contracts -t <repo>:<tag> --load .
 #   docker buildx build --platform linux/arm64 --target telemetry-ingest -t <repo>:<tag> --load .
 #   docker buildx build --platform linux/arm64 --target dashboard-api -t <repo>:<tag> --load .
 #   docker buildx build --platform linux/arm64 --target retention-worker -t <repo>:<tag> --load .
+#
+# enrollment-api 만 named context `telemetry-contracts`(telemetryctl 의 contracts 디렉터리)를 요구한다 —
+# manifest 재동기화가 원본 스키마를 jar 에 넣어 검증하기 때문이다(ADR 0019). 다른 target 은 필요 없다.
 
 FROM --platform=$BUILDPLATFORM eclipse-temurin:25-jdk AS build-base
 
@@ -55,6 +58,10 @@ ENTRYPOINT ["java", "-cp", "/app/lib/*", "com.team376.pulsemetry.devseed.DevSeed
 
 
 FROM build-base AS enrollment-api-build
+
+# 원본 계약을 별도 named context로 받는다. 인증 정책 검증에 필요한 스키마만 jar에 들어간다.
+COPY --from=telemetry-contracts /enrollment-manifest.schema.json /workspace/contracts/enrollment-manifest.schema.json
+ENV PULSEMETRY_CONTRACTS_DIR=/workspace/contracts
 
 RUN --mount=type=cache,target=/root/.gradle,sharing=locked \
 	./gradlew --no-daemon :apps:enrollment-api:dependencies --configuration runtimeClasspath > /dev/null

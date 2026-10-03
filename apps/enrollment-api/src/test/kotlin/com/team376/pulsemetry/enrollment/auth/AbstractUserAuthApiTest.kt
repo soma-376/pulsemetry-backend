@@ -56,6 +56,7 @@ abstract class AbstractUserAuthApiTest {
     @Autowired protected lateinit var data: EnrollmentTestData
     @Autowired protected lateinit var jdbc: JdbcClient
     @Autowired protected lateinit var mapper: ObjectMapper
+    @Autowired protected lateinit var limiter: com.team376.pulsemetry.security.user.AuthRateLimiter
     @Autowired protected lateinit var auth: UserAuthService
     @Autowired protected lateinit var clock: AuthTestClock
     protected val http = HttpClient.newHttpClient()
@@ -95,6 +96,14 @@ abstract class AbstractUserAuthApiTest {
     protected fun login(): HttpResponse<String> {
         val authorizationCode = URI(authorize()).rawQuery.substringAfter("code=").substringBefore('&')
         return post("token", mapOf("code" to authorizationCode, "redirect_uri" to redirect, "code_verifier" to verifier))
+    }
+    /** 신규 업무 테스트도 비밀번호 없이 검증된 OIDC 신원으로 최초 연결한다. */
+    protected fun loginMember(id: UUID): HttpResponse<String> {
+        jdbc.sql("UPDATE enrollment.tenants SET oidc_issuer=:issuer,oidc_client_id='test',oidc_client_secret_ref='config:mock',sso_enabled=true WHERE id=:id")
+            .param("issuer", oidcIssuer).param("id", tenant).update()
+        val address = jdbc.sql("SELECT email FROM enrollment.members WHERE id=:id").param("id", id).query(String::class.java).single()
+        val callback = auth.authorizeOidc(tenant, oidcIssuer, "subject-$id", redirect, "client-state-1234567890", challenge, "S256", id, address, address)
+        return post("token", mapOf("code" to URI(callback).rawQuery.substringAfter("code=").substringBefore('&'), "redirect_uri" to redirect, "code_verifier" to verifier))
     }
     protected fun tokens(): JsonNode { provisionMember(); val r=login(); assertThat(r.statusCode()).isEqualTo(200); return mapper.readTree(r.body()) }
     protected fun refresh(rt: String) = post("refresh", mapOf("refresh_token" to rt))

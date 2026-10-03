@@ -109,10 +109,10 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
     }
 
     @Test fun `IP 제한은 DB 공유 상태를 사용하고 경계에서 초기화된다`() {
-        repeat(30) { auth.limitIp("198.51.100.1") }
-        assertThatThrownBy { auth.limitIp("198.51.100.1") }.isInstanceOf(UserAuthException::class.java)
+        repeat(30) { limiter.entry("198.51.100.1") }
+        assertThatThrownBy { limiter.entry("198.51.100.1") }.isInstanceOf(UserAuthException::class.java)
         clock.now=clock.now.plusSeconds(60)
-        auth.limitIp("198.51.100.1")
+        limiter.entry("198.51.100.1")
         val malformed=mapOf("refresh_token" to "not-a-token")
         repeat(30) { assertThat(post("refresh",malformed).statusCode()).isEqualTo(401) }
         val r=post("refresh",malformed)
@@ -234,4 +234,20 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
             .content("{\"refresh_token\":\"invalid\"}")).andExpect(status().isTooManyRequests)
     }
 
+    @Test fun `AT 는 HTTP 에서도 발급 330초부터 거절되고 같은 세션의 RT 로 회복한다`() {
+        val issued = tokens()
+        val start = clock.now
+        fun me(token: String) = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/me")).header("Authorization", "Bearer $token").GET().build(),
+            HttpResponse.BodyHandlers.ofString())
+        // exp − iat = 300(명세 §2.2 토큰 표)에 시계 차이 허용 30초 — 329초는 받고 330초부터 거절한다.
+        clock.now = start.plusSeconds(329)
+        assertThat(me(issued.path("access_token").asString()).statusCode()).isEqualTo(200)
+        clock.now = start.plusSeconds(330)
+        val expired = me(issued.path("access_token").asString())
+        assertThat(expired.statusCode()).isEqualTo(401)
+        assertThat(mapper.readTree(expired.body()).path("error").asString()).isEqualTo("invalid_credentials")
+        val renewed = refresh(issued.path("refresh_token").asString())
+        assertThat(renewed.statusCode()).withFailMessage(renewed.body()).isEqualTo(200)
+        assertThat(me(mapper.readTree(renewed.body()).path("access_token").asString()).statusCode()).isEqualTo(200)
+    }
 }

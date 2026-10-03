@@ -32,6 +32,13 @@ class SnapshotReferences(
 			),
 		) { LocalDate.parse(it.path("d").asString()) }.toSet()
 
+	/** 완전 관측으로 판정해 build 때 고정한 날짜(ADR 0042). 없는 날짜는 완전하지 않다. */
+	fun completeDates(snapshot: SnapshotManifestStore.Manifest): Set<LocalDate> =
+		cache.sql("SELECT complete_date FROM dashboard_cache.snapshot_complete_days WHERE snapshot_id = :snapshot")
+			.param("snapshot", snapshot.snapshotId)
+			.query { rs, _ -> rs.getObject("complete_date", LocalDate::class.java) }
+			.set()
+
 	/** build 때의 로스터 한 사람. [role]·[status] 는 enrollment 의 값 그대로다. */
 	data class RosterMember(
 		val id: UUID,
@@ -85,6 +92,16 @@ class SnapshotReferences(
 				.query { rs, _ -> rs.getObject("member_id", UUID::class.java) to rs.getString("account") }
 				.list()
 				.toMap()
+
+	/** build 때의 관측 제품 매핑 한 줄(ADR 0044). [kind] 는 카탈로그 제품 ID. */
+	data class Product(val observed: String, val kind: String, val displayName: String, val sortOrder: Int)
+
+	/** 관측 제품 매핑 — 카탈로그 순서. 제품 축(ADR 0045)은 이것으로만 관측을 카탈로그 제품에 잇는다. */
+	fun products(snapshot: SnapshotManifestStore.Manifest): List<Product> =
+		cache.sql("SELECT observed_product, product_id, display_name, sort_order FROM dashboard_cache.snapshot_products WHERE snapshot_id = :snapshot ORDER BY sort_order, product_id, observed_product")
+			.param("snapshot", snapshot.snapshotId)
+			.query { rs, _ -> Product(rs.getString("observed_product"), rs.getString("product_id"), rs.getString("display_name"), rs.getInt("sort_order")) }
+			.list()
 
 	fun teams(snapshot: SnapshotManifestStore.Manifest): List<Team> =
 		cache.sql("SELECT team_id, name, archived FROM dashboard_cache.snapshot_teams WHERE snapshot_id = :snapshot")

@@ -30,6 +30,8 @@ class UserAuthProperties {
 @EnableConfigurationProperties(UserAuthProperties::class)
 class UserAuthConfig {
     @Bean
+    fun manifestContractValidator() = ManifestContractValidator()
+    @Bean
     fun userJwt(p: UserAuthProperties, clock: Clock): UserJwt {
         require(p.privateKeyFile.isNotBlank() && p.publicKeyFiles.isNotEmpty()) { "사용자 인증 키 파일 설정이 필요하다" }
         return UserJwt(p.issuer, p.audience, p.activeKid, UserJwt.privateKey(Path.of(p.privateKeyFile)),

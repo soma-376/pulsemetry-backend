@@ -4,6 +4,7 @@ import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheClient
 import com.team376.pulsemetry.dashboard.store.ClickHouseParam
 import org.slf4j.LoggerFactory
 import java.time.Clock
+import java.time.Instant
 
 /**
  * 자기 캐시의 정리 (ADR 0023 §1·§4). **자기 캐시 행만 지운다** — 분석 원본·ledger·`telemetry_ops` 는 건드리지 않는다.
@@ -19,6 +20,8 @@ class SnapshotCleaner(
 	private val clickHouse: ClickHouseCacheClient,
 	private val limits: SnapshotBuilder.Limits,
 	private val clock: Clock,
+	/** 설정의 벤더 관측 고정(ADR 0044)을 같은 기한으로 지운다. 지운 묶음 수를 돌려준다. */
+	private val purgeObservations: (Instant) -> Int = { 0 },
 ) {
 
 	private val log = LoggerFactory.getLogger(SnapshotCleaner::class.java)
@@ -36,7 +39,8 @@ class SnapshotCleaner(
 			}
 		}
 		val deleted = manifests.delete(targets.map { it.snapshotId })
-		if (abandoned > 0 || deleted > 0) log.info("snapshot 정리 — 버려진 build {}건, 지운 snapshot {}건", abandoned, deleted)
+		val observations = purgeObservations(now - limits.buildTimeout - SnapshotBuilder.API_LIFETIME - limits.purgeGrace)
+		if (abandoned > 0 || deleted > 0 || observations > 0) log.info("snapshot 정리 — 버려진 build {}건, 지운 snapshot {}건, 지운 벤더 관측 고정 {}건", abandoned, deleted, observations)
 		return Result(abandoned, deleted)
 	}
 

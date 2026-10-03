@@ -10,6 +10,8 @@ dependencies {
 	implementation(project(":libs:telemetry-ops-persistence"))
 	// ClickHouse — fence(쓰기)·process list(읽기)·두 분석 테이블 DELETE. DDL 은 ingest 가 적용한다 (ADR 0015).
 	implementation(project(":libs:telemetry-persistence"))
+	// RDS enrollment — 요청 모드의 보존 정리 요청과 공통 작업 기록(쓰기). DDL 은 enrollment-api 가 적용한다 (ADR 0047).
+	implementation(project(":libs:enrollment-persistence"))
 
 	// DataSource 하나. 웹·JPA·Flyway 자동설정은 올리지 않는다.
 	implementation(libs.spring.boot.starter.jdbc)

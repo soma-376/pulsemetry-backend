@@ -94,6 +94,35 @@ class RetentionWorkerApplicationTest {
 	}
 
 	@Test
+	@DisplayName("요청 모드는 저장된 보존 정리 요청을 실행하고 작업을 닫는다 — 요청 모드 설정이 없거나 명령 인자와 섞으면 아무것도 하지 않고 2 다")
+	fun requestMode() {
+		val jdbc = org.springframework.jdbc.core.simple.JdbcClient.create(stores.dataSource)
+		jdbc.sql("TRUNCATE enrollment.retention_cleanup_requests, enrollment.operation_targets, enrollment.operations CASCADE").update()
+		val admin = UUID.randomUUID()
+		jdbc.sql("INSERT INTO enrollment.tenants(id,name,slug) VALUES (:id,'요청 모드',:slug)").param("id", tenant).param("slug", "requests-$tenant").update()
+		jdbc.sql("INSERT INTO enrollment.members(id,tenant_id,email,role) VALUES (:id,:tenant,:email,'admin')")
+			.param("id", admin).param("tenant", tenant).param("email", "admin-$admin@example.test").update()
+		val manager = org.springframework.jdbc.datasource.DataSourceTransactionManager(stores.dataSource)
+		val operations = com.team376.pulsemetry.persistence.enrollment.operation.OperationStore(jdbc, manager, java.time.Clock.systemUTC())
+		val requests = com.team376.pulsemetry.persistence.enrollment.operation.RetentionCleanupRequests(jdbc, manager, operations)
+		val id = requireNotNull(requests.onRetentionChanged(tenant, admin, null, 12, Instant.parse("2026-09-24T01:00:00Z")))
+		stores.insert("telemetry_events", listOf(RetentionTestStores.Row(tenant, RetentionTestStores.observationId(1), Instant.parse("2025-01-01T00:00:00Z"))))
+
+		assertThat(run(*settings(), "--requests")).isEqualTo(RetentionCommandRunner.EXIT_USAGE)
+		assertThat(run(*settings(), "--pulsemetry.retention.requests.lease=10m", "--pulsemetry.retention.requests.max-runs=3", "--requests", "--tenant=$tenant"))
+			.isEqualTo(RetentionCommandRunner.EXIT_USAGE)
+		assertThat(requests.find(id)!!["runs"]).isEqualTo(0)
+
+		val code = run(*settings(), "--pulsemetry.retention.requests.lease=10m", "--pulsemetry.retention.requests.max-runs=3", "--requests")
+
+		assertThat(code).isEqualTo(RetentionCommandRunner.EXIT_DELETED)
+		assertThat(stores.rows("telemetry_events", tenant)).isZero()
+		assertThat(operations.find(tenant, id)!!.status.wire).isEqualTo("succeeded")
+		assertThat(TenantRetentionBoundaryStore(stores.dataSource).read(tenant))
+			.isEqualTo(TenantRetentionBoundary(tenant, Instant.parse("2025-09-23T15:00:00Z"), 1))
+	}
+
+	@Test
 	@DisplayName("인자가 틀리면 아무것도 하지 않고 2 로 끝난다")
 	fun aBadCommandExitsWithTwo() {
 		val code = run(*settings(), "--tenant=$tenant", "--retention-months=12")

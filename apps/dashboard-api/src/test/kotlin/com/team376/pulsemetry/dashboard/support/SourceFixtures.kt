@@ -45,6 +45,8 @@ object SourceFixtures {
 		val pricingVersion: String? = null,
 		val receivedTime: Instant = sourceTime,
 		val qualityFlags: List<String> = emptyList(),
+		/** `usage = false` 인 도구 결과 행의 도구 이름(ADR 0051 미승인 도구). */
+		val toolName: String? = null,
 	)
 
 	fun insertEvents(tenantId: UUID, vararg events: Event) {
@@ -82,6 +84,7 @@ object SourceFixtures {
 				"cost_estimated_usd" to event.costEstimatedUsd,
 				"pricing_version" to event.pricingVersion,
 				"quality_flags" to event.qualityFlags,
+				"tool_name" to event.toolName,
 			)
 		}
 		DashboardTestStores.clickHouseAdmin("INSERT INTO default.telemetry_events FORMAT JSONEachRow\n$lines")
@@ -187,16 +190,29 @@ object SourceFixtures {
 		DashboardTestStores.clickHouseAdmin("INSERT INTO default.telemetry_ingest_ledger FORMAT JSONEachRow\n$line")
 	}
 
-	/** 활성(또는 비활성) manifest 한 판. [privacy] 는 manifest 의 `privacy` 객체 JSON 이다. */
-	fun insertManifest(tenantId: UUID, version: Int, createdBy: UUID, privacy: String = "{}", active: Boolean = true): UUID {
+	/**
+	 * 활성(또는 비활성) manifest 한 판. [privacy] 는 manifest 의 `privacy` 객체 JSON 이다. [signals] 를 주면 `signals` 객체를 싣는다.
+	 * [activatedAt] 을 주면 그 시각에 활성화된 판이다(주지 않으면 활성 판만 지금 활성화된 것으로 둔다).
+	 */
+	fun insertManifest(tenantId: UUID, version: Int, createdBy: UUID, privacy: String = "{}", active: Boolean = true,
+		signals: String? = null, activatedAt: Instant? = null): UUID {
 		val id = UUID.randomUUID()
 		DashboardTestStores.writer.sql(
 			"INSERT INTO enrollment.manifests (id, tenant_id, version, manifest, is_active, created_by_member_id, activated_at) " +
-				"VALUES (:id, :tenant, :version, CAST(:manifest AS jsonb), :active, :created_by, CASE WHEN :active THEN now() END)",
+				"VALUES (:id, :tenant, :version, CAST(:manifest AS jsonb), :active, :created_by, COALESCE(CAST(:activated_at AS timestamptz), CASE WHEN :active THEN now() END))",
 		).param("id", id).param("tenant", tenantId).param("version", version)
-			.param("manifest", """{"schema_version":1,"config_revision":$version,"privacy":$privacy}""")
-			.param("active", active).param("created_by", createdBy).update()
+			.param("manifest", """{"schema_version":1,"config_revision":$version,"privacy":$privacy${signals?.let { ""","signals":$it""" } ?: ""}}""")
+			.param("active", active).param("created_by", createdBy).param("activated_at", activatedAt?.toString(), java.sql.Types.VARCHAR).update()
 		return id
+	}
+
+	/** 설치의 등록 시각과 폐기 시각을 바꾼다. 폐기 시각을 주면 상태도 폐기다. */
+	fun setInstallationTimes(installationId: UUID, createdAt: Instant, revokedAt: Instant? = null) {
+		DashboardTestStores.writer.sql(
+			"UPDATE enrollment.installations SET created_at = :created, revoked_at = CAST(:revoked AS timestamptz), " +
+				"status = CAST(CASE WHEN CAST(:revoked AS timestamptz) IS NULL THEN 'active' ELSE 'revoked' END AS enrollment.installation_status) WHERE id = :id",
+		).param("id", installationId).param("created", java.sql.Timestamp.from(createdAt))
+			.param("revoked", revokedAt?.toString(), java.sql.Types.VARCHAR).update()
 	}
 
 	fun insertAssignment(installationId: UUID, manifestId: UUID, appliedAt: Instant?) {
@@ -228,6 +244,45 @@ object SourceFixtures {
 		).param("id", installation).param("tenant", tenantId).param("member", memberId).param("invitation", invitation)
 			.param("client_version", clientVersion).param("status", status).update()
 		return installation
+	}
+
+	/**
+	 * 설치의 마지막 보고 한 행(ADR 0040). 운영에서는 enrollment-api 가 쓴다. 시각은 서버 시각이다.
+	 * [pendingSince] 를 주면 그때부터 전달 대기가 이어진 것이다(ADR 0041). [appliedManifestId] 는 보고한 판이 그 조직의 manifest 일 때의 그 판이고,
+	 * 없으면 서버가 모르는 판을 보고한 것이다.
+	 */
+	fun setHeartbeat(
+		installationId: UUID,
+		receivedAt: Instant,
+		mode: String = "local",
+		forwarding: Boolean = true,
+		receivingSince: Instant? = receivedAt.minusSeconds(3600),
+		lastDeliveredAt: Instant? = receivedAt.minusSeconds(30),
+		pendingSince: Instant? = null,
+		appliedManifestId: UUID? = null,
+	) {
+		DashboardTestStores.writer.sql(
+			"INSERT INTO enrollment.installation_heartbeats (installation_id, received_at, run_id, daemon_version, architecture, applied_config_revision, " +
+				"applied_manifest_id, mode, forwarding, receiving_since, delivered, lost, pending, last_delivered_at, pending_since) " +
+				"VALUES (:id, :received, 'b3f1c2a49d5e4f60a1b2c3d4e5f60718', '0.2.0', 'arm64', " +
+				"COALESCE((SELECT version FROM enrollment.manifests WHERE id = CAST(:manifest AS uuid)), 9999), CAST(:manifest AS uuid), " +
+				":mode, :forwarding, :since, 0, 0, :pending, :last, :pending_since) " +
+				"ON CONFLICT (installation_id) DO UPDATE SET received_at=EXCLUDED.received_at, mode=EXCLUDED.mode, forwarding=EXCLUDED.forwarding, " +
+				"receiving_since=EXCLUDED.receiving_since, pending=EXCLUDED.pending, last_delivered_at=EXCLUDED.last_delivered_at, pending_since=EXCLUDED.pending_since, " +
+				"applied_config_revision=EXCLUDED.applied_config_revision, applied_manifest_id=EXCLUDED.applied_manifest_id",
+		).param("id", installationId).param("received", java.sql.Timestamp.from(receivedAt)).param("mode", mode).param("forwarding", forwarding)
+			.param("manifest", appliedManifestId?.toString(), java.sql.Types.VARCHAR)
+			.param("since", receivingSince?.let(java.sql.Timestamp::from)).param("pending", if (pendingSince == null) 0L else 1L)
+			.param("last", lastDeliveredAt?.let(java.sql.Timestamp::from)).param("pending_since", pendingSince?.let(java.sql.Timestamp::from)).update()
+	}
+
+	/** 설치가 수집 중이었다고 보고로 확인된 구간 한 행(ADR 0040). [lost] 가 0 이 아니면 손실 구간이다. */
+	fun insertSegment(installationId: UUID, fromAt: Instant, toAt: Instant, lost: Long = 0) {
+		DashboardTestStores.writer.sql(
+			"INSERT INTO enrollment.installation_collection_segments (id, installation_id, run_id, from_at, to_at, lost) " +
+				"VALUES (:id, :installation, 'b3f1c2a49d5e4f60a1b2c3d4e5f60718', :from, :to, :lost)",
+		).param("id", UUID.randomUUID()).param("installation", installationId)
+			.param("from", java.sql.Timestamp.from(fromAt)).param("to", java.sql.Timestamp.from(toAt)).param("lost", lost).update()
 	}
 
 	private fun json(vararg fields: Pair<String, Any?>): String =

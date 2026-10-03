@@ -10,6 +10,8 @@ plugins {
 
 dependencies {
 	api(libs.jackson.module.kotlin)
+	// 좌석 원장이 커넥터 설명(계정 종류·커넥터가 있는 플랜)과 벤더 목록 타입을 받는다 — 공개 시그니처에 나타나므로 api 다 (ADR 0048).
+	api(project(":libs:vendor-connector"))
 	// api: 소비자(앱 모듈)의 컴파일 클래스패스에도 노출한다.
 	// 엔티티·리포지토리·DataSource·JdbcClient 는 앱 코드가 직접 다루는 타입이다.
 	api(libs.spring.boot.starter.data.jpa)

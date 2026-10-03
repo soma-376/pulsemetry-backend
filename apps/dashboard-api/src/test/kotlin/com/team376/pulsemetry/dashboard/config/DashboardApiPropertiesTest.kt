@@ -116,7 +116,83 @@ class DashboardApiPropertiesTest {
 		"pulsemetry.dashboard.snapshot.max-copy-bytes=1000000000",
 		"pulsemetry.dashboard.snapshot.cleanup-interval=5m",
 		"pulsemetry.dashboard.members.idle-days=30",
+		"pulsemetry.dashboard.ingest.window=15m",
+		"pulsemetry.dashboard.ingest.delayed-after=5m",
+		"pulsemetry.dashboard.ingest.down-after=3h",
+		"pulsemetry.dashboard.completeness.settle-after=1h",
+		"pulsemetry.dashboard.seats.stale-after=26h",
+		"pulsemetry.dashboard.alerts.evaluation-interval=1m",
+		"pulsemetry.dashboard.alerts.lease=10m",
 	)
+
+	@ParameterizedTest
+	@ValueSource(strings = ["", "0s", "-1m"])
+	@DisplayName("알림 평가 주기·선점 기한이 없거나 0 이하면 기동이 실패한다 — 기본값이 없다 (ADR 0051)")
+	fun alertSettingsAreRequired(value: String) {
+		for (key in listOf("pulsemetry.dashboard.alerts.evaluation-interval", "pulsemetry.dashboard.alerts.lease")) {
+			runner.withPropertyValues(*complete.filterNot { it.startsWith("$key=") }.toTypedArray()).run { assertThat(it).hasFailed() }
+			runner.withPropertyValues(*complete, "$key=$value").run { assertThat(it).hasFailed() }
+		}
+		runner.withPropertyValues(*complete).run { assertThat(it).hasNotFailed() }
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = ["", "0s", "-1h"])
+	@DisplayName("좌석 원장의 낡음 기준이 없거나 0 이하면 기동이 실패한다 — 기본값이 없다 (ADR 0048)")
+	fun seatStaleAfterIsRequired(value: String) {
+		runner.withPropertyValues(*complete.filterNot { it.startsWith("pulsemetry.dashboard.seats.stale-after=") }.toTypedArray())
+			.run { assertThat(it).hasFailed() }
+		runner.withPropertyValues(*complete, "pulsemetry.dashboard.seats.stale-after=$value").run { assertThat(it).hasFailed() }
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = ["", "0s", "-1m"])
+	@DisplayName("기간 완전성의 확정 대기 시간이 없거나 0 이하면 기동이 실패한다 — 기본값이 없다 (ADR 0042)")
+	fun settleAfterIsRequired(value: String) {
+		runner.withPropertyValues(*complete.filterNot { it.startsWith("pulsemetry.dashboard.completeness.settle-after=") }.toTypedArray())
+			.run { assertThat(it).hasFailed() }
+		runner.withPropertyValues(*complete, "pulsemetry.dashboard.completeness.settle-after=$value").run { assertThat(it).hasFailed() }
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = ["pulsemetry.dashboard.ingest.window", "pulsemetry.dashboard.ingest.delayed-after", "pulsemetry.dashboard.ingest.down-after"])
+	@DisplayName("수집 상태 판정의 임계값이 없거나 비면 기동이 실패한다 — 기본값이 없다 (ADR 0041)")
+	fun ingestThresholdsAreRequired(key: String) {
+		val withoutKey = complete.filterNot { it.startsWith("$key=") }.toTypedArray()
+		runner.withPropertyValues(*withoutKey).run { assertThat(it).hasFailed() }
+		runner.withPropertyValues(*withoutKey, "$key=").run { assertThat(it).hasFailed() }
+	}
+
+	@ParameterizedTest
+	@ValueSource(
+		strings = [
+			// 창은 응답에 분 단위로 나간다.
+			"pulsemetry.dashboard.ingest.window=30s",
+			"pulsemetry.dashboard.ingest.window=90s",
+			"pulsemetry.dashboard.ingest.window=0m",
+			"pulsemetry.dashboard.ingest.delayed-after=0s",
+			"pulsemetry.dashboard.ingest.delayed-after=-1m",
+			// 중단 기준은 지연 기준보다 길어야 두 상태가 갈린다.
+			"pulsemetry.dashboard.ingest.down-after=5m",
+			"pulsemetry.dashboard.ingest.down-after=1m",
+		],
+	)
+	@DisplayName("수집 상태 판정의 임계값이 서로 맞지 않으면 기동이 실패한다")
+	fun ingestThresholdsMustBeConsistent(override: String) {
+		runner.withPropertyValues(*complete, override).run { assertThat(it).hasFailed() }
+	}
+
+	@Test
+	@DisplayName("수집 상태 판정의 임계값은 준 값 그대로 뜬다")
+	fun ingestThresholdsBind() {
+		runner.withPropertyValues(*complete).run {
+			assertThat(it).hasNotFailed()
+			val ingest = it.getBean(DashboardApiProperties::class.java).ingest
+			assertThat(ingest.window).isEqualTo(Duration.ofMinutes(15))
+			assertThat(ingest.delayedAfter).isEqualTo(Duration.ofMinutes(5))
+			assertThat(ingest.downAfter).isEqualTo(Duration.ofHours(3))
+		}
+	}
 
 	@ParameterizedTest
 	@ValueSource(strings = ["0", "10", "90", ""])

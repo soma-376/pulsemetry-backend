@@ -120,19 +120,12 @@ class UserAuthService(
 
     fun verify(token: String): UserIdentity = UserAccessVerifier(jwt, repository, clock).verify(token)
 
-    fun limitIp(ip: String) {
-        val hash = UserSecrets.hash("ip:$ip")
-        val retry = tx.execute {
-            val now = clock.instant()
-            val attempt = repository.lockAttempt(hash, now)
-            val reset = now >= attempt.windowStartedAt.plusSeconds(60)
-            val start = if (reset) now else attempt.windowStartedAt
-            val count = if (reset) 0 else attempt.attempts
-            if (count >= 30) return@execute secondsUntil(now, start.plusSeconds(60))
-            repository.saveAttempt(hash, start, count + 1, null)
-            0L
-        }
-        if (retry > 0) throw UserAuthException("rate_limited", 429, retry)
+    /** PROJ-109가 관리자 경로에 연결할 정책 대조. 재동기화 경로는 RT 인증이므로 이 검사를 거치지 않는다. */
+    fun verifyCurrentRevision(token: String): UserIdentity {
+        val identity = verify(token)
+        val current = repository.activeRevision(identity.tenantId) ?: throw UserAuthException("manifest_not_configured", 409)
+        if (identity.revision != current) throw UserAuthException("manifest_revision_mismatch", 409)
+        return identity
     }
 
     private fun newSession(member: AuthMember): UserTokens {
