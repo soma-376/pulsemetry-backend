@@ -179,7 +179,7 @@ class MemberEditApiTest : AbstractUserAuthApiTest() {
     }
 
     @Test fun `자기 역할은 바꿀 수 없지만 자기 팀은 바꿀 수 있다`() {
-        assertThat(signup().statusCode()).isEqualTo(201)
+        provisionMember()
         jdbc.sql("UPDATE enrollment.members SET role='admin' WHERE id=:id").param("id", member).update()
         val token = mapper.readTree(login().body()).path("access_token").asString()
         val platform = team(token, "플랫폼")
@@ -329,8 +329,7 @@ class MemberEditApiTest : AbstractUserAuthApiTest() {
         val id = data.member(tenant, email, role = MemberRole.member, status = MemberStatus.invited).id
         val invitation = InvitationCode.generate()
         data.invitation(tenant, id, invitation, expiresAt = clock.now.plusSeconds(3600))
-        assertThat(post("signup", mapOf("code" to invitation, "email" to email, "password" to password)).statusCode()).isEqualTo(201)
-        val login = post("login", mapOf("tenant_id" to tenant, "email" to email, "password" to password))
+        val login = loginMember(id)
         assertThat(login.statusCode()).isEqualTo(200)
         return mapper.readTree(login.body())
     }

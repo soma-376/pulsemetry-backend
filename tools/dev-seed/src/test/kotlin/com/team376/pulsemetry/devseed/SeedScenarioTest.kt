@@ -13,6 +13,14 @@ import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
 
 class SeedScenarioTest {
+    @Test fun `SSO 시드에는 비밀번호와 사전 연결한 subject가 없다`() {
+        for (name in SCENARIOS) {
+            val members = scenario(name, LocalDate.parse("2026-09-28")).rows.getValue("enrollment.members")
+            assertTrue(members.all { "password_hash" !in it && "oidc_issuer" !in it })
+            assertTrue(members.all { it.containsKey("oidc_subject") && it["oidc_subject"] == null })
+        }
+    }
+
     private val date = LocalDate.of(2026, 9, 28)
     private val a = scenario("A", date)
     private val b = scenario("B", date)
@@ -80,7 +88,7 @@ class SeedScenarioTest {
         assertTrue((2..11).all { reported.getValue(id("A/installation/$it")).asString() == "2026-09-27T15:00:00Z" })
         assertTrue(reported.getValue(id("A/installation/2/secondary")).isNull)
         val serialized = encode(fixture)
-        for (secret in listOf("password_hash", "development_password", "code_hash", "invitation_codes", SEED_PASSWORD)) {
+        for (secret in listOf("password_hash", "development_password", "code_hash", "invitation_codes", "client_secret")) {
             assertFalse(serialized.contains(secret))
         }
         assertEquals(encode(frontendFixture(a)), encode(frontendFixture(scenario("A", date))))
@@ -156,22 +164,23 @@ class SeedScenarioTest {
         assertEquals("owner@seed-b.example.test", owner["email"])
         assertEquals("owner", owner["role"])
         assertEquals("active", owner["status"])
-        assertFalse(owner["password_hash"]?.toString().isNullOrBlank())
+        assertFalse(owner.containsKey("password_hash"))
+        assertEquals(false, owner.containsKey("oidc_issuer"))
+        assertEquals(null, owner["oidc_subject"])
         assertNull(b.rows.getValue("enrollment.tenants").single()["onboarding_completed_at"])
         assertTrue(b.invitationCodes.isEmpty())
         assertTrue(b.events.isEmpty()); assertTrue(b.ledger.isEmpty())
     }
 
-    @Test fun `수신 주소를 바꿔도 A·B·C 의 지문은 이 기능 전과 같다 — 주소는 manifest 에만 들고 지문에 들지 않는다`() {
-        // 이 기능을 넣기 전 생성기의 지문(기존 볼륨이 reset 없이 그대로 맞아야 한다).
-        val before = mapOf(
-            "2026-09-28" to mapOf("A" to "7bb853e766593c769f6b96833b35a9ca1229ceede1c8071928c0cede01d1709c", "B" to "1a4e9cd3e8e756a135a6b169c3a08dd16b12b7890c74684afd940475533ad311",
-                "C" to "b650deeed60a2c89ff0bbf69afd631e77d93bcd8260fe2a5f0023779a4e6e712"),
-            "2026-10-01" to mapOf("A" to "040326cbe9dd94efb844af8e119fd00b3557fd4f55eeb8930ba3220f25e15a6a", "B" to "305c5f56c146520663c041ed860845c57699234230f8736cf6551bf411ee15c8",
-                "C" to "9ae368f5a64344f088bed1c50d119463eb6153038e457b1e10792adf57c5282e"))
-        for ((day, prints) in before) for ((name, print) in prints) {
-            assertEquals(print, scenario(name, LocalDate.parse(day)).fingerprint, "$day $name")
-            assertEquals(print, scenario(name, LocalDate.parse(day), "http://localhost:24316").fingerprint, "$day $name — 주소만 다름")
+    @Test fun `수신 주소만 바꾸면 지문은 동일하다 — 업무 데이터 변경은 다른 지문이다`() {
+        for (day in listOf("2026-09-28", "2026-10-01")) for (name in SCENARIOS) {
+            val original = scenario(name, LocalDate.parse(day))
+            assertEquals(original.fingerprint, scenario(name, LocalDate.parse(day), "http://localhost:24316").fingerprint, "$day $name")
+            val rows = LinkedHashMap(original.rows)
+            rows["enrollment.members"] = original.rows.getValue("enrollment.members").map { row ->
+                LinkedHashMap(row).apply { put("display_name", "변경한 이름") }
+            }.toMutableList()
+            assertNotEquals(original.fingerprint, original.copy(rows = rows).fingerprint)
         }
         val moved = scenario("A", date, "http://localhost:24316")
         val endpoints = moved.rows.getValue("enrollment.manifests").map { json.readTree(it["manifest"].toString()).at("/otlp/endpoint").asString() }

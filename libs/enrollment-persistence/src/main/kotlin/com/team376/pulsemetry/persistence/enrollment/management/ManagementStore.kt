@@ -296,7 +296,7 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
     }
     private fun revoke(tenant: UUID, raw: String, now: Instant): JsonNode {
         val id = uuid(raw)
-        val count = jdbc.sql("UPDATE enrollment.invitations SET revoked_at=:now WHERE tenant_id=:tenant AND id=:id AND revoked_at IS NULL AND (used_at IS NULL OR signup_used_at IS NULL)")
+        val count = jdbc.sql("UPDATE enrollment.invitations SET revoked_at=:now WHERE tenant_id=:tenant AND id=:id AND revoked_at IS NULL AND used_at IS NULL")
             .param("now", Timestamp.from(now)).param("tenant", tenant).param("id", id).update()
         if (count == 0) fail("invitation_unavailable", 409)
         // 폐기한 코드의 메일이 아직 나가지 않았으면 보내지 않는다.
@@ -318,7 +318,7 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
             WHERE tenant_id=:tenant AND id=:id AND revoked_at IS NULL FOR UPDATE""")
             .param("tenant", tenant).param("id", uuid(raw)).query { r, _ -> Triple(r.getObject(1, UUID::class.java), r.getTimestamp(2), r.getTimestamp(3)) }
             .optional().orElse(null) ?: fail("invitation_unavailable", 409)
-        if (old.second != null && old.third != null) fail("invitation_unavailable", 409)
+        if (old.second != null) fail("invitation_unavailable", 409)
         revoke(tenant, raw, now)
         val code = newCode()
         val id = UUID.randomUUID()

@@ -72,6 +72,8 @@ services:
     user: "0:0"
     volumes:
       - ./build/dev-auth:/app/dev-auth
+      # 실제 비밀값 없는 회사별 공개 Cognito fixture. 팀원이 같은 개발 풀에 연결된다.
+      - ./tools/dev-seed/config/cognito:/app/oidc-seed:ro
     depends_on:
       postgres:
         condition: service_healthy

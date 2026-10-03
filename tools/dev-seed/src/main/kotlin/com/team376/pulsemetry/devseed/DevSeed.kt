@@ -8,6 +8,14 @@ import java.nio.file.Path
 
 /** Docker Compose의 초기화와 수동 관리 명령을 한 진입점에서 실행한다(ADR 0031). */
 fun main(args: Array<String>) {
+    if (args.firstOrNull() == "configure-oidc") {
+        runTenantOidc(args, System.getenv())
+        return
+    }
+    if (args.firstOrNull() in listOf("switch-oidc", "snapshot-oidc", "restore-oidc")) {
+        runIdentitySwitch(args, System.getenv())
+        return
+    }
     val request = SeedCommand.parse(args, System.getenv())
     val (command, asOf, scenarios, endpoint) = request
     fun printSummary(data: SeedData) { println(tools.jackson.databind.json.JsonMapper.builder().build().writerWithDefaultPrettyPrinter().writeValueAsString(data.summary())) }
@@ -20,6 +28,8 @@ fun main(args: Array<String>) {
         println(json.writerWithDefaultPrettyPrinter().writeValueAsString(frontendFixture(scenario("A", asOf!!, endpoint))))
         return
     }
+    // JSON 누락·변조는 DB 변경 전에 검사한다. C만 선택하면 OIDC 자료는 필요 없다.
+    val oidcSeeds = if (command == "init") loadCompanyOidcSeeds(Path.of("/app/oidc-seed"), scenarios) else emptyList()
     SeedStore.openCompose().use { store ->
         if (command == "init") {
             val source = DriverManagerDataSource(SeedStore.COMPOSE_JDBC_URL, "pulsemetry", "pulsemetry")
@@ -31,6 +41,7 @@ fun main(args: Array<String>) {
             TelemetryOpsSchemaMigrator(source).migrate()
             println("시드 manifest 수신 주소: $endpoint")
             StartupSeed.run(store, scenarios.joinToString(","), asOf.toString(), endpoint).forEach(::println)
+            println("개발 OIDC 연결: ${seedCompanyOidc(store, oidcSeeds)}개 회사 최초 적용")
             prepareDashboardStore(store)
             prepareAuthKeys(Path.of("/app/dev-auth"))
             println("개발 Compose 스키마·시드 준비 완료")

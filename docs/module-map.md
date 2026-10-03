@@ -82,7 +82,7 @@ pulsemetry-backend
     │                                  ├ seat/  좌석 원장·벤더 연결(자격증명 암호화)·동기화 실행 기록 (ADR 0048)
     │                                  └ alert/ 알림 규칙의 켜짐·모델·도구 목록과 켜기 판정 (ADR 0051)
     ├── security/                    com.team376.pulsemetry.security
-    │                                └ 사용자 JWT·세션·암호 검증과 OTLP 경로의 ptt_ 검증 · telemetry token 해시
+    │                                └ 사용자 JWT·세션·OIDC 신원 연결과 OTLP 경로의 ptt_ 검증 · telemetry token 해시
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
     │                                OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
     │                                ├ masking/    blocked_values 14종 값 마스킹

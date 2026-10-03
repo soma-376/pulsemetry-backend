@@ -236,7 +236,7 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
     }
 
     @Test fun `조직과 오너만 있어도 로그인 갱신 최초 정책 저장과 온보딩 완료가 가능하다`() {
-        assertThat(signup().statusCode()).isEqualTo(201)
+        provisionMember()
         sql("DELETE FROM enrollment.manifests")
         sql("DELETE FROM enrollment.invitations")
         sql("UPDATE enrollment.members SET role='owner'")
@@ -352,9 +352,12 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         assertThat(renewed.statusCode()).withFailMessage(renewed.body()).isEqualTo(200)
         assertThat(manage("POST", path, emptyMap<String, String>(), token, key).body()).isEqualTo(renewed.body())
         assertThat(manage("POST", path, emptyMap<String, String>(), token).statusCode()).isEqualTo(409)
-        val signupBody = mapOf("code" to issued.path("code").asString(), "email" to "reissue@example.test", "password" to password)
-        assertThat(post("signup", signupBody).statusCode()).isEqualTo(409)
-        assertThat(post("signup", signupBody + ("code" to mapper.readTree(renewed.body()).path("code").asString())).statusCode()).isEqualTo(201)
+        val oldCode = code
+        code = issued.path("code").asString()
+        assertThat(enroll().statusCode()).isEqualTo(409)
+        code = mapper.readTree(renewed.body()).path("code").asString()
+        assertThat(enroll().statusCode()).isEqualTo(201)
+        code = oldCode
         val listing = manage("GET", "/invitations?limit=1", null, token)
         assertThat(listing.statusCode()).withFailMessage(listing.body()).isEqualTo(200)
         assertThat(listing.body()).doesNotContain(issued.path("code").asString(), "code_hash", "password")
@@ -429,9 +432,11 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         assertThat(waiting.single().path("memberId").asString()).isEqualTo(before[0])
         assertThat(waiting.single().path("memberVersion").asLong()).isEqualTo(after[3])
         // 취소한 코드는 죽은 채이고 새 코드로만 가입한다.
-        val signupBody = mapOf("code" to first.path("code").asString(), "email" to "again@example.test", "password" to password)
-        assertThat(post("signup", signupBody).statusCode()).isEqualTo(409)
-        assertThat(post("signup", signupBody + ("code" to second.path("code").asString())).statusCode()).isEqualTo(201)
+        code = first.path("code").asString()
+        assertThat(enroll().statusCode()).isEqualTo(409)
+        code = second.path("code").asString()
+        assertThat(enroll().statusCode()).isEqualTo(201)
+        assertThat(loginMember(UUID.fromString(after[0] as String)).statusCode()).isEqualTo(200)
         assertThat(invite("member", null).path("status").asString()).isEqualTo("already_member")
     }
 
@@ -454,9 +459,7 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         val id = UUID.fromString(issued.path("invitationId").asString())
         jdbc.sql("UPDATE enrollment.invitations SET used_at=:now WHERE id=:id").param("now", java.sql.Timestamp.from(clock.now)).param("id", id).update()
         val renewed = manage("POST", "/invitations/$id/reissue", emptyMap<String, String>(), token)
-        assertThat(renewed.statusCode()).isEqualTo(200)
-        val nextId = UUID.fromString(mapper.readTree(renewed.body()).path("invitationId").asString())
-        assertThat(jdbc.sql("SELECT used_at IS NOT NULL AND signup_used_at IS NULL FROM enrollment.invitations WHERE id=:id").param("id", nextId).query(Boolean::class.java).single()).isTrue()
+        assertThat(renewed.statusCode()).isEqualTo(409)
     }
 
     @Test fun `온보딩 조회도 일반 구성원과 다른 조직을 거부한다`() {

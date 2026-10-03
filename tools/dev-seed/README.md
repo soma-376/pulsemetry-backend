@@ -1,5 +1,9 @@
 # 개발용 시드
 
+로그인 연결은 [Cognito 실행·자동 시딩](../../docs/cognito-dev.md)를 따른다.
+Compose init은 공개 JSON으로 A·B 시드 회사의 OIDC 설정만 주입한다. 회원 sub는 NULL에서 최초 SSO 로그인으로 연결하며 기존 연결은 보존한다. 실제 Secret은 호스트 환경변수로 별도 설정한다.
+`local`만 지정하면 개발 Cognito 로그인도 활성화된다.
+
 `:tools:dev-seed` 하나에 생성·적재·검증을 모으고 Docker에서만 실행한다(ADR 0031).
 서버는 local 프로필에서도 시드를 실행하지 않는다. Spring 서버는 호스트에서 실행한다.
 Compose가 기존 소유 모듈의 마이그레이션 → A/B/C → 대시보드 DB 계정·인증 키를 준비한다.
@@ -51,7 +55,7 @@ CLI 설치는 A의 `plan`에 나오는 대기 초대 또는 관리자 API로 발
 
 ## 서버 실행
 
-시드 완료 후 각 터미널에서 실행한다.
+시드 완료 후 [회사별 Secret 환경변수](../../docs/cognito-dev.md)를 호스트에 설정하고 각 터미널에서 실행한다.
 
 ```powershell
 .\gradlew.bat :apps:enrollment-api:bootRun --args="--spring.profiles.active=local"
@@ -118,10 +122,14 @@ A의 현재 활성 사용자는 8명, 이전 구간은 과거 전용 사용자 1
 가상 요율을 사용하며 실제 공급자 요금·청구 금액을 뜻하지 않는다.
 서로 다른 도구의 토큰 의미를 억지로 통일하지 않는다. API의 혼합 토큰 합계·비교 등은 null/unavailable일 수 있다.
 
-계정은 `owner@seed-a.example.test` 또는 `admin@seed-a.example.test`다. C는 `seed-c`로 바꾼다.
-B 계정은 `owner@seed-b.example.test` 하나뿐이다. D·E는 `owner@seed-d.example.test`·`owner@seed-e.example.test`다.
-개발용 비밀번호는 `Pulsemetry-local-2026!`이며 DB에는 BCrypt 해시로 저장한다.
-실제 로그인에는 해당 조직 ID도 함께 보낸다. 초대 코드는 `plan` 출력에서 확인한다.
+개발 Cognito 로그인 계정은 A의 `owner@seed-a.example.test`·`admin@seed-a.example.test`, B의 `owner@seed-b.example.test`다. C 회원은 DB 시드에는 있지만 Cognito 풀·계정은 준비하지 않는다.
+비밀번호는 외부 IdP 화면에만 입력한다. Pulsemetry DB에는 비밀번호가 없다.
+초대 코드는 설치용이며 `plan` 출력에서 확인한다. 기존 ready 시드는 자동 수정하지 않는다.
+A·B 회사 OIDC 설정은 [공개 Cognito JSON](../../docs/cognito-dev.md)으로 init 시 자동 준비한다. 회원 sub는 최초 SSO에서 연결한다. 기존 연결이 다르면 자동 교체하지 않는다.
+구 공유 풀용 스냅샷·전환 명령은 회사별 버전 2 JSON에 사용할 수 없다. 풀 교체는 위 안내의 재실행·충돌 절차를 확인하며 회원·분석 데이터를 초기화하지 않는다.
+`verify`는 별도 관리되는 issuer/sub를 시드 행 비교에서 제외한다. 예전 fingerprint와 새 정의가 달라도
+로그인 설정만 바꾸기 위해 `reset`을 실행하지 않는다. 통합 시드의 지문은 판 2이므로 기존 판의 `apply` 재실행은 중단된다. 기존 볼륨의 데이터·Flyway 이력을 백업하고 별도로 이관하거나, 검증용 새 볼륨을 사용한다. 사용자 볼륨은 자동 초기화하지 않는다.
+D·E는 격리 E2E용 조직이며 실제 Cognito 연결을 제공하지 않는다.
 
 ### A의 PostgreSQL 기준 데이터
 

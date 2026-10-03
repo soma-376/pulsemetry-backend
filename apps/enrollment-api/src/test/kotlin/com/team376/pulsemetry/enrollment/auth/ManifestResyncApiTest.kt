@@ -51,6 +51,7 @@ class ManifestResyncApiTest {
     @Autowired private lateinit var data:EnrollmentTestData
     @Autowired private lateinit var jdbc:JdbcClient
     @Autowired private lateinit var mapper:ObjectMapper
+    @Autowired private lateinit var repository: com.team376.pulsemetry.persistence.enrollment.repository.UserAuthRepository
     @Autowired private lateinit var auth:UserAuthService
     @Autowired private lateinit var clock:AuthTestClock
     @Autowired private lateinit var manager:PlatformTransactionManager
@@ -67,10 +68,11 @@ class ManifestResyncApiTest {
         val code=InvitationCode.generate()
         data.invitation(tenant,member,code,expiresAt=clock.now.plusSeconds(3600))
         data.activeManifest(tenant,member,3)
-        assertThat(post("signup",mapOf("code" to code,"email" to "user@example.com","password" to "correct-password-123")).statusCode()).isEqualTo(201)
-        val login=post("login",mapOf("tenant_id" to tenant,"email" to "user@example.com","password" to "correct-password-123"))
-        assertThat(login.statusCode()).isEqualTo(200)
-        old=mapper.readTree(login.body())
+        jdbc.sql("UPDATE enrollment.members SET status='active' WHERE id=:id").param("id",member).update()
+        val session = com.team376.pulsemetry.persistence.enrollment.repository.AuthSession(UUID.randomUUID(),member,3,clock.now,clock.now.plusSeconds(2592000))
+        repository.createSession(session)
+        val tokens = auth.tokens(requireNotNull(repository.member(member)),session)
+        old=mapper.valueToTree(mapOf("access_token" to tokens.accessToken,"refresh_token" to tokens.refreshToken))
     }
     private fun post(path:String,body:Any)=http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/$path"))
         .header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build(),HttpResponse.BodyHandlers.ofString())
@@ -224,7 +226,13 @@ class ManifestResyncApiTest {
     @Test fun `응답을 잃은 RT를 재시도하지 않고 재로그인으로 복구한다`() {
         assertThat(get().statusCode()).isEqualTo(200) // 클라이언트가 응답 봉투를 저장하지 않은 상황.
         assertThat(get().statusCode()).isEqualTo(401)
-        val login=post("login",mapOf("tenant_id" to tenant,"email" to "user@example.com","password" to "correct-password-123"))
+        jdbc.sql("UPDATE enrollment.tenants SET oidc_issuer='https://idp.example.test',oidc_client_id='test',oidc_client_secret_ref='config:test',sso_enabled=true WHERE id=:id").param("id",tenant).update()
+        jdbc.sql("UPDATE enrollment.members SET oidc_subject='resync-sub' WHERE id=:id").param("id",member).update()
+        val verifier = "v".repeat(43)
+        val redirect = "http://127.0.0.1:12345/callback"
+        val challenge = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray()))
+        val callback = auth.authorizeOidc(tenant,"https://idp.example.test","resync-sub",redirect,"resync-state-1234567890",challenge,"S256")
+        val login=post("token",mapOf("code" to URI(callback).rawQuery.substringAfter("code=").substringBefore('&'),"redirect_uri" to redirect,"code_verifier" to verifier))
         assertThat(login.statusCode()).isEqualTo(200)
         assertThat(get(mapper.readTree(login.body())["refresh_token"].asString()).statusCode()).isEqualTo(200)
     }

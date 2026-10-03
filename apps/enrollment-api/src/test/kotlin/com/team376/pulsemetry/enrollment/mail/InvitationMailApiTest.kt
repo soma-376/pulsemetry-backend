@@ -68,7 +68,8 @@ class InvitationMailApiTest : AbstractUserAuthApiTest() {
     private fun listed(invitation: String): JsonNode = mapper.readTree(manage("GET", "/invitations?limit=100", null, token).body()).path("items").toList()
         .single { it.path("invitationId").asString() == invitation }.path("delivery")
     private fun mailsTo(email: String) = MailpitServer.received().filter { MailpitServer.recipients(it) == listOf(email) }
-    private fun signup(email: String, code: String) = post("signup", mapOf("code" to code, "email" to email, "password" to password)).statusCode()
+    private fun install(email: String, code: String): Int = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI("http://localhost:$port/v1/enroll"))
+        .header("Content-Type", "application/json").POST(java.net.http.HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(mapOf("code" to code, "platform" to "macos")))).build(), java.net.http.HttpResponse.BodyHandlers.ofString()).statusCode()
     private fun outboxStatus(invitation: String) = outbox.delivery("invitation:$invitation")?.status
 
     @Test fun `초대를 발급하면 같은 트랜잭션에서 메일을 적재하고 발송 작업이 보낸 메일이 실제로 도착한다`() {
@@ -92,7 +93,7 @@ class InvitationMailApiTest : AbstractUserAuthApiTest() {
         // 제목에는 코드가 없다. 코드는 본문에만, 수락 링크에는 fragment 로만 실린다.
         assertThat(message.path("Subject").asString()).isEqualTo("Pulsemetry 초대 코드").doesNotContain(code)
         val text = MailpitServer.text(message)
-        assertThat(text).contains("테스트 조직", "초대 코드: $code", "$ACCEPT_URL#code=$code",
+        assertThat(text).contains("테스트 조직", "초대 코드: $code", ACCEPT_URL,
             "curl -fsSL '$INSTALL_BASE/unix?code=$code' | sh", "irm '$INSTALL_BASE/windows?code=$code' | iex", "2026-09-12 21:00 (한국 시간)까지")
         assertThat(text).doesNotContain("$ACCEPT_URL?code=")
 
@@ -100,8 +101,8 @@ class InvitationMailApiTest : AbstractUserAuthApiTest() {
         assertThat(listOf(sent.path("status").asString(), sent.path("sentAt").asString(), sent.path("lastAttemptAt").asString(), sent.path("attempts").asInt()))
             .isEqualTo(listOf("sent", clock.now.toString(), clock.now.toString(), 1))
         assertThat(sent.path("failureCode").isNull).isTrue()
-        // 메일로 받은 코드로 실제로 가입한다.
-        assertThat(signup("new@example.test", code)).isEqualTo(201)
+        // 메일로 받은 코드로 실제 설치한다.
+        assertThat(install("new@example.test", code)).isEqualTo(201)
     }
 
     @Test fun `같은 멱등 키의 재시도는 메일을 한 통만 만든다`() {
@@ -134,8 +135,8 @@ class InvitationMailApiTest : AbstractUserAuthApiTest() {
         assertThat(text).contains("초대 코드: ${renewed.path("code").asString()}").doesNotContain(issued.path("code").asString())
         assertThat(listed(renewed.path("invitationId").asString()).path("status").asString()).isEqualTo("sent")
         // 옛 코드는 죽었고 메일로 받은 새 코드만 쓸 수 있다.
-        assertThat(signup("renew@example.test", issued.path("code").asString())).isEqualTo(409)
-        assertThat(signup("renew@example.test", renewed.path("code").asString())).isEqualTo(201)
+        assertThat(install("renew@example.test", issued.path("code").asString())).isEqualTo(409)
+        assertThat(install("renew@example.test", renewed.path("code").asString())).isEqualTo(201)
     }
 
     @Test fun `이미 나간 메일 뒤의 재발급은 새 메일을 한 통 더 보낸다`() {

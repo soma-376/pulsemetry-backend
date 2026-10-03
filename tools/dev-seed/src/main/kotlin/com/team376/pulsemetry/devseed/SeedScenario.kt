@@ -43,10 +43,6 @@ fun otlpEndpoint(environment: Map<String, String>): String {
     return raw.trimEnd('/')
 }
 
-// 공개된 로컬 개발용 계정이다. 운영 계정에는 사용하지 않는다.
-const val SEED_PASSWORD = "Pulsemetry-local-2026!"
-private const val PASSWORD_HASH = "\$2a\$12\$1UOJpgz.rEryDueX68mqxebO4v9zLldEp7P/pn.otP4IBwDgsQKKm"
-
 data class SeedData(
     val scenario: String,
     val asOf: LocalDate,
@@ -60,8 +56,8 @@ data class SeedData(
     internal val defaultEndpointFingerprint: String? = null,
 ) {
     val tenantId = id(scenario)
-    /** 수신 주소는 지문에 넣지 않는다 — 주소만 바꿨다고 기존 볼륨에 reset 을 요구하지 않는다. 주소가 다르면 기본 주소로 만든 같은 시드의 지문이다. */
-    val fingerprint: String get() = defaultEndpointFingerprint ?: hash(encode(listOf(1, scenario, asOf.toString(), rows, events, ledger)))
+    /** 업무 시드와 SSO 컬럼을 합친 판 2. 과거 판의 지문을 같다고 간주하거나 자동 초기화하지 않는다. */
+    val fingerprint: String get() = defaultEndpointFingerprint ?: hash(encode(listOf(2, scenario, asOf.toString(), rows, events, ledger)))
 
     fun summary(): Row {
         val start = asOf.minusDays(28).atStartOfDay(seoul).toInstant().toString()
@@ -79,7 +75,7 @@ data class SeedData(
             "period_known_estimated_usd" to current.mapNotNull { it["cost_estimated_usd"] as? BigDecimal }.fold(BigDecimal.ZERO, BigDecimal::add),
             "period_cost_complete" to current.all { it["cost_estimated_usd"] != null },
             "owner_email" to rows.getValue("enrollment.members").first()["email"],
-            "development_password" to SEED_PASSWORD, "invitation_codes" to invitationCodes, "otlp_endpoint" to otlpEndpoint)
+            "invitation_codes" to invitationCodes, "otlp_endpoint" to otlpEndpoint)
     }
 }
 
@@ -120,7 +116,8 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
         val local = when (index) { 0 -> "owner"; 1 -> "admin"; else -> "member$index" }
         add("enrollment.members", "id" to member(index), "tenant_id" to tenant, "email" to "$local@seed-${name.lowercase()}.example.test",
             "display_name" to "$name 구성원 %02d".format(index), "role" to when(index) { 0 -> "owner"; 1 -> "admin"; else -> "member" },
-            "status" to if (index >= count) "invited" else "active", "password_hash" to if (index < 2) PASSWORD_HASH else null,
+            "status" to if (index >= count) "invited" else "active",
+            "oidc_subject" to null,
             "created_at" to origin, "updated_at" to origin)
     }
     repeat(if (name == "A") 4 else 1) { index ->
@@ -426,7 +423,7 @@ private fun emptyOrganization(name: String, label: String, asOf: LocalDate): See
         )),
         "enrollment.members" to mutableListOf(linkedMapOf(
             "id" to id("$name/member/0"), "tenant_id" to tenant, "email" to "owner@seed-${name.lowercase()}.example.test",
-            "display_name" to "$name 구성원 00", "role" to "owner", "status" to "active", "password_hash" to PASSWORD_HASH,
+            "display_name" to "$name 구성원 00", "role" to "owner", "status" to "active", "oidc_subject" to null,
             "created_at" to origin, "updated_at" to origin,
         )),
     )
@@ -446,7 +443,7 @@ private fun enrollmentOrganization(asOf: LocalDate, otlpEndpoint: String): SeedD
     fun add(table: String, vararg fields: Pair<String, Any?>) { rows.getOrPut(table) { mutableListOf() }.add(linkedMapOf(*fields)) }
     val owner = id("$name/member/0")
     add("enrollment.members", "id" to id("$name/member/1"), "tenant_id" to tenant, "email" to "member1@seed-e.example.test",
-        "display_name" to "E 구성원 01", "role" to "member", "status" to "invited", "password_hash" to null, "created_at" to origin, "updated_at" to origin)
+        "display_name" to "E 구성원 01", "role" to "member", "status" to "invited", "oidc_subject" to null, "created_at" to origin, "updated_at" to origin)
     val privacy = listOf("user_prompts", "assistant_responses", "tool_details", "tool_content", "user_email", "raw_api_bodies").associate { "collect_$it" to false }
     val manifest = linkedMapOf("schema_version" to 1, "config_revision" to 1, "otlp" to mapOf("endpoint" to otlpEndpoint, "protocol" to "http/protobuf"),
         "signals" to mapOf("logs" to true, "metrics" to true, "traces" to true), "privacy" to privacy)

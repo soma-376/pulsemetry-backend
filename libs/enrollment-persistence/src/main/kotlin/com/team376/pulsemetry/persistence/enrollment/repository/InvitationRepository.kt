@@ -61,8 +61,8 @@ interface InvitationRepository : JpaRepository<Invitation, UUID> {
 		@Param("now") now: Instant,
 	): Int
 
-	/** 사용자 인증이 활성화됐을 때 설치 소비 뒤 남은 가입 권한도 폐기한다. */
+	/** 기존 호출자 호환용 이름. 가입 소비는 폐지되어 설치 미사용 초대만 폐기한다. */
 	@Modifying(flushAutomatically = true, clearAutomatically = true)
-	@Query("UPDATE Invitation i SET i.revokedAt = :now WHERE i.id = :id AND i.revokedAt IS NULL AND (i.usedAt IS NULL OR i.signupUsedAt IS NULL)")
+	@Query("UPDATE Invitation i SET i.revokedAt = :now WHERE i.id = :id AND i.revokedAt IS NULL AND i.usedAt IS NULL")
 	fun revokeIncludingSignup(@Param("id") id: UUID, @Param("now") now: Instant): Int
 }

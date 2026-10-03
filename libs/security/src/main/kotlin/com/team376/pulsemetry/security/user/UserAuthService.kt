@@ -3,9 +3,9 @@ package com.team376.pulsemetry.security.user
 import com.team376.pulsemetry.persistence.enrollment.repository.AuthMember
 import com.team376.pulsemetry.persistence.enrollment.repository.AuthSession
 import com.team376.pulsemetry.persistence.enrollment.repository.UserAuthRepository
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
+import org.springframework.dao.DuplicateKeyException
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -13,6 +13,7 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import java.util.Locale
 import kotlin.math.max
 
 /** 실패 카운터와 재사용 폐기는 반환값으로 커밋한 뒤 예외로 바꾼다. 서명/SQL 실패는 롤백한다. */
@@ -21,41 +22,54 @@ class UserAuthService(
     transactionManager: PlatformTransactionManager,
     private val jwt: UserJwt,
     private val clock: Clock,
+    private val allowedRedirectUris: Set<String> = emptySet(),
 ) {
     private val tx = TransactionTemplate(transactionManager)
-    private val defaultLimits = AuthRateLimiter(repository, transactionManager, jwt, clock)
-    private val passwords = BCryptPasswordEncoder(12)
-    private val dummyHash = passwords.encode("not-a-real-member-password")
 
-    fun signup(codeHash: String, email: String, password: String) {
-        if (password.codePointCount(0, password.length) < 12 || password.toByteArray(StandardCharsets.UTF_8).size > 72 || email.length > 320) badRequest()
-        // KDF는 DB 잠금을 잡기 전에 끝낸다.
-        val passwordHash = requireNotNull(passwords.encode(password))
-        tx.executeWithoutResult {
-            val now = clock.instant()
-            val invitation = repository.lockInvitation(codeHash) ?: throw UserAuthException("signup_unavailable", 409)
-            val member = repository.member(invitation.memberId, true) ?: throw UserAuthException("signup_unavailable", 409)
-            if (invitation.revokedAt != null || invitation.signupUsedAt != null || invitation.expiresAt <= now ||
-                member.tenantId != invitation.tenantId || member.tenantStatus != "active" || member.status == "suspended" ||
-                member.passwordHash != null || member.email != UserSecrets.email(email)) throw UserAuthException("signup_unavailable", 409)
-            repository.signup(member.id, invitation.id, passwordHash, now)
-        }
-    }
-
-    fun login(tenant: UUID, email: String, password: String): UserTokens = authenticated(tenant, email, password) { member ->
-        newSession(member)
-    }
-
-    fun authorize(tenant: UUID, email: String, password: String, redirect: String, state: String,
-        challenge: String, method: String): String {
+    /** IdP로 이동하기 전에 클라이언트의 복귀 주소와 별도 PKCE를 검증한다. */
+    fun validateAuthorizationRequest(redirect: String, state: String, challenge: String, method: String) {
         validateRedirect(redirect)
         if (method != "S256" || !Regex("[A-Za-z0-9_-]{43}").matches(challenge) ||
             state.length !in 16..256 || state.any { it.code < 33 || it.code > 126 }) badRequest()
-        return authenticated(tenant, email, password) { member ->
-            val code = UserSecrets.token("uac_")
-            repository.addCode(UserSecrets.hash(code), member.id, redirect, challenge, clock.instant().plusSeconds(60))
-            "$redirect?code=$code&state=${URLEncoder.encode(state, StandardCharsets.UTF_8)}"
+    }
+
+    fun oidcLoginMember(tenant: UUID, email: String): UUID =
+        repository.oidcLoginMember(tenant, email.trim().lowercase(Locale.ROOT))
+            ?: throw UserAuthException("member_not_allowed", 403)
+
+    /** verifiedEmail은 서명·issuer·audience·nonce와 email_verified=true 검증을 마친 ID Token에서만 받는다. */
+    fun authorizeOidc(tenant: UUID, issuer: String, subject: String, redirect: String, state: String,
+        challenge: String, method: String, loginMemberId: UUID? = null, loginEmail: String? = null,
+        verifiedEmail: String? = null): String {
+        validateAuthorizationRequest(redirect, state, challenge, method)
+        if (issuer.isBlank() || issuer.length > 512 || subject.isBlank() || subject.length > 255) invalid()
+        try {
+            return requireNotNull(tx.execute {
+                val member = (if (loginMemberId == null)
+                    repository.oidcMember(tenant, issuer, subject)?.takeIf { it.active() }
+                else connectOidcMember(tenant, issuer, subject, loginMemberId, loginEmail, verifiedEmail))
+                    ?: throw UserAuthException("member_not_allowed", 403)
+                val code = UserSecrets.token("uac_")
+                repository.addCode(UserSecrets.hash(code), member.id, redirect, challenge, clock.instant().plusSeconds(60))
+                "$redirect?code=$code&state=${URLEncoder.encode(state, StandardCharsets.UTF_8)}"
+            })
+        } catch (_: DuplicateKeyException) {
+            // 다른 회원이 같은 sub를 먼저 연결했으면 활성화와 코드 발급도 롤백한다.
+            throw UserAuthException("member_not_allowed", 403)
         }
+    }
+
+    private fun connectOidcMember(tenant: UUID, issuer: String, subject: String, memberId: UUID,
+        loginEmail: String?, verifiedEmail: String?): AuthMember? {
+        val member = repository.oidcLinkCandidate(tenant, issuer, memberId) ?: return null
+        if (member.tenantStatus != "active" || member.status !in setOf("invited", "active")) return null
+        if (member.oidcSubject != null) return member.takeIf { it.active() && it.oidcSubject == subject }
+        val email = verifiedEmail?.trim()?.lowercase(Locale.ROOT) ?: return null
+        if (email.length > 254 || !email.matches(Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) ||
+            email != loginEmail || email != member.email.lowercase(Locale.ROOT) ||
+            repository.oidcLoginMember(tenant, email) != member.id) return null
+        if (!repository.linkOidcSubject(member.id, subject)) return null
+        return member.copy(oidcSubject = subject, status = "active")
     }
 
     fun exchange(code: String, redirect: String, verifier: String): UserTokens {
@@ -114,37 +128,6 @@ class UserAuthService(
         return identity
     }
 
-    /** 토큰 없는 진입의 IP 버킷을 기본 한도로 센다. 설정 한도를 쓰는 경로는 앱이 조립한 [AuthRateLimiter]를 부른다(ADR 0052). */
-    fun limitIp(ip: String) = defaultLimits.entry(ip)
-
-    private fun <T : Any> authenticated(tenant: UUID, email: String, password: String, operation: (AuthMember) -> T): T {
-        if (email.length > 320 || password.toByteArray(StandardCharsets.UTF_8).size > 72) invalid()
-        val normalized = UserSecrets.email(email)
-        val hash = UserSecrets.hash("account:$tenant:$normalized")
-        val outcome = requireNotNull(tx.execute {
-            val now = clock.instant()
-            val attempt = repository.lockAttempt(hash, now)
-            if (attempt.lockedUntil?.isAfter(now) == true) {
-                return@execute Outcome<T>(error = UserAuthException("rate_limited", 429, secondsUntil(now, requireNotNull(attempt.lockedUntil))))
-            }
-            val reset = now >= attempt.windowStartedAt.plusSeconds(900)
-            val start = if (reset) now else attempt.windowStartedAt
-            val count = if (reset) 0 else attempt.attempts
-            val found = repository.member(tenant, normalized)
-            val member = found?.let { repository.member(it.id, true) }
-            val matches = passwords.matches(password, member?.passwordHash ?: dummyHash)
-            if (member == null || !member.active() || member.passwordHash == null || !matches) {
-                val failures = count + 1
-                repository.saveAttempt(hash, start, failures, if (failures >= 5) now.plusSeconds(900) else null)
-                return@execute Outcome<T>(error = if (failures >= 5) UserAuthException("rate_limited", 429, 900)
-                    else UserAuthException("invalid_credentials"))
-            }
-            repository.saveAttempt(hash, now, 0, null)
-            Outcome(value = operation(member))
-        })
-        return outcome.unwrap()
-    }
-
     private fun newSession(member: AuthMember): UserTokens {
         // 수집 설정이 없는 조직도 로그인해 온보딩을 시작한다. 0은 미설정 세션이다(ADR 0033).
         val revision = repository.activeRevision(member.tenantId) ?: 0
@@ -168,6 +151,9 @@ class UserAuthService(
 
     private fun validateRedirect(raw: String) {
         val uri = try { URI(raw) } catch (_: Exception) { badRequest() }
+        if (raw.length > 256 || uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null) badRequest()
+        if (raw in allowedRedirectUris && (uri.scheme == "https" ||
+            (uri.scheme == "http" && uri.host in setOf("localhost", "127.0.0.1", "[::1]")))) return
         if (raw.length > 256 || uri.scheme != "http" || uri.host !in setOf("127.0.0.1", "[::1]") ||
             uri.port !in 1..65535 || uri.rawPath != "/callback" || uri.rawUserInfo != null ||
             uri.rawQuery != null || uri.rawFragment != null) badRequest()

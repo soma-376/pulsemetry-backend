@@ -69,7 +69,7 @@ class InstallationInvitationApiTest : AbstractUserAuthApiTest() {
     private fun enrollWith(code: String): HttpResponse<String> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/enroll"))
         .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(mapOf("code" to code, "platform" to "macos")))).build(),
         HttpResponse.BodyHandlers.ofString())
-    private fun signupWith(email: String, code: String) = post("signup", mapOf("code" to code, "email" to email, "password" to password))
+    private fun signupWith(email: String, code: String) = post("signup", mapOf("code" to code, "email" to email, "password" to "removed-password-auth"))
     private fun listed(token: String, invitation: String): JsonNode = json(manage("GET", "/invitations?limit=100", null, token)).path("items").toList()
         .single { it.path("invitationId").asString() == invitation }
     private fun invitationCount() = jdbc.sql("SELECT count(*) FROM enrollment.invitations").query(Int::class.java).single()
@@ -103,10 +103,10 @@ class InstallationInvitationApiTest : AbstractUserAuthApiTest() {
         assertThat(message.path("Subject").asString()).isEqualTo("Pulsemetry 설치 코드").doesNotContain(code)
         val text = MailpitServer.text(message)
         assertThat(text).contains("테스트 조직", "설치 코드: $code", "curl -fsSL '$INSTALL_BASE/unix?code=$code' | sh", "irm '$INSTALL_BASE/windows?code=$code' | iex",
-            "계정 만들기에는 쓸 수 없습니다")
+            "로그인에는 쓸 수 없습니다")
         assertThat(text).doesNotContain(ACCEPT_URL, "#code=", "계정 만들기\n")
 
-        assertThat(signupWith("laptop@example.test", code).statusCode()).isEqualTo(409)
+        assertThat(signupWith("laptop@example.test", code).statusCode()).isEqualTo(410)
         val enrolled = enrollWith(code)
         assertThat(enrolled.statusCode()).withFailMessage(enrolled.body()).isEqualTo(201)
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.installations WHERE member_id=:id").param("id", target).query(Int::class.java).single()).isEqualTo(1)
@@ -163,23 +163,17 @@ class InstallationInvitationApiTest : AbstractUserAuthApiTest() {
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.invitations WHERE target_member_id=:id").param("id", target).query(Int::class.java).single()).isEqualTo(1)
     }
 
-    @Test fun `가입을 마친 초대의 재발급 메일은 설치 경로만, 설치를 마친 초대의 재발급 메일은 계정 만들기만 안내한다`() {
+    @Test fun `SSO 로그인한 회원도 미사용 설치 코드는 재발급하고 소비한 코드는 재발급하지 않는다`() {
         val token = adminToken()
-        // 기본 구성원의 초대는 방금 가입에 썼고 설치가 남았다.
         val ownInvitation = jdbc.sql("SELECT id FROM enrollment.invitations WHERE target_member_id=:id").param("id", member).query(UUID::class.java).single()
-        val installOnly = json(manage("POST", "/invitations/$ownInvitation/reissue", emptyMap<String, String>(), token))
-        // 설치만 마치고 가입하지 않은 대기자.
-        val pc = data.member(tenant, "pc-only@example.test", role = MemberRole.member, status = MemberStatus.active).id
-        val installed = data.invitation(tenant, pc, InvitationCode.generate(), expiresAt = clock.now.plusSeconds(3600), usedAt = earlier).id
-        val signupOnly = json(manage("POST", "/invitations/$installed/reissue", emptyMap<String, String>(), token))
-
-        assertThat(dispatcher.runOnce()).isEqualTo(2)
-        val toOwner = MailpitServer.received().single { MailpitServer.recipients(it) == listOf(email) }
-        assertThat(toOwner.path("Subject").asString()).isEqualTo("Pulsemetry 설치 코드")
-        assertThat(MailpitServer.text(toOwner)).contains("$INSTALL_BASE/unix?code=${installOnly.path("code").asString()}").doesNotContain("#code=")
-        val toPc = MailpitServer.received().single { MailpitServer.recipients(it) == listOf("pc-only@example.test") }
-        assertThat(toPc.path("Subject").asString()).isEqualTo("Pulsemetry 초대 코드")
-        assertThat(MailpitServer.text(toPc)).contains("$ACCEPT_URL#code=${signupOnly.path("code").asString()}", "설치는 이미 마쳤습니다").doesNotContain("/unix?code=", "/windows?code=")
+        val renewed = manage("POST", "/invitations/$ownInvitation/reissue", emptyMap<String, String>(), token)
+        assertThat(renewed.statusCode()).isEqualTo(200)
+        val body = json(renewed)
+        assertThat(dispatcher.runOnce()).isEqualTo(1)
+        val text = MailpitServer.text(MailpitServer.received().single { MailpitServer.recipients(it) == listOf(email) })
+        assertThat(text).contains("회사 SSO 로그인", ACCEPT_URL, "$INSTALL_BASE/unix?code=${body.path("code").asString()}").doesNotContain("#code=", "계정 만들기")
+        assertThat(enrollWith(body.path("code").asString()).statusCode()).isEqualTo(201)
+        assertThat(manage("POST", "/invitations/${body.path("invitationId").asString()}/reissue", emptyMap<String,String>(),token).statusCode()).isEqualTo(409)
     }
 
     companion object {

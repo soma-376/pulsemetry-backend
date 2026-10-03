@@ -43,8 +43,8 @@ abstract class AbstractAuthRateLimitApiTest : AbstractUserAuthApiTest() {
     protected fun logout(rt: String) = send("POST", "/v1/auth/logout", mapOf("refresh_token" to rt))
     protected fun me(at: String?) = send("GET", "/v1/auth/me", bearer = at)
     protected fun manifest(rt: String?) = send("GET", "/v1/manifest", bearer = rt)
-    protected fun unknownLogin(n: Int, origin: String? = null) = send("POST", "/v1/auth/login",
-        mapOf("tenant_id" to tenant, "email" to "nobody-$n@example.test", "password" to "wrong-password-123"), origin = origin)
+    protected fun unknownExchange(n: Int, origin: String? = null) = send("POST", "/v1/auth/token",
+        mapOf("code" to "invalid-$n", "redirect_uri" to redirect, "code_verifier" to verifier), origin = origin)
     protected fun nextRefreshToken(response: HttpResponse<String>): String {
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200)
         return mapper.readTree(response.body()).path("refresh_token").asString()
@@ -67,8 +67,8 @@ class AuthRateLimitApiTest : AbstractAuthRateLimitApiTest() {
     @Test fun `한 IP에서 서로 다른 세션 40개가 갱신해도 429가 없고 진입 버킷도 쓰지 않는다`() {
         activate()
         repeat(40) { assertThat(refresh(newSession().refreshToken).statusCode()).isEqualTo(200) }
-        repeat(30) { assertThat(unknownLogin(it).statusCode()).isEqualTo(401) }
-        assertLimited(unknownLogin(30), "60")
+        repeat(30) { assertThat(unknownExchange(it).statusCode()).isEqualTo(401) }
+        assertLimited(unknownExchange(30), "60")
     }
 
     @Test fun `한 세션이 한도를 넘으면 그 세션만 429이고 RT는 소비되지 않아 창이 지난 뒤 그대로 쓴다`() {
@@ -82,7 +82,7 @@ class AuthRateLimitApiTest : AbstractAuthRateLimitApiTest() {
         assertThat(limited.headers().firstValue("Access-Control-Expose-Headers").orElse("")).contains("Retry-After")
         // 다른 세션과 진입은 막히지 않는다.
         assertThat(refresh(newSession().refreshToken).statusCode()).isEqualTo(200)
-        assertThat(unknownLogin(0).statusCode()).isEqualTo(401)
+        assertThat(unknownExchange(0).statusCode()).isEqualTo(401)
         clock.now = clock.now.plusSeconds(60)
         assertThat(refresh(rt).statusCode()).isEqualTo(200)
     }
@@ -90,8 +90,8 @@ class AuthRateLimitApiTest : AbstractAuthRateLimitApiTest() {
     @Test fun `진입은 IP 한도 그대로 31회째 429이고 같은 IP의 세션 요청은 막지 않는다`() {
         activate()
         val tokens = newSession()
-        repeat(30) { assertThat(unknownLogin(it).statusCode()).isEqualTo(401) }
-        val limited = unknownLogin(30, origin = ORIGIN)
+        repeat(30) { assertThat(unknownExchange(it).statusCode()).isEqualTo(401) }
+        val limited = unknownExchange(30, origin = ORIGIN)
         assertLimited(limited, "60")
         assertThat(limited.headers().firstValue("Content-Type").orElse("")).isEqualToIgnoringCase("application/json;charset=UTF-8")
         assertThat(limited.headers().firstValue("Access-Control-Expose-Headers").orElse("")).contains("Retry-After")
@@ -107,7 +107,7 @@ class AuthRateLimitApiTest : AbstractAuthRateLimitApiTest() {
         repeat(8) { assertThat(logout("urt_" + "A".repeat(43)).statusCode()).isEqualTo(401) }
         repeat(7) { assertThat(me("not-a-jwt").statusCode()).isEqualTo(401) }
         repeat(7) { assertThat(manifest(null).statusCode()).isEqualTo(401) }
-        assertLimited(unknownLogin(0), "60")
+        assertLimited(unknownExchange(0), "60")
         assertLimited(refresh("not-a-token"), "60")
         // 알려진 세션의 토큰은 세션 버킷이라 막히지 않는다.
         assertThat(refresh(newSession().refreshToken).statusCode()).isEqualTo(200)
@@ -144,13 +144,13 @@ class AuthRateLimitApiTest : AbstractAuthRateLimitApiTest() {
 class AuthRateLimitSettingsApiTest : AbstractAuthRateLimitApiTest() {
     @Test fun `설정한 진입 한도와 세션 한도가 적용된다`() {
         activate()
-        repeat(3) { assertThat(unknownLogin(it).statusCode()).isEqualTo(401) }
-        assertLimited(unknownLogin(3), "10")
+        repeat(3) { assertThat(unknownExchange(it).statusCode()).isEqualTo(401) }
+        assertLimited(unknownExchange(3), "10")
         var rt = newSession().refreshToken
         repeat(2) { rt = nextRefreshToken(refresh(rt)) }
         assertLimited(refresh(rt), "20")
         clock.now = clock.now.plusSeconds(10)
-        assertThat(unknownLogin(4).statusCode()).isEqualTo(401)
+        assertThat(unknownExchange(4).statusCode()).isEqualTo(401)
         assertLimited(refresh(rt), "10")
     }
 }

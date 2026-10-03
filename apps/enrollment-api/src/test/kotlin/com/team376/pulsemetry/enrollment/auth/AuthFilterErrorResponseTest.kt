@@ -30,7 +30,7 @@ class AuthFilterErrorResponseTest : AbstractUserAuthApiTest() {
 
     private fun loginBytes(email: String = this.email): HttpResponse<ByteArray> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/login"))
         .header("Content-Type", "application/json")
-        .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(mapOf("tenant_id" to tenant, "email" to email, "password" to password))))
+        .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(mapOf("tenant_id" to tenant, "email" to email, "password" to "removed-password-auth"))))
         .build(), HttpResponse.BodyHandlers.ofByteArray())
 
     private fun assertAuthError(response: HttpResponse<ByteArray>, status: Int, code: String, retryAfter: Boolean = true) {
@@ -60,7 +60,7 @@ class AuthFilterErrorResponseTest : AbstractUserAuthApiTest() {
     }
 
     @Test fun `필터가 쓰는 진입 요청 제한의 429도 UTF-8 JSON이다`() {
-        repeat(30) { assertThat(loginBytes("nobody-$it@example.test").statusCode()).isEqualTo(401) }
+        repeat(30) { assertThat(loginBytes("nobody-$it@example.test").statusCode()).isEqualTo(410) }
         val limited = loginBytes("nobody-30@example.test")
         assertAuthError(limited, 429, "rate_limited")
         assertThat(limited.headers().firstValue("Retry-After")).hasValue("60")
@@ -72,7 +72,7 @@ class AuthFilterErrorResponseTest : AbstractUserAuthApiTest() {
             val response = loginBytes()
             assertAuthError(response, 503, "auth_unavailable")
             assertThat(response.headers().firstValue("Retry-After")).hasValue("1")
-            assertThat(String(response.body(), StandardCharsets.UTF_8)).doesNotContain("auth_attempts", "relation", "SQL", password)
+            assertThat(String(response.body(), StandardCharsets.UTF_8)).doesNotContain("auth_attempts", "relation", "SQL", "removed-password-auth")
         } finally { sql("ALTER TABLE enrollment.auth_attempts_unavailable RENAME TO auth_attempts") }
     }
 }

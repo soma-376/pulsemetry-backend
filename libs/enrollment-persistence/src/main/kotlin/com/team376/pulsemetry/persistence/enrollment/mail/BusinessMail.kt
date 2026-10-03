@@ -50,12 +50,12 @@ class InvitationMailer(private val outbox: MailOutbox, acceptUrl: String, instal
             add(if (installOnly) "$organization 에서 Pulsemetry 설치 코드를 보냈습니다. 새 PC 등에 CLI 를 설치할 때 씁니다."
                 else "$organization 에서 Pulsemetry 초대 코드를 보냈습니다.")
             add("${if (installOnly) "설치 코드" else "초대 코드"}: $code\n유효 기간: ${SEOUL.format(expiresAt)} (한국 시간)까지")
-            if (signup) add("계정 만들기\n$acceptUrl#code=$code")
+            if (signup) add("회사 SSO 로그인\n$acceptUrl")
             if (install) add("CLI 설치 — 터미널에 붙여넣습니다.\nmacOS·Linux: curl -fsSL '$installBaseUrl/unix?code=$code' | sh\nWindows: irm '$installBaseUrl/windows?code=$code' | iex")
             add(when {
-                signup && install -> "코드는 가입과 설치에 한 번씩 쓸 수 있습니다."
-                install -> "이 코드는 설치에 한 번 쓸 수 있습니다. 계정 만들기에는 쓸 수 없습니다."
-                else -> "이 코드는 계정 만들기에 한 번 쓸 수 있습니다. 설치는 이미 마쳤습니다."
+                signup && install -> "회사 계정으로 SSO 로그인하세요. 이 코드는 CLI 설치에 한 번 쓸 수 있으며 로그인에는 사용하지 않습니다."
+                install -> "이 코드는 설치에 한 번 쓸 수 있습니다. 로그인에는 쓸 수 없습니다."
+                else -> "회사 계정으로 SSO 로그인하세요. 설치는 이미 마쳤습니다."
             } + " 관리자가 코드를 다시 발급하거나 초대를 취소하면 이 코드는 더 이상 쓸 수 없습니다.\n요청한 적 없는 초대라면 이 메일을 무시하세요.")
         }
         return outbox.enqueue(MailDraft(key(invitation), "invitation", email,

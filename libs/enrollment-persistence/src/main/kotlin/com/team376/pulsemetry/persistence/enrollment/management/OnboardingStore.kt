@@ -149,7 +149,7 @@ class OnboardingStore(private val jdbc: JdbcClient, private val mapper: ObjectMa
                 SELECT i.id,i.created_at,i.expires_at,i.used_at,i.signup_used_at,i.revoked_at,
                     m.id AS member_id,m.email,m.role::text AS role,m.status::text AS member_status,m.updated_at AS member_updated_at,
                     CASE WHEN i.revoked_at IS NOT NULL THEN 'revoked'
-                         WHEN i.used_at IS NOT NULL AND i.signup_used_at IS NOT NULL THEN 'used'
+                         WHEN i.used_at IS NOT NULL THEN 'used'
                          WHEN i.expires_at <= :now THEN 'expired' ELSE 'pending' END AS status,
                     team.open_count,team.team_id,team.team_name,
                     o.status AS mail_status,o.attempts AS mail_attempts,o.queued_at AS mail_queued_at,o.last_attempt_at AS mail_last_attempt_at,

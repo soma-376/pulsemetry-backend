@@ -10,6 +10,8 @@
 - 조직 조회와 카탈로그에 `Authorization: Bearer <access_token>`을 사용한다. owner/admin만 접근한다.
 - 인증은 enrollment-api가 발급한 JWT의 공개키 검증과 현재 사용자·세션 조회를 결합한다.
   로그아웃·폐기된 세션은 기존 AT로도 다음 요청부터 401이다.
+  IdP OIDC는 enrollment-api의 로그인 단계에서만 사용한다. IdP 토큰이나 OIDC 임시 쿠키를
+  이 서버의 Bearer 인증 대신 보내지 않는다. 새 로그인 절차는 Enrollment 명세 §11을 따른다.
 - 조직 경로는 인증 주체의 조직과 일치해야 한다. 타 조직 경로와 일반 구성원은 403 `forbidden`이다(`OrganizationAccess`). 인증 주체의 조직이 삭제됐으면 404다.
   조직 안의 자원(알림·작업·구성원·제품)은 다른 조직의 것이면 없는 것과 같은 404다. 관리 명령(enrollment-api)은 타 조직 경로를 404로 거부한다(enrollment 명세 §12).
 - 인증 기본값은 비활성이며 이때 보호 경로를 모두 거부한다. 공개키·issuer·audience를 설정해 활성화한다.
@@ -18,12 +20,16 @@
 - 성공은 `application/json`, camelCase DTO이며 별도 공통 data 봉투가 없다. nullable 필드는 유지한다.
 - 금액은 USD decimal 문자열이다. null을 0으로 바꾸거나 환산 비용을 실제 청구액으로 표현하지 않는다.
 - 허용된 프론트 origin에 GET/OPTIONS CORS를 제공하며 쿠키 인증을 사용하지 않는다.
-- `GET /v1/healthz`는 인증 없이 200 `{ "status": "ok" }`를 반환하는 생존 확인이다.
+- `GET /v1/healthz`는 인증 없는 생존 확인이다. 쿼리 파라미터는 없다.
 
-## 2. 조직별 조회 API
+```json
+{ "status": "ok" }
+```
 
-아래 경로 앞에는 `/api/v1/organizations/{organizationId}`를 붙인다. 모두 GET이다.
-성공은 200 JSON이며 필드명은 camelCase다.
+## 2. 페이지별 조직 조회 API
+
+아래 경로 앞에는 `/api/v1/organizations/{organizationId}`를 붙인다. 모두 GET이고 성공은 200 JSON,
+필드명은 camelCase다. 코드 블록은 서버가 직렬화하는 전체 필드와 nullable 여부를 나타내는 TypeScript 표기다.
 
 신규 조직은 생성 시 초기화한 빈 수집 요약을 읽어 개요에 `meta.dataState=never_observed`,
 `ingest.status=empty`를 반환한다(ADR 0034). 사용량은 null이며 조회 과정에서 요약을 쓰지 않는다.
@@ -52,42 +58,196 @@
 | `/alerts/{alertId}` | 없음 | AlertResponse |
 
 기간은 필수 `startDate`, `endDate` (`YYYY-MM-DD`, 종료일 포함, 1~366일)와 선택 `timeZone`이다.
-시간대는 `Asia/Seoul`만 지원하며 생략 시에도 같은 값이다.
-`compare`는 `prev_week`(기본), `prev_period`, `none`이다. 구성원 화면에는 비교가 없다.
-`sort`는 `cost`(기본), `token`, `session`이다. `q`는 최대 200자다.
-팀 경로의 `teamId=unassigned`는 미배정 팀을 뜻한다.
-
+시간대는 `Asia/Seoul`만 지원하며 생략 시에도 같은 값이다. `compare`는 `prev_week`(기본),
+`prev_period`, `none`이고 구성원 화면에는 비교가 없다. `q`는 최대 200자다.
 다음 페이지에는 동일 조건과 응답의 `nextCursor`·`snapshotId`를 사용한다.
-409 `snapshot_expired`이면 첫 페이지부터 다시 조회한다. 개요는 응답에 snapshotId를 노출하지 않는다.
+409 `snapshot_expired`이면 첫 페이지부터 다시 조회한다. 개요는 snapshotId를 노출하지 않는다.
+
+모든 페이지가 공유하는 응답 조각은 다음과 같다.
 
 ```ts
 type Money = string; // USD decimal. null을 0으로 바꾸지 않는다.
+type Availability = "available" | "partial" | "unavailable";
+type Observation = "complete" | "partial" | "unobserved";
 type Page<T> = { items: T[]; totalCount: number; nextCursor: string | null };
-type Section<T> = {
-  availability: "available" | "partial" | "unavailable";
-  reason: string | null; data: T | null;
-};
+type Section<T> = { availability: Availability; reason: string | null; data: T | null };
+type TeamRef = { teamId: string | null; teamName: string };
+type Coverage = { status: "complete" | "partial" | "none"; observedDays: number };
 type Usage = {
-  activeUsers: number | null; sessionCount: number | null;
-  equivalentCostUsd: Money | null;
+  activeUsers: number | null;
+  sessionCount: number | null;
   tokens: {
-    inputUncached: number | null; output: number | null;
-    cacheRead: number | null; cacheWrite: number | null; total: number | null;
+    inputUncached: number | null;
+    output: number | null;
+    cacheRead: number | null;
+    cacheWrite: number | null;
+    total: number | null;
   };
+  equivalentCostUsd: Money | null;
+};
+type AnalyticsMeta = {
+  organizationId: string;
+  generatedAt: string;
+  dataThrough: string | null;
+  currency: "USD";
+  startDate: string;
+  endDate: string;
+  timeZone: "Asia/Seoul";
+  dayCount: number;
+  dataState: "ready" | "partial" | "no_data" | "never_observed";
+  currentCoverage: Coverage;
+  pricingVersion: string | null;
+  snapshotId: string; // 개요 응답에만 없음
+};
+type CurrentMeta = {
+  organizationId: string;
+  generatedAt: string;
+  asOf: string;
+  snapshotId: string;
+  currency: "USD";
+  timeZone: "Asia/Seoul";
+};
+type Ingest = {
+  status: "empty" | "healthy" | "delayed" | "down" | "unknown";
+  reason: string | null;
+  asOf: string;
+  firstObservedAt: string | null;
+  lastReceivedAt: string | null;
+  windowMinutes: number;
+  activeInstallations: number | null;
+  observedMembers: number | null;
+  eligibleMembers: number | null;
+  coverageRatio: number | null;
 };
 ```
 
-개요 최상위 필드는 `meta`, `comparison`, `ingest`, `usage`, `seats`, `alerts`, `trend`, `modelMix`, `waste`, `teamUsage`다.
-`usage.current/previous`는 `Usage | null`, 추이의 비용·토큰은 null 가능하다.
+### 2.1 개요 페이지
+
+`GET /analytics/overview`
+
+쿼리 파라미터:
+
+```ts
+{
+  startDate: string;                 // 필수, YYYY-MM-DD
+  endDate: string;                   // 필수, YYYY-MM-DD
+  timeZone?: "Asia/Seoul";          // 기본 Asia/Seoul
+  compare?: "prev_week" | "prev_period" | "none"; // 기본 prev_week
+}
+```
+
+응답:
+
+```ts
+type OverviewResponse = {
+  meta: Omit<AnalyticsMeta, "snapshotId">;
+  comparison: {
+    mode: "prev_week" | "prev_period" | "none";
+    startDate: string | null;
+    endDate: string | null;
+    status: "available" | "unavailable" | "disabled";
+    reason: string | null;
+    coverage: Coverage | null;
+  };
+  ingest: Ingest;
+  usage: { current: Usage | null; previous: Usage | null };
+  seats: {
+    availability: Availability;
+    reason: string | null;
+    scopeVendorIds: string[];
+    allocationMethod: "contract_proration" | "estimated_30_day" | null;
+    current: SeatPeriod | null;
+    previous: SeatPeriod | null;
+    reclaimEstimate: {
+      idleSeats: number;
+      monthlySavingsUsd: Money;
+      efficiencyAfterReclaim: number | null;
+    } | null;
+  };
+  alerts: {
+    availability: "available" | "unavailable";
+    reason: string | null;
+    asOf: string;
+    unacknowledgedTotal: number | null;
+    security: number | null;
+    cost: number | null;
+  };
+  trend: {
+    bucket: "day";
+    points: {
+      date: string;
+      observation: Observation;
+      equivalentCostUsd: Money | null;
+      allocatedSeatCostUsd: Money | null;
+      totalTokens: number | null;
+    }[];
+  };
+  modelMix: {
+    availability: Availability;
+    reason: string | null;
+    models: {
+      modelId: string;
+      displayName: string;
+      equivalentCostUsd: Money | null;
+      totalTokens: number | null;
+      effectiveCostPerMillionTokensUsd: Money | null;
+    }[];
+  };
+  waste: {
+    availability: Availability;
+    reason: string | null;
+    methodologyVersion: string | null;
+    totalMonthlyEquivalentCostUsd: Money | null;
+    items: {
+      kind: string;
+      availability: Availability;
+      reason: string | null;
+      currentEquivalentCostUsd: Money | null;
+      previousEquivalentCostUsd: Money | null;
+      monthlyEquivalentCostUsd: Money | null;
+      previousMonthlyEquivalentCostUsd: Money | null;
+      rate: number | null;
+      rateDefinition: string | null;
+    }[];
+  };
+  teamUsage: {
+    availability: Availability;
+    reason: string | null;
+    ranking: "equivalentCostUsd_desc";
+    attributionBasis: "event_time";
+    totalTeamCount: number;
+    topTeams: {
+      teamId: string;
+      teamName: string;
+      current: TeamPeriod;
+      previous: TeamPeriod | null;
+      topModel: { modelId: string; displayName: string; share: number } | null;
+    }[];
+    otherTeams: {
+      count: number;
+      currentEquivalentCostUsd: Money | null;
+      previousEquivalentCostUsd: Money | null;
+    };
+    unassigned: { current: TeamPeriod; previous: TeamPeriod | null };
+  };
+};
+type SeatPeriod = {
+  contractedSeats: number;
+  activeSeats: number | null;
+  monthlyFeeUsd: Money;
+  allocatedFeeUsd: Money;
+  equivalentCostUsd: Money;
+  efficiency: number | null;
+};
+type TeamPeriod = { activeUsers: number | null; equivalentCostUsd: Money | null };
+```
+
 `teamUsage`는 상위 팀·나머지 팀·미배정으로 구분하며 이벤트 시점 소속으로 집계한다.
 팀 간 이동한 구성원이나 여러 도구를 쓰는 구성원을 조직 활성 사용자 수에서 중복 계산하지 않는다.
 
-전체 응답 필드·nullable 타입:
+### 2.2 팀 분석 페이지
 
-- [개요 DTO](../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/analytics/OverviewResponse.kt), [공통 사용량 DTO](../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/analytics/AnalyticsTypes.kt)
-- [팀 DTO](../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/analytics/TeamsResponses.kt)
-- [구성원 DTO](../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/analytics/MembersResponses.kt)
-- [설정 DTO](../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/analytics/SettingsResponses.kt)
+#### 팀 목록
 
 ### 제품별 사용 (ADR 0045)
 
@@ -439,7 +599,17 @@ DB 편집은 서버 재시작 없이 반영되며 조직별 등록과 계약 이
 
 ### 3.1 벤더 검색·페이지
 
-`GET /api/v1/vendor-catalog?q=anthropic&limit=20&cursor=...`
+`GET /api/v1/vendor-catalog`
+
+쿼리 파라미터:
+
+```ts
+{
+  q?: string;      // 최대 200자
+  limit?: number;  // 기본 20, 1~100
+  cursor?: string;
+}
+```
 
 q는 선택, 최대 200자다. 앞뒤 공백을 제거하고 대소문자를 구분하지 않는 부분 문자열 검색으로
 id·provider·displayName·product를 찾는다. limit 기본 20, 범위 1~100이다.
@@ -468,6 +638,11 @@ items에 플랜 전체나 단가를 포함하지 않는다. totalCount는 검색
 ### 3.2 선택한 벤더의 플랜
 
 `GET /api/v1/vendor-catalog/claude_team/plans`
+
+```ts
+// 쿼리 파라미터 없음
+{}
+```
 
 ```json
 {
