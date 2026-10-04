@@ -131,10 +131,6 @@ class SettingsService(
 				AlertRule(rule.ruleId, rule.version, rule.enabled, if (rule.available) Availability.AVAILABLE else Availability.UNAVAILABLE, rule.reason,
 					AlertThreshold(rule.thresholdValue.toDouble(), rule.thresholdUnit), rule.evaluationWindow, rule.comparisonWindow)
 			},
-			alertLists = AlertRules.lists(source, organization.id).let { lists ->
-				fun view(id: String) = lists.getValue(id).let { AlertListView(it.listId, it.version, it.entries, it.updatedAt?.toString()) }
-				AlertLists(view(AlertRules.ALLOWED_MODELS), view(AlertRules.APPROVED_TOOLS))
-			},
 		)
 	}
 

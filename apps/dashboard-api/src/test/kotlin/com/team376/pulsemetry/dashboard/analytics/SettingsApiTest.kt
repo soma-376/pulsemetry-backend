@@ -116,17 +116,16 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/policyRollout/appliedInstallations").asLong()).isEqualTo(1)
 		assertThat(body.at("/policyRollout/outdatedInstallations").asLong()).isEqualTo(1)
 		assertThat(body.at("/policyRollout/unknownInstallations").asLong()).isEqualTo(1)
-		// ADR 0051 §1 — 수집 구간 보고가 없고(급증), 한도 초과는 근거가 없으며, 두 목록이 비어 있다.
+		// 수집 구간 보고가 없고 한도 초과 근거는 없지만 제품은 등록되어 있다(허브 ADR 0008).
 		assertThat(body.at("/alertRules").list().map { Triple(it.path("ruleId").asString(), it.path("enabled").asBoolean(), it.path("reason").asString()) })
 			.containsExactly(
 				Triple("spend_spike", false, "completeness_not_available"),
 				Triple("quota_exceeded", false, "source_not_available"),
-				Triple("model_not_allowed", false, "allowed_models_not_configured"),
-				Triple("tool_unapproved", false, "approved_tools_not_configured"),
+				Triple("product_not_registered", false, ""),
 			)
-		assertThat(body.at("/alertRules").list().map { it.path("version").asLong() to it.path("availability").asString() }).containsOnly(0L to "unavailable")
-		assertThat(listOf("/alertLists/allowedModels", "/alertLists/approvedTools").map { body.at("$it/version").asLong() to body.at("$it/entries").size() })
-			.containsOnly(0L to 0)
+		assertThat(body.at("/alertRules").list().map { it.path("version").asLong() }).containsOnly(0L)
+		assertThat(body.at("/alertRules/2/availability").asString()).isEqualTo("available")
+		assertThat(body.has("alertLists")).isFalse()
 		assertThat(body.at("/alertRules/0/threshold/value").asDouble()).isEqualTo(0.4)
 		assertThat(body.at("/alertRules/0/comparisonWindow").asString()).isEqualTo("preceding_7_calendar_days")
 		assertThat(listOf("editContracts", "editCollectionPolicy", "editAlertRules", "notifyInstallations").map { body.at("/capabilities/$it").asBoolean() })
@@ -347,33 +346,23 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
-	@DisplayName("알림 규칙 — 저장된 켜짐·판과 목록을 내고, 근거가 생긴 규칙만 켤 수 있다고 말한다(ADR 0051)")
+	@DisplayName("알림 규칙 — 등록 제품의 가용성과 판을 내고 폐기한 규칙·목록은 응답하지 않는다")
 	fun storedAlertRules() {
 		val org = seed()
 		val other = seed()
 		val admin = DashboardTestStores.writer.sql("SELECT id FROM enrollment.members WHERE tenant_id = :t LIMIT 1").param("t", org.tenant).query(UUID::class.java).single()
-		fun list(tenant: UUID, listId: String, version: Long, vararg entries: String) {
-			DashboardTestStores.writer.sql("INSERT INTO enrollment.organization_alert_lists (tenant_id,list_id,version,updated_at,updated_by) VALUES (:t,:l,:v,'2026-09-20T01:00:00Z',(SELECT id FROM enrollment.members WHERE tenant_id = :t LIMIT 1))")
-				.param("t", tenant).param("l", listId).param("v", version).update()
-			entries.forEach { DashboardTestStores.writer.sql("INSERT INTO enrollment.organization_alert_list_entries (tenant_id,list_id,entry) VALUES (:t,:l,:e)").param("t", tenant).param("l", listId).param("e", it).update() }
-		}
-		list(org.tenant, "allowed_models", 2, "gpt-6-astra", "claude-opus-*")
-		DashboardTestStores.writer.sql("INSERT INTO enrollment.organization_alert_rules (tenant_id,rule_id,enabled,version,updated_at,updated_by) VALUES (:t,'model_not_allowed',true,3,'2026-09-20T02:00:00Z',:a)")
+		DashboardTestStores.writer.sql("INSERT INTO enrollment.organization_alert_rules (tenant_id,rule_id,enabled,version,updated_at,updated_by) VALUES (:t,'product_not_registered',true,3,'2026-09-20T02:00:00Z',:a)")
 			.param("t", org.tenant).param("a", admin).update()
-		// 다른 조직의 목록·수집 구간은 이 조직의 근거가 아니다.
-		list(other.tenant, "approved_tools", 1, "Bash")
+		// 다른 조직의 수집 구간은 이 조직의 근거가 아니다.
 		SourceFixtures.insertSegment(other.applied, kst("2026-09-20T00:00:00"), kst("2026-09-20T01:00:00"))
 
 		val before = ok(org.tenant, "/settings")
 		val rules = before.at("/alertRules").list().associateBy { it.path("ruleId").asString() }
-		assertThat(rules.getValue("model_not_allowed").let { listOf(it.path("enabled").asBoolean(), it.path("version").asLong(), it.path("availability").asString(), it.path("reason").isNull) })
+		assertThat(rules.getValue("product_not_registered").let { listOf(it.path("enabled").asBoolean(), it.path("version").asLong(), it.path("availability").asString(), it.path("reason").isNull) })
 			.containsExactly(true, 3L, "available", true)
-		assertThat(rules.getValue("tool_unapproved").path("reason").asString()).isEqualTo("approved_tools_not_configured")
+		assertThat(rules.keys).containsExactlyInAnyOrder("spend_spike", "quota_exceeded", "product_not_registered")
 		assertThat(rules.getValue("spend_spike").path("reason").asString()).isEqualTo("completeness_not_available")
-		assertThat(before.at("/alertLists/allowedModels/entries").list().map { it.asString() }).containsExactly("claude-opus-*", "gpt-6-astra")
-		assertThat(listOf(before.at("/alertLists/allowedModels/listId").asString(), before.at("/alertLists/allowedModels/version").asLong(),
-			before.at("/alertLists/allowedModels/updatedAt").asString())).containsExactly("allowed_models", 2L, "2026-09-20T01:00:00Z")
-		assertThat(before.at("/alertLists/approvedTools/entries").size()).isZero()
+		assertThat(before.has("alertLists")).isFalse()
 
 		// 이 조직의 설치가 수집 구간을 보고하면 급증 규칙을 켤 수 있다(완전한 날이 생길 근거).
 		SourceFixtures.insertSegment(org.applied, kst("2026-09-20T00:00:00"), kst("2026-09-20T01:00:00"))

@@ -46,7 +46,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | 설치 보고·업데이트 확인 | 서버 구현됨. 데몬 쪽은 업데이트 확인만 있다 | 설치 보고 수신(수집 구간·적용 판), 업데이트 확인(telemetryctl 릴리스 디렉터리와 `SHA256SUMS`로 판 확인), 정책 적용 현황·업데이트 안내 메일. telemetryctl 기본 브랜치에는 보고 송신·RT 재조회·CLI 로그인이 없어 그 데몬의 설치는 적용 판 확인 불가다. ADR 0040·0043·0053, 허브 `contracts/daemon-updates.md` |
 | 메일 | 구현됨. 설정으로 활성화 | 초대 메일·문의 통지·설치 업데이트 안내를 outbox 로 적재하고 enrollment-api 의 발송 작업이 SMTP로 보낸다. ADR 0037·0038·0043 |
 | 좌석·벤더 연결·청구 | 구현됨. 벤더 연결은 설정으로 활성화 | 좌석 원장·수동 기록·CSV, 커넥터 동기화(Claude Enterprise·Cursor Enterprise — Copilot·Gemini 는 커넥터가 없다, ADR 0054)·회수·복원(관리자 조치), 벤더 청구 누계. 실계정 검증은 남았다(`docs/vendor-connector-verification.md`). ADR 0048·0049·0050 |
-| 알림 | 구현됨 | 규칙 켜기·모델·도구 목록(enrollment-api), 주기 평가·개요 미확인 수·확인(dashboard-api 평가 + enrollment-api 확인). 한도 초과는 근거가 없어 켤 수 없다. ADR 0051 |
+| 알림 | 구현됨 | 규칙 켜기(enrollment-api)·등록 제품 기준 사용 알림(허브 ADR 0008), 주기 평가·개요 미확인 수·확인(dashboard-api 평가 + enrollment-api 확인). 한도 초과는 근거가 없어 켤 수 없다. ADR 0051 |
 | 대시보드 API | 개요·팀·구성원·설정·카탈로그·수집 상태·좌석·알림·작업 상태 조회 구현 | `docs/dashboard-server-spec.md` 참고. 관리 쓰기는 enrollment-api가 맡는다. 기간 완전성·비교(ADR 0042), 수집 상태 판정(ADR 0041). API 구현과 프론트 전체 배선·E2E 완료는 별개 |
 | 텔레메트리 파이프라인 이관 | **코드는 끝났다. 배포만 남았다** | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다 — 남은 것은 infra 가 이 앱을 배포하고 collector 컨테이너를 내리는 일이다(PROJ-106) |
 

@@ -103,11 +103,9 @@ internal fun frontendFixture(data: SeedData): Row {
         "usage" to mapOf("startDate" to data.asOf.minusDays(28).toString(), "endDate" to data.asOf.minusDays(1).toString(),
             "activeUsers" to recent.map { it["member_id"] }.distinct().size, "eventCount" to recent.size,
             "byProduct" to recent.groupBy { it["product"] }.mapValues { (_, events) -> mapOf("activeUsers" to events.map { it["member_id"] }.distinct().size) }),
-        // 알림 규칙(ADR 0051) — 켠 규칙과 두 목록. 알림(평가 결과)은 시드 뒤 dashboard-api 의 주기 평가가 만든다 — 여기에 싣지 않는다.
-        "alertRules" to rows("organization_alert_rules").map { mapOf("ruleId" to it["rule_id"], "enabled" to it["enabled"], "version" to it["version"]) },
-        "alertLists" to rows("organization_alert_lists").associate { list ->
-            list["list_id"].toString() to rows("organization_alert_list_entries").filter { it["list_id"] == list["list_id"] }.map { it["entry"].toString() }.sorted()
-        },
+        // 현재 규칙의 저장값만 제공한다. 미저장 제품 규칙은 꺼짐·판 0이다(허브 ADR 0008).
+        "alertRules" to (rows("organization_alert_rules").map { mapOf("ruleId" to it["rule_id"], "enabled" to it["enabled"], "version" to it["version"]) } +
+            mapOf("ruleId" to "product_not_registered", "enabled" to false, "version" to 0)),
         // 0원 약정과 null, 구 계약 ID 처리 회귀 검증을 위해 보존한다. 좌석 계약으로 변환하지 않는다.
         "legacyContracts" to rows("contracts").map { contract ->
             val term = rows("contract_term_commitments").single { it["contract_id"] == contract["id"] }

@@ -2,6 +2,8 @@
 
 ## Status
 
+모델 허용·승인 도구 목록과 두 규칙은 [허브 ADR 0017](../../../../docs/adr/0017-registered-product-usage-alerts.md)로 대체한다. 비용 규칙·평가 위치·확인·이력 보존은 아래 상태를 따른다.
+
 Proposed — 허브 PRD 개정 제안([§6-1 #7·§6-3](../../../docs/product/prd.md))이 채택되면 Accepted.
 §5 의 "평가 기록을 RDS `dashboard_cache` 스키마에 쓴다"는 [ADR 0022](0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) §2 를 부분 개정하므로,
 ADR 0022 의 Status 조건인 허브 ADR 0007(대시보드 자기 캐시의 쓰기 예외) 리뷰에 함께 올린다.

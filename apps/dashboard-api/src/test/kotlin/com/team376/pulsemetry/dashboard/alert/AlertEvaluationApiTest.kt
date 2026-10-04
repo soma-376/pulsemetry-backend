@@ -76,20 +76,16 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 			.param("t", org.tenant).param("r", ruleId).param("v", version).param("at", Timestamp.from(enabledAt)).param("by", org.owner).update()
 	}
 
-	private fun list(org: Org, listId: String, vararg entries: String) {
-		DashboardTestStores.writer.sql("INSERT INTO enrollment.organization_alert_lists (tenant_id,list_id,version,updated_at,updated_by) VALUES (:t,:l,1,now(),:by)")
-			.param("t", org.tenant).param("l", listId).param("by", org.owner).update()
-		entries.forEach {
-			DashboardTestStores.writer.sql("INSERT INTO enrollment.organization_alert_list_entries (tenant_id,list_id,entry) VALUES (:t,:l,:e)")
-				.param("t", org.tenant).param("l", listId).param("e", it).update()
-		}
+	private fun register(org: Org, kind: String) {
+		DashboardTestStores.writer.sql("INSERT INTO enrollment.managed_vendors (tenant_id,vendor_id,kind,source,created_at) VALUES (:t,:id,:kind,'manual',now())")
+			.param("t", org.tenant).param("id", UUID.randomUUID().toString()).param("kind", kind).update()
 	}
 
 	private fun cost(org: Org, name: String, at: String, usd: String) = Event("${org.tenant}-$name", kst(at), memberId = org.member, sessionId = "s-$name",
 		costEstimatedUsd = BigDecimal(usd), pricingVersion = "v1")
 
-	private fun model(org: Org, name: String, at: String, model: String, member: UUID = org.member) = Event("${org.tenant}-$name", kst(at), memberId = member,
-		sessionId = "s-$name", model = model, costEstimatedUsd = BigDecimal("0.01"), pricingVersion = "v1")
+	private fun model(org: Org, name: String, at: String, model: String, member: UUID = org.member, product: String = "claude_code") = Event("${org.tenant}-$name", kst(at), memberId = member,
+		sessionId = "s-$name", model = model, product = product, costEstimatedUsd = BigDecimal("0.01"), pricingVersion = "v1")
 
 	private fun get(tenant: UUID, path: String): HttpResponse<String> = http.send(
 		"/api/v1/organizations/$tenant$path",
@@ -164,15 +160,15 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
-	@DisplayName("비허용 모델 — 대상마다 24시간 안에 이어진 위반을 한 묶음으로 세고, 이어서 평가하면 열린 묶음이 늘며, 24시간 조용하면 닫힌다")
-	fun modelNotAllowed() {
+	@DisplayName("미등록 제품 — 대상마다 24시간 안에 이어진 위반을 한 묶음으로 세고, 이어서 평가하면 열린 묶음이 늘며, 24시간 조용하면 닫힌다")
+	fun unregisteredProductRolling() {
 		val org = organization()
-		list(org, "allowed_models", "claude-sonnet-*", "gpt-5")
+		register(org, "openai_biz")
 		SourceFixtures.insertEvents(org.tenant,
-			model(org, "allowed-1", "2026-09-10T09:00:00", "claude-sonnet-4"),
-			model(org, "allowed-2", "2026-09-10T09:30:00", "gpt-5"),
-			// 허용 목록의 접두사는 끝의 * 만이다 — gpt-5-mini 는 gpt-5 와 같지 않다.
-			model(org, "mini", "2026-09-10T11:00:00", "gpt-5-mini"),
+			model(org, "allowed-1", "2026-09-10T09:00:00", "claude-sonnet-4", product = "codex"),
+			model(org, "allowed-2", "2026-09-10T09:30:00", "gpt-5", product = "codex"),
+			// 모델 이름이 달라도 등록 제품의 사용은 알림 대상이 아니다.
+			model(org, "mini", "2026-09-10T11:00:00", "gpt-5-mini", product = "codex"),
 			model(org, "opus-1", "2026-09-10T10:00:00", "claude-opus-4"),
 			model(org, "opus-2", "2026-09-10T20:00:00", "claude-opus-4", member = org.other),
 			model(org, "opus-3", "2026-09-11T19:00:00", "claude-opus-4"),
@@ -180,71 +176,71 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 			// 켜기 24시간 전보다 앞선 위반은 보지 않는다.
 			model(org, "old", "2026-09-08T10:00:00", "claude-opus-4"),
 		)
-		enable(org, "model_not_allowed", kst("2026-09-10T00:00:00"))
+		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
 		val clock = MutableClock(kst("2026-09-14T00:00:00"))
 		evaluator(clock).evaluate(org.tenant)
 
-		val opus = alerts(org).filter { it.subject == "claude-opus-4" }.sortedBy { it.occurredAt }
+		val opus = alerts(org).filter { it.subject == "claude_team" }.sortedBy { it.occurredAt }
 		assertThat(opus.map { listOf(it.occurredAt, it.lastSeenAt, it.eventCount, it.status) }).containsExactly(
 			listOf(kst("2026-09-10T10:00:00"), kst("2026-09-11T19:00:00"), 3L, "closed"),
 			listOf(kst("2026-09-13T10:00:00"), kst("2026-09-13T10:00:00"), 1L, "open"),
 		)
 		assertThat(opus[0].memberIds).containsExactlyInAnyOrder(org.member.toString(), org.other.toString())
 		assertThat(opus.map { it.category }).containsOnly("security")
-		assertThat(alerts(org).single { it.subject == "gpt-5-mini" }.eventCount).isEqualTo(1)
-		assertThat(alerts(org).map { it.subject }).doesNotContain("claude-sonnet-4", "gpt-5")
+		assertThat(alerts(org).map { it.subject }).containsOnly("claude_team")
 
 		// 다음 회차: 열린 묶음에서 16시간 뒤의 위반은 같은 묶음이다(판이 오른다). 다시 평가해도 늘지 않는다.
 		SourceFixtures.insertEvents(org.tenant, model(org, "opus-5", "2026-09-14T02:00:00", "claude-opus-4"))
 		clock.now = kst("2026-09-14T04:00:00")
 		evaluator(clock).evaluate(org.tenant)
 		evaluator(clock).evaluate(org.tenant)
-		val extended = alerts(org).single { it.subject == "claude-opus-4" && it.status == "open" }
+		val extended = alerts(org).single { it.subject == "claude_team" && it.status == "open" }
 		assertThat(listOf(extended.eventCount, extended.version, extended.lastSeenAt)).containsExactly(2L, 2L, kst("2026-09-14T02:00:00"))
-		assertThat(alerts(org).count { it.subject == "claude-opus-4" }).isEqualTo(2)
+		assertThat(alerts(org).count { it.subject == "claude_team" }).isEqualTo(2)
 
 		// 24시간 동안 위반이 없으면 닫힌다.
 		clock.now = kst("2026-09-15T04:00:00")
 		evaluator(clock).evaluate(org.tenant)
-		assertThat(alerts(org).filter { it.subject == "claude-opus-4" }.map { it.status }).containsOnly("closed")
+		assertThat(alerts(org).filter { it.subject == "claude_team" }.map { it.status }).containsOnly("closed")
 	}
 
 	@Test
-	@DisplayName("미승인 도구 — 도구 결과의 이름을 승인 목록과 대조한다. 꺼진 규칙은 평가하지 않는다")
-	fun toolUnapprovedAndDisabledRules() {
+	@DisplayName("도구 결과는 제품 사용으로 세지 않으며 꺼진 규칙은 평가하지 않는다")
+	fun toolResultsAndDisabledRules() {
 		val org = organization()
-		list(org, "approved_tools", "Bash", "Read")
+		register(org, "openai_biz")
 		SourceFixtures.insertEvents(org.tenant,
 			Event("${org.tenant}-bash", kst("2026-09-10T10:00:00"), usage = false, memberId = org.member, toolName = "Bash"),
+			model(org, "usage", "2026-09-10T12:00:00", "claude-opus-4"),
 			Event("${org.tenant}-mcp", kst("2026-09-10T11:00:00"), usage = false, memberId = org.member, toolName = "mcp_tool"),
 		)
-		// 목록은 있지만 규칙이 꺼져 있다 — 평가도 알림도 없다.
+		// 제품 등록은 있지만 규칙이 꺼져 있다 — 평가도 알림도 없다.
 		val clock = MutableClock(kst("2026-09-14T00:00:00"))
 		evaluator(clock).evaluate(org.tenant)
 		assertThat(store.evaluations(org.tenant)).isEmpty()
 		assertThat(ok(org.tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").at("/alerts").let { it.path("availability").asString() to it.path("reason").asString() })
 			.isEqualTo("unavailable" to "evaluation_not_configured")
 
-		enable(org, "tool_unapproved", kst("2026-09-10T00:00:00"))
+		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
 		assertThat(ok(org.tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").at("/alerts/reason").asString()).isEqualTo("evaluation_pending")
 		assertThat(evaluator(clock).runOnce()).isGreaterThanOrEqualTo(1)
-		assertThat(alerts(org).map { it.ruleId to it.subject }).containsExactly("tool_unapproved" to "mcp_tool")
+		assertThat(alerts(org).map { it.ruleId to it.subject }).containsExactly("product_not_registered" to "claude_team")
 	}
 
 	@Test
 	@DisplayName("개요·목록·단건 — 미확인은 확인 기록이 없는 알림이고, 확인하면 줄어든다. 다른 조직의 알림은 없다")
 	fun overviewListAndAcknowledgement() {
 		val org = organization()
-		list(org, "allowed_models", "claude-sonnet-*")
+		register(org, "cursor")
 		SourceFixtures.insertEvents(org.tenant,
-			cost(org, "before", "2026-09-03T10:00:00", "10"), cost(org, "after", "2026-09-10T10:00:00", "20"),
-			model(org, "opus", "2026-09-10T12:00:00", "claude-opus-4"), model(org, "o3", "2026-09-11T12:00:00", "o3"))
+			cost(org, "before", "2026-09-03T10:00:00", "10"), cost(org, "after", "2026-09-10T10:00:00", "20").copy(product = "unknown"),
+			model(org, "opus", "2026-09-10T12:00:00", "claude-opus-4"), model(org, "o3", "2026-09-11T12:00:00", "o3", product = "codex"))
 		enable(org, "spend_spike", kst("2026-09-14T00:10:00"))
-		enable(org, "model_not_allowed", kst("2026-09-10T00:00:00"))
+		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
 		val clock = MutableClock(kst("2026-09-14T01:30:00"))
 		evaluator(clock).evaluate(org.tenant)
 		val all = alerts(org)
-		assertThat(all.map { it.ruleId }).containsExactlyInAnyOrder("spend_spike", "model_not_allowed", "model_not_allowed")
+		assertThat(all.map { it.ruleId }).containsExactlyInAnyOrder("spend_spike", "product_not_registered", "product_not_registered")
 
 		val overview = ok(org.tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").at("/alerts")
 		assertThat(listOf(overview.path("availability").asString(), overview.path("unacknowledgedTotal").asLong(), overview.path("security").asLong(), overview.path("cost").asLong()))
@@ -258,13 +254,13 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		val next = ok(org.tenant, "/alerts?limit=2&cursor=${page.at("/alerts/nextCursor").asString()}")
 		val listed = (page.at("/alerts/items").toList() + next.at("/alerts/items").toList())
 		// 최근 발생 순: 급증(9/14 0시) → o3(9/11 12시) → opus(9/10 12시).
-		assertThat(listed.map { it.path("ruleId").asString() + ":" + it.path("subject").asString() }).containsExactly("spend_spike:", "model_not_allowed:o3", "model_not_allowed:claude-opus-4")
+		assertThat(listed.map { it.path("ruleId").asString() + ":" + it.path("subject").asString() }).containsExactly("spend_spike:", "product_not_registered:openai_biz", "product_not_registered:claude_team")
 		assertThat(listed[0].path("subject").isNull && listed[0].path("eventCount").isNull).isTrue()
 		assertThat(listed[1].path("members").toList().map { it.path("account").asString() }).allMatch { it.startsWith("member-") }
 		assertThat(page.at("/evaluation/rules").toList().filter { it.path("enabled").asBoolean() }.map { it.path("ruleId").asString() to it.path("status").asString() })
-			.containsExactlyInAnyOrder("spend_spike" to "evaluated", "model_not_allowed" to "evaluated")
+			.containsExactlyInAnyOrder("spend_spike" to "evaluated", "product_not_registered" to "evaluated")
 
-		val opus = all.single { it.subject == "claude-opus-4" }
+		val opus = all.single { it.subject == "claude_team" }
 		acknowledge(org, opus.alertId, opus.version)
 		val after = ok(org.tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").at("/alerts")
 		assertThat(listOf(after.path("unacknowledgedTotal").asLong(), after.path("security").asLong(), after.path("cost").asLong())).containsExactly(2L, 1L, 1L)
@@ -285,17 +281,16 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 	@DisplayName("가용성 — 켠 규칙 가운데 지금 판의 평가가 없는 것이 있으면 evaluation_pending 이고, 모두 평가되면 available, 다시 켠 규칙은 평가될 때까지 pending, 모두 끄면 남은 기록으로 판단한다")
 	fun availabilityWaitsForEveryEnabledRule() {
 		val org = organization()
-		list(org, "allowed_models", "claude-sonnet-*")
-		list(org, "approved_tools", "Bash")
+		register(org, "openai_biz")
 		SourceFixtures.insertEvents(org.tenant, model(org, "opus", "2026-09-10T12:00:00", "claude-opus-4"))
-		enable(org, "model_not_allowed", kst("2026-09-10T00:00:00"))
-		enable(org, "tool_unapproved", kst("2026-09-10T00:00:00"))
+		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
+		enable(org, "spend_spike", kst("2026-09-10T00:00:00"))
 		val clock = MutableClock(kst("2026-09-14T01:30:00"))
 		fun overview() = ok(org.tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").at("/alerts")
 		fun evaluation() = ok(org.tenant, "/alerts?status=all").at("/evaluation")
 
 		// 첫 회차 도중 — 한 규칙만 기록됐다. 아직 평가하지 않은 규칙을 0건으로 읽히게 두지 않는다(ADR 0051 §6).
-		store.record(org.tenant, Evaluation("model_not_allowed", 1, null, null, kst("2026-09-14T01:00:00"), "evaluated", null, null, null))
+		store.record(org.tenant, Evaluation("product_not_registered", 1, null, null, kst("2026-09-14T01:00:00"), "evaluated", null, null, null))
 		with(overview()) {
 			assertThat(listOf(path("availability").asString(), path("reason").asString())).containsExactly("unavailable", "evaluation_pending")
 			assertThat(path("unacknowledgedTotal").isNull).isTrue()
@@ -313,9 +308,9 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		}
 
 		// 규칙을 다시 켜 판이 바뀌었다 — 그 판이 평가될 때까지 앞 판의 기록으로 0건을 말하지 않는다.
-		enable(org, "tool_unapproved", kst("2026-09-14T01:40:00"), version = 3)
+		enable(org, "spend_spike", kst("2026-09-14T01:40:00"), version = 3)
 		assertThat(overview().path("reason").asString()).isEqualTo("evaluation_pending")
-		assertThat(evaluation().path("rules").toList().single { it.path("ruleId").asString() == "tool_unapproved" }.path("evaluatedAt").isNull).isTrue()
+		assertThat(evaluation().path("rules").toList().single { it.path("ruleId").asString() == "spend_spike" }.path("evaluatedAt").isNull).isTrue()
 		clock.advance(Duration.ofMinutes(15))
 		evaluator(clock).evaluate(org.tenant)
 		assertThat(overview().path("availability").asString()).isEqualTo("available")
@@ -331,8 +326,8 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 	@DisplayName("선점 — 다른 인스턴스가 기한 안에 잡은 조직은 평가하지 않고 기한이 지나면 가져가며, 같은 시각에 여럿이 잡으면 하나만 잡는다")
 	fun evaluationLease() {
 		val org = organization()
-		list(org, "allowed_models", "claude-sonnet-*")
-		enable(org, "model_not_allowed", kst("2026-09-10T00:00:00"))
+		register(org, "openai_biz")
+		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
 		val clock = MutableClock(kst("2026-09-14T01:30:00"))
 		val lease = Duration.ofMinutes(10)
 		val mine = AlertEvaluator(source, reader, store, frames, aggregator, organizations, boundaries, Duration.ofHours(1), lease, clock, owner = "this-instance")
@@ -345,7 +340,7 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		assertThat(store.evaluations(org.tenant)).describedAs("기한 시각에는 아직 그 인스턴스의 것").isEmpty()
 		clock.advance(Duration.ofMillis(1))
 		mine.runOnce()
-		assertThat(store.evaluations(org.tenant).map { it.ruleId }).containsExactly("model_not_allowed")
+		assertThat(store.evaluations(org.tenant).map { it.ruleId }).containsExactly("product_not_registered")
 		assertThat(store.claim(org.tenant, "other-instance", clock.instant(), clock.instant().plus(lease))).describedAs("평가가 끝나면 선점을 놓는다").isTrue()
 
 		// 같은 회차를 여러 인스턴스가 동시에 잡는다 — 정확히 하나만 잡는다.
@@ -363,18 +358,44 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
-	@DisplayName("허용 목록 패턴 — 대소문자를 구분하는 정확 일치와 끝의 * 접두사뿐이다. 부정 문법은 없다 — ! 로 시작하는 항목은 그 글자 그대로다")
-	fun allowListPatternBoundaries() {
+	@DisplayName("등록 제품은 모델과 무관하며 다른 조직의 등록·미분류·도구 결과·삭제 관측은 판정을 바꾸지 않는다")
+	fun productBoundaries() {
 		val org = organization()
-		list(org, "allowed_models", "!claude-opus-*", "gpt-5")
+		val other = organization()
+		register(org, "claude_team")
+		register(other, "openai_biz")
 		SourceFixtures.insertEvents(org.tenant,
-			model(org, "allowed", "2026-09-10T09:00:00", "gpt-5"),
-			model(org, "literal", "2026-09-10T09:30:00", "!claude-opus-x"),
-			model(org, "negated", "2026-09-10T10:00:00", "claude-opus-4"),
-			model(org, "upper", "2026-09-10T11:00:00", "GPT-5"),
+			model(org, "registered", "2026-09-10T09:00:00", "gpt-5", product = "claude_code"),
+			model(org, "outside", "2026-09-10T10:00:00", "claude-opus-4", product = "codex"),
+			model(org, "unknown", "2026-09-10T11:00:00", "gpt-5", product = "unknown"),
+			model(org, "unmapped", "2026-09-10T11:10:00", "gpt-5", product = "new_tool"),
+			model(org, "generic", "2026-09-10T11:20:00", "gpt-5", product = "codex").copy(mappingStatus = "generic"),
+			model(org, "deleted", "2026-09-10T11:30:00", "gpt-5", product = "codex").copy(recordStatus = "tombstone"),
+			model(org, "tool", "2026-09-10T11:40:00", "gpt-5", product = "codex").copy(usage = false, toolName = "Bash"),
 		)
-		enable(org, "model_not_allowed", kst("2026-09-10T00:00:00"))
-		evaluator(MutableClock(kst("2026-09-14T01:30:00"))).evaluate(org.tenant)
-		assertThat(alerts(org).map { it.subject }).containsExactlyInAnyOrder("claude-opus-4", "GPT-5")
+		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
+		val clock = MutableClock(kst("2026-09-10T14:00:00"))
+		evaluator(clock).evaluate(org.tenant)
+		val alert = alerts(org).single()
+		assertThat(alert.subject to alert.eventCount).isEqualTo("openai_biz" to 1L)
+		assertThat(alert.summary).containsEntry("productId", "openai_biz").containsKey("productName")
+		register(org, "openai_biz")
+		SourceFixtures.insertEvents(org.tenant, model(org, "now-registered", "2026-09-10T14:00:00", "new-model", product = "codex"))
+		clock.now = kst("2026-09-10T16:00:00")
+		evaluator(clock).evaluate(org.tenant)
+		assertThat(alerts(org).single().eventCount).isEqualTo(1)
 	}
+
+	@Test
+	@DisplayName("등록이 모두 없어지면 위반 0건으로 평가하지 않고 사유를 남긴다")
+	fun noRegistrationIsNotEvaluated() {
+		val org = organization()
+		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
+		SourceFixtures.insertEvents(org.tenant, model(org, "outside", "2026-09-10T10:00:00", "gpt-5", product = "codex"))
+		evaluator(MutableClock(kst("2026-09-10T14:00:00"))).evaluate(org.tenant)
+		assertThat(alerts(org)).isEmpty()
+		assertThat(store.evaluation(org.tenant, "product_not_registered")!!.let { it.status to it.reason })
+			.isEqualTo("not_evaluated" to "registered_products_not_configured")
+	}
+
 }

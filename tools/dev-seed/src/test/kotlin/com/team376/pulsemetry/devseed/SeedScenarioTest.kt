@@ -384,24 +384,22 @@ class SeedScenarioTest {
         assertTrue(listOf(b, c).none { it.rows.containsKey("enrollment.organization_policy_settings") })
     }
 
-    @Test fun `A만 알림 규칙 셋을 켰고 사용 기록에는 허용 목록 밖 모델의 호출이 있다`() {
-        // ADR 0051: 켠 규칙은 근거가 있어야 한다 — 급증은 수집 구간 보고(A 에 있다), 모델·도구는 비지 않은 목록. 한도 초과는 켜지 않는다.
+    @Test fun registeredProductRuleStartsDisabled() {
         val rules = a.rows.getValue("enrollment.organization_alert_rules")
-        assertEquals(setOf("spend_spike", "model_not_allowed", "tool_unapproved"), rules.map { it["rule_id"] }.toSet())
-        assertTrue(rules.all { it["enabled"] == true && it["updated_at"] == "2026-09-20T15:00:00Z" })
+        assertEquals(listOf("spend_spike"), rules.map { it["rule_id"] })
+        assertTrue(rules.all { it["enabled"] == true })
         assertTrue(a.rows.getValue("enrollment.installation_collection_segments").isNotEmpty())
-        val allowed = a.rows.getValue("enrollment.organization_alert_list_entries").filter { it["list_id"] == "allowed_models" }.map { it["entry"].toString() }
-        fun allowedModel(model: String) = allowed.any { if (it.endsWith("*")) model.startsWith(it.dropLast(1)) else model == it }
-        // 켠 시각 24시간 전부터의 사용 대표 행 중 허용 목록 밖 모델이 있어야 평가가 알림을 만든다.
-        val since = "2026-09-19T15:00:00Z"
-        val violating = a.events.filter { it["event_type"] == "model.response.usage" && it["source_time"].toString() >= since && !allowedModel(it["model"].toString()) }
-            .map { it["model"] }.toSet()
-        assertEquals(setOf("claude-opus-4", "o3"), violating)
+        assertFalse(a.rows.containsKey("enrollment.organization_alert_lists"))
+        assertFalse(a.rows.containsKey("enrollment.organization_alert_list_entries"))
         assertTrue(listOf(b, c).none { it.rows.containsKey("enrollment.organization_alert_rules") })
-        // 프론트 fixture 도 같은 규칙·목록을 싣는다.
         val fixture = json.readTree(encode(frontendFixture(a)))
-        assertEquals(setOf("spend_spike", "model_not_allowed", "tool_unapproved"), fixture.path("alertRules").toList().map { it.path("ruleId").asString() }.toSet())
-        assertEquals(allowed.sorted(), fixture.path("alertLists").path("allowed_models").toList().map { it.asString() })
+        assertFalse(fixture.has("alertLists"))
+        val productRule = fixture.path("alertRules").toList().single { it.path("ruleId").asString() == "product_not_registered" }
+        assertFalse(productRule.path("enabled").asBoolean())
+        assertEquals(0, productRule.path("version").asInt())
+        // A의 관측 제품은 모두 등록되어 있으므로 모델 이름이 달라도 제품 위반은 아니다.
+        val registered = a.rows.getValue("enrollment.managed_vendors").map { it["kind"] }.toSet()
+        assertTrue(a.events.filter { it["event_type"] == "model.response.usage" }.all { OBSERVED_PRODUCTS[it["product"]] in registered })
     }
 
     @Test fun `fixture 의 관측 매핑은 enrollment 마이그레이션의 매핑과 같다`() {

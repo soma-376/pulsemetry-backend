@@ -340,27 +340,12 @@ type ProductRef = { kind: string | null; displayName: string | null };
 - `rawContentRetentionDays`는 null이다. 원문 보존 기간의 원천(원본 아카이브의 수명)이 이 저장소에 없다.
 - 집계 보존을 줄인 저장은 보존 정리 작업을 만든다(enrollment 명세 §13.2, ADR 0047). 진행은 아래 "작업 상태 조회"로 본다.
 
-### 알림 규칙 (ADR 0051)
+### 알림 규칙 (허브 ADR 0008)
 
-규칙의 켜짐과 두 목록은 enrollment-api가 저장한다(enrollment 명세 §12 "알림 규칙과 목록"). 이 앱은 `enrollment.organization_alert_rules`·`organization_alert_lists`·
-`organization_alert_list_entries`·`alert_rule_definitions`와 설치의 수집 구간을 읽기 전용 계정으로 요청마다 읽고, 명령과 같은 판정(`AlertRules`)으로 가용성을 낸다.
-
-| 값 | 규칙 |
-| --- | --- |
-| `alertRules[].enabled`·`version` | 저장된 값. 저장한 적 없으면 false·0 |
-| `alertRules[].availability`·`reason` | 켤 수 있는 근거가 있으면 `available`·null. 아니면 `unavailable`과 사유 — `completeness_not_available`(설치의 수집 구간 보고가 없음), `source_not_available`(한도 초과 — 검증된 관측 없음), `allowed_models_not_configured`, `approved_tools_not_configured` |
-| `alertRules[].threshold`·`evaluationWindow`·`comparisonWindow` | 정의 표의 기준 데이터(급증 0.4 ratio, 한도 5 users, 모델·도구 1 events) |
-| `capabilities.editAlertRules` | 관리 기능이 켜진 배포(`pulsemetry.management.enabled`)면 true. 규칙마다 켤 수 있는지는 그 규칙의 가용성이 말한다 |
-
-```ts
-// GET O/settings 에 더한 키(가산)
-//   alertLists: { allowedModels: AlertList; approvedTools: AlertList };
-//   type AlertList = { listId: "allowed_models" | "approved_tools"; version: number; entries: string[]; updatedAt: string | null };
-//   저장한 적 없는 목록은 entries [] · version 0. entries 는 코드 포인트 순서다
-```
-
-- 켜진 규칙은 언제나 켤 수 있는 규칙이다 — 목록을 비우는 저장은 그 목록에 기대는 규칙이 켜져 있으면 거절된다.
-- 평가와 알림은 아래 "알림"이다.
+설정의 alertRules는 활성 규칙 spend_spike·quota_exceeded·product_not_registered만 제공한다. 명령과 같은 AlertRules 판정으로 켜짐·판·가용성을 반환한다.
+보관되지 않은 managed_vendors.kind가 등록 기준이며, 제품 규칙은 등록이 없으면 unavailable·registered_products_not_configured다.
+계약이 만료되거나 계약 상세가 없어도 등록은 유지된다. alertLists는 응답하지 않는다.
+product_not_registered는 1 events·rolling_24_hours다. 기존 비용 규칙의 임계값·창과 capabilities.editAlertRules는 그대로다.
 
 ### 알림 (ADR 0051 §5·§6)
 
@@ -370,14 +355,15 @@ type ProductRef = { kind: string | null; displayName: string | null };
 | 규칙 | 평가 | 평가하지 않는 사유 |
 | --- | --- | --- |
 | `spend_spike` | 확정 대기가 지난 날 D 마다 D 로 끝나는 7일 대 그 앞 7일. 개요와 같은 snapshot·같은 환산 비용. 증가율 ≥ 0.4 면 (급증, D) 알림 하나 | `period_incomplete`(두 기간 중 하나가 완전하지 않음), `cost_not_available`, `no_previous_spend`, `period_not_settled` |
-| `model_not_allowed` | 사용량 대표 행의 `model` 이 허용 목록(정확 일치·끝의 `*` 접두사) 밖이면 위반 | 목록이 비면 그 사유(켜진 규칙의 목록은 비울 수 없다) |
-| `tool_unapproved` | `tool.result` 의 `tool_name` 이 승인 목록 밖이면 위반 | 같다 |
+| `product_not_registered` | active·mapped 로그의 model.response.usage·primary 행에서 product를 vendor_catalog_observed_products로 매핑한 제품이 조직 등록 밖이면 알림 | 등록이 없으면 registered_products_not_configured. 매핑 없는 product·unknown은 판정 대상에서 제외 |
 | `quota_exceeded` | 켤 수 없다(근거 없음) | — |
 
-- 24시간 규칙은 대상(모델·도구 이름)마다 위반을 시간순으로 묶는다. 마지막 위반에서 24시간 안의 위반은 같은 묶음이고, 24시간 조용하면 묶음이 닫힌다(`status` `open`→`closed`).
+- 24시간 규칙은 대상(카탈로그 제품 ID)마다 위반을 시간순으로 묶는다. 마지막 위반에서 24시간 안의 위반은 같은 묶음이고, 24시간 조용하면 묶음이 닫힌다(`status` `open`→`closed`).
   묶음의 위반 수가 임계값(1) 이상이면 알림이다. 묶음이 늘면 알림의 `version` 이 오른다. 같은 사건은 다시 평가해도 하나다.
 - 평가는 지난 평가가 끝난 시각부터 확정 대기(`completeness.settle-after`) 전까지를 이어서 읽는다. 켠 뒤 처음은 급증은 켠 날의 전날, 24시간 규칙은 켠 시각의 24시간 전부터다.
-- 알림에는 무엇(모델·도구 이름, 급증의 두 기간 비용)·언제·누가(구성원 ID·계정)·몇 건만 싣는다. 본문·마스킹된 값은 싣지 않는다.
+- 알림에는 무엇(제품 ID·제품명, 급증의 두 기간 비용)·언제·누가(구성원 ID·계정)·몇 건만 싣는다. 본문·마스킹된 값은 싣지 않는다.
+
+새 제품 알림의 subject는 카탈로그 제품 ID이며 summary는 productId·productName·events·threshold다. 공급자·모델로 계약 제품이나 개인 결제를 추정하지 않는다. 이전 규칙의 알림과 확인 이력은 원래 식별자로 유지한다.
 
 **개요 `alerts`** — 조회 기간과 무관한 지금의 미확인 수. 미확인 = 임계값에 이른 알림 중 확인 기록이 없는 것.
 
@@ -385,7 +371,7 @@ type ProductRef = { kind: string | null; displayName: string | null };
 | --- | --- |
 | `availability`·`reason` | 켠 규칙마다 지금 판의 평가 기록이 있으면 `available`·null. 켠 규칙 가운데 지금 판의 평가 기록이 없는 것이 있으면 `unavailable`·`evaluation_pending` — 첫 평가 회차 도중이나 규칙을 다시 켠 직후도 그 규칙이 평가될 때까지다(평가하지 않은 규칙을 0건으로 읽히게 하지 않는다). 켠 규칙이 없고 평가 기록도 없으면 `unavailable`·`evaluation_not_configured`, 켠 규칙이 없어도 앞의 평가 기록이 있으면 `available` |
 | `asOf` | 마지막 평가 시각. 평가 기록이 없으면 응답 시각 |
-| `unacknowledgedTotal`·`security`·`cost` | 미확인 수. `security` = 모델·도구, `cost` = 급증·한도. `total = security + cost`. unavailable 이면 null |
+| `unacknowledgedTotal`·`security`·`cost` | 미확인 수. `security` = 미등록 제품과 이전 모델·도구 알림 이력, `cost` = 급증·한도. `total = security + cost`. unavailable 이면 null |
 
 **목록·단건** (가산 — 조직 분석 권한):
 

@@ -26,8 +26,6 @@ object JsonStructure {
 		),
 		// 관측됐지만 등록하지 않은 제품·매핑 없는 관측 — ADR 0044.
 		"settings-response.example.json" to mapOf(
-			// 알림 규칙이 기대는 모델·도구 목록 — ADR 0051.
-			"" to setOf("alertLists"),
 			"/summary" to setOf("detectedProducts", "unmappedObservations", "assignedSeats"),
 			// 등록 제품의 좌석 원천(권위·커넥터 설명·활성 연결) — ADR 0048.
 			"/vendors/items/0" to setOf("seatSource", "seats"),
