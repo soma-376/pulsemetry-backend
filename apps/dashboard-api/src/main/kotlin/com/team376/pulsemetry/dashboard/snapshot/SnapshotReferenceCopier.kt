@@ -31,7 +31,7 @@ class SnapshotReferenceCopier(
 			.list()
 		val members = source.sql(
 			"""
-			SELECT m.id, m.email, m.display_name, m.role::text AS role, m.status::text AS status, m.updated_at,
+			SELECT m.id, m.email, m.display_name, m.role::text AS role, m.status::text AS status, m.updated_at, m.planned_vendor_ids,
 			       ARRAY(
 			           SELECT DISTINCT tm.team_id FROM enrollment.team_memberships tm
 			           WHERE tm.member_id = m.id AND tm.joined_at <= :as_of AND (tm.left_at IS NULL OR tm.left_at > :as_of)
@@ -51,6 +51,7 @@ class SnapshotReferenceCopier(
 					role = rs.getString("role"),
 					status = rs.getString("status"),
 					updatedAt = rs.getObject("updated_at", OffsetDateTime::class.java),
+					plannedVendorIds = (rs.getArray("planned_vendor_ids").array as Array<*>).map { it as String },
 					currentTeamIds = (rs.getArray("current_team_ids").array as Array<*>).map { it as UUID },
 				)
 			}
@@ -68,10 +69,10 @@ class SnapshotReferenceCopier(
 			cache.sql(
 				"""
 				INSERT INTO dashboard_cache.snapshot_members
-				    (snapshot_id, member_id, account, display_name, role, status, current_team_ids, updated_at)
+				    (snapshot_id, member_id, account, display_name, role, status, current_team_ids, updated_at, planned_vendor_ids)
 				VALUES (:snapshot, :member, :account, :display_name,
 				    CAST(:role AS dashboard_cache.member_role), CAST(:status AS dashboard_cache.member_status),
-				    CAST(:teams AS uuid[]), :updated_at)
+				    CAST(:teams AS uuid[]), :updated_at, CAST(:vendors AS text[]))
 				""".trimIndent(),
 			)
 				.param("snapshot", snapshotId)
@@ -82,6 +83,7 @@ class SnapshotReferenceCopier(
 				.param("status", member.status)
 				.param("teams", member.currentTeamIds.joinToString(",", "{", "}"))
 				.param("updated_at", member.updatedAt)
+				.param("vendors", member.plannedVendorIds.joinToString(",", "{", "}"))
 				.update()
 		}
 		val products = source.sql(
@@ -115,6 +117,7 @@ class SnapshotReferenceCopier(
 		val status: String,
 		val updatedAt: OffsetDateTime,
 		val currentTeamIds: List<UUID>,
+		val plannedVendorIds: List<String>,
 	)
 
 	private companion object {

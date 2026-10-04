@@ -76,6 +76,61 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.team_memberships WHERE left_at IS NULL").query(Int::class.java).single()).isEqualTo(1)
     }
 
+    @Test fun `초대의 사용 예정 제품은 저장하지만 좌석은 만들지 않고 구성원 버전으로 수정한다`() {
+        val token = adminToken()
+        fun product(kind: String): String {
+            val response = manage("POST", "/vendors", mapOf("kind" to kind, "displayName" to kind), token)
+            assertThat(response.statusCode()).describedAs(response.body()).isEqualTo(201)
+            return mapper.readTree(response.body()).at("/vendor/vendorId").asString()
+        }
+        val first = product("claude_team")
+        val second = product("cursor")
+        fun invite(email: String, vendors: Any?, key: String = UUID.randomUUID().toString()) = manage("POST", "/invitations/batch",
+            mapOf("invitations" to listOf(mapOf("email" to email, "teamId" to null, "role" to "member", "plannedVendorIds" to vendors))), token, key)
+        val key = UUID.randomUUID().toString()
+        val created = invite("planned@example.test", listOf(first, second), key)
+        assertThat(created.statusCode()).describedAs(created.body()).isEqualTo(200)
+        assertThat(invite("planned@example.test", listOf(first, second), key).body()).isEqualTo(created.body())
+        assertThat(invite("planned@example.test", emptyList<String>()).body()).contains("already_invited")
+        fun listed(): JsonNode {
+            val items = mapper.readTree(manage("GET", "/invitations?status=pending", null, token).body()).path("items")
+            return (0 until items.size()).map { items[it] }.single { it.path("email").asString() == "planned@example.test" }
+        }
+        val row = listed()
+        assertThat((0 until row.path("plannedVendorIds").size()).map { row.path("plannedVendorIds")[it].asString() }).containsExactlyInAnyOrder(first, second)
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.seat_assignments").query(Int::class.java).single()).isZero()
+        val target = row.path("memberId").asString()
+        val version = row.path("memberVersion").asLong()
+        val saved = manage("PATCH", "/members/$target", mapOf("expectedVersion" to version, "plannedVendorIds" to listOf(second)), token)
+        assertThat(saved.statusCode()).describedAs(saved.body()).isEqualTo(200)
+        val savedBody = mapper.readTree(saved.body())
+        assertThat(savedBody.path("plannedVendorIds")[0].asString()).isEqualTo(second)
+        assertThat(savedBody.path("version").asLong()).isGreaterThan(version)
+        assertThat(manage("PATCH", "/members/$target", mapOf("expectedVersion" to version, "plannedVendorIds" to emptyList<String>()), token).statusCode()).isEqualTo(409)
+        val nextVersion = savedBody.path("version").asLong()
+        val noChange = manage("PATCH", "/members/$target", mapOf("expectedVersion" to nextVersion, "plannedVendorIds" to listOf(second)), token)
+        assertThat(mapper.readTree(noChange.body()).path("version").asLong()).isEqualTo(nextVersion)
+        // 타 조직의 등록 ID도 사용할 수 없다. 제품 ID만으로 조회하면 이 검증을 통과하게 된다.
+        val otherTenant = data.tenant().id
+        jdbc.sql("INSERT INTO enrollment.managed_vendors(tenant_id,vendor_id,kind,source,created_at) VALUES (:tenant,'foreign-vendor','other','manual',now())")
+            .param("tenant", otherTenant).update()
+        for (bad in listOf("foreign-vendor", "missing")) {
+            assertThat(invite("$bad@example.test", listOf(bad)).body()).contains("vendor_not_found")
+            assertThat(manage("PATCH", "/members/$target", mapOf("expectedVersion" to nextVersion, "plannedVendorIds" to listOf(bad)), token).statusCode()).isEqualTo(422)
+        }
+        for (bad in listOf(null, "not-an-array", listOf(first, first), listOf("bad,id"), List(101) { "v$it" })) {
+            assertThat(invite("invalid@example.test", bad).statusCode()).isEqualTo(400)
+        }
+        jdbc.sql("UPDATE enrollment.managed_vendors SET archived=true WHERE tenant_id=:tenant AND vendor_id=:id")
+            .param("tenant", tenant).param("id", second).update()
+        assertThat(invite("archived@example.test", listOf(second)).body()).contains("vendor_not_found")
+        // 이미 선택한 보관 제품을 유지해 다른 항목을 고치거나 선택을 비울 수 있다.
+        assertThat(manage("PATCH", "/members/$target", mapOf("expectedVersion" to nextVersion, "plannedVendorIds" to listOf(second)), token).statusCode()).isEqualTo(200)
+        val cleared = manage("PATCH", "/members/$target", mapOf("expectedVersion" to nextVersion, "plannedVendorIds" to emptyList<String>()), token)
+        assertThat(cleared.statusCode()).isEqualTo(200)
+        assertThat(listed().path("plannedVendorIds").size()).isZero()
+    }
+
     @Test fun `초대 재시도는 같은 코드를 반환하고 DB 재시도 본문은 암호화한다`() {
         val token = adminToken()
         val key = UUID.randomUUID().toString()

@@ -147,7 +147,7 @@ class OnboardingStore(private val jdbc: JdbcClient, private val mapper: ObjectMa
         if (memberStatus != null && memberStatus !in setOf("invited", "active", "suspended")) throw ManagementException("invalid_request", 400, "memberStatus")
         val rows = jdbc.sql("""SELECT * FROM (
                 SELECT i.id,i.created_at,i.expires_at,i.used_at,i.signup_used_at,i.revoked_at,
-                    m.id AS member_id,m.email,m.role::text AS role,m.status::text AS member_status,m.updated_at AS member_updated_at,
+                    m.id AS member_id,m.email,m.role::text AS role,m.status::text AS member_status,m.updated_at AS member_updated_at,m.planned_vendor_ids,
                     CASE WHEN i.revoked_at IS NOT NULL THEN 'revoked'
                          WHEN i.used_at IS NOT NULL THEN 'used'
                          WHEN i.expires_at <= :now THEN 'expired' ELSE 'pending' END AS status,
@@ -177,6 +177,7 @@ class OnboardingStore(private val jdbc: JdbcClient, private val mapper: ObjectMa
                     "installationUsedAt" to r.getTimestamp("used_at")?.toInstant()?.toString(), "signupUsedAt" to r.getTimestamp("signup_used_at")?.toInstant()?.toString(),
                     "revokedAt" to r.getTimestamp("revoked_at")?.toInstant()?.toString(), "status" to r.getString("status"),
                     "memberId" to r.getString("member_id"), "memberStatus" to r.getString("member_status"), "team" to team,
+                    "plannedVendorIds" to (r.getArray("planned_vendor_ids").array as Array<*>).map { it as String },
                     "memberVersion" to r.getTimestamp("member_updated_at").toInstant().toEpochMilli(), "delivery" to delivery)
             }.list()
         return node(mapOf("items" to rows.take(limit), "nextCursor" to if (rows.size > limit) rows[limit-1]["invitationId"] else null))

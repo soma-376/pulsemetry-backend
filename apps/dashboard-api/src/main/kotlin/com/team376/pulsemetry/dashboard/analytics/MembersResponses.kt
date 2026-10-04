@@ -13,6 +13,7 @@ data class Member(
 	val lastUsedAt: String?,
 	val observation: String,
 	val seatState: String,
+	val plannedVendorIds: List<String> = emptyList(),
 )
 
 data class SeatSummary(

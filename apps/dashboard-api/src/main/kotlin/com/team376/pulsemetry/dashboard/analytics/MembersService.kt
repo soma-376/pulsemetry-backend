@@ -287,6 +287,7 @@ class MembersService(
 				role = Roles.of(roster.role).wire,
 				status = roster.status,
 				version = roster.updatedAt.toEpochMilli(),
+			plannedVendorIds = roster.plannedVendorIds,
 				periodUsage = if (frame.empty || !totals.hasUsage) null else Usage.of(totals, frame.pricingMixed),
 				lastUsedAt = lastUsed[roster.id.toString()]?.toString(),
 				observation = if (frame.currentCoverage.observedDays > 0) PARTIAL else UNOBSERVED,

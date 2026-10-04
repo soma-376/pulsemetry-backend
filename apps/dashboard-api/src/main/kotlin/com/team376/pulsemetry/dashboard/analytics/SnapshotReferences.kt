@@ -48,11 +48,12 @@ class SnapshotReferences(
 		val status: String,
 		val currentTeamIds: List<UUID>,
 		val updatedAt: Instant,
+		val plannedVendorIds: List<String> = emptyList(),
 	)
 
 	fun roster(snapshot: SnapshotManifestStore.Manifest): List<RosterMember> =
 		cache.sql(
-			"SELECT member_id, account, display_name, role::text AS role, status::text AS status, current_team_ids, updated_at " +
+			"SELECT member_id, account, display_name, role::text AS role, status::text AS status, current_team_ids, updated_at, planned_vendor_ids " +
 				"FROM dashboard_cache.snapshot_members WHERE snapshot_id = :snapshot",
 		)
 			.param("snapshot", snapshot.snapshotId)
@@ -65,6 +66,7 @@ class SnapshotReferences(
 					status = rs.getString("status"),
 					currentTeamIds = (rs.getArray("current_team_ids").array as Array<*>).map { it as UUID },
 					updatedAt = rs.getObject("updated_at", OffsetDateTime::class.java).toInstant(),
+					plannedVendorIds = (rs.getArray("planned_vendor_ids").array as Array<*>).map { it as String },
 				)
 			}
 			.list()

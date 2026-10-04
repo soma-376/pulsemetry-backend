@@ -929,3 +929,9 @@ type IngestStatusResponse = {
 | `pulsemetry.dashboard.ingest.down-after` | `PULSEMETRY_DASHBOARD_INGEST_DOWN_AFTER` | 전달 성공(또는 설치 보고)이 이보다 오래 없으면 중단 | `delayed-after`보다 크다 |
 
 local 프로필은 15분 · 5분 · 24시간이다. 개발 시드에는 살아 있는 데몬이 없어 시드 A는 기준일에서 하루가 지나면 `down`(`installations_silent`)이다.
+
+### 구성원의 사용 예정 제품
+
+구성원 항목의 `plannedVendorIds: string[]`는 초대 또는 구성원 편집에서 지정한 등록 제품 ID다(허브 ADR 0015). 빈 배열은 미지정이다.
+`enrollment.members`의 값을 snapshot에 함께 복제해 구성원 version과 같은 시점으로 반환한다. 기존 snapshot의 기본값은 빈 배열이며 새 snapshot부터 저장된 선택을 포함한다.
+선택만으로 실제 좌석 수·활성 사용자·회수 후보·청구액을 늘리지 않는다.

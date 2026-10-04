@@ -204,7 +204,7 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
         if (old.second == "suspended") fail("member_suspended", 409)
         checkVersion(old.third, long(body, "expectedVersion"))
         // 보내지 않은 필드는 바꾸지 않는다. teamId: null 은 미배정이다.
-        if (!body.has("teamId") && !body.has("role")) fail("invalid_request", 400)
+        if (!body.has("teamId") && !body.has("role") && !body.has("plannedVendorIds")) fail("invalid_request", 400)
         val openTeams = jdbc.sql("SELECT team_id FROM enrollment.team_memberships WHERE member_id=:id AND left_at IS NULL")
             .param("id", id).query(UUID::class.java).list().toSet()
         var teamChanged = false
@@ -226,18 +226,41 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                 role = requested
             }
         }
+        val previousVendors = jdbc.sql("SELECT planned_vendor_ids FROM enrollment.members WHERE id=:id").param("id", id)
+            .query { rs, _ -> (rs.getArray(1).array as Array<*>).map { it as String } }.single()
+        val vendors = if (body.has("plannedVendorIds")) plannedVendors(body) else previousVendors
+        if (!validPlannedVendors(tenant, vendors - previousVendors.toSet())) fail("vendor_not_found", 422, "plannedVendorIds")
         var updated = old.third
-        if (teamChanged || role != old.first) {
+        if (teamChanged || role != old.first || vendors.toSet() != previousVendors.toSet()) {
             if (teamChanged) moveTeam(id, team, now)
             updated = advance(now, old.third)
-            jdbc.sql("UPDATE enrollment.members SET role=CAST(:role AS enrollment.member_role),updated_at=:now WHERE id=:id")
-                .param("role", role).param("now", Timestamp.from(updated)).param("id", id).update()
+            jdbc.sql("UPDATE enrollment.members SET role=CAST(:role AS enrollment.member_role),planned_vendor_ids=CAST(:vendors AS text[]),updated_at=:now WHERE id=:id")
+                .param("vendors", vendors.joinToString(",", "{", "}")).param("role", role).param("now", Timestamp.from(updated)).param("id", id).update()
         }
         // 열린 소속이 하나일 때만 현재 팀으로 본다.
         val current = jdbc.sql("""SELECT t.id,t.name FROM enrollment.team_memberships tm JOIN enrollment.teams t ON t.id=tm.team_id
             WHERE tm.member_id=:id AND tm.left_at IS NULL""").param("id", id)
             .query { rs, _ -> mapOf("teamId" to rs.getString(1), "teamName" to rs.getString(2)) }.list().singleOrNull()
-        return node(mapOf("memberId" to id, "team" to current, "role" to role, "status" to old.second, "version" to updated.toEpochMilli()))
+        return node(mapOf("memberId" to id, "team" to current, "role" to role, "status" to old.second, "version" to updated.toEpochMilli(), "plannedVendorIds" to vendors))
+    }
+
+    /** 관리자가 지정한 사용 예정 제품. 실제 좌석은 만들지 않는다. */
+    private fun plannedVendors(body: JsonNode): List<String> {
+        if (!body.has("plannedVendorIds")) return emptyList()
+        val values = body.path("plannedVendorIds")
+        if (!values.isArray || values.size() > 100) fail("invalid_request", 400, "plannedVendorIds")
+        val ids = (0 until values.size()).map { index ->
+            val value = values[index]
+            if (!value.isString || !Regex("[A-Za-z0-9_-]{1,100}").matches(value.asString())) fail("invalid_request", 400, "plannedVendorIds")
+            value.asString()
+        }
+        if (ids.distinct().size != ids.size) fail("invalid_request", 400, "plannedVendorIds")
+        return ids.sorted()
+    }
+
+    private fun validPlannedVendors(tenant: UUID, ids: List<String>): Boolean = ids.sorted().all { id ->
+        jdbc.sql("SELECT vendor_id FROM enrollment.managed_vendors WHERE tenant_id=:tenant AND vendor_id=:id AND NOT archived FOR SHARE")
+            .param("tenant", tenant).param("id", id).query(String::class.java).optional().isPresent
     }
 
     private fun invite(tenant: UUID, actor: UUID, body: JsonNode, now: Instant): JsonNode {
@@ -245,12 +268,14 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
         val results = array(body, "invitations").map { item ->
             val email = text(item, "email", 320).lowercase(Locale.ROOT)
             val role = text(item, "role", 20)
+            val vendors = plannedVendors(item)
             val team = item.path("teamId").takeUnless { it.isNull || it.isMissingNode }?.let { uuid(it.asString()) }
             var reason: String? = null
             if (!Regex("[^\\s@]+@[^\\s@]+\\.[^\\s@]+").matches(email) || email.any(Char::isISOControl)) reason = "invalid_email"
             if (!seen.add(email)) reason = "duplicate_email"
             if (role !in setOf("admin", "member")) reason = "role_not_assignable"
             if (team != null && jdbc.sql("SELECT count(*) FROM enrollment.teams WHERE tenant_id=:tenant AND id=:id AND status='active'").param("tenant", tenant).param("id", team).query(Int::class.java).single() == 0) reason = "team_not_found"
+            if (!validPlannedVendors(tenant, vendors)) reason = "vendor_not_found"
             val existing = jdbc.sql("SELECT id,status::text FROM enrollment.members WHERE tenant_id=:tenant AND lower(email)=:email")
                 .param("tenant", tenant).param("email", email).query { rs, _ -> rs.getObject(1, UUID::class.java) to rs.getString(2) }.list()
             if (existing.size > 1) reason = "ambiguous_email"
@@ -271,6 +296,8 @@ class ManagementStore(private val jdbc: JdbcClient, manager: PlatformTransaction
                         .param("id", member).param("tenant", tenant).param("email", email).param("role", role).param("now", Timestamp.from(now)).update()
                     if (team != null) addMembership(member, team, now)
                 }
+                jdbc.sql("UPDATE enrollment.members SET planned_vendor_ids=CAST(:vendors AS text[]) WHERE id=:id")
+                    .param("vendors", vendors.joinToString(",", "{", "}")).param("id", member).update()
                 code = newCode()
                 invitation = UUID.randomUUID()
                 jdbc.sql("INSERT INTO enrollment.invitations(id,tenant_id,target_member_id,created_by_member_id,code_hash,expires_at,created_at) VALUES (:id,:tenant,:member,:actor,:hash,:expires,:now)")
