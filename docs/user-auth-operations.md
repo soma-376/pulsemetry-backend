@@ -6,7 +6,7 @@
 Pulsemetry는 사전 등록된 `invited`·`active` 회원만 허용한다. 최초 로그인은 회사 IdP의 검증된 이메일로 sub를 연결하고, 이후에는 `(tenant_id, issuer, sub)`로 식별한다(허브 ADR 0010).
 공개 가입·자동 회원 생성은 없으며 회원 역할/조직은 DB가 권위 원천이다.
 비밀번호는 IdP에만 존재한다. 구 `/signup`·`/login`·`/cli/authorize`는 410이다.
-API 필드·응답은 [Enrollment 명세 §11](enrollment-server-spec.md#11-사용자-인증)을 따른다.
+API 필드·응답은 [사용자 인증 API](api/auth.md)를 따른다.
 
 Enrollment(8080)는 OIDC 로그인·자체 토큰 발급·관리 명령, Dashboard(8081)는 자체 JWT·현재 세션 검증을 담당한다.
 IdP access/ID token을 서비스 API에 보내지 않는다. OIDC 임시 쿠키 역시 업무 API 인증에 쓰지 않는다.
@@ -194,4 +194,4 @@ docker buildx build --target enrollment-api \
 
 CI의 PR 검증과 develop 배포는 telemetryctl 기본 브랜치를 체크아웃해 그 `contracts`를 쓴다(ref를 고정하지 않는다).
 계약 테스트는 telemetryctl 기본 브랜치에 있는 `enrollment-envelope`·`enrollment-manifest` 두 스키마만 원본으로 읽는다. 사용자 토큰 봉투·AT 클레임·재조회 봉투의 오라클은
-[명세](enrollment-server-spec.md) §11·§11.1의 표다 — 원격 기본 브랜치에 없는 스키마를 읽게 하면 CI가 죽는다.
+[인증 API](api/auth.md)와 [manifest 재조회](api/enrollment.md)의 표다 — 원격 기본 브랜치에 없는 스키마를 읽게 하면 CI가 죽는다.

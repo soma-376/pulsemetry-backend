@@ -9,7 +9,7 @@ Playwright 테스트 코드는 프론트 레포에 작성하고 실제 Spring AP
 
 ## 기준과 범위
 
-- API 필드·상태 코드: [Enrollment 서버 명세](enrollment-server-spec.md), [Dashboard 서버 명세](dashboard-server-spec.md).
+- API 필드·상태 코드: [페이지·기능별 API 문서](api/README.md).
 - 시드와 실행 절차: [개발용 시드](../tools/dev-seed/README.md).
 - 레포 간 기준: [대시보드 계약](../../docs/contracts/dashboard-api.md).
   허브 계약을 기준으로 실제 화면 배선과 검증 결과를 대조한다. 이 문서는 새 계약을 확정하지 않는다.
