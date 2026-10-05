@@ -49,7 +49,7 @@ pulsemetry-backend
 │   │                                ├ auth/           사용자 인증 HTTP·필터·키 설정
 │   │                                ├ inquiry/        로그인 전 도입 문의 접수 HTTP·출처별 제한 필터
 │   │                                ├ installation/   설치 보고(heartbeat) 수신 — 본문 해석·적용 확인·기록 (ADR 0040). telemetryctl 기본 브랜치에 송신 없음 (ADR 0053)
-│   │                                ├ mail/           메일 설정 바인딩·SMTP 발송 구현·발송 작업의 주기 실행 (ADR 0037)
+│   │                                ├ mail/           메일 설정 바인딩·발송 구현(SMTP·SES)·발송 작업의 주기 실행 (ADR 0037·0057)
 │   │                                ├ update/         데몬 업데이트 확인 — 릴리스 디렉터리의 판과 SHA256SUMS 확인·SemVer 비교, /bin 서빙과 같은 확인 (허브 ADR 0011, ADR 0053)
 │   │                                ├ seat/           벤더 연결 설정·커넥터 조립·좌석 동기화와 회수·복원 벤더 제어의 주기 실행 (ADR 0048·0049·0050)
 │   │                                └ management/     온보딩·정책·팀·초대·제품·계약·좌석·벤더 연결·알림 규칙·알림 확인 관리 HTTP
@@ -136,7 +136,7 @@ snapshot 이 아니라서 snapshot 정리 작업은 지우지 않는다.
 
 | 작업 | 앱·패키지 | 근거 |
 | --- | --- | --- |
-| 메일 발송(초대·문의 통지·설치 업데이트 안내) | enrollment-api `mail/` | ADR 0037·0043 |
+| 메일 발송(초대·문의 통지·설치 업데이트 안내) | enrollment-api `mail/` | ADR 0037·0043·0057 |
 | 좌석 동기화·청구 누계 읽기·회수·복원의 벤더 제어 | enrollment-api `seat/`(한 주기 작업, 제어가 먼저) | ADR 0048·0049·0050 |
 | snapshot 정리 | dashboard-api `snapshot/` | ADR 0023 |
 | 알림 평가 | dashboard-api `alert/` | ADR 0051 |

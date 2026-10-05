@@ -646,16 +646,19 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.token-hash-secret` | 없음 | telemetry token 의 HMAC-SHA256 키. **비어 있으면 기동 실패.** auth-proxy(ai-telemetry-pipeline)와 같은 값을 써야 OTLP 인증이 성립한다. dev 인프라에서는 `DevEdgeStack` 의 `TokenHashSecretArn` 이 가리키는 Secrets Manager 값. 키 변경 = 발급된 전 토큰 무효 |
 | `pulsemetry.invitation.default-ttl-hours` | `72` | `expires_in_hours` 생략 시 만료 시간 |
 | `pulsemetry.binaries.dir` | `./binaries` | telemetryctl 릴리스 디렉터리(`v<SemVer>`, §6.3)나 공개 이름의 CLI 바이너리(§6.2)가 놓인 서버 로컬 디렉터리 |
-| `pulsemetry.mail.enabled` | `false` | 메일 발송(ADR 0037)을 켠다. 켜면 아래 열한 값이 **모두 필요하다 — 하나라도 비면 기동 실패**. 꺼져 있으면 outbox에 적재하지도 보내지도 않는다 |
-| `pulsemetry.mail.smtp.host` · `.port` | 없음 | SMTP 서버 |
-| `pulsemetry.mail.smtp.username` · `.password` | 없음 | SMTP 계정. 로그·응답에 싣지 않는다 |
-| `pulsemetry.mail.smtp.starttls` | 없음 | STARTTLS를 요구하는가(`true`·`false`). 운영 SMTP는 `true` |
-| `pulsemetry.mail.from` | 없음 | 발신 주소 |
+| `pulsemetry.mail.enabled` | `false` | 메일 발송(ADR 0037 · 0057)을 켠다. 켜면 아래 공통 값과 **고른 발송 구현의 값이 모두 필요하다 — 하나라도 비면 기동 실패**. 고르지 않은 구현의 값은 보지 않는다. 꺼져 있으면 outbox에 적재하지도 보내지도 않는다 |
+| `pulsemetry.mail.provider` | 없음 | 발송 구현. `smtp`(로컬·테스트) 또는 `ses`(배포). 다른 값이면 기동 실패. 한쪽이 실패해도 다른 쪽으로 넘어가지 않는다 |
+| `pulsemetry.mail.smtp.host` · `.port` | 없음 | SMTP 서버. `smtp`일 때만 필요 |
+| `pulsemetry.mail.smtp.username` · `.password` | 없음 | SMTP 계정. `smtp`일 때만 필요. 로그·응답에 싣지 않는다 |
+| `pulsemetry.mail.smtp.starttls` | 없음 | STARTTLS를 요구하는가(`true`·`false`). `smtp`일 때만 필요. 운영 SMTP는 `true` |
+| `pulsemetry.mail.ses.region` | 없음 | SES 리전. `ses`일 때만 필요. 다른 AWS 설정에서 추론하지 않는다. 자격 증명은 SDK 기본 공급자 체인(배포에서는 태스크 역할)이고 정적 키 설정은 없다 |
+| `pulsemetry.mail.ses.configuration-set` | 없음 | SES configuration set 이름. 선택 — 비우면 요청에서 뺀다 |
+| `pulsemetry.mail.from` | 없음 | 발신 주소. SES 에서는 검증된 identity 의 주소 |
 | `pulsemetry.mail.encryption-key` | 없음 | 대기 중인 메일 본문의 AES-256-GCM 키(Base64 32바이트). 바꾸면 그때 대기 중이던 메일은 본문을 읽지 못해 실패로 끝난다 |
 | `pulsemetry.mail.dispatch-interval` | 없음 | 발송 작업이 outbox를 보는 주기(ISO-8601 기간) |
 | `pulsemetry.mail.retry-interval` | 없음 | 일시 실패 뒤 다시 시도하기까지의 간격 |
 | `pulsemetry.mail.max-attempts` | 없음 | 한 메일의 최대 시도 횟수(1 이상) |
-| `pulsemetry.mail.send-timeout` | 없음 | SMTP 연결·읽기·쓰기 각각의 제한 시간. 선점 임대는 이 값의 네 배다 |
+| `pulsemetry.mail.send-timeout` | 없음 | 한 번의 발송 제한 시간. SMTP는 연결·읽기·쓰기 각각, SES는 API 호출 전체(SDK는 한 번만 시도하고 재시도는 outbox가 한다). 선점 임대는 이 값의 네 배다 |
 | `pulsemetry.management.invitation-accept-url` | 없음 | 초대 메일의 수락 링크가 가리키는 프론트 주소(fragment 없는 http(s) 주소). 관리 기능과 메일을 **함께 켜면 필수** — 비면 기동 실패 |
 | `pulsemetry.inquiries.notification-recipient` | 없음 | 접수된 문의를 알릴 담당자 주소. 문의 접수와 메일을 **함께 켜면 필수** — 비면 기동 실패 |
 | `pulsemetry.inquiries.enabled` | `false` | 도입 문의 접수(§2.2)를 켠다. 켜면 아래 네 값이 **모두 필요하다 — 하나라도 비면 기동 실패** |
@@ -680,8 +683,9 @@ CLI 는 non-2xx 본문을 그대로 사용자 터미널에 출력한다. 메시�
 | `pulsemetry.vendor-connections.base-urls.<커넥터 ID>` | 벤더 공식 주소 | 모의 서버·스테이징에서만 바꾼다. 로컬 모의 서버는 `tools/mock-vendor/README.md` |
 
 DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_PASSWORD` 로 덮어쓴다.
-메일의 키는 `PULSEMETRY_MAIL_ENABLED` · `_FROM` · `_ENCRYPTION_KEY` · `_DISPATCH_INTERVAL` · `_RETRY_INTERVAL` · `_MAX_ATTEMPTS` · `_SEND_TIMEOUT` ·
-`_SMTP_HOST` · `_SMTP_PORT` · `_SMTP_USERNAME` · `_SMTP_PASSWORD` · `_SMTP_STARTTLS` 로 준다. local 프로필은 Compose의 메일 수신 컨테이너(`localhost:1025`)로 켠다.
+메일의 키는 `PULSEMETRY_MAIL_ENABLED` · `_PROVIDER` · `_FROM` · `_ENCRYPTION_KEY` · `_DISPATCH_INTERVAL` · `_RETRY_INTERVAL` · `_MAX_ATTEMPTS` · `_SEND_TIMEOUT` ·
+`_SMTP_HOST` · `_SMTP_PORT` · `_SMTP_USERNAME` · `_SMTP_PASSWORD` · `_SMTP_STARTTLS` · `_SES_REGION` · `_SES_CONFIGURATION_SET` 로 준다.
+local 프로필은 `smtp`로 Compose의 메일 수신 컨테이너(`localhost:1025`)에 보낸다. 배포 환경은 `ses`를 명시한다 — 인프라에 넘길 권한·identity·비밀 조건과 전환 절차는 [메일 발송 운영](mail-operations.md)이 담는다.
 수락 주소와 통지 수신자는 `PULSEMETRY_INVITATION_ACCEPT_URL` · `PULSEMETRY_INQUIRIES_NOTIFICATION_RECIPIENT` 로 준다.
 문의 접수의 다섯 키는 `PULSEMETRY_INQUIRIES_ENABLED` · `_DUPLICATE_WINDOW` · `_RATE_LIMIT_REQUESTS` · `_RATE_LIMIT_WINDOW` · `_ALLOWED_ORIGINS` 로 준다.
 local 프로필은 개발용 값(10분, 1분에 10회, 출처 3000·3107)으로 켠다. 운영 수치의 배포 기본값은 두지 않는다.
@@ -1238,7 +1242,7 @@ type Delivery = {
   reason: "mail_disabled" | "not_queued" | null; // not_sent일 때만 값이 있다
   queuedAt: string | null;      // 적재 시각
   lastAttemptAt: string | null; // 마지막 발송 시도 시각
-  sentAt: string | null;        // SMTP 서버가 받은 시각. sent일 때만 값이 있다
+  sentAt: string | null;        // 메일 공급자(SMTP 서버·SES)가 받은 시각. sent일 때만 값이 있다
   failureCode: string | null;   // 실패 분류 코드. 재시도 대기(queued) 중에는 마지막 시도의 사유
   attempts: number;
 };
@@ -1251,13 +1255,14 @@ type ContractWrite = {
 
 초대는 최대 100명, role은 `admin`·`member`, `teamId`는 UUID 또는 null이다.
 발급 결과의 `status`는 코드 발급만 말한다. **발급은 발송이 아니다** — 초대 메일의 상태는 `delivery`가 따로 말한다(ADR 0038).
-메일 기능(`pulsemetry.mail.enabled`)이 켜져 있으면 발급과 같은 트랜잭션에서 초대 메일을 outbox에 적재하고(`delivery.status=queued`), 발송 작업이 SMTP로 보낸다(ADR 0037).
+메일 기능(`pulsemetry.mail.enabled`)이 켜져 있으면 발급과 같은 트랜잭션에서 초대 메일을 outbox에 적재하고(`delivery.status=queued`), 발송 작업이 설정된 발송 구현(로컬 SMTP·배포 SES)으로 보낸다(ADR 0037 · 0057).
 메일에는 조직 이름·설치 코드·만료 시각, 회사 SSO 로그인 주소(`pulsemetry.management.invitation-accept-url`), 설치 명령(§2.1의 `install_commands`와 같은 형태)이 담긴다. 로그인 주소와 제목에는 코드가 없다.
 SSO 통합 후 메일의 로그인 안내는 회사 로그인 주소만 사용하며 초대 코드를 붙이지 않는다. 다음 가입 관련 필드는 과거 이력 호환용이다.
 메일은 그 코드에 남은 용도만 안내한다(ADR 0055) — 가입 권한이 없으면 수락 링크를, 설치를 마쳤으면 설치 명령을 싣지 않는다. 가입 권한이 없는 코드의 메일 제목은 `Pulsemetry 설치 코드`다.
 메일 기능이 꺼져 있으면 `delivery`는 `{status:"not_sent", reason:"mail_disabled"}`다. **적재되지 않은 메일을 `queued`로 내지 않는다.** 그때는 `issued`의 코드를 관리자가 직접 전달한다.
-`sent`는 SMTP 서버가 메시지를 받았다는 뜻이고 수신함 도착을 뜻하지 않는다. 실패 코드는 `recipient_rejected` · `message_rejected` · `invalid_address`(재시도하지 않음),
+`sent`는 메일 공급자(SMTP 서버·SES)가 메시지를 받았다는 뜻이고 수신함 도착·반송 없음을 뜻하지 않는다. 실패 코드는 `recipient_rejected` · `message_rejected` · `invalid_address`(재시도하지 않음),
 `recipient_deferred` · `smtp_deferred` · `smtp_auth_failed` · `smtp_unavailable` · `send_error`(재시도), `outcome_unknown`이다.
+SES 의 실패는 이 어휘 안의 `invalid_address` · `message_rejected`(영구)와 `send_error`(재시도)로만 나온다 — SES 세부 분류는 API에 내지 않는다(ADR 0057).
 같은 멱등 키의 재시도는 저장된 응답을 그대로 돌려주므로 `delivery`도 최초 시점의 값이고 메일은 한 통이다. 최신 발송 상태는 목록(§13.3)에서 본다.
 초대 취소(`revoke`)는 그 초대의 아직 보내지 않은 메일을 취소한다(`cancelled`). 이미 나간 메일은 되돌리지 못하고, 그 안의 코드는 폐기돼 쓸 수 없다.
 신규 초대의 기본 만료는 72시간이다. 기존 초대가 있으면 `already_invited`이며 기존 원본 코드를 재조회하지 않는다.
@@ -1336,7 +1341,7 @@ PATCH는 표시 이름만 바꾸고 계약을 그대로 보존한다. 신규 계
   `Location`이 그 조회 경로다. 같은 멱등 키의 재시도는 같은 작업을 가리키고 메일을 다시 만들지 않는다. 새 키는 새 안내다.
 - **대상의 결과는 메일의 발송 결과다.** 발송 작업이 한 바퀴 돈 뒤 끝난 메일을 대상 결과로 옮긴다 — `sent` → 대상 `succeeded`,
   `failed` → 대상 `failed`(메일의 실패 분류 코드, 위 초대 메일과 같은 목록), `cancelled` → 대상 `failed`(`cancelled`). 재시도 대기 중인 메일의 대상은 `pending`이다.
-  `succeeded`는 SMTP 서버가 받았다는 뜻이고 설치가 새 판을 적용했다는 뜻이 아니다. 적용 여부는 대시보드 설치 조회로 다시 확인한다.
+  `succeeded`는 메일 공급자(SMTP 서버·SES)가 받았다는 뜻이고 설치가 새 판을 적용했다는 뜻이 아니다. 적용 여부는 대시보드 설치 조회로 다시 확인한다.
 
 ### 벤더 연결 (ADR 0048)
 
@@ -1800,6 +1805,7 @@ organization_onboarding에는 정책 확인자·시각과 완료자만 남는다
 서버 API 구현, 프론트 배선, 실제 시드 E2E 통과는 별도로 확인한다.
 프론트 온보딩에서 계약 입력은 선택이며 설정의 계약 관리도 API에 연결돼 있다.
 초대 메일과 문의 통지는 `InvitationMailApiTest`가 실제 SMTP(메일 수신 컨테이너)로 도착을 확인한다.
+SES 발송 구현은 `SesMailTransportTest`가 실제 SDK를 로컬 HTTP 모의 서버에 붙여 확인한다. 실제 SES 발송은 검증하지 않았다([메일 발송 운영](mail-operations.md) §5).
 활성 구성원 설치 코드는 `InstallationInvitationApiTest`가 새 코드의 실제 enroll·가입 거절·남은 설치 코드 폐기·설치 경로만 담은 메일을 확인한다.
 전체 화면의 연동 완료 여부는 [E2E 목표 시나리오](frontend-e2e-scenarios.md)와 실제 실행 결과를 대조한다.
 
