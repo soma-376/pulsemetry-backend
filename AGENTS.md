@@ -44,7 +44,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | 사람 계정·로그인 | 표준 OIDC 구현. 개발·데모는 Cognito, 외부 계정 없는 테스트는 모의 OIDC | 비밀번호 API 대신 사전 등록 회원을 최초 SSO의 검증된 이메일로 연결하고 이후 issuer/sub로 식별한다. dashboard-api는 자체 JWT·현재 세션을 검증한다. 허브 ADR 0010·0013, `docs/user-auth-operations.md` 참고. 프론트 BFF·OIDC 배선은 구현됐으며 CLI 배선·운영 배포·SAML은 별도 |
 | 수집 정책·온보딩 | 최초 생성·수정·완료 상태 구현 | `PUT /collection-policy`가 최초 manifest를 만들거나 새 판을 저장하고, 회수 기준·집계 보존을 manifest 와 따로 저장한다. 서버가 기존 설치에 밀어 넣지 않는다. telemetryctl 기본 브랜치의 데몬은 새 정책을 스스로 받지 않는다 — 이미 설치된 기기는 다시 설치해야 새 판을 받는다(ADR 0053). ADR 0029·0032·0033·0046 |
 | 설치 보고·업데이트 확인 | 서버 구현됨. 데몬 쪽은 업데이트 확인만 있다 | 설치 보고 수신(수집 구간·적용 판), 업데이트 확인(telemetryctl 릴리스 디렉터리와 `SHA256SUMS`로 판 확인), 정책 적용 현황·업데이트 안내 메일. telemetryctl 기본 브랜치에는 보고 송신·RT 재조회·CLI 로그인이 없어 그 데몬의 설치는 적용 판 확인 불가다. ADR 0040·0043·0053, 허브 `contracts/daemon-updates.md` |
-| 메일 | 구현됨. 설정으로 활성화 | 초대 메일·문의 통지·설치 업데이트 안내를 outbox 로 적재하고 enrollment-api 의 발송 작업이 SMTP로 보낸다. ADR 0037·0038·0043 |
+| 메일 | 구현됨. 설정으로 활성화 | 초대 메일·문의 통지·설치 업데이트 안내를 outbox 로 적재하고 enrollment-api 의 발송 작업이 보낸다 — 로컬·테스트는 SMTP(Mailpit), 배포는 SES API(`pulsemetry.mail.provider`). SES 는 모의 서버로만 검증했고 실제 발송과 인프라 준비(리전·identity·태스크 역할·비밀)는 남았다(`docs/mail-operations.md`). ADR 0037·0038·0043·0057 |
 | 좌석·벤더 연결·청구 | 구현됨. 벤더 연결은 설정으로 활성화 | 좌석 원장·수동 기록·CSV, 커넥터 동기화(Claude Enterprise·Cursor Enterprise — Copilot·Gemini 는 커넥터가 없다, ADR 0054)·회수·복원(관리자 조치), 벤더 청구 누계. 실계정 검증은 남았다(`docs/vendor-connector-verification.md`). ADR 0048·0049·0050 |
 | 알림 | 구현됨 | 규칙 켜기(enrollment-api)·등록 제품 기준 사용 알림(허브 ADR 0008), 주기 평가·개요 미확인 수·확인(dashboard-api 평가 + enrollment-api 확인). 한도 초과는 근거가 없어 켤 수 없다. ADR 0051 |
 | 대시보드 API | 개요·팀·구성원·설정·카탈로그·수집 상태·좌석·알림·작업 상태 조회 구현 | `docs/dashboard-server-spec.md` 참고. 관리 쓰기는 enrollment-api가 맡는다. 기간 완전성·비교(ADR 0042), 수집 상태 판정(ADR 0041). API 구현과 프론트 전체 배선·E2E 완료는 별개 |
@@ -88,6 +88,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | `docs/vendor-connector-evidence.md` · `docs/vendor-connector-verification.md` | 벤더 커넥터의 공식 문서 근거와 실계정 검증 절차 |
 | `tools/mock-vendor/README.md` | 로컬 모의 벤더 서버(벤더 연결·회수·복원 E2E) |
 | `docs/user-auth-operations.md` | 사용자 인증 활성화·키·세션 운영 |
+| `docs/mail-operations.md` | 메일 설정 계약·SES 인프라 인계 조건·실제 발송 확인·전환과 복구 |
 | `tools/dev-seed/README.md` | Docker 전용 시드 생성·적재·검증 |
 | `docs/frontend-e2e-scenarios.md` | 실제 API E2E 목표 시나리오. 통과 보고서가 아님 |
 | `docs/module-map.md` | 모듈 구성·네임스페이스·의존 방향 — 모듈을 추가하기 전에 본다 |
@@ -213,7 +214,11 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
 - **벤더 자격증명은 암호문으로만 저장한다**(ADR 0048 §6). 키는 `pulsemetry.vendor-connections.credential-keys`(키 ID → Base64 32바이트)이고 관리 응답·메일 키와
   따로다. 응답·로그·예외 메시지·테스트 fixture에 평문을 싣지 않는다 — 연결 명령이 PUT인 것도 멱등 기록(요청 해시·응답)을 남기지 않기 위해서다.
   dashboard-api는 `VendorConnections`로 비밀 아닌 열만 읽는다. 옛 키는 `vendor_connections.credential_key_id`가 그 키를 쓰는 행이 없을 때만 뺀다.
-- **메일은 outbox 다**(ADR 0037). 업무 쓰기와 같은 트랜잭션에서 적재하고 enrollment-api 의 발송 작업이 선점해 보낸다 — 명령 안에서 SMTP를 부르지 않는다.
+- **메일은 outbox 다**(ADR 0037). 업무 쓰기와 같은 트랜잭션에서 적재하고 enrollment-api 의 발송 작업이 선점해 보낸다 — 명령 안에서 메일 공급자를 부르지 않는다.
+  발송 구현은 `pulsemetry.mail.provider`(`smtp`·`ses`)로 고르고 자동 fallback 은 없다(ADR 0057). SES SDK 는 **한 번만 시도**한다 — 재시도는 outbox 가 갖는다.
+  **SDK 의 `apiCallTimeout`은 자격 증명 조회를 포함하지 않는다.** `SesMailTransport`가 조회를 `send-timeout` 기한까지만 기다리고 남은 시간만 호출에 준다 —
+  이 순서를 빼면 늦은 ECS 자격 증명 조회로 발송이 선점 임대를 넘겨 같은 메일이 두 번 나간다.
+  공개 실패 코드는 ADR 0037 어휘 그대로이고 SES 세부는 `failure_detail`(`ses_*`)과 로그에만 둔다. AWS 오류 메시지 원문과 SES 접수 ID 를 DB 에 넣지 않는다.
   초대 코드는 메일 본문·CLI 설치 명령에만 싣고 SSO 로그인 링크에는 붙이지 않는다(ADR 0056). 발급은 발송이 아니다 — `delivery` 상태를 따로 낸다.
 - **비동기 명령은 공통 작업 기록이다**(ADR 0039). 접수(202)는 완료가 아니다 — 결과는 dashboard-api 의 작업 상태 조회로 본다. 조치 대기(`awaiting_admin_action`)는 관리자의 확인으로만 끝난다.
 - **설치 보고는 `installation_token`(무염 SHA-256)으로 인증하고 경로의 설치 ID와 대조한다**(ADR 0040). 수집 구간이 기간 완전성(ADR 0042)과 수집 상태 판정(ADR 0041)의 근거다 —

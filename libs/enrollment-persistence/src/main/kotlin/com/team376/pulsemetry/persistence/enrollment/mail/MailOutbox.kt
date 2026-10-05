@@ -31,12 +31,15 @@ data class MailDelivery(val id: UUID, val dedupKey: String, val kind: String, va
 /** 발송 작업이 선점한 메일. [attempt] 는 이번이 몇 번째 시도인지다. */
 class ClaimedMail(val id: UUID, val kind: String, val recipient: String, val subject: String, val body: String, val attempt: Int)
 
-/** 실제로 보내는 쪽. 구현은 앱이 준다. 보내지 못하면 [MailTransportFailure] 를 던진다. */
+/** 실제로 보내는 쪽. 구현(SMTP·SES)은 앱이 준다(ADR 0057). 보내지 못하면 [MailTransportFailure] 를 던진다. */
 fun interface MailTransport {
     fun send(mail: ClaimedMail)
 }
 
-/** [permanent] 면 다시 시도하지 않는다. [code] 는 분류 코드, [detail] 은 SMTP 응답 코드다 — 서버 응답 원문을 넣지 않는다. */
+/**
+ * [permanent] 면 다시 시도하지 않는다. [code] 는 API 에 내는 분류 코드, [detail] 은 API 에 내지 않는 세부 — SMTP 응답 코드나 SES 의 정해진 분류 토큰이다.
+ * 공급자 응답 원문을 넣지 않는다.
+ */
 class MailTransportFailure(val permanent: Boolean, val code: String, val detail: String? = null) : RuntimeException(code)
 
 /** 재시도 정책. 기본값이 없다 — 조립하는 앱이 설정에서 읽어 준다. */
@@ -49,7 +52,7 @@ data class MailPolicy(val retryInterval: Duration, val maxAttempts: Int, val lea
 }
 
 /**
- * 메일 outbox 의 적재·선점·결과 기록 (ADR 0037). 빈·SMTP 의존성은 없다.
+ * 메일 outbox 의 적재·선점·결과 기록 (ADR 0037). 빈·발송 공급자 의존성은 없다.
  * 적재는 호출자의 트랜잭션에 참여하고, 선점과 결과 기록은 각각 자기 트랜잭션이다.
  */
 class MailOutbox(private val jdbc: JdbcClient, manager: PlatformTransactionManager, private val clock: Clock,

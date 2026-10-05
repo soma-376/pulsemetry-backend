@@ -86,9 +86,11 @@ pulsemetry:
       max-attempts: ${PULSEMETRY_VENDOR_CONNECTIONS_HTTP_MAX_ATTEMPTS:}
       retry-backoff: ${PULSEMETRY_VENDOR_CONNECTIONS_HTTP_RETRY_BACKOFF:}
       max-retry-wait: ${PULSEMETRY_VENDOR_CONNECTIONS_HTTP_MAX_RETRY_WAIT:}
-  # 메일 발송(ADR 0037). 켜면 아래 값이 모두 필요하다 — 비어 있으면 기동이 실패한다.
+  # 메일 발송(ADR 0037 · 0057). 켜면 공통 값과 고른 발송 구현(provider)의 값이 모두 필요하다 — 비어 있으면 기동이 실패한다.
+  # provider 는 smtp(로컬·테스트) 또는 ses(배포)다. 기본값이 없다 — 배포 환경에서 명시한다.
   mail:
     enabled: ${PULSEMETRY_MAIL_ENABLED:false}
+    provider: ${PULSEMETRY_MAIL_PROVIDER:}
     from: ${PULSEMETRY_MAIL_FROM:}
     encryption-key: ${PULSEMETRY_MAIL_ENCRYPTION_KEY:}
     dispatch-interval: ${PULSEMETRY_MAIL_DISPATCH_INTERVAL:}
@@ -101,6 +103,10 @@ pulsemetry:
       username: ${PULSEMETRY_MAIL_SMTP_USERNAME:}
       password: ${PULSEMETRY_MAIL_SMTP_PASSWORD:}
       starttls: ${PULSEMETRY_MAIL_SMTP_STARTTLS:}
+    # SES 자격 증명은 기본 공급자 체인(task role)이다. 정적 키 설정은 없다. configuration-set 은 비우면 요청에서 뺀다.
+    ses:
+      region: ${PULSEMETRY_MAIL_SES_REGION:}
+      configuration-set: ${PULSEMETRY_MAIL_SES_CONFIGURATION_SET:}
   # 도입 문의 접수. 켜면 아래 값이 모두 필요하다 — 비어 있으면 기동이 실패한다.
   inquiries:
     enabled: ${PULSEMETRY_INQUIRIES_ENABLED:false}

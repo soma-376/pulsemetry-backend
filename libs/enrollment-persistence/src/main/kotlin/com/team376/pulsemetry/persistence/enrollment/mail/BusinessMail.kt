@@ -10,7 +10,7 @@ private val SEOUL: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd H
 
 /**
  * 응답과 목록에 내는 발송 상태 (ADR 0038). 발급·접수와 별개의 사실이다.
- * `sent` 는 SMTP 서버가 받았다는 뜻이고, 메일이 없으면 `not_sent` 와 그 이유를 낸다 — 적재된 것처럼 보이게 하지 않는다.
+ * `sent` 는 설정된 메일 공급자(SMTP 서버·SES)가 받았다는 뜻이고(ADR 0057), 메일이 없으면 `not_sent` 와 그 이유를 낸다 — 적재된 것처럼 보이게 하지 않는다.
  */
 object MailDeliveryView {
     fun of(delivery: MailDelivery): Map<String, Any?> =
