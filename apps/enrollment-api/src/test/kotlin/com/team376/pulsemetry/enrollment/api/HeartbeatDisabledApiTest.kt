@@ -35,7 +35,7 @@ class HeartbeatDisabledApiTest {
         val member = data.member(tenant).id
         val installation = data.installation(tenant, member, data.invitation(tenant, member, InvitationCode.generate()).id).id
         val token = data.credential(installation)
-        val response = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/installations/$installation/heartbeat"))
+        val response = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/installations/$installation/heartbeat"))
             .header("Content-Type", "application/json").header("Authorization", "Bearer $token")
             .POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofString())
         assertThat(response.statusCode()).isEqualTo(404)

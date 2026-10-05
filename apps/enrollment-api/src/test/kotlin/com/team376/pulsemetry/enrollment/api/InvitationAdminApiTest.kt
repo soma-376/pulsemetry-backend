@@ -59,7 +59,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("X-Admin-Token 이 없으면 401 unauthorized")
 	fun missingAdminTokenIsUnauthorized() {
-		val response = post("/v1/invitations", createBody(), adminToken = null)
+		val response = post("/api/v1/invitations", createBody(), adminToken = null)
 
 		assertThat(response.statusCode()).isEqualTo(401)
 		assertThat(errorCode(response)).isEqualTo("unauthorized")
@@ -68,7 +68,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("X-Admin-Token 이 다르면 401 unauthorized")
 	fun wrongAdminTokenIsUnauthorized() {
-		val response = post("/v1/invitations", createBody(), adminToken = "not-the-token")
+		val response = post("/api/v1/invitations", createBody(), adminToken = "not-the-token")
 
 		assertThat(response.statusCode()).isEqualTo(401)
 		assertThat(errorCode(response)).isEqualTo("unauthorized")
@@ -77,7 +77,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("빈 X-Admin-Token 도 401 이다")
 	fun blankAdminTokenIsUnauthorized() {
-		assertThat(post("/v1/invitations", createBody(), adminToken = "").statusCode()).isEqualTo(401)
+		assertThat(post("/api/v1/invitations", createBody(), adminToken = "").statusCode()).isEqualTo(401)
 	}
 
 	@Test
@@ -85,7 +85,7 @@ class InvitationAdminApiTest {
 	fun revokeRequiresAdminToken() {
 		val invitationId = data.invitation(tenantId, ownerId, InvitationCode.generate()).id
 
-		val response = post("/v1/invitations/$invitationId/revoke", null, adminToken = null)
+		val response = post("/api/v1/invitations/$invitationId/revoke", null, adminToken = null)
 
 		assertThat(response.statusCode()).isEqualTo(401)
 	}
@@ -93,7 +93,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("인증 실패 응답이 관리자 키를 되돌려주지 않는다 (R4)")
 	fun unauthorizedBodyLeaksNothing() {
-		val response = post("/v1/invitations", createBody(), adminToken = "guess-1")
+		val response = post("/api/v1/invitations", createBody(), adminToken = "guess-1")
 
 		assertThat(response.body()).doesNotContain("guess-1").doesNotContain(ADMIN_TOKEN)
 	}
@@ -103,7 +103,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("owner 가 발급하면 201 이다")
 	fun ownerCanCreateInvitation() {
-		val response = post("/v1/invitations", createBody())
+		val response = post("/api/v1/invitations", createBody())
 
 		assertThat(response.statusCode()).isEqualTo(201)
 	}
@@ -113,7 +113,7 @@ class InvitationAdminApiTest {
 	fun adminCanCreateInvitation() {
 		val adminId = data.member(tenantId, "admin@example.com", MemberRole.admin).id
 
-		val response = post("/v1/invitations", createBody(createdBy = adminId))
+		val response = post("/api/v1/invitations", createBody(createdBy = adminId))
 
 		assertThat(response.statusCode()).isEqualTo(201)
 	}
@@ -121,7 +121,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("응답 최상위 키가 4개다")
 	fun responseShape() {
-		val body = objectMapper.readTree(post("/v1/invitations", createBody()).body())
+		val body = objectMapper.readTree(post("/api/v1/invitations", createBody()).body())
 
 		assertThat(body.propertyNames()).containsExactlyInAnyOrder(
 			"invitation_id",
@@ -136,7 +136,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("응답의 code 가 DB 의 code_hash 와 일치한다 — 원본은 저장하지 않는다")
 	fun responseCodeMatchesStoredHash() {
-		val body = objectMapper.readTree(post("/v1/invitations", createBody()).body())
+		val body = objectMapper.readTree(post("/api/v1/invitations", createBody()).body())
 		val code = body.get("code").asString()
 		val invitationId = UUID.fromString(body.get("invitation_id").asString())
 
@@ -148,7 +148,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("발급된 code 가 정규 형식이다")
 	fun issuedCodeMatchesPattern() {
-		val code = objectMapper.readTree(post("/v1/invitations", createBody()).body())
+		val code = objectMapper.readTree(post("/api/v1/invitations", createBody()).body())
 			.get("code").asString()
 
 		assertThat(InvitationCode.matches(code)).isTrue()
@@ -158,11 +158,11 @@ class InvitationAdminApiTest {
 	@DisplayName("발급된 code 로 실제 enroll 이 가능하다")
 	fun issuedCodeWorksForEnroll() {
 		data.activeManifest(tenantId, ownerId)
-		val code = objectMapper.readTree(post("/v1/invitations", createBody()).body())
+		val code = objectMapper.readTree(post("/api/v1/invitations", createBody()).body())
 			.get("code").asString()
 
 		val enroll = post(
-			"/v1/enroll",
+			"/api/v1/enroll",
 			"""{"code":"$code","platform":"darwin","invite":""}""",
 			adminToken = null,
 		)
@@ -173,7 +173,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("install_commands 에 코드와 설정된 base-url 이 들어간다")
 	fun installCommandsUseConfiguredBaseUrl() {
-		val body = objectMapper.readTree(post("/v1/invitations", createBody()).body())
+		val body = objectMapper.readTree(post("/api/v1/invitations", createBody()).body())
 		val code = body.get("code").asString()
 		val commands = body.get("install_commands")
 
@@ -186,7 +186,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("expires_at 이 ISO-8601 UTC 문자열이다 — epoch 숫자가 아니다")
 	fun expiresAtIsIsoInstant() {
-		val expiresAt = objectMapper.readTree(post("/v1/invitations", createBody()).body())
+		val expiresAt = objectMapper.readTree(post("/api/v1/invitations", createBody()).body())
 			.get("expires_at")
 
 		assertThat(expiresAt.isString).isTrue()
@@ -197,7 +197,7 @@ class InvitationAdminApiTest {
 	@DisplayName("expires_in_hours 를 생략하면 기본 72시간이다")
 	fun defaultTtlIsSeventyTwoHours() {
 		val before = Instant.now()
-		val body = objectMapper.readTree(post("/v1/invitations", createBody()).body())
+		val body = objectMapper.readTree(post("/api/v1/invitations", createBody()).body())
 		val expiresAt = Instant.parse(body.get("expires_at").asString())
 
 		assertThat(expiresAt).isAfter(before.plus(71, ChronoUnit.HOURS))
@@ -209,7 +209,7 @@ class InvitationAdminApiTest {
 	fun explicitTtlIsHonoured() {
 		val before = Instant.now()
 		val body = objectMapper.readTree(
-			post("/v1/invitations", createBody(expiresInHours = 2)).body(),
+			post("/api/v1/invitations", createBody(expiresInHours = 2)).body(),
 		)
 		val expiresAt = Instant.parse(body.get("expires_at").asString())
 
@@ -222,7 +222,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("신규 email 이면 member 를 invited 상태로 만든다")
 	fun newEmailCreatesInvitedMember() {
-		post("/v1/invitations", createBody(email = "newcomer@example.com"))
+		post("/api/v1/invitations", createBody(email = "newcomer@example.com"))
 
 		val created = data.findMemberByEmail(tenantId, "newcomer@example.com")
 		assertThat(created).isNotNull()
@@ -236,7 +236,7 @@ class InvitationAdminApiTest {
 		val existing = data.member(tenantId, "existing@example.com", MemberRole.member)
 
 		val body = objectMapper.readTree(
-			post("/v1/invitations", createBody(email = "existing@example.com")).body(),
+			post("/api/v1/invitations", createBody(email = "existing@example.com")).body(),
 		)
 		val invitationId = UUID.fromString(body.get("invitation_id").asString())
 
@@ -247,7 +247,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("email 앞뒤 공백은 정리된다")
 	fun emailIsTrimmed() {
-		post("/v1/invitations", createBody(email = "  spaced@example.com  "))
+		post("/api/v1/invitations", createBody(email = "  spaced@example.com  "))
 
 		assertThat(data.findMemberByEmail(tenantId, "spaced@example.com")).isNotNull()
 	}
@@ -259,7 +259,7 @@ class InvitationAdminApiTest {
 	fun plainMemberCannotInvite() {
 		val plainId = data.member(tenantId, "plain@example.com", MemberRole.member).id
 
-		val response = post("/v1/invitations", createBody(createdBy = plainId))
+		val response = post("/api/v1/invitations", createBody(createdBy = plainId))
 
 		assertThat(response.statusCode()).isEqualTo(403)
 		assertThat(errorCode(response)).isEqualTo("forbidden")
@@ -271,7 +271,7 @@ class InvitationAdminApiTest {
 		val otherTenantId = data.tenant().id
 		val otherOwnerId = data.member(otherTenantId, "other-owner@example.com", MemberRole.owner).id
 
-		val response = post("/v1/invitations", createBody(createdBy = otherOwnerId))
+		val response = post("/api/v1/invitations", createBody(createdBy = otherOwnerId))
 
 		assertThat(response.statusCode()).isEqualTo(403)
 	}
@@ -279,7 +279,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("존재하지 않는 created_by_member_id 는 403")
 	fun unknownCreatorIsForbidden() {
-		val response = post("/v1/invitations", createBody(createdBy = UUID.randomUUID()))
+		val response = post("/api/v1/invitations", createBody(createdBy = UUID.randomUUID()))
 
 		assertThat(response.statusCode()).isEqualTo(403)
 	}
@@ -294,7 +294,7 @@ class InvitationAdminApiTest {
 			MemberStatus.suspended,
 		).id
 
-		val response = post("/v1/invitations", createBody(createdBy = suspendedId))
+		val response = post("/api/v1/invitations", createBody(createdBy = suspendedId))
 
 		assertThat(response.statusCode()).isEqualTo(403)
 		assertThat(errorCode(response)).isEqualTo("forbidden")
@@ -305,7 +305,7 @@ class InvitationAdminApiTest {
 	fun suspendedTargetCannotBeInvited() {
 		data.member(tenantId, "suspended@example.com", MemberRole.member, MemberStatus.suspended)
 
-		val response = post("/v1/invitations", createBody(email = "suspended@example.com"))
+		val response = post("/api/v1/invitations", createBody(email = "suspended@example.com"))
 
 		assertThat(response.statusCode()).isEqualTo(403)
 		assertThat(errorCode(response)).isEqualTo("forbidden")
@@ -320,7 +320,7 @@ class InvitationAdminApiTest {
 	fun invitedTargetStillGetsInvitation() {
 		data.member(tenantId, "pending@example.com", MemberRole.member, MemberStatus.invited)
 
-		val response = post("/v1/invitations", createBody(email = "pending@example.com"))
+		val response = post("/api/v1/invitations", createBody(email = "pending@example.com"))
 
 		assertThat(response.statusCode()).isEqualTo(201)
 		assertThat(data.countRows("invitations")).isEqualTo(1)
@@ -331,7 +331,7 @@ class InvitationAdminApiTest {
 	fun forbiddenLeavesNothingBehind() {
 		val plainId = data.member(tenantId, "plain@example.com", MemberRole.member).id
 
-		post("/v1/invitations", createBody(createdBy = plainId, email = "victim@example.com"))
+		post("/api/v1/invitations", createBody(createdBy = plainId, email = "victim@example.com"))
 
 		assertThat(data.countRows("invitations")).isZero()
 		assertThat(data.findMemberByEmail(tenantId, "victim@example.com")).isNull()
@@ -342,7 +342,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("필수 필드가 빠지면 400 invalid_request")
 	fun missingFieldIsBadRequest() {
-		val response = post("/v1/invitations", """{"tenant_id":"$tenantId"}""")
+		val response = post("/api/v1/invitations", """{"tenant_id":"$tenantId"}""")
 
 		assertThat(response.statusCode()).isEqualTo(400)
 		assertThat(errorCode(response)).isEqualTo("invalid_request")
@@ -353,29 +353,29 @@ class InvitationAdminApiTest {
 	fun unknownFieldIsBadRequest() {
 		val body = createBody().trimEnd().dropLast(1) + ""","surprise":true}"""
 
-		assertThat(post("/v1/invitations", body).statusCode()).isEqualTo(400)
+		assertThat(post("/api/v1/invitations", body).statusCode()).isEqualTo(400)
 	}
 
 	@Test
 	@DisplayName("email 이 공백뿐이면 400")
 	fun blankEmailIsBadRequest() {
-		assertThat(post("/v1/invitations", createBody(email = "   ")).statusCode()).isEqualTo(400)
+		assertThat(post("/api/v1/invitations", createBody(email = "   ")).statusCode()).isEqualTo(400)
 	}
 
 	@Test
 	@DisplayName("expires_in_hours 가 0 이하면 400")
 	fun nonPositiveTtlIsBadRequest() {
-		assertThat(post("/v1/invitations", createBody(expiresInHours = 0)).statusCode()).isEqualTo(400)
-		assertThat(post("/v1/invitations", createBody(expiresInHours = -5)).statusCode()).isEqualTo(400)
+		assertThat(post("/api/v1/invitations", createBody(expiresInHours = 0)).statusCode()).isEqualTo(400)
+		assertThat(post("/api/v1/invitations", createBody(expiresInHours = -5)).statusCode()).isEqualTo(400)
 	}
 
 	@Test
 	@DisplayName("expires_in_hours 가 상한 720 을 넘으면 400 — 만료 계산 오버플로 차단")
 	fun tooLargeTtlIsBadRequest() {
-		assertThat(post("/v1/invitations", createBody(expiresInHours = 720)).statusCode()).isEqualTo(201)
-		assertThat(post("/v1/invitations", createBody(expiresInHours = 721)).statusCode()).isEqualTo(400)
+		assertThat(post("/api/v1/invitations", createBody(expiresInHours = 720)).statusCode()).isEqualTo(201)
+		assertThat(post("/api/v1/invitations", createBody(expiresInHours = 721)).statusCode()).isEqualTo(400)
 		assertThat(
-			post("/v1/invitations", createBody(expiresInHours = Long.MAX_VALUE)).statusCode(),
+			post("/api/v1/invitations", createBody(expiresInHours = Long.MAX_VALUE)).statusCode(),
 		).isEqualTo(400)
 	}
 
@@ -386,7 +386,7 @@ class InvitationAdminApiTest {
 	fun revokeUnusedInvitation() {
 		val invitationId = data.invitation(tenantId, ownerId, InvitationCode.generate()).id
 
-		val response = post("/v1/invitations/$invitationId/revoke", null)
+		val response = post("/api/v1/invitations/$invitationId/revoke", null)
 
 		assertThat(response.statusCode()).isEqualTo(204)
 		assertThat(response.body()).isEmpty()
@@ -400,7 +400,7 @@ class InvitationAdminApiTest {
 			tenantId, ownerId, InvitationCode.generate(), usedAt = Instant.now(),
 		).id
 
-		val response = post("/v1/invitations/$invitationId/revoke", null)
+		val response = post("/api/v1/invitations/$invitationId/revoke", null)
 
 		assertThat(response.statusCode()).isEqualTo(409)
 		assertThat(errorCode(response)).isEqualTo("invitation_used")
@@ -413,7 +413,7 @@ class InvitationAdminApiTest {
 			tenantId, ownerId, InvitationCode.generate(), revokedAt = Instant.now(),
 		).id
 
-		val response = post("/v1/invitations/$invitationId/revoke", null)
+		val response = post("/api/v1/invitations/$invitationId/revoke", null)
 
 		assertThat(response.statusCode()).isEqualTo(409)
 		assertThat(errorCode(response)).isEqualTo("invitation_revoked")
@@ -422,7 +422,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("존재하지 않는 초대를 폐기하면 404 invitation_not_found")
 	fun revokeUnknownInvitation() {
-		val response = post("/v1/invitations/${UUID.randomUUID()}/revoke", null)
+		val response = post("/api/v1/invitations/${UUID.randomUUID()}/revoke", null)
 
 		assertThat(response.statusCode()).isEqualTo(404)
 		assertThat(errorCode(response)).isEqualTo("invitation_not_found")
@@ -432,13 +432,13 @@ class InvitationAdminApiTest {
 	@DisplayName("폐기된 초대로는 enroll 이 안 된다")
 	fun revokedInvitationCannotEnroll() {
 		data.activeManifest(tenantId, ownerId)
-		val body = objectMapper.readTree(post("/v1/invitations", createBody()).body())
+		val body = objectMapper.readTree(post("/api/v1/invitations", createBody()).body())
 		val code = body.get("code").asString()
 		val invitationId = body.get("invitation_id").asString()
 
-		post("/v1/invitations/$invitationId/revoke", null)
+		post("/api/v1/invitations/$invitationId/revoke", null)
 		val enroll = post(
-			"/v1/enroll",
+			"/api/v1/enroll",
 			"""{"code":"$code","platform":"darwin","invite":""}""",
 			adminToken = null,
 		)
@@ -450,7 +450,7 @@ class InvitationAdminApiTest {
 	@Test
 	@DisplayName("UUID 가 아닌 경로 변수는 400 invalid_request 다")
 	fun malformedPathVariable() {
-		val response = post("/v1/invitations/not-a-uuid/revoke", null)
+		val response = post("/api/v1/invitations/not-a-uuid/revoke", null)
 
 		assertThat(response.statusCode()).isEqualTo(400)
 		assertThat(errorCode(response)).isEqualTo("invalid_request")

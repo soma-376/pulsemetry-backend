@@ -1,10 +1,10 @@
-# 65 POST `/v1/invitations/{id}/revoke`
+# 65 POST `/api/v1/invitations/{id}/revoke`
 
 관리자 키 초대 취소
 
 [전체 API](../README.md) · [초대·설치 코드](../invitations.md)
 
-<!-- endpoint: enrollment-api POST /v1/invitations/{id}/revoke -->
+<!-- endpoint: enrollment-api POST /api/v1/invitations/{id}/revoke -->
 
 서버: **enrollment-api** · 성공: **204** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/api/InvitationAdminController.kt)
 

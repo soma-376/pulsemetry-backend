@@ -65,7 +65,7 @@ confirmed는 저장 완료 여부이며 수집 허용 여부가 아니다. false
 
 호출 흐름:
 
-1. 로그인 → `/v1/auth/me`로 조직 확인 → `GET /onboarding`.
+1. 로그인 → `/api/v1/auth/me`로 조직 확인 → `GET /onboarding`.
 2. `PUT /collection-policy`로 선택 저장.
 3. dashboard 카탈로그에서 제품 선택 → `POST /vendors`에 kind·displayName만 보내도 등록 가능.
 4. 팀·초대는 원하는 경우 저장.

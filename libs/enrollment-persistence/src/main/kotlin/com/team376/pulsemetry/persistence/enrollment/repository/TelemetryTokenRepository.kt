@@ -16,7 +16,7 @@ interface TelemetryTokenRepository : JpaRepository<TelemetryToken, UUID> {
 
 	/**
 	 * 해당 installation 의 살아있는 telemetry token 을 전부 폐기한다.
-	 * 재발급(`POST /v1/installations/telemetry-token`, `docs/enrollment-server-spec.md` §4.3)은
+	 * 재발급(`POST /api/v1/installations/telemetry-token`, `docs/enrollment-server-spec.md` §4.3)은
 	 * 새 토큰을 만들기 전에 이걸 먼저 부른다.
 	 *
 	 * @return 폐기된 행 수. 이미 폐기된 토큰은 세지 않는다.

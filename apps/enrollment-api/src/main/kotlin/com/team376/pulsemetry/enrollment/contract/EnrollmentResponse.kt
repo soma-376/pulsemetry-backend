@@ -3,7 +3,7 @@ package com.team376.pulsemetry.enrollment.contract
 import com.fasterxml.jackson.annotation.JsonProperty
 
 /**
- * `POST /v1/enroll` 성공(201) 응답 봉투.
+ * `POST /api/v1/enroll` 성공(201) 응답 봉투.
  *
  * **최상위 키는 정확히 이 4개다.** 클라이언트가 `DisallowUnknownFields` 로 파싱하므로
  * "도움이 될" 필드(`member_email`, `tenant_name` …)를 하나라도 더하면 설치가 즉시 실패한다 (PLAN.md A4).
@@ -27,7 +27,7 @@ data class EnrollmentResponse(
 )
 
 /**
- * `POST /v1/installations/telemetry-token` 응답.
+ * `POST /api/v1/installations/telemetry-token` 응답.
  *
  * **최상위 키는 정확히 이 2개다** (PLAN.md §6.3 / §9 7번).
  */

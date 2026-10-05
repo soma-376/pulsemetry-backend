@@ -92,11 +92,11 @@ def source_endpoints() -> set[tuple[str, str, str]]:
                             result.add((server, method, prefix + route))
     oidc = ROOT / 'apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/OidcLoginConfig.kt'
     text = oidc.read_text()
-    for route in ('/v1/auth/oidc/authorize', '/v1/auth/oidc/callback/*'):
+    for route in ('/api/v1/auth/oidc/authorize', '/api/v1/auth/oidc/callback/*'):
         if f'"{route}"' not in text:
             fail(f'OIDC 필터 경로 변경: {route}')
-    result.add(('enrollment-api', 'GET', '/v1/auth/oidc/authorize'))
-    result.add(('enrollment-api', 'GET', '/v1/auth/oidc/callback/{registrationId}'))
+    result.add(('enrollment-api', 'GET', '/api/v1/auth/oidc/authorize'))
+    result.add(('enrollment-api', 'GET', '/api/v1/auth/oidc/callback/{registrationId}'))
     return result
 
 def main() -> int:

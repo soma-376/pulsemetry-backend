@@ -32,7 +32,7 @@ import java.time.Instant
 import java.util.Locale
 
 /**
- * `POST /v1/enroll` 의 본체.
+ * `POST /api/v1/enroll` 의 본체.
  *
  * PLAN.md §6.2 가 못박은 10단계를 **그 순서 그대로** 수행한다. 순서를 바꾸지 마라 —
  * 예를 들어 초대 소비를 뒤로 미루면 그 사이에 같은 코드로 두 번 설치가 된다.

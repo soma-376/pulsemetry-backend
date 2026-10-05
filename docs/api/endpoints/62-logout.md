@@ -1,10 +1,10 @@
-# 62 POST `/v1/auth/logout`
+# 62 POST `/api/v1/auth/logout`
 
 서비스 로그아웃
 
 [전체 API](../README.md) · [로그인·사용자 인증](../auth.md)
 
-<!-- endpoint: enrollment-api POST /v1/auth/logout -->
+<!-- endpoint: enrollment-api POST /api/v1/auth/logout -->
 
 서버: **enrollment-api** · 성공: **204** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/UserAuthController.kt)
 

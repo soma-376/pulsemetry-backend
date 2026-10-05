@@ -55,7 +55,7 @@ class InquiryApiTest {
     }
 
     private fun send(body: String, contentType: String = "application/json", origin: String? = null): HttpResponse<String> {
-        val builder = HttpRequest.newBuilder(URI("http://localhost:$port/v1/inquiries")).header("Content-Type", contentType)
+        val builder = HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/inquiries")).header("Content-Type", contentType)
         origin?.let { builder.header("Origin", it) }
         return http.send(builder.POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
     }
@@ -178,7 +178,7 @@ class InquiryApiTest {
     }
 
     @Test fun `허용한 출처만 CORS를 통과하고 preflight는 요청으로 세지 않는다`() {
-        fun preflight(origin: String) = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/inquiries")).header("Origin", origin)
+        fun preflight(origin: String) = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/inquiries")).header("Origin", origin)
             .header("Access-Control-Request-Method", "POST").header("Access-Control-Request-Headers", "content-type")
             .method("OPTIONS", HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString())
         repeat(6) {
@@ -251,7 +251,7 @@ class InquiryDisabledApiTest {
     @Test fun `꺼져 있으면 경로가 없고 아무것도 저장하지 않는다`() {
         fun rows() = listOf("inquiries", "inquiry_attempts").map { jdbc.sql("SELECT count(*) FROM enrollment.$it").query(Int::class.java).single() }
         val before = rows()
-        val response = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/inquiries")).header("Content-Type", "application/json")
+        val response = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/inquiries")).header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString("""{"company":"코드웍스","email":"lead@example.test"}""")).build(), HttpResponse.BodyHandlers.ofString())
         assertThat(response.statusCode()).isEqualTo(404)
         assertThat(mapper.readTree(response.body()).path("error").asString()).isEqualTo("not_found")

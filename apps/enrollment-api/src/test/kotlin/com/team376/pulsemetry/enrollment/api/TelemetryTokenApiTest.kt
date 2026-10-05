@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit
 import javax.sql.DataSource
 
 /**
- * `POST /v1/installations/telemetry-token` 통합 테스트 (PLAN.md §6.3).
+ * `POST /api/v1/installations/telemetry-token` 통합 테스트 (PLAN.md §6.3).
  *
  * 재발급의 의미는 "새 토큰을 준다" 가 아니라 **"이전 토큰을 전부 무효로 만든다"** 이다.
  * 그래서 발급된 토큰 하나보다 폐기된 토큰의 개수를 더 꼼꼼히 본다.
@@ -454,7 +454,7 @@ class TelemetryTokenApiTest {
 	}
 
 	private fun postReissue(authorization: String?): HttpResponse<String> {
-		val builder = HttpRequest.newBuilder(URI.create("http://localhost:$port/v1/installations/telemetry-token"))
+		val builder = HttpRequest.newBuilder(URI.create("http://localhost:$port/api/v1/installations/telemetry-token"))
 			.POST(HttpRequest.BodyPublishers.noBody())
 		authorization?.let { builder.header("Authorization", it) }
 		return http.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))

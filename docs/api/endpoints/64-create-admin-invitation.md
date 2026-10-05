@@ -1,10 +1,10 @@
-# 64 POST `/v1/invitations`
+# 64 POST `/api/v1/invitations`
 
 관리자 키 초대
 
 [전체 API](../README.md) · [초대·설치 코드](../invitations.md)
 
-<!-- endpoint: enrollment-api POST /v1/invitations -->
+<!-- endpoint: enrollment-api POST /api/v1/invitations -->
 
 서버: **enrollment-api** · 성공: **201** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/api/InvitationAdminController.kt)
 

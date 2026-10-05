@@ -1,10 +1,10 @@
-# 66 POST `/v1/inquiries`
+# 66 POST `/api/v1/inquiries`
 
 도입 문의 접수
 
 [전체 API](../README.md) · [도입 문의](../inquiries.md)
 
-<!-- endpoint: enrollment-api POST /v1/inquiries -->
+<!-- endpoint: enrollment-api POST /api/v1/inquiries -->
 
 서버: **enrollment-api** · 성공: **201** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/inquiry/InquiryController.kt)
 
