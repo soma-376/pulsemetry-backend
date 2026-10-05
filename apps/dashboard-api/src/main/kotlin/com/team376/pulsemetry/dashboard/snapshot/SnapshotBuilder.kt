@@ -18,7 +18,7 @@ import java.util.UUID
  * 순서가 불변식이다.
  * 1. 삭제 경계를 읽는다. 실패하면 manifest 도 만들지 않고 실패한다 — 경계를 모른 채 과거 행을 복사하지 않는다.
  * 2. `building` manifest 를 쓴다(시작 epoch·적용 경계·기준 시각·해석 규칙 판). tenant 의 동시 build 가 한도에 차 있으면 쓰지 않고 거부한다.
- * 3. 참조를 복제한다(팀·로스터).
+ * 3. 참조를 복제한다(팀·로스터). 현재·비교 기간의 완전한 날짜를 판정해 고정한다(ADR 0042).
  * 4. 원본을 **한 번** 읽어 사용량 행과 관측 일자를 만든다(`INSERT … SELECT` 한 문장 — [SnapshotCopySql.intake]).
  * 5. 기간 밖 고정 입력(구성원별 마지막 사용)을 만든다.
  * 6. **검증** — 조회에 쓸 연결로 행을 세어 서버가 보고한 쓴 행 수와 맞춘다. 입구의 모든 행은 관측 일자의 개수로 한 번씩 세이므로
@@ -33,6 +33,7 @@ class SnapshotBuilder(
 	private val boundaries: RetentionBoundaryReader,
 	private val manifests: SnapshotManifestStore,
 	private val references: SnapshotReferenceCopier,
+	private val completeness: SnapshotCompleteness,
 	private val clickHouse: ClickHouseCacheClient,
 	private val sql: SnapshotCopySql,
 	private val resolution: ModelResolution,
@@ -104,6 +105,13 @@ class SnapshotBuilder(
 
 		try {
 			references.copy(snapshotId, request.tenantId, asOf = createdAt)
+			completeness.fix(
+				snapshotId, request.tenantId,
+				dates = (request.period.current.dates() + request.period.previous?.dates().orEmpty()).distinct(),
+				zone = request.period.current.zone,
+				asOf = createdAt,
+				deletedBefore = boundary.deletedBefore,
+			)
 			val scope = SnapshotCopySql.Scope(
 				tenantId = request.tenantId.toString(),
 				snapshotId = snapshotId,

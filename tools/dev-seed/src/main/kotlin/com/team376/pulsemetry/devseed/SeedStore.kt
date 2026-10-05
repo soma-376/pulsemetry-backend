@@ -29,7 +29,8 @@ class SeedStore private constructor(private val pg: Connection, private val clic
             return connect(COMPOSE_JDBC_URL, "http://clickhouse:8123")
         }
 
-        private fun connect(jdbcUrl: String, clickHouseUrl: String): SeedStore {
+        /** 테스트의 격리 DB도 같은 잠금·트랜잭션 경로를 검증한다. CLI는 openCompose만 사용한다. */
+        internal fun connect(jdbcUrl: String, clickHouseUrl: String): SeedStore {
             val connection = DriverManager.getConnection(jdbcUrl, "pulsemetry", "pulsemetry")
             val store = SeedStore(connection, clickHouseUrl)
             try {
@@ -64,7 +65,7 @@ class SeedStore private constructor(private val pg: Connection, private val clic
         // DDL은 원래 소유 모듈의 멱등 마이그레이션을 재사용한다(ADR 0028).
         // 개발 Compose 연결 검증·PG 잠금 획득 뒤에만 호출할 수 있다.
         if (initializeClickHouse) ClickHouseSchemaMigrator(ClickHouseHttpClient(clickHouseUrl)).apply()
-        query("SELECT id, password_hash FROM enrollment.members LIMIT 0")
+        query("SELECT id, oidc_subject FROM enrollment.members LIMIT 0")
         query("SELECT tenant_id FROM telemetry_ops.tenant_ingest_summary LIMIT 0")
         clickHouse("SELECT observation_id FROM default.telemetry_events LIMIT 0")
         clickHouse("SELECT receipt_id FROM default.telemetry_ingest_ledger LIMIT 0")
@@ -107,13 +108,13 @@ class SeedStore private constructor(private val pg: Connection, private val clic
         return "적재 및 검증 완료"
     }
 
-    fun ensureOnStartup(name: String, asOf: LocalDate): String {
-        require(name in listOf("A", "B", "C"))
+    fun ensureOnStartup(name: String, asOf: LocalDate, otlpEndpoint: String = DEFAULT_OTLP_ENDPOINT): String {
+        require(name in SCENARIOS)
         val tenant = sql(id(name))
         val state = scalar("SELECT state FROM dev_seed.dashboard_datasets WHERE tenant_id=$tenant")
         val slug = scalar("SELECT slug FROM enrollment.tenants WHERE id=$tenant")
         if (!shouldSeedOnStartup(state, slug, name)) return "이미 준비된 시드 — 개발 중 변경 유지 (검증은 verify)"
-        return "$asOf 기준 ${apply(scenario(name, asOf))}"
+        return "$asOf 기준 ${apply(scenario(name, asOf, otlpEndpoint))}"
     }
 
     fun verify(data: SeedData) {
@@ -121,11 +122,16 @@ class SeedStore private constructor(private val pg: Connection, private val clic
         check(scalar("SELECT count(*) FROM telemetry_ops.tenant_ingest_summary WHERE tenant_id=$tenant") == "1") {
             "${data.scenario}: 조직 생성 시 초기화해야 하는 수집 요약이 없습니다."
         }
-        if (data.scenario == "B") check(scalar("""SELECT count(*) FROM telemetry_ops.tenant_ingest_summary
+        if (data.scenario in setOf("B", "D", "E")) check(scalar("""SELECT count(*) FROM telemetry_ops.tenant_ingest_summary
             WHERE tenant_id=$tenant AND first_received_at IS NULL AND first_observed_at IS NULL
-            AND last_received_at IS NULL AND NOT has_pre_ledger_history""") == "1") { "B: 신규 조직의 수집 요약이 비어 있지 않습니다." }
+            AND last_received_at IS NULL AND NOT has_pre_ledger_history""") == "1") { "${data.scenario}: 신규 조직의 수집 요약이 비어 있지 않습니다." }
         for ((table, rows) in data.rows) for (row in rows) {
-            val predicate = row.entries.joinToString(" AND ") { (key, value) -> "$key IS NOT DISTINCT FROM ${sql(value)}" }
+            // 외부 IdP 연결은 시드 생성 후 별도 관리한다. 연결 변경을 시드 오염으로 판정하지 않는다.
+            val fields = if (table == "enrollment.members") row.filterKeys { it !in setOf("oidc_issuer", "oidc_subject") } else row
+            val predicate = fields.entries.joinToString(" AND ") { (key, value) ->
+                if (table == "enrollment.manifests" && key == "manifest") "manifest #- '{otlp,endpoint}' IS NOT DISTINCT FROM CAST(${sql(value)} AS jsonb) #- '{otlp,endpoint}'"
+                else "$key IS NOT DISTINCT FROM ${sql(value)}"
+            }
             check(scalar("SELECT count(*) FROM $table WHERE $predicate") == "1") { "${data.scenario}: $table 시드 행이 기대값과 다릅니다." }
         }
         for ((table, expected, identity) in listOf(Triple("telemetry_events", data.events, "observation_id"), Triple("telemetry_ingest_ledger", data.ledger, "receipt_id"))) {
@@ -151,11 +157,12 @@ class SeedStore private constructor(private val pg: Connection, private val clic
 
     private fun verifyTotals(data: SeedData) {
         for ((dimension, expression) in mapOf("organization" to "'all'", "day" to "toString(toDate(source_time,'Asia/Seoul'))",
-            "model" to "model", "team" to "ifNull(team_id_as_of,'unassigned')",
+            "model" to "ifNull(model,'')", "team" to "ifNull(team_id_as_of,'unassigned')",
             "member" to "member_id", "product" to "product")) {
             fun key(row: Row): String = when(dimension) {
                 "day" -> Instant.parse(row["source_time"].toString()).atZone(seoul).toLocalDate().toString()
-                "model" -> row["model"].toString()
+                // 모델이 없는 관측(예: 알아보지 못한 도구)은 빈 키로 센다 — ClickHouse 쪽의 ifNull 과 같다.
+                "model" -> row["model"]?.toString() ?: ""
                 "team" -> row["team_id_as_of"]?.toString() ?: "unassigned"
                 "member" -> row["member_id"].toString()
                 "product" -> row["product"].toString()
@@ -173,7 +180,7 @@ class SeedStore private constructor(private val pg: Connection, private val clic
     }
 
     fun reset(scenario: String): String {
-        require(scenario in listOf("A", "B", "C"))
+        require(scenario in SCENARIOS)
         val tenant = sql(id(scenario))
         if (scalar("SELECT tenant_id FROM dev_seed.dashboard_datasets WHERE tenant_id=$tenant") == null) return "실행 기록 없음 (삭제 없음)"
         val slug = scalar("SELECT slug FROM enrollment.tenants WHERE id=$tenant")
@@ -200,15 +207,23 @@ class SeedStore private constructor(private val pg: Connection, private val clic
 private fun identifier(value: String): String { require(Regex("[a-z_][a-z0-9_]*").matches(value)); return value }
 
 internal fun resetStatements(scenario: String, present: Set<String>): List<String> {
-    require(scenario in listOf("A", "B", "C"))
+    require(scenario in SCENARIOS)
     val tenant = sql(id(scenario))
     val members = "SELECT id FROM enrollment.members WHERE tenant_id=$tenant"
     val installations = "SELECT id FROM enrollment.installations WHERE tenant_id=$tenant"
     val contracts = "SELECT id FROM enrollment.contracts WHERE tenant_id=$tenant"
-    val clauses = listOf("organization_onboarding" to "tenant_id=$tenant", "management_commands" to "tenant_id=$tenant", "vendor_contract_versions" to "tenant_id=$tenant", "managed_vendors" to "tenant_id=$tenant") + listOf(
+    // 좌석 원장(ADR 0048)과 회수·복원 기록(ADR 0049)은 작업·등록 제품을 가리키므로 먼저 지운다.
+    val clauses = listOf("seat_controls", "seat_reclaim_previews", "seat_assignment_events", "seat_assignments", "seat_sync_runs", "vendor_billing_periods", "vendor_connections")
+        .map { it to "tenant_id=$tenant" } +
+        listOf("operation_targets" to "operation_id IN (SELECT id FROM enrollment.operations WHERE tenant_id=$tenant)",
+        "retention_cleanup_requests" to "tenant_id=$tenant", "operations" to "tenant_id=$tenant",
+        "organization_onboarding" to "tenant_id=$tenant", "organization_policy_settings" to "tenant_id=$tenant",
+        // 알림 확인·규칙·목록(ADR 0051)은 조직과 구성원을 가리킨다. 항목 → 목록 순서다.
+        "alert_acknowledgements" to "tenant_id=$tenant", "organization_alert_list_entries" to "tenant_id=$tenant",
+        "organization_alert_lists" to "tenant_id=$tenant", "organization_alert_rules" to "tenant_id=$tenant", "management_commands" to "tenant_id=$tenant", "vendor_contract_versions" to "tenant_id=$tenant", "managed_vendors" to "tenant_id=$tenant") + listOf(
         "user_refresh_tokens" to "session_id IN (SELECT id FROM enrollment.user_sessions WHERE member_id IN ($members))",
         "user_sessions" to "member_id IN ($members)", "user_authorization_codes" to "member_id IN ($members)",
-    ) + listOf("telemetry_tokens", "installation_credentials", "installation_manifest_assignments").map { it to "installation_id IN ($installations)" } +
+    ) + listOf("installation_collection_segments", "installation_heartbeats", "telemetry_tokens", "installation_credentials", "installation_manifest_assignments").map { it to "installation_id IN ($installations)" } +
         listOf("contract_memberships", "contract_token_discounts", "contract_term_commitments").map { it to "contract_id IN ($contracts)" } +
         listOf("contracts", "installations", "invitations", "manifests").map { it to "tenant_id=$tenant" } +
         listOf("team_memberships" to "member_id IN ($members)") + listOf("teams", "members").map { it to "tenant_id=$tenant" } + listOf("tenants" to "id=$tenant")

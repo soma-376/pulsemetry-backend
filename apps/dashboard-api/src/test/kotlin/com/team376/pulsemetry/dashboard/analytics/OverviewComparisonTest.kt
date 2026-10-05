@@ -54,9 +54,17 @@ class OverviewComparisonTest {
 		val references = SnapshotReferences(assembly.clickHouse, DashboardTestStores.writer)
 		val ingest = IngestStatusReader(TenantIngestSummaryStore(dataSource), TenantSummaryBackfill(dataSource), ledger, DashboardTestStores.writer)
 		return OverviewService(
-			frames = AnalyticsFrames(assembly.service, references, ingest, policy, Clock.systemUTC()),
+			frames = AnalyticsFrames(assembly.service, references, ingest, policy,
+				IngestThresholds(Duration.ofMinutes(15), Duration.ofMinutes(5), Duration.ofHours(3)), Clock.systemUTC()),
 			aggregator = UsageAggregator(assembly.clickHouse),
 			references = references,
+			seats = SeatService(
+				SeatLedgerReader(DashboardTestStores.writer, ledger, mapper, com.team376.pulsemetry.dashboard.snapshot.RetentionBoundaryReader(DashboardTestStores.writer),
+					com.team376.pulsemetry.dashboard.snapshot.SnapshotCompleteness(DashboardTestStores.writer, DashboardTestStores.writer, Duration.ofHours(1))),
+				OrganizationPolicies(DashboardTestStores.writer, 14), Duration.ofHours(26)),
+			alerts = com.team376.pulsemetry.dashboard.alert.AlertService(DashboardTestStores.writer,
+				com.team376.pulsemetry.dashboard.alert.AlertStore(DashboardTestStores.writer, mapper), CurrentStateTokens(mapper),
+				com.team376.pulsemetry.dashboard.request.PageCursorCodec(mapper), Clock.systemUTC()),
 		)
 	}
 

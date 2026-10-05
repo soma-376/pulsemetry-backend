@@ -24,7 +24,10 @@ data class TeamTrendPoint(
 	val observation: String,
 	val equivalentCostUsd: String?,
 	val totalTokens: Long?,
-	/** 시작부터 그 날까지 관측이 완전할 때만 값이 있다 — v1 은 모든 날이 partial 이라 없다. */
+	/**
+	 * 기간 시작일부터 그날까지 그 팀에서 관측된 고유 세션 수(대시보드 명세 "팀 누적 세션"). 세션은 처음 본 날에 한 번만 더한다.
+	 * 시작일부터 그날까지 모든 날이 완전 관측(ADR 0042)이고 세션 없는 사용 행이 없을 때만 값이 있다 — 한 번 끊기면 그 뒤로는 없다.
+	 */
 	val cumulativeSessionCount: Long?,
 )
 
@@ -36,6 +39,8 @@ data class TeamAnalytics(
 	val previous: Usage?,
 	val modelMix: Section<TeamModelMix>,
 	val trend: List<TeamTrendPoint>,
+	/** 현재 기간의 카탈로그 제품별 사용(가산 — ADR 0045). 사용량 행이 있는 제품만. */
+	val products: List<ProductUsage>,
 )
 
 data class ScatterModel(

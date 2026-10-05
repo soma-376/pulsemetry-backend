@@ -1,9 +1,11 @@
 package com.team376.pulsemetry.dashboard.api
 
 import com.team376.pulsemetry.dashboard.analytics.MemberListResponse
+import com.team376.pulsemetry.dashboard.analytics.MemberSeatsResponse
 import com.team376.pulsemetry.dashboard.analytics.MembersResponse
 import com.team376.pulsemetry.dashboard.analytics.MembersService
 import com.team376.pulsemetry.dashboard.analytics.ReclaimCandidatesResponse
+import com.team376.pulsemetry.dashboard.analytics.VendorSeatsResponse
 import com.team376.pulsemetry.dashboard.authentication.DashboardPrincipal
 import com.team376.pulsemetry.dashboard.authorization.DashboardAction
 import com.team376.pulsemetry.dashboard.authorization.OrganizationAccess
@@ -71,6 +73,33 @@ class MembersController(
 		val organization = access.require(principal, organizationId, DashboardAction.MEMBER_DIRECTORY)
 		val page = QueryReader(request::getParameter).read { page(default = 20, max = 100, codec = codec) }
 		return members.reclaimCandidates(organization, page, request.getParameter(SNAPSHOT_ID))
+	}
+
+	/** 구성원의 벤더 좌석(ADR 0048) — 현재 상태라 `snapshotId` 는 현재 상태 토큰이다. 경로의 구성원 ID 가 UUID 가 아니거나 로스터에 없으면 404. */
+	@GetMapping("/api/v1/organizations/{organizationId}/members/{memberId}/seats")
+	fun memberSeats(
+		@AuthenticationPrincipal principal: DashboardPrincipal,
+		@PathVariable organizationId: String,
+		@PathVariable memberId: String,
+		request: HttpServletRequest,
+	): MemberSeatsResponse {
+		val organization = access.require(principal, organizationId, DashboardAction.MEMBER_DIRECTORY)
+		val id = runCatching { java.util.UUID.fromString(memberId) }.getOrNull()?.takeIf { it.toString() == memberId.lowercase() }
+			?: throw com.team376.pulsemetry.dashboard.error.DashboardException(com.team376.pulsemetry.dashboard.error.ErrorCode.NOT_FOUND)
+		return members.memberSeats(organization, id, request.getParameter(SNAPSHOT_ID))
+	}
+
+	/** 등록 제품 하나의 좌석(ADR 0048·0049) — 구성원에 잇지 않은 좌석까지. 현재 상태라 `snapshotId` 는 현재 상태 토큰이다. 없는 제품은 404. */
+	@GetMapping("/api/v1/organizations/{organizationId}/vendors/{vendorId}/seats")
+	fun vendorSeats(
+		@AuthenticationPrincipal principal: DashboardPrincipal,
+		@PathVariable organizationId: String,
+		@PathVariable vendorId: String,
+		request: HttpServletRequest,
+	): VendorSeatsResponse {
+		val organization = access.require(principal, organizationId, DashboardAction.ORGANIZATION_SETTINGS)
+		val page = QueryReader(request::getParameter).read { page(default = 50, max = 200, codec = codec) }
+		return members.vendorSeats(organization, vendorId, page, request.getParameter(SNAPSHOT_ID))
 	}
 
 	private companion object {

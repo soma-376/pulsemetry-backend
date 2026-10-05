@@ -260,7 +260,17 @@
           "modelId": "vendor-a/model-pro",
           "displayName": "Model Pro",
           "share": 0.6
-        }
+        },
+        "products": [
+          {
+            "kind": "claude_team",
+            "displayName": "Claude (Anthropic)"
+          },
+          {
+            "kind": "openai_biz",
+            "displayName": "ChatGPT / Codex (OpenAI)"
+          }
+        ]
       },
       {
         "teamId": "team_payments",
@@ -277,7 +287,13 @@
           "modelId": "vendor-a/model-pro",
           "displayName": "Model Pro",
           "share": 0.6
-        }
+        },
+        "products": [
+          {
+            "kind": "claude_team",
+            "displayName": "Claude (Anthropic)"
+          }
+        ]
       },
       {
         "teamId": "team_data",
@@ -294,7 +310,17 @@
           "modelId": "vendor-a/model-standard",
           "displayName": "Model Standard",
           "share": 0.5
-        }
+        },
+        "products": [
+          {
+            "kind": "claude_team",
+            "displayName": "Claude (Anthropic)"
+          },
+          {
+            "kind": "openai_biz",
+            "displayName": "ChatGPT / Codex (OpenAI)"
+          }
+        ]
       }
     ],
     "otherTeams": {
@@ -310,7 +336,47 @@
       "previous": {
         "activeUsers": 5,
         "equivalentCostUsd": "300.000000"
-      }
+      },
+      "products": [
+        {
+          "kind": "claude_team",
+          "displayName": "Claude (Anthropic)"
+        },
+        {
+          "kind": null,
+          "displayName": null
+        }
+      ]
     }
+  },
+  "productUsage": {
+    "availability": "available",
+    "reason": null,
+    "products": [
+      {
+        "kind": "claude_team",
+        "displayName": "Claude (Anthropic)",
+        "activeUsers": 77,
+        "sessionCount": 740,
+        "totalTokens": 74000000,
+        "equivalentCostUsd": "3700.000000"
+      },
+      {
+        "kind": "openai_biz",
+        "displayName": "ChatGPT / Codex (OpenAI)",
+        "activeUsers": 28,
+        "sessionCount": 240,
+        "totalTokens": 24000000,
+        "equivalentCostUsd": "1200.000000"
+      },
+      {
+        "kind": null,
+        "displayName": null,
+        "activeUsers": 1,
+        "sessionCount": 20,
+        "totalTokens": 2000000,
+        "equivalentCostUsd": "100.000000"
+      }
+    ]
   }
 }

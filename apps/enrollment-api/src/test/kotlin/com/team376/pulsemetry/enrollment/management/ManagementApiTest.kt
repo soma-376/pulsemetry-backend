@@ -76,6 +76,61 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.team_memberships WHERE left_at IS NULL").query(Int::class.java).single()).isEqualTo(1)
     }
 
+    @Test fun `초대의 사용 예정 제품은 저장하지만 좌석은 만들지 않고 구성원 버전으로 수정한다`() {
+        val token = adminToken()
+        fun product(kind: String): String {
+            val response = manage("POST", "/vendors", mapOf("kind" to kind, "displayName" to kind), token)
+            assertThat(response.statusCode()).describedAs(response.body()).isEqualTo(201)
+            return mapper.readTree(response.body()).at("/vendor/vendorId").asString()
+        }
+        val first = product("claude_team")
+        val second = product("cursor")
+        fun invite(email: String, vendors: Any?, key: String = UUID.randomUUID().toString()) = manage("POST", "/invitations/batch",
+            mapOf("invitations" to listOf(mapOf("email" to email, "teamId" to null, "role" to "member", "plannedVendorIds" to vendors))), token, key)
+        val key = UUID.randomUUID().toString()
+        val created = invite("planned@example.test", listOf(first, second), key)
+        assertThat(created.statusCode()).describedAs(created.body()).isEqualTo(200)
+        assertThat(invite("planned@example.test", listOf(first, second), key).body()).isEqualTo(created.body())
+        assertThat(invite("planned@example.test", emptyList<String>()).body()).contains("already_invited")
+        fun listed(): JsonNode {
+            val items = mapper.readTree(manage("GET", "/invitations?status=pending", null, token).body()).path("items")
+            return (0 until items.size()).map { items[it] }.single { it.path("email").asString() == "planned@example.test" }
+        }
+        val row = listed()
+        assertThat((0 until row.path("plannedVendorIds").size()).map { row.path("plannedVendorIds")[it].asString() }).containsExactlyInAnyOrder(first, second)
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.seat_assignments").query(Int::class.java).single()).isZero()
+        val target = row.path("memberId").asString()
+        val version = row.path("memberVersion").asLong()
+        val saved = manage("PATCH", "/members/$target", mapOf("expectedVersion" to version, "plannedVendorIds" to listOf(second)), token)
+        assertThat(saved.statusCode()).describedAs(saved.body()).isEqualTo(200)
+        val savedBody = mapper.readTree(saved.body())
+        assertThat(savedBody.path("plannedVendorIds")[0].asString()).isEqualTo(second)
+        assertThat(savedBody.path("version").asLong()).isGreaterThan(version)
+        assertThat(manage("PATCH", "/members/$target", mapOf("expectedVersion" to version, "plannedVendorIds" to emptyList<String>()), token).statusCode()).isEqualTo(409)
+        val nextVersion = savedBody.path("version").asLong()
+        val noChange = manage("PATCH", "/members/$target", mapOf("expectedVersion" to nextVersion, "plannedVendorIds" to listOf(second)), token)
+        assertThat(mapper.readTree(noChange.body()).path("version").asLong()).isEqualTo(nextVersion)
+        // 타 조직의 등록 ID도 사용할 수 없다. 제품 ID만으로 조회하면 이 검증을 통과하게 된다.
+        val otherTenant = data.tenant().id
+        jdbc.sql("INSERT INTO enrollment.managed_vendors(tenant_id,vendor_id,kind,source,created_at) VALUES (:tenant,'foreign-vendor','other','manual',now())")
+            .param("tenant", otherTenant).update()
+        for (bad in listOf("foreign-vendor", "missing")) {
+            assertThat(invite("$bad@example.test", listOf(bad)).body()).contains("vendor_not_found")
+            assertThat(manage("PATCH", "/members/$target", mapOf("expectedVersion" to nextVersion, "plannedVendorIds" to listOf(bad)), token).statusCode()).isEqualTo(422)
+        }
+        for (bad in listOf(null, "not-an-array", listOf(first, first), listOf("bad,id"), List(101) { "v$it" })) {
+            assertThat(invite("invalid@example.test", bad).statusCode()).isEqualTo(400)
+        }
+        jdbc.sql("UPDATE enrollment.managed_vendors SET archived=true WHERE tenant_id=:tenant AND vendor_id=:id")
+            .param("tenant", tenant).param("id", second).update()
+        assertThat(invite("archived@example.test", listOf(second)).body()).contains("vendor_not_found")
+        // 이미 선택한 보관 제품을 유지해 다른 항목을 고치거나 선택을 비울 수 있다.
+        assertThat(manage("PATCH", "/members/$target", mapOf("expectedVersion" to nextVersion, "plannedVendorIds" to listOf(second)), token).statusCode()).isEqualTo(200)
+        val cleared = manage("PATCH", "/members/$target", mapOf("expectedVersion" to nextVersion, "plannedVendorIds" to emptyList<String>()), token)
+        assertThat(cleared.statusCode()).isEqualTo(200)
+        assertThat(listed().path("plannedVendorIds").size()).isZero()
+    }
+
     @Test fun `초대 재시도는 같은 코드를 반환하고 DB 재시도 본문은 암호화한다`() {
         val token = adminToken()
         val key = UUID.randomUUID().toString()
@@ -236,7 +291,7 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
     }
 
     @Test fun `조직과 오너만 있어도 로그인 갱신 최초 정책 저장과 온보딩 완료가 가능하다`() {
-        assertThat(signup().statusCode()).isEqualTo(201)
+        provisionMember()
         sql("DELETE FROM enrollment.manifests")
         sql("DELETE FROM enrollment.invitations")
         sql("UPDATE enrollment.members SET role='owner'")
@@ -352,13 +407,105 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         assertThat(renewed.statusCode()).withFailMessage(renewed.body()).isEqualTo(200)
         assertThat(manage("POST", path, emptyMap<String, String>(), token, key).body()).isEqualTo(renewed.body())
         assertThat(manage("POST", path, emptyMap<String, String>(), token).statusCode()).isEqualTo(409)
-        val signupBody = mapOf("code" to issued.path("code").asString(), "email" to "reissue@example.test", "password" to password)
-        assertThat(post("signup", signupBody).statusCode()).isEqualTo(409)
-        assertThat(post("signup", signupBody + ("code" to mapper.readTree(renewed.body()).path("code").asString())).statusCode()).isEqualTo(201)
+        val oldCode = code
+        code = issued.path("code").asString()
+        assertThat(enroll().statusCode()).isEqualTo(409)
+        code = mapper.readTree(renewed.body()).path("code").asString()
+        assertThat(enroll().statusCode()).isEqualTo(201)
+        code = oldCode
         val listing = manage("GET", "/invitations?limit=1", null, token)
         assertThat(listing.statusCode()).withFailMessage(listing.body()).isEqualTo(200)
         assertThat(listing.body()).doesNotContain(issued.path("code").asString(), "code_hash", "password")
         assertThat(mapper.readTree(listing.body()).path("nextCursor").isNull).isFalse()
+    }
+
+    @Test fun `메일이 꺼진 배포의 초대는 코드만 발급하고 발송하지 않았다고 표시한다`() {
+        val token = adminToken()
+        val issued = mapper.readTree(manage("POST", "/invitations/batch", mapOf("invitations" to listOf(mapOf("email" to "nomail@example.test", "teamId" to null, "role" to "member"))), token).body()).path("results")[0]
+        assertThat(issued.path("status").asString()).isEqualTo("issued")
+        assertThat(InvitationCode.matches(issued.path("code").asString())).isTrue()
+        fun notSent(delivery: JsonNode) {
+            // 적재된 것처럼 보이게 하지 않는다.
+            assertThat(listOf(delivery.path("status").asString(), delivery.path("reason").asString(), delivery.path("attempts").asInt())).isEqualTo(listOf("not_sent", "mail_disabled", 0))
+            assertThat(listOf(delivery.path("queuedAt"), delivery.path("lastAttemptAt"), delivery.path("sentAt"), delivery.path("failureCode")).all { it.isNull }).isTrue()
+        }
+        notSent(issued.path("delivery"))
+        val listed = mapper.readTree(manage("GET", "/invitations?limit=100", null, token).body()).path("items").toList()
+        assertThat(listed).isNotEmpty()
+        listed.forEach { notSent(it.path("delivery")) }
+        val renewed = mapper.readTree(manage("POST", "/invitations/${issued.path("invitationId").asString()}/reissue", emptyMap<String, String>(), token).body())
+        notSent(renewed.path("delivery"))
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.mail_outbox").query(Int::class.java).single()).isEqualTo(0)
+        // 발급하지 않은 결과에는 발송 상태가 없다.
+        val again = mapper.readTree(manage("POST", "/invitations/batch", mapOf("invitations" to listOf(mapOf("email" to "nomail@example.test", "teamId" to null, "role" to "member"))), token).body()).path("results")[0]
+        assertThat(again.path("status").asString()).isEqualTo("already_invited")
+        assertThat(again.path("delivery").isNull).isTrue()
+    }
+
+    @Test fun `메일이 꺼진 배포는 설치 업데이트 안내를 접수하지 않는다`() {
+        val token = adminToken()
+        val owner = data.member(tenant, "notice@example.test", MemberRole.member, MemberStatus.active).id
+        val installation = data.installation(tenant, owner, data.invitation(tenant, owner, InvitationCode.generate()).id).id
+        val response = manage("POST", "/installation-update-notifications", mapOf("installationIds" to listOf(installation.toString()), "expectedPolicyVersion" to 3), token)
+        // 보낼 채널이 없다 — 접수한 척하지 않는다(ADR 0043).
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(422)
+        assertThat(mapper.readTree(response.body()).path("error").path("code").asString()).isEqualTo("notification_channel_unavailable")
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.operations").query(Int::class.java).single()).isEqualTo(0)
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.mail_outbox").query(Int::class.java).single()).isEqualTo(0)
+    }
+
+    @Test fun `취소된 초대의 대기자는 같은 구성원으로 다시 초대하고 요청의 팀과 역할을 적용한다`() {
+        val token = adminToken()
+        val team = mapper.readTree(manage("POST", "/teams", mapOf("teamName" to "다시 초대 팀"), token).body()).path("teamId").asString()
+        fun invite(role: String, teamId: String?) = mapper.readTree(manage("POST", "/invitations/batch",
+            mapOf("invitations" to listOf(mapOf("email" to "again@example.test", "teamId" to teamId, "role" to role))), token).body()).path("results")[0]
+        fun invited() = jdbc.sql("SELECT id, role::text, status::text, updated_at FROM enrollment.members WHERE lower(email)='again@example.test'")
+            .query { r, _ -> listOf(r.getString(1), r.getString(2), r.getString(3), r.getTimestamp(4).toInstant().toEpochMilli()) }.list()
+        val first = invite("member", null)
+        assertThat(first.path("status").asString()).isEqualTo("issued")
+        val before = invited().single()
+        // 살아 있는 초대가 있으면 새로 발급하지 않는다.
+        assertThat(invite("admin", team).path("status").asString()).isEqualTo("already_invited")
+        assertThat(manage("POST", "/invitations/${first.path("invitationId").asString()}/revoke", emptyMap<String, String>(), token).statusCode()).isEqualTo(204)
+
+        val second = invite("admin", team)
+        assertThat(second.path("status").asString()).isEqualTo("issued")
+        assertThat(InvitationCode.matches(second.path("code").asString())).isTrue()
+        assertThat(second.path("code").asString()).isNotEqualTo(first.path("code").asString())
+        assertThat(second.path("invitationId").asString()).isNotEqualTo(first.path("invitationId").asString())
+        assertThat(second.path("expiresAt").asString()).isEqualTo(clock.now.plusSeconds(72 * 3600).toString())
+        // 새 구성원을 만들지 않는다. 같은 ID에 요청의 역할과 팀이 적용되고 version이 오른다.
+        val after = invited().single()
+        assertThat(after[0]).isEqualTo(before[0])
+        assertThat(after.subList(1, 3)).isEqualTo(listOf("admin", "invited"))
+        assertThat(after[3] as Long).isGreaterThan(before[3] as Long)
+        assertThat(jdbc.sql("SELECT team_id::text FROM enrollment.team_memberships WHERE member_id=CAST(:id AS uuid) AND left_at IS NULL").param("id", after[0]).query(String::class.java).list())
+            .isEqualTo(listOf(team))
+        val waiting = mapper.readTree(manage("GET", "/invitations?status=pending&memberStatus=invited&limit=100", null, token).body()).path("items").toList()
+            .filter { it.path("email").asString() == "again@example.test" }
+        assertThat(waiting.map { it.path("invitationId").asString() }).isEqualTo(listOf(second.path("invitationId").asString()))
+        assertThat(waiting.single().path("memberId").asString()).isEqualTo(before[0])
+        assertThat(waiting.single().path("memberVersion").asLong()).isEqualTo(after[3])
+        // 취소한 코드는 죽은 채이고 새 코드로만 가입한다.
+        code = first.path("code").asString()
+        assertThat(enroll().statusCode()).isEqualTo(409)
+        code = second.path("code").asString()
+        assertThat(enroll().statusCode()).isEqualTo(201)
+        assertThat(loginMember(UUID.fromString(after[0] as String)).statusCode()).isEqualTo(200)
+        assertThat(invite("member", null).path("status").asString()).isEqualTo("already_member")
+    }
+
+    @Test fun `만료만 된 초대의 대기자는 다시 초대하지 않고 재발급으로 살린다`() {
+        val token = adminToken()
+        val input = mapOf("invitations" to listOf(mapOf("email" to "lapsed@example.test", "teamId" to null, "role" to "member")))
+        val issued = mapper.readTree(manage("POST", "/invitations/batch", input, token).body()).path("results")[0]
+        val id = UUID.fromString(issued.path("invitationId").asString())
+        jdbc.sql("UPDATE enrollment.invitations SET expires_at=:past WHERE id=:id").param("past", java.sql.Timestamp.from(clock.now.minusSeconds(60))).param("id", id).update()
+        val again = mapper.readTree(manage("POST", "/invitations/batch", input, token).body()).path("results")[0]
+        assertThat(again.path("status").asString()).isEqualTo("already_invited")
+        assertThat(again.path("code").isNull).isTrue()
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.invitations WHERE target_member_id=(SELECT target_member_id FROM enrollment.invitations WHERE id=:id)").param("id", id).query(Int::class.java).single()).isEqualTo(1)
+        assertThat(manage("POST", "/invitations/$id/reissue", emptyMap<String, String>(), token).statusCode()).isEqualTo(200)
     }
 
     @Test fun `재발급해도 이미 소비한 설치 권한은 다시 열리지 않는다`() {
@@ -367,9 +514,7 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         val id = UUID.fromString(issued.path("invitationId").asString())
         jdbc.sql("UPDATE enrollment.invitations SET used_at=:now WHERE id=:id").param("now", java.sql.Timestamp.from(clock.now)).param("id", id).update()
         val renewed = manage("POST", "/invitations/$id/reissue", emptyMap<String, String>(), token)
-        assertThat(renewed.statusCode()).isEqualTo(200)
-        val nextId = UUID.fromString(mapper.readTree(renewed.body()).path("invitationId").asString())
-        assertThat(jdbc.sql("SELECT used_at IS NOT NULL AND signup_used_at IS NULL FROM enrollment.invitations WHERE id=:id").param("id", nextId).query(Boolean::class.java).single()).isTrue()
+        assertThat(renewed.statusCode()).isEqualTo(409)
     }
 
     @Test fun `온보딩 조회도 일반 구성원과 다른 조직을 거부한다`() {
@@ -379,4 +524,37 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
         assertThat(manage("GET", "/onboarding", null, token).statusCode()).isEqualTo(404)
     }
 
+    @Test fun `일괄 팀 배정은 한 사람의 판이 어긋나면 아무도 옮기지 않고, 같은 이름의 팀과 빈 이름은 거절한다`() {
+        val token = adminToken()
+        fun body(response: HttpResponse<String>) = mapper.readTree(response.body())
+        fun error(response: HttpResponse<String>) = response.statusCode() to body(response).path("error").path("code").asString()
+        fun version(id: UUID) = jdbc.sql("SELECT updated_at FROM enrollment.members WHERE id=:id").param("id", id).query { r, _ -> r.getTimestamp(1).toInstant().toEpochMilli() }.single()
+        fun openTeams() = jdbc.sql("SELECT count(*) FROM enrollment.team_memberships WHERE left_at IS NULL").query(Int::class.java).single()
+        val created = manage("POST", "/teams", mapOf("teamName" to "플랫폼"), token)
+        assertThat(created.statusCode()).isEqualTo(201)
+        val team = body(created).path("teamId").asString()
+        val first = data.member(tenant, "first@example.test", role = MemberRole.member).id
+        val second = data.member(tenant, "second@example.test", role = MemberRole.member).id
+        val before = listOf(version(first), version(second))
+
+        // 배정은 전체를 검증한 뒤 한 트랜잭션이다(명세 §12) — 두 번째의 낡은 판이 첫 번째의 배정까지 막는다.
+        val stale = mapOf("assignments" to listOf(mapOf("memberId" to first, "teamId" to team, "expectedVersion" to before[0]),
+            mapOf("memberId" to second, "teamId" to team, "expectedVersion" to before[1] - 1)))
+        assertThat(error(manage("POST", "/member-team-assignments", stale, token))).isEqualTo(409 to "version_conflict")
+        assertThat(openTeams()).isZero()
+        assertThat(listOf(version(first), version(second))).isEqualTo(before)
+
+        // 같은 이름은 다른 요청(새 멱등 키)이어도 409 team_name_conflict, 다른 팀을 그 이름으로 바꾸어도 같다.
+        assertThat(error(manage("POST", "/teams", mapOf("teamName" to "플랫폼"), token))).isEqualTo(409 to "team_name_conflict")
+        val other = body(manage("POST", "/teams", mapOf("teamName" to "데이터"), token))
+        val rename = manage("PATCH", "/teams/${other.path("teamId").asString()}", mapOf("teamName" to "플랫폼", "expectedVersion" to other.path("version").asLong()), token)
+        assertThat(error(rename)).isEqualTo(409 to "team_name_conflict")
+        // 빈 이름·공백뿐인 이름은 필드 오류다.
+        for (blank in listOf("", "   ")) {
+            val rejected = manage("POST", "/teams", mapOf("teamName" to blank), token)
+            assertThat(error(rejected)).isEqualTo(400 to "invalid_request")
+            assertThat(body(rejected).at("/error/fieldErrors/0/field").asString()).isEqualTo("teamName")
+        }
+        assertThat(jdbc.sql("SELECT name FROM enrollment.teams ORDER BY name").query(String::class.java).list()).containsExactly("데이터", "플랫폼")
+    }
 }

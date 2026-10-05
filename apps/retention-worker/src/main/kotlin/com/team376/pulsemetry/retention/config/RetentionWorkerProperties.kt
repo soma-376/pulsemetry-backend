@@ -13,6 +13,8 @@ data class RetentionWorkerProperties(
 	val drain: Drain,
 	/** drain → DELETE → 검증의 최대 반복 수. */
 	val maxPasses: Int,
+	/** 요청 모드(`--requests`)의 설정. 명령 하나를 실행하는 모드는 쓰지 않는다. 값이 모두 비면 null 로 묶인다. */
+	val requests: Requests?,
 ) {
 	init {
 		require(maxPasses >= 1) { "pulsemetry.retention.max-passes 는 1 이상이어야 한다." }
@@ -29,6 +31,21 @@ data class RetentionWorkerProperties(
 			require(url.isNotBlank()) { "pulsemetry.retention.clickhouse.url 이 비어 있다." }
 			require(database.isNotBlank()) { "pulsemetry.retention.clickhouse.database 가 비어 있다." }
 			require(timeout.toSeconds() >= 1) { "pulsemetry.retention.clickhouse.timeout 은 1초 이상이어야 한다." }
+		}
+	}
+
+	data class Requests(
+		/**
+		 * 요청 하나의 선점 기한(ADR 0047). 한 요청의 삭제 실행 전체(drain 상한 × 반복 수 + DELETE)보다 길어야 한다 — 지나면 다른 실행이 다시 잡는다.
+		 * 없으면 요청 모드가 아무것도 하지 않고 종료 코드 2 로 끝난다. 기본값이 없다.
+		 */
+		val lease: Duration?,
+		/** 한 요청을 몇 번까지 실행하는가. 그 안에 끝내지 못하면 작업을 실패로 닫는다. 없으면 요청 모드가 종료 코드 2 로 끝난다. */
+		val maxRuns: Int?,
+	) {
+		init {
+			require(lease == null || (!lease.isNegative && !lease.isZero)) { "pulsemetry.retention.requests.lease 는 0 보다 커야 한다." }
+			require(maxRuns == null || maxRuns >= 1) { "pulsemetry.retention.requests.max-runs 는 1 이상이어야 한다." }
 		}
 	}
 

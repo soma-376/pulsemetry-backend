@@ -43,6 +43,9 @@ pulsemetry:
     allowed-origins: ${PULSEMETRY_USER_AUTH_ALLOWED_ORIGINS:}
   management:
     enabled: ${PULSEMETRY_MANAGEMENT_ENABLED:false}
+  # 메일 발송은 enrollment-api 가 한다. 이 값은 "설치 업데이트 안내를 보낼 수 있는가"의 표시에만 쓴다(ADR 0043) — enrollment-api 와 같은 값을 준다.
+  mail:
+    enabled: ${PULSEMETRY_MAIL_ENABLED:false}
   dashboard:
     # 503 응답의 Retry-After.
     retry-after: ${PULSEMETRY_DASHBOARD_RETRY_AFTER:}
@@ -98,3 +101,26 @@ pulsemetry:
     # 구성원 화면의 정책 값 — 저장된 조직 정책이 없어 설정으로 받는다. 7·14·30·60 중 하나, 기본값 없음.
     members:
       idle-days: ${PULSEMETRY_DASHBOARD_MEMBERS_IDLE_DAYS:}
+
+    # 수집 상태 판정의 운영 수치 (ADR 0041). 기본값 없음.
+    # window 는 설치 보고 주기(enrollment-api 의 pulsemetry.heartbeat.report-interval)보다 길어야 한다 — 짧으면 살아 있는 설치가 보고 사이에 빠진다.
+    ingest:
+      window: ${PULSEMETRY_DASHBOARD_INGEST_WINDOW:}
+      delayed-after: ${PULSEMETRY_DASHBOARD_INGEST_DELAYED_AFTER:}
+      down-after: ${PULSEMETRY_DASHBOARD_INGEST_DOWN_AFTER:}
+
+    # 기간 완전성 판정의 운영 수치 (ADR 0042). 기본값 없음.
+    # settle-after: 하루가 끝난 뒤 그날을 확정하기까지 기다리는 시간 — 데몬의 전송(재시도 포함)·서버 적재가 끝나는 시간보다 길게.
+    completeness:
+      settle-after: ${PULSEMETRY_DASHBOARD_COMPLETENESS_SETTLE_AFTER:}
+
+    # 좌석 원장 조회의 운영 수치 (ADR 0048 §7). 기본값 없음.
+    # stale-after: 연결의 마지막 성공 동기화가 이보다 오래되면 그 제품의 좌석을 낡았다고 표시한다 — enrollment-api 의 동기화 간격보다 길게.
+    seats:
+      stale-after: ${PULSEMETRY_DASHBOARD_SEATS_STALE_AFTER:}
+
+    # 알림 평가의 운영 수치 (ADR 0051 §5). 기본값 없음.
+    # evaluation-interval: 켜진 규칙을 평가하는 주기. lease: 한 조직의 평가 선점 기한 — 한 회차보다 길게.
+    alerts:
+      evaluation-interval: ${PULSEMETRY_DASHBOARD_ALERTS_EVALUATION_INTERVAL:}
+      lease: ${PULSEMETRY_DASHBOARD_ALERTS_LEASE:}

@@ -84,6 +84,23 @@ class MembersApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
+	fun plannedVendorsRemainSeparateFromSeats() {
+		val org = seed()
+		DashboardTestStores.writer.sql("UPDATE enrollment.members SET planned_vendor_ids=ARRAY['planned-product'] WHERE id=:id")
+			.param("id", org.alice).update()
+		val body = ok(org.tenant, "/members/dashboard?$week")
+		val alice = body.at("/members/items").list().first { it.path("memberId").asString() == org.alice.toString() }
+		assertThat(alice.path("plannedVendorIds")[0].asString()).isEqualTo("planned-product")
+		assertThat(body.at("/summary/seats/availability").asString()).isEqualTo("unavailable")
+		// 동일 snapshot의 후속 조회는 변경 전 선택을 유지한다.
+		DashboardTestStores.writer.sql("UPDATE enrollment.members SET planned_vendor_ids='{}' WHERE id=:id").param("id", org.alice).update()
+		val snapshot = body.at("/meta/snapshotId").asString()
+		val continued = ok(org.tenant, "/members?$week&snapshotId=$snapshot")
+		val fixed = continued.at("/members/items").list().first { it.path("memberId").asString() == org.alice.toString() }
+		assertThat(fixed.path("plannedVendorIds")[0].asString()).isEqualTo("planned-product")
+	}
+
+	@Test
 	@DisplayName("dashboard — 로스터가 원천이다: 사용 없는 사람도 남고 초대 중인 사람은 로스터가 아니며, 비용 내림차순 + 사용 없는 사람은 마지막")
 	fun dashboardRoster() {
 		val org = seed()
@@ -222,6 +239,6 @@ class MembersApiTest : AbstractDashboardApiTest() {
 	fun structureMatchesExample() {
 		val org = seed()
 
-		JsonStructure.assertSameKeys("", JsonStructure.example("members-response.example.json"), ok(org.tenant, "/members/dashboard?$week"))
+		JsonStructure.assertMatches("members-response.example.json", ok(org.tenant, "/members/dashboard?$week"))
 	}
 }

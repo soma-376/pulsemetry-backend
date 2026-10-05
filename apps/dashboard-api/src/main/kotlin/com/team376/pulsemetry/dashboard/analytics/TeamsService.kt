@@ -87,8 +87,8 @@ class TeamsService(
 			ingest = frames.ingest(frame),
 			attributionBasis = ATTRIBUTION_BASIS,
 			totals = OverviewResponse.UsagePair(
-				current = if (frame.empty) null else Usage.of(data.organization, frame.pricingMixed),
-				previous = data.previousOrganization?.let { Usage.of(it, frame.pricingMixed) },
+				current = if (frame.empty) null else Usage.of(data.organization, frame.pricingMixed, frame.currentComplete),
+				previous = data.previousOrganization?.let { Usage.of(it, frame.pricingMixed, frame.previousComplete) },
 			),
 			sort = sort.wire,
 			teams = Page(items.map { data.analytics(TeamKey.Team(UUID.fromString(it))) }, ranked.size, next),
@@ -153,7 +153,8 @@ class TeamsService(
 			meta = frames.analyticsMeta(frame),
 			team = teamRef(key, directory),
 			summary = TeamUsersSummary(
-				usage = if (frame.empty || !team.hasUsage) null else Usage.of(team, pricingMixed),
+				// 완전한 기간이면 사용이 없는 팀도 0 이다 — 팀 상세와 같은 기준이다.
+				usage = if (frame.empty || (!team.hasUsage && !frame.currentComplete)) null else Usage.of(team, pricingMixed, frame.currentComplete),
 				averageEquivalentCostUsd = average(identified.map { it.second }, pricingMixed)?.let(Money::format),
 				cacheReadTokens = team.tokens(team.cacheRead),
 				cacheEligibleInputTokens = team.cacheEligibleInput(),
@@ -204,6 +205,10 @@ class TeamsService(
 		val teamModels: Map<List<String?>, UsageTotals>,
 		val teamDays: Map<List<String?>, UsageTotals>,
 		val models: Map<List<String?>, UsageTotals>,
+		val teamProducts: Map<List<String?>, UsageTotals>,
+		/** 팀별로 세션을 처음 본 날의 새 세션 수 — 누적 세션(대시보드 명세 "팀 누적 세션")의 재료. */
+		val firstSessions: Map<Pair<String?, String>, Long>,
+		val products: List<SnapshotReferences.Product>,
 		val directory: Map<String, SnapshotReferences.Team>,
 	) {
 		val pricingMixed = frame.pricingMixed
@@ -223,23 +228,33 @@ class TeamsService(
 			val models = teamModels.filterKeys { it[0] == id }
 				.map { (k, v) -> modelUsage(k[1]!!, v, pricingMixed) }
 				.sortedWith(COST_THEN_ID)
+			// 누적 세션(대시보드 명세 "팀 누적 세션"): 시작일부터 그날까지 모든 날이 완전하고 세션 없는 행이 없을 때만 값이다 — 한 번 끊기면 그 뒤로는 없다.
+			var sessions = 0L
+			var cumulative = true
 			return TeamAnalytics(
 				teamId = ref.teamId,
 				teamName = ref.teamName,
-				current = if (frame.empty || !totals.hasUsage) null else Usage.of(totals, pricingMixed),
-				previous = if (frame.comparable) previous[listOf(id)]?.takeIf { it.hasUsage }?.let { Usage.of(it, pricingMixed) } else null,
+				current = if (frame.empty || (!totals.hasUsage && !frame.currentComplete)) null else Usage.of(totals, pricingMixed, frame.currentComplete),
+				previous = if (!frame.comparable) null else (previous[listOf(id)] ?: UsageTotals.EMPTY).let { prior ->
+					if (!prior.hasUsage && !frame.previousComplete) null else Usage.of(prior, pricingMixed, frame.previousComplete)
+				},
 				modelMix = section(models) { TeamModelMix.of(models) },
 				trend = frame.period.current.dates().map { date ->
 					val day = teamDays[listOf(id, date.toString())] ?: UsageTotals.EMPTY
-					val seen = frame.observed(date)
+					val observation = frame.observation(date)
+					// 완전한 날에 사용이 없으면 0, 미관측이면 값이 없다.
+					val usage = if (observation == AnalyticsFrames.UNOBSERVED) null else Usage.of(day, pricingMixed, observation == Coverage.COMPLETE)
+					cumulative = cumulative && observation == Coverage.COMPLETE && day.sessionlessRows == 0L
+					sessions += firstSessions[id to date.toString()] ?: 0
 					TeamTrendPoint(
 						date = date.toString(),
-						observation = if (seen) PARTIAL else UNOBSERVED,
-						equivalentCostUsd = if (seen) day.equivalentCost(pricingMixed)?.let(Money::format) else null,
-						totalTokens = if (seen) day.apiTotal() else null,
-						cumulativeSessionCount = null,
+						observation = observation,
+						equivalentCostUsd = usage?.equivalentCostUsd,
+						totalTokens = usage?.tokens?.total,
+						cumulativeSessionCount = if (cumulative) sessions else null,
 					)
 				},
+				products = Products.usages(teamProducts.filterKeys { it[0] == id }.mapKeys { it.key[1] ?: UsageAggregator.UNMAPPED_PRODUCT }, products, pricingMixed),
 			)
 		}
 
@@ -277,7 +292,8 @@ class TeamsService(
 			fun load(frame: AnalyticsFrames.Frame, aggregator: UsageAggregator, references: SnapshotReferences): TeamData {
 				val snapshot = frame.snapshot
 				val empty = frame.empty
-				fun totals(axis: Axis, side: Side = Side.CURRENT) = if (empty) emptyMap() else aggregator.totals(snapshot, side, axis)
+				val products = references.products(snapshot)
+				fun totals(axis: Axis, side: Side = Side.CURRENT) = if (empty) emptyMap() else aggregator.totals(snapshot, side, axis, products = products)
 				return TeamData(
 					frame = frame,
 					organization = aggregator.totals(snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()),
@@ -287,6 +303,9 @@ class TeamsService(
 					teamModels = totals(Axis.TEAM_MODEL),
 					teamDays = totals(Axis.TEAM_DAY),
 					models = totals(Axis.MODEL),
+					teamProducts = totals(Axis.TEAM_PRODUCT),
+					firstSessions = if (empty) emptyMap() else aggregator.firstSessionDays(snapshot, Side.CURRENT),
+					products = products,
 					directory = references.teams(snapshot).associateBy { it.id.toString() },
 				)
 			}
@@ -300,8 +319,6 @@ class TeamsService(
 		const val ATTRIBUTION_BASIS = "event_time"
 		const val COST_SHARE_THRESHOLD = 0.05
 		const val UNASSIGNED_NAME = "미배정"
-		private const val PARTIAL = "partial"
-		private const val UNOBSERVED = "unobserved"
 		private const val CURSOR = "cursor"
 
 		private val COST_THEN_ID = compareBy<TeamModelUsage, BigDecimal?>(nullsLast(reverseOrder())) { it.equivalentCostUsd?.let(::BigDecimal) }

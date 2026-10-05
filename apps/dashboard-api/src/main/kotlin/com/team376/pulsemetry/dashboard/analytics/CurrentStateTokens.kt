@@ -27,6 +27,9 @@ class CurrentStateTokens(
 		return Token(encode(kind, tenantId, asOf), asOf)
 	}
 
+	/** 정한 기준 시각의 토큰 — 사용량 snapshot 의 기준 시각으로 현재 상태 목록(회수 후보)의 첫 페이지를 낼 때 다음 페이지가 같은 시각을 잇게 한다. */
+	fun at(kind: String, tenantId: UUID, asOf: Instant): Token = issue(kind, tenantId, asOf)
+
 	/** [value] 가 있으면 해석하고(아니면 409), 없으면 새로 낸다. */
 	fun resolve(kind: String, tenantId: UUID, value: String?, now: Instant): Token =
 		if (value == null) issue(kind, tenantId, now) else Token(value, decode(kind, value, tenantId, now))

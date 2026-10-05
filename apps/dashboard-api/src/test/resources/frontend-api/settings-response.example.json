@@ -105,7 +105,26 @@
     "aggregateRetentionMonths": 24,
     "rawContentRetentionDays": 30,
     "effectiveAt": "2026-09-19T00:00:00Z",
-    "updatedBy": "member-001"
+    "updatedBy": "member-001",
+    "settingsVersion": 2,
+    "settingsUpdatedAt": "2026-09-19T00:00:00Z",
+    "settingsUpdatedBy": "member-001",
+    "reclaimIdleDaysSource": "organization",
+    "options": {
+      "reclaimIdleDays": [
+        7,
+        14,
+        30,
+        60
+      ],
+      "aggregateRetentionMonths": [
+        12,
+        24,
+        36,
+        null
+      ]
+    },
+    "cleanupOperationId": null
   },
   "policyRollout": {
     "desiredVersion": 4,

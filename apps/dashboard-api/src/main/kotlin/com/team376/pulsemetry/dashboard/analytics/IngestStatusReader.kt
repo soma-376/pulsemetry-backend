@@ -17,6 +17,8 @@ import java.util.UUID
  *   "수신한 적 없음"으로 읽는다. 둘 다 없으면 판정할 근거가 없어 [IngestHistoryUnknownException](503)이다 — 요약 부재를 수집한 적 없음으로 바꾸지 않는다.
  *   요약을 읽지 못하는 것(장애)도 503 이다.
  * - 관측된 구성원은 최근 창(ledger 의 수신 시각) 안에 수신이 있는 설치를 `installations.member_id` 로 풀어 센다. 이 조회가 실패하면 0 이 아니라 null 이다.
+ * - 설치의 마지막 보고와 손실 구간(`enrollment.installation_heartbeats`·`installation_collection_segments` — ADR 0040)은 상태 판정의 근거다(ADR 0041).
+ *   읽지 못하면 빈 목록이 아니라 null 이다 — 보고가 없는 것과 읽지 못한 것은 다르다.
  */
 class IngestStatusReader(
 	private val summaries: TenantIngestSummaryStore,
@@ -40,22 +42,74 @@ class IngestStatusReader(
 		return History(summary)
 	}
 
-	fun observedMembers(tenantId: UUID, since: Instant): Long? = try {
-		val installations = ledger.query(
+	/** [since] 이후에 수신(ledger)이 있는 설치. 읽지 못하면 null 이다. */
+	fun observedInstallations(tenantId: UUID, since: Instant): Set<UUID>? = try {
+		ledger.query(
 			"SELECT DISTINCT installation_id AS i FROM telemetry_ingest_ledger " +
 				"WHERE tenant_id = {tenant:String} AND received_time >= {since:DateTime64(9, 'UTC')}",
 			mapOf("tenant" to ClickHouseParam.string(tenantId.toString()), "since" to ClickHouseParam.instant(since)),
-		) { it.path("i").asString() }.mapNotNull { runCatching { UUID.fromString(it) }.getOrNull() }
-		if (installations.isEmpty()) 0 else
-			source.sql(
+		) { it.path("i").asString() }.mapNotNull { runCatching { UUID.fromString(it) }.getOrNull() }.toSet()
+	} catch (e: RuntimeException) {
+		log.warn("수신 설치 조회 실패 — null 로 둔다", e)
+		null
+	}
+
+	/** [observed] 설치를 구성원으로 풀어 센다. 설치 상태와 구성원 상태를 가리지 않는다(기존 의미). */
+	fun observedMembers(tenantId: UUID, observed: Set<UUID>?): Long? = try {
+		when {
+			observed == null -> null
+			observed.isEmpty() -> 0
+			else -> source.sql(
 				"SELECT count(DISTINCT member_id) FROM enrollment.installations WHERE tenant_id = :tenant AND id = ANY(CAST(:ids AS uuid[]))",
 			)
 				.param("tenant", tenantId)
-				.param("ids", installations.joinToString(",", "{", "}"))
+				.param("ids", observed.joinToString(",", "{", "}"))
 				.query(Long::class.java)
 				.single()
+		}
 	} catch (e: RuntimeException) {
 		log.warn("관측 구성원 조회 실패 — null 로 둔다", e)
+		null
+	}
+
+	/**
+	 * 그 조직의 **활성 설치**와 각 설치의 마지막 보고. [since] 이후에 끝난 손실 구간이 있으면 `recentLoss` 다.
+	 * 조직은 설치 행으로 가른다 — 보고 표에는 조직이 없다.
+	 */
+	fun installations(tenantId: UUID, since: Instant): List<InstallationState>? = try {
+		source.sql(
+			"""SELECT i.id, i.member_id, (m.status = 'active') AS member_active,
+				h.received_at, h.mode, h.forwarding, h.receiving_since, h.last_delivered_at, h.pending_since,
+				EXISTS (SELECT 1 FROM enrollment.installation_collection_segments s
+					WHERE s.installation_id = i.id AND s.lost > 0 AND s.to_at >= :since) AS recent_loss
+			FROM enrollment.installations i
+			JOIN enrollment.members m ON m.id = i.member_id
+			LEFT JOIN enrollment.installation_heartbeats h ON h.installation_id = i.id
+			WHERE i.tenant_id = :tenant AND i.status = 'active'""",
+		)
+			.param("tenant", tenantId)
+			.param("since", java.sql.Timestamp.from(since))
+			.query { rs, _ ->
+				InstallationState(
+					installationId = rs.getObject("id", UUID::class.java),
+					memberId = rs.getObject("member_id", UUID::class.java),
+					memberActive = rs.getBoolean("member_active"),
+					report = rs.getTimestamp("received_at")?.let { received ->
+						InstallationState.Report(
+							receivedAt = received.toInstant(),
+							local = rs.getString("mode") == "local",
+							forwarding = rs.getBoolean("forwarding"),
+							receivingSince = rs.getTimestamp("receiving_since")?.toInstant(),
+							lastDeliveredAt = rs.getTimestamp("last_delivered_at")?.toInstant(),
+							pendingSince = rs.getTimestamp("pending_since")?.toInstant(),
+							recentLoss = rs.getBoolean("recent_loss"),
+						)
+					},
+				)
+			}
+			.list()
+	} catch (e: RuntimeException) {
+		log.warn("설치 보고 조회 실패 — null 로 둔다", e)
 		null
 	}
 

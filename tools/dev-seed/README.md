@@ -1,5 +1,9 @@
 # 개발용 시드
 
+로그인 연결은 [Cognito 실행·자동 시딩](../../docs/cognito-dev.md)를 따른다.
+Compose init은 공개 JSON으로 A·B 시드 회사의 OIDC 설정만 주입한다. 회원 sub는 NULL에서 최초 SSO 로그인으로 연결하며 기존 연결은 보존한다. 실제 Secret은 호스트 환경변수로 별도 설정한다.
+`local`만 지정하면 개발 Cognito 로그인도 활성화된다.
+
 `:tools:dev-seed` 하나에 생성·적재·검증을 모으고 Docker에서만 실행한다(ADR 0031).
 서버는 local 프로필에서도 시드를 실행하지 않는다. Spring 서버는 호스트에서 실행한다.
 Compose가 기존 소유 모듈의 마이그레이션 → A/B/C → 대시보드 DB 계정·인증 키를 준비한다.
@@ -22,14 +26,22 @@ docker compose ps -a dev-seed
 Compose 서비스 이름과 고정 개발 계정만 사용하고 Docker 소켓은 사용하지 않는다.
 
 최초 적재 기준일은 서울 기준 실행일이며 시나리오 기본값은 `A,B,C`다. 선택적으로 지정할 수 있다.
+빈 조직 D·E(아래 시나리오 표)는 기본 목록에 없다 — 파괴적 E2E 를 돌릴 격리 DB에서만 `A,B,C,D,E`처럼 명시한다.
 
 ```powershell
 $env:PULSEMETRY_LOCAL_SEED_DATE = '2026-09-28'
 $env:PULSEMETRY_LOCAL_SEED_SCENARIOS = 'A,B,C'
+$env:PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT = 'http://localhost:4316'
 docker compose up -d --build
 ```
 
-시드 조직은 A/B/C 세 개다. A는 정책 확인·활성 벤더 선택·온보딩 완료 상태이며 B/C는 미완료다.
+`PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT`는 시드 manifest(A·C·E)의 수신 주소다. 비우면 `http://localhost:4316`(이 Compose 의 ingest)이고,
+호스트가 있는 http(s) 주소만 받는다(사용자 정보·쿼리·조각 불가). telemetryctl 은 http 를 호스트가 `localhost`일 때만 받으므로
+다른 포트의 ingest 를 쓰는 격리 스택은 `http://localhost:<포트>`로 준다. 실제로 쓴 주소는 `plan`·`init` 출력의 `otlp_endpoint`에 나온다.
+**주소는 지문에 들지 않는다** — 주소만 바꿨다고 기존 볼륨에 reset 을 요구하지 않고 `verify`도 manifest 의 주소를 비교하지 않는다.
+대신 이미 적재된 manifest 의 주소는 바뀌지 않는다. 새 주소로 다시 쓰려면 그 시나리오를 reset 한 뒤 적재한다.
+
+시드 조직은 기본 A/B/C 세 개(+ 명시하면 빈 조직 D/E)다. A는 정책 확인·활성 벤더 선택·온보딩 완료 상태이며 B/C/D/E는 미완료다.
 B는 조직과 `owner@seed-b.example.test` 한 명만 생성한다. manifest·수집 이력·팀·벤더도 없다.
 조직 생성 트리거가 필수 초기 상태인 빈 수집 요약을 함께 만든다(ADR 0034). 수신·관측 시각은 모두 NULL이며
 신규 B의 개요 응답은 `200`, `meta.dataState=never_observed`, `ingest.status=empty`다.
@@ -38,12 +50,12 @@ A/C는 자동 생성된 요약에 합성 이력을 채운다. 기존 조직의 �
 `tenants.onboarding_completed`는 완료 시각에서 계산하므로 시각과 완료 여부가 어긋나지 않는다.
 기존 기본 로컬 개발 조직과 `local-owner@example.com`은 더 이상 생성하지 않는다(ADR 0032).
 CLI 설치는 A의 `plan`에 나오는 대기 초대 또는 관리자 API로 발급한 새 초대를 사용한다.
-시드 manifest의 수신 주소는 `http://localhost:4316`이다.
+시드 manifest의 수신 주소는 기본 `http://localhost:4316`이다(`PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT`로 바꾼다).
 기존 ready 데이터는 자동 갱신하지 않는다. 새 시나리오 정의와 엄격히 비교하려면 해당 조직을 명시적으로 reset 후 재적재한다.
 
 ## 서버 실행
 
-시드 완료 후 각 터미널에서 실행한다.
+시드 완료 후 [회사별 Secret 환경변수](../../docs/cognito-dev.md)를 호스트에 설정하고 각 터미널에서 실행한다.
 
 ```powershell
 .\gradlew.bat :apps:enrollment-api:bootRun --args="--spring.profiles.active=local"
@@ -51,7 +63,9 @@ CLI 설치는 A의 `plan`에 나오는 대기 초대 또는 관리자 API로 발
 ```
 
 각 앱의 `application-local.yaml`이 로컬 인증·관리 기능과 DB 계정 설정을 제공한다.
-Compose가 `build/dev-auth`에 인증 키와 응답 암호화 키를 만들며 기존 키는 덮어쓰지 않는다.
+Compose가 `build/dev-auth`에 인증 키와 응답 암호화 키, 메일 본문 암호화 키를 만들며 기존 키는 덮어쓰지 않는다.
+메일 키가 없던 기존 디렉터리에는 다음 `docker compose up -d --build`에서 메일 키만 더한다.
+서버가 보낸 메일은 Compose의 메일 수신 컨테이너가 받는다. `http://localhost:8025`에서 확인하며 실제로 발송되지 않는다.
 서버는 키를 읽기만 한다. 키가 없으면 먼저 Compose 초기화를 실행한다.
 키 경로는 Gradle bootRun의 앱 디렉터리 기준이며 다른 위치에서 실행할 때는
 `PULSEMETRY_DEV_AUTH_DIR`에 키 디렉터리의 절대 경로를 지정한다.
@@ -97,7 +111,9 @@ PostgreSQL·ClickHouse 볼륨을 삭제하므로 시드 외에 직접 추가한 
 | --- | --- | --- |
 | A | `1b59ab21-1788-35e0-bfd7-23baa88a35b4` | 온보딩 완료·선택 제품 4개. 관리자 2명·일반 구성원 10명·초대 대기 2명. 4팀+미배정, 팀 이동, 설치 11대. 두 도구·6모델의 56일 사용 이력 |
 | B | `db1c8c6b-6970-38c6-821a-eb5e61b7a180` | 조직과 오너 1명만 존재. 첫 로그인·최초 온보딩용 |
-| C | `4769355c-a20e-327f-89fc-fef69e94dfb6` | 8명, 이벤트 14건. 미확인 모델, 토큰·비용 누락, 과거 사용, 계약 없음 |
+| C | `4769355c-a20e-327f-89fc-fef69e94dfb6` | 8명, 이벤트 15건. 미확인 모델, 토큰·비용 누락, 과거 사용, 계약 없음, 어느 카탈로그 제품에도 매핑되지 않는 관측(`product = unknown`, 사용량 행 아님) 1건 |
+| D | `e77dd38f-4e6c-33ff-84bd-79c8a53ba900` | 명시할 때만. B처럼 조직과 오너(`owner@seed-d.example.test`) 1명만 존재. 온보딩을 끝까지 돌리는 파괴적 E2E용 — A·B·C를 바꾸지 않는다 |
+| E | `bd6fe5c2-6fdd-3433-b77e-5d5334b0bb8e` | 명시할 때만. 오너가 수집 정책 1판을 저장했고(온보딩 미완료, 벤더·팀 없음) 초대한 구성원 `member1@seed-e.example.test`의 설치 코드가 있다. 설치·수신 없음 — 데몬 등록 흐름과 벤더 커넥터 E2E 용(그 E2E 가 Claude·Cursor Enterprise 계약 등록·온보딩 완료·member1 합류를 한다, `tools/mock-vendor/README.md`). 코드는 `plan`의 `invitation_codes.pending` |
 
 기준일 직전 28일이 현재 조회 구간이고 그 앞 28일은 이전 구간이다. 기준일 `2026-09-29`라면
 현재 `2026-09-01`~`2026-09-28`, 이전 `2026-08-04`~`2026-08-31`이다(서울 시간).
@@ -106,10 +122,14 @@ A의 현재 활성 사용자는 8명, 이전 구간은 과거 전용 사용자 1
 가상 요율을 사용하며 실제 공급자 요금·청구 금액을 뜻하지 않는다.
 서로 다른 도구의 토큰 의미를 억지로 통일하지 않는다. API의 혼합 토큰 합계·비교 등은 null/unavailable일 수 있다.
 
-계정은 `owner@seed-a.example.test` 또는 `admin@seed-a.example.test`다. C는 `seed-c`로 바꾼다.
-B 계정은 `owner@seed-b.example.test` 하나뿐이다.
-개발용 비밀번호는 `Pulsemetry-local-2026!`이며 DB에는 BCrypt 해시로 저장한다.
-실제 로그인에는 해당 조직 ID도 함께 보낸다. 초대 코드는 `plan` 출력에서 확인한다.
+개발 Cognito 로그인 계정은 A의 `owner@seed-a.example.test`·`admin@seed-a.example.test`, B의 `owner@seed-b.example.test`다. C 회원은 DB 시드에는 있지만 Cognito 풀·계정은 준비하지 않는다.
+비밀번호는 외부 IdP 화면에만 입력한다. Pulsemetry DB에는 비밀번호가 없다.
+초대 코드는 설치용이며 `plan` 출력에서 확인한다. 기존 ready 시드는 자동 수정하지 않는다.
+A·B 회사 OIDC 설정은 [공개 Cognito JSON](../../docs/cognito-dev.md)으로 init 시 자동 준비한다. 회원 sub는 최초 SSO에서 연결한다. 기존 연결이 다르면 자동 교체하지 않는다.
+구 공유 풀용 스냅샷·전환 명령은 회사별 버전 2 JSON에 사용할 수 없다. 풀 교체는 위 안내의 재실행·충돌 절차를 확인하며 회원·분석 데이터를 초기화하지 않는다.
+`verify`는 별도 관리되는 issuer/sub를 시드 행 비교에서 제외한다. 예전 fingerprint와 새 정의가 달라도
+로그인 설정만 바꾸기 위해 `reset`을 실행하지 않는다. 통합 시드의 지문은 판 2이므로 기존 판의 `apply` 재실행은 중단된다. 기존 볼륨의 데이터·Flyway 이력을 백업하고 별도로 이관하거나, 검증용 새 볼륨을 사용한다. 사용자 볼륨은 자동 초기화하지 않는다.
+D·E는 격리 E2E용 조직이며 실제 Cognito 연결을 제공하지 않는다.
 
 ### A의 PostgreSQL 기준 데이터
 
@@ -121,11 +141,15 @@ ClickHouse 이벤트·수신 기록은 이 ID를 참조한다. 기본 설치는 
 | 현재 팀 소속 | 플랫폼 4명, 제품 4명, 데이터 2명, 디자인 1명, 미배정 1명. 초대 대기 2명은 소속 없음 |
 | 팀 이동 | `member2`가 기준일 14일 전 플랫폼 → 제품으로 이동. 이전 소속 종료 시각과 새 소속 시작 시각이 같음 |
 | 설치 | 일반 구성원 10명에게 1대씩, `member2`에게 두 번째 설치 1대. Windows·macOS·Linux 포함 |
-| 정책 적용 | 기본 설치 10대는 v1 적용 기록 있음. 두 번째 설치는 적용 확인·수신 이력 없음 |
+| 수집 정책 | 판 1(조직 생성 때), 판 2(기준일 7일 전 관리자가 도구 세부 수집만 켬 — 사용량 시그널·원문 선택은 그대로)가 있고 판 2가 활성 |
+| 정책 적용 | 기본 설치 10대 모두 판 1 적용 기록 있음. `member2`~`member8`의 설치 7대는 판 2 적용을 보고했다(적용). `member9`~`member11`의 3대는 판 1에 머문다(미적용). 두 번째 설치는 판 2로 등록했으나 적용 확인이 없다(미확인). 적용 현황은 적용 7 · 미적용 3 · 미확인 1 |
+| 설치 보고 | 기본 설치 10대는 기준 시각(기준일의 서울 자정)에 마지막으로 보고했다 — 등록 뒤로 끊김·손실 없이 수집 중(로컬 배선·전달·수신), 대기 0. 보고의 적용 판은 위 "정책 적용"과 같다. 두 번째 설치는 보고한 적 없음 |
 | Claude 계약 | Team, 표준 8석 × $20 + 프리미엄 2석 × $100 = 월 $360 |
 | OpenAI 계약 | Business, Standard 6석 × $25 + Premium 2석 × $125 = 월 $400. 최초 계약 미입력(v1) → 14일 전 관리자 입력(v2) 이력 |
 | Copilot 계약 | Business 5석 × $19 = 월 $95, 기준일 전날 만료 |
 | Cursor 등록 | 제품만 등록, 계약 없음 |
+| 좌석 원장 | 사람별 좌석(ADR 0048) — 구매 수량으로 채우지 않는다. Claude 수동 5석(member4·8·10 표준, admin 프리미엄, 구성원 없는 외부 계정 하나), OpenAI 수동 2석(member3·5). 모두 관리자가 기록했고 계정은 이메일이다. Copilot·Cursor 는 좌석을 기록하지 않았다(`seat_source_not_recorded`) — Copilot 은 커넥터가 없는 플랜이다(ADR 0054). A 에는 벤더 연결이 없다 |
+| 알림 규칙 | A는 비용 급증만 켠다. 미등록 제품 규칙은 꺼짐·판 0이며 모델·도구 목록을 시딩하지 않는다(허브 ADR 0008). A의 관측 제품은 모두 등록되어 있어 제품 알림이 생기지 않는다. 급증은 기준일 −8일에 비용 감소로 알림이 없고 이후는 기간 불완전이다. 알림 확인 E2E에는 별도의 미확인 알림 또는 이전 평가 이력이 필요하다 |
 
 모든 단가는 합성 테스트 입력이며 공시 가격을 자동 적용한 것이 아니다. 계약 좌석 수는 실제 구성원 배정이나
 관측 인원과 별개다. 유효 계약 두 개의 월 금액 합은 $760이지만, 만료·미입력 제품도 있어 전체 계약 합계는
@@ -143,7 +167,19 @@ Cursor·Copilot은 등록·계약 화면 확인용이며 수집 도구 지원을
 ### A의 ClickHouse 사용 기록
 
 `telemetry_events`에는 요청별 사용량을, `telemetry_ingest_ledger`에는 세션 단위로 묶은 수신을 적재한다.
-`tenant_ingest_summary`와 설치의 마지막 수신 시각도 같은 기록에서 계산한다.
+`tenant_ingest_summary`도 같은 기록에서 계산한다. 설치 보고의 전달 개수와 마지막 전달 시각은 그 설치의 수신 기록과 같다.
+설치의 `last_seen_at`은 설치 보고가 있는 설치는 마지막 보고 시각(기준 시각)이고, C처럼 보고가 없는 설치는 마지막 수신 시각이다.
+C의 설치는 구성원 2~7에게 1대씩 6대이고 기준일 45일 전(서울 자정)에 등록하며 판 1 적용 확인 기록(적용 시각 = 등록 시각)을 남겼다. 설치 보고는 없다 —
+C의 정책 적용 현황은 적용 6 · 미적용 0 · 확인 불가 0이고 판정 근거는 모두 적용 확인 기록이다(A는 기본 설치 10대가 설치 보고, 두 번째 설치는 근거 없음).
+
+시드에는 살아 있는 데몬이 없다. A는 "기준 시각까지 정상으로 수집하다가 조용해진 조직"이므로 공통 헤더의 수집 상태는
+조회하는 시각에 따라 정해진다(ADR 0041) — local 프로필에서는 기준 시각에서 24시간 안이면 `unknown`(`installations_silent`), 그 뒤는 `down`이다.
+`healthy`를 보려면 실제 데몬이 보고해야 한다. C는 설치 보고가 없어 `unknown`(`source_not_available`)으로 남는다.
+
+같은 수집 구간이 기간 완전성의 근거다(ADR 0042). A는 설치 등록일(기준일 58일 전)부터 두 번째 설치 등록 전날(기준일 4일 전)까지의 날이 완전하다 —
+두 번째 설치는 보고한 적이 없어 그 등록일부터는 완전하지 않고, 기준일 전날은 확정 대기(local 1시간)가 구간 끝(기준 시각)을 넘는다.
+그래서 비교(`comparison.status=available`)는 두 기간이 모두 그 안에 있을 때 나온다. 기준일 2026-09-29면 예: `startDate=2026-09-08&endDate=2026-09-21&compare=prev_period`.
+B(설치 없음)·C(보고 없음)는 완전한 날이 없어 `partial`·비교 없음 그대로다.
 메트릭 사용량을 추가로 만들지 않아 대표 로그와 이중 합산하지 않는다.
 
 | 확인 사례 | 데이터 구성 |
@@ -200,8 +236,16 @@ Cursor는 계약 미입력이다. 계약의 상세 구성과 이력은 위 Postg
 실제 가격표도, 사용 인원으로 계산한 좌석 배정도 아니다.
 Copilot Business는 합성 테스트용 5석 × $19 = $95/월이며, 기준일 -60일 시작·기준일 -1일 종료로 만료된 계약이다.
 프론트 fixture의 contractStatus는 A 기준일로 계산한다. DB의 기존 시드는 자동 덮어쓰지 않는다.
+fixture의 설치 행은 API와 같은 규칙이다 — 적용 판은 설치가 지금 집행하는 판(보고가 있으면 보고의 판), `lastHeartbeatAt`은 마지막 보고 시각,
+`canNotify`는 local 프로필(관리 기능·메일 켬) 기준으로 구성원이 활성이고 적용이 확인되지 않은 설치(시드 A는 미적용 3대와 미확인 1대)다(ADR 0043).
 기존 Anthropic $1,200 / OpenAI $0 기간 약정은 호환성·0/null 회귀 검증용으로 남긴다.
-기간 약정과 좌석 계약을 연결·합산하지 않는다. 관리 벤더의 관측 인원은 연결 근거가 없어 null이다.
+기간 약정과 좌석 계약을 연결·합산하지 않는다. 관리 벤더의 관측 지표는 카탈로그의 명시 매핑(`claude_code` → `claude_team`, `codex` → `openai_biz`)으로 잇는 관측만 쓴다(ADR 0044).
+C의 Cursor(Enterprise 계약 3석 × $40)는 벤더 연결이 있지만 기준일 0시 실행에서 좌석 목록이 일시 장애로 실패했고(좌석 없음 — `seat_sync_failing`),
+같은 실행의 청구 누계(이번 청구 주기 on-demand 지출 $137.42, 주기 시작 기준일 −12일)만 있다. 이 청구 행의 원천은 `seed`다 — **실제 청구의 증거가 아니다**(ADR 0050).
+fixture의 `seats`는 위 좌석 원장의 행이다(계정은 합성 이메일뿐). 설치 보고가 기준일 0시에 끝나므로 기준일이 지나면 회수 후보는
+관측 부족(`observation_incomplete`)으로 빠진다 — 정상으로 꾸미지 않는다.
+A의 Claude·OpenAI 등록 제품은 관측이 있고, Cursor·Copilot은 매핑이 없어 `unobserved`·null이다. fixture는 기준일 0시를 기준 시각으로 쓰고 최근 7·30일은 기준일 전날까지다.
+fixture는 수집 구간으로 완전성을 판정하지 않는다 — 관측이 있으면 `partial`이고 창에서 센 0은 null이다. C의 설정에는 매핑 없는 관측(`unknown`)이 따로 보인다.
 
 아래 명령은 DB에 접속하지 않고 공개 fixture JSON만 출력한다.
 카탈로그는 `src/main/resources/fixtures/vendor-catalog.json`의 고정 테스트용 목록이다.

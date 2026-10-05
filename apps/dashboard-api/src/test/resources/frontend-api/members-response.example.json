@@ -86,7 +86,8 @@
         },
         "lastUsedAt": "2026-09-13T05:00:00Z",
         "observation": "complete",
-        "seatState": "assigned"
+        "seatState": "assigned",
+        "plannedVendorIds": []
       },
       {
         "memberId": "member-002",
@@ -113,7 +114,8 @@
         },
         "lastUsedAt": "2026-09-01T00:00:00Z",
         "observation": "complete",
-        "seatState": "assigned"
+        "seatState": "assigned",
+        "plannedVendorIds": []
       },
       {
         "memberId": "member-003",
@@ -140,7 +142,8 @@
         },
         "lastUsedAt": "2026-09-13T05:00:00Z",
         "observation": "complete",
-        "seatState": "assigned"
+        "seatState": "assigned",
+        "plannedVendorIds": []
       }
     ],
     "totalCount": 3,
@@ -173,7 +176,8 @@
         },
         "lastUsedAt": "2026-09-13T05:00:00Z",
         "observation": "complete",
-        "seatState": "assigned"
+        "seatState": "assigned",
+        "plannedVendorIds": []
       }
     ],
     "totalCount": 1,

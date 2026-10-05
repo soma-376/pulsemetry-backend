@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.dashboard.config
 
+import com.team376.pulsemetry.persistence.enrollment.management.OrganizationPolicySettings
 import org.springframework.boot.context.properties.ConfigurationProperties
 import java.time.Duration
 
@@ -12,7 +13,7 @@ import java.time.Duration
 @ConfigurationProperties(prefix = "pulsemetry.dashboard")
 data class DashboardApiProperties(
 
-	/** 503 응답의 `Retry-After`. 초 단위로 싣는다. */
+	/** 503 응답과 진행 중인 작업 조회(ADR 0039)의 `Retry-After`. 초 단위로 싣는다. */
 	val retryAfter: Duration,
 
 	val clickhouse: ClickHouse,
@@ -22,6 +23,14 @@ data class DashboardApiProperties(
 	val snapshot: Snapshot,
 
 	val members: Members,
+
+	val ingest: Ingest,
+
+	val completeness: Completeness,
+
+	val seats: Seats,
+
+	val alerts: Alerts,
 ) {
 	init {
 		require(retryAfter.toSeconds() >= 1) {
@@ -129,9 +138,9 @@ data class DashboardApiProperties(
 		}
 	}
 
-	/** 구성원 화면의 정책 값. 저장된 조직 정책이 아직 없어 설정으로 받는다 — 기본값이 없다. */
+	/** 구성원 화면의 정책 값. 기본값이 없다. */
 	data class Members(
-		/** 회수 후보의 유휴 기준 일수. 요청서가 정한 값(7·14·30·60) 중 하나. */
+		/** 조직이 회수 기준을 저장하지 않았을 때 쓰는 유휴 기준 일수(ADR 0046). 요청서가 정한 값(7·14·30·60) 중 하나. */
 		val idleDays: Int,
 	) {
 		init {
@@ -139,8 +148,69 @@ data class DashboardApiProperties(
 		}
 	}
 
+	/**
+	 * 수집 상태 판정의 운영 수치 (ADR 0041). 기본값이 없다 — 설치 보고 주기(enrollment-api 의 `pulsemetry.heartbeat.report-interval`)와
+	 * 조직의 근무 형태에 맞춰 infra 가 정한다.
+	 */
+	data class Ingest(
+		/** "지금"으로 보는 창. 이 안에 받은 설치 보고·수신만 현재의 근거로 쓴다. 응답의 `windowMinutes` 다. 설치 보고 주기보다 길어야 한다. */
+		val window: Duration,
+		/** 대기 중인 전달이 있는데 마지막 전달 성공이 이보다 오래됐으면 지연이다. */
+		val delayedAfter: Duration,
+		/** 마지막 전달 성공(또는 마지막 설치 보고)이 이보다 오래됐으면 중단이다. */
+		val downAfter: Duration,
+	) {
+		init {
+			require(window.toMinutes() >= 1 && window == Duration.ofMinutes(window.toMinutes())) {
+				"pulsemetry.dashboard.ingest.window 는 1분 이상의 분 단위여야 한다: $window"
+			}
+			require(!delayedAfter.isNegative && !delayedAfter.isZero) { "pulsemetry.dashboard.ingest.delayed-after 는 0보다 커야 한다: $delayedAfter" }
+			require(downAfter > delayedAfter) { "pulsemetry.dashboard.ingest.down-after 는 delayed-after 보다 커야 한다: $downAfter" }
+		}
+	}
+
+	/** 기간 완전성 판정의 운영 수치 (ADR 0042). 기본값이 없다. */
+	data class Completeness(
+		/**
+		 * 하루가 끝난 뒤 그날을 확정하기까지 기다리는 시간. 데몬의 전송(재시도 포함)과 서버 적재가 끝나는 데 걸리는 시간보다 길어야 한다.
+		 * 그날의 끝부터 이 시각까지도 손실 없이 수집 중이었다는 보고가 있어야 그날이 완전하다.
+		 */
+		val settleAfter: Duration,
+	) {
+		init {
+			require(!settleAfter.isNegative && !settleAfter.isZero) { "pulsemetry.dashboard.completeness.settle-after 는 0보다 커야 한다: $settleAfter" }
+		}
+	}
+
+	/** 좌석 원장 조회의 운영 수치 (ADR 0048 §7). 기본값이 없다. */
+	data class Seats(
+		/**
+		 * 연결의 마지막 성공 동기화가 이보다 오래되면 그 제품의 좌석 값을 낡았다고 표시한다(`partial`, `seat_sync_outdated`).
+		 * enrollment-api 의 동기화 간격(`pulsemetry.vendor-connections.sync.interval`)보다 길어야 한다 — 짧으면 정상 주기 사이에도 늘 낡아 보인다.
+		 */
+		val staleAfter: Duration,
+	) {
+		init {
+			require(!staleAfter.isNegative && !staleAfter.isZero) { "pulsemetry.dashboard.seats.stale-after 는 0보다 커야 한다: $staleAfter" }
+		}
+	}
+
+	/** 알림 평가의 운영 수치 (ADR 0051 §5). 기본값이 없다. */
+	data class Alerts(
+		/** 켜진 규칙을 평가하는 주기. 24시간 규칙의 알림이 늦게 열리는 최대 시간이다(확정 대기와 함께). */
+		val evaluationInterval: Duration,
+		/** 한 조직의 평가를 선점하는 기한. 한 회차(급증의 snapshot 들 포함)보다 길게. */
+		val lease: Duration,
+	) {
+		init {
+			require(!evaluationInterval.isNegative && !evaluationInterval.isZero) { "pulsemetry.dashboard.alerts.evaluation-interval 은 0보다 커야 한다: $evaluationInterval" }
+			require(!lease.isNegative && !lease.isZero) { "pulsemetry.dashboard.alerts.lease 는 0보다 커야 한다: $lease" }
+		}
+	}
+
 	private companion object {
-		val IDLE_DAYS = setOf(7, 14, 30, 60)
+		/** 조직이 저장할 수 있는 값과 같다(ADR 0046). */
+		val IDLE_DAYS = OrganizationPolicySettings.RECLAIM_IDLE_DAYS.toSet()
 
 		/** DB 이름은 snapshot 복사 SQL 에 식별자로 들어간다. */
 		val IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")

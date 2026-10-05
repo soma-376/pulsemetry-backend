@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "company": "A",
+  "issuer": "https://cognito-idp.ap-northeast-2.amazonaws.com/ap-northeast-2_aTZWvnmMu",
+  "clientId": "5p4p8mm8st8i1aimimbmdek03d",
+  "clientSecretRef": "config:cognito-a"
+}

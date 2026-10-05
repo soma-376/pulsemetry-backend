@@ -44,6 +44,10 @@ spring-security-web = { module = "org.springframework.security:spring-security-w
 # 켜는 것이 조립 앱에서는 의도된 선택이다 — 명시적 SecurityFilterChain 빈이 있으면 Boot 의
 # 기본 체인은 물러난다. :libs: 에는 여전히 붙이지 않는다 (ADR 0011 · 0016).
 spring-boot-starter-security = { module = "org.springframework.boot:spring-boot-starter-security" }
+# 메일 발송(ADR 0037). :apps:enrollment-api 전용이다 — SMTP 구현과 주기 실행은 앱이 갖는다.
+spring-boot-starter-mail = { module = "org.springframework.boot:spring-boot-starter-mail" }
+# starter 가 런타임에 끌어오는 Jakarta Mail 구현이다. SMTP 응답 코드를 읽는 예외 타입 때문에 컴파일에도 올린다.
+angus-mail = { module = "org.eclipse.angus:angus-mail" }
 # 서블릿 컨테이너가 런타임에 제공한다. 라이브러리는 compileOnly 로만 쓴다.
 jakarta-servlet-api = { module = "jakarta.servlet:jakarta.servlet-api" }
 

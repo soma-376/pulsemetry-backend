@@ -13,15 +13,27 @@ dependencies {
 	implementation(project(":libs:telemetry-ops-persistence"))
 	implementation(libs.spring.boot.starter.webmvc)
 	implementation(libs.spring.boot.starter.security)
+	implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
+	implementation("org.springframework.session:spring-session-jdbc")
+	// outbox 의 메일을 SMTP 로 보낸다 (ADR 0037). JavaMailSender 는 설정(pulsemetry.mail.*)으로 직접 만든다.
+	implementation(libs.spring.boot.starter.mail)
+	// 일시 실패와 영구 실패를 SMTP 응답 코드로 가른다. 그 코드는 구현 쪽 예외 타입에 있다.
+	implementation(libs.angus.mail)
 	implementation(libs.jackson.module.kotlin)
+	// manifest 재동기화가 저장된 정책을 telemetryctl 원본 스키마로 검증한다 (ADR 0019).
+	// 계약 테스트도 같은 검증기를 쓴다.
+	implementation(libs.json.schema.validator)
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
 	// PostgresContainerConfig 는 영속성 모듈이 testFixtures 로 노출한다.
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
+	// 좌석 동기화 통합 테스트가 벤더 API 모의 서버(JDK 내장 HTTP 서버)를 쓴다.
+	testImplementation(testFixtures(project(":libs:vendor-connector")))
 	// 앱 컨텍스트가 뜨려면 실제 PostgreSQL 이 필요하다 (Flyway 가 기동 시 마이그레이션한다).
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.postgresql)
-	testImplementation(libs.json.schema.validator)
+	// 메일 수신 컨테이너로 실제 SMTP 발송을 검증한다.
+	testImplementation(libs.testcontainers)
 }
 
 // 실행 산출물은 bootJar 하나다. plain jar 를 만들면 Dockerfile 이 둘 중 하나를 골라내야 한다.
@@ -35,6 +47,7 @@ val contractsDir: String = providers.environmentVariable("PULSEMETRY_CONTRACTS_D
 	.getOrElse(rootProject.projectDir.parentFile.resolve("telemetryctl/contracts").absolutePath)
 
 tasks.withType<Test>().configureEach {
+	useJUnitPlatform()
 	systemProperty("pulsemetry.contracts.dir", contractsDir)
 
 	// 관리자 키가 비어 있으면 애플리케이션이 뜨지 않는다. 테스트 JVM 전체에 한 번만 주입해
@@ -50,4 +63,17 @@ tasks.withType<Test>().configureEach {
 		"pulsemetry.binaries.dir",
 		layout.buildDirectory.dir("test-binaries").get().asFile.absolutePath,
 	)
+}
+
+// 재동기화는 저장된 정책을 원본 JSON Schema로 검사한다. 소스 복사본 없이 배포 jar에 계약을 포함한다.
+tasks.named<org.gradle.language.jvm.tasks.ProcessResources>("processResources") {
+	doFirst {
+		check(file("$contractsDir/enrollment-manifest.schema.json").isFile) {
+			"PULSEMETRY_CONTRACTS_DIR에 원본 manifest 스키마가 필요하다"
+		}
+	}
+	from(contractsDir) {
+		include("enrollment-manifest.schema.json")
+		into("contracts")
+	}
 }

@@ -13,6 +13,8 @@ import java.util.UUID
  * - 로스터: tenant 의 모든 구성원(사용량이 없는 사람 포함). 현재 팀은 [asOf] 에 유효한 소속의 **서로 다른** 팀 ID 다 —
  *   같은 팀의 소속 행이 겹쳐도 하나다.
  *
+ * - 관측 제품 매핑: 카탈로그의 명시 매핑(ADR 0044)과 카탈로그 제품의 표시 이름·순서. 제품 축(ADR 0045)이 이것만으로 잇는다.
+ *
  * 두 저장소를 한 트랜잭션으로 읽지 않는다. 일관성의 범위는 이 복제본 자체다.
  */
 class SnapshotReferenceCopier(
@@ -20,7 +22,7 @@ class SnapshotReferenceCopier(
 	private val cache: JdbcClient,
 ) {
 
-	data class Copied(val teams: Int, val members: Int)
+	data class Copied(val teams: Int, val members: Int, val products: Int = 0)
 
 	fun copy(snapshotId: String, tenantId: UUID, asOf: Instant): Copied {
 		val teams = source.sql("SELECT id, name, status::text AS status FROM enrollment.teams WHERE tenant_id = :tenant")
@@ -29,7 +31,7 @@ class SnapshotReferenceCopier(
 			.list()
 		val members = source.sql(
 			"""
-			SELECT m.id, m.email, m.display_name, m.role::text AS role, m.status::text AS status, m.updated_at,
+			SELECT m.id, m.email, m.display_name, m.role::text AS role, m.status::text AS status, m.updated_at, m.planned_vendor_ids,
 			       ARRAY(
 			           SELECT DISTINCT tm.team_id FROM enrollment.team_memberships tm
 			           WHERE tm.member_id = m.id AND tm.joined_at <= :as_of AND (tm.left_at IS NULL OR tm.left_at > :as_of)
@@ -49,6 +51,7 @@ class SnapshotReferenceCopier(
 					role = rs.getString("role"),
 					status = rs.getString("status"),
 					updatedAt = rs.getObject("updated_at", OffsetDateTime::class.java),
+					plannedVendorIds = (rs.getArray("planned_vendor_ids").array as Array<*>).map { it as String },
 					currentTeamIds = (rs.getArray("current_team_ids").array as Array<*>).map { it as UUID },
 				)
 			}
@@ -66,10 +69,10 @@ class SnapshotReferenceCopier(
 			cache.sql(
 				"""
 				INSERT INTO dashboard_cache.snapshot_members
-				    (snapshot_id, member_id, account, display_name, role, status, current_team_ids, updated_at)
+				    (snapshot_id, member_id, account, display_name, role, status, current_team_ids, updated_at, planned_vendor_ids)
 				VALUES (:snapshot, :member, :account, :display_name,
 				    CAST(:role AS dashboard_cache.member_role), CAST(:status AS dashboard_cache.member_status),
-				    CAST(:teams AS uuid[]), :updated_at)
+				    CAST(:teams AS uuid[]), :updated_at, CAST(:vendors AS text[]))
 				""".trimIndent(),
 			)
 				.param("snapshot", snapshotId)
@@ -80,9 +83,28 @@ class SnapshotReferenceCopier(
 				.param("status", member.status)
 				.param("teams", member.currentTeamIds.joinToString(",", "{", "}"))
 				.param("updated_at", member.updatedAt)
+				.param("vendors", member.plannedVendorIds.joinToString(",", "{", "}"))
 				.update()
 		}
-		return Copied(teams.size, members.size)
+		val products = source.sql(
+			"""SELECT o.observed_product, o.product_id, p.display_name, p.sort_order FROM enrollment.vendor_catalog_observed_products o
+			JOIN enrollment.vendor_catalog_products p ON p.id = o.product_id""",
+		)
+			.query { rs, _ -> listOf(rs.getString("observed_product"), rs.getString("product_id"), rs.getString("display_name")) to rs.getInt("sort_order") }
+			.list()
+		for ((product, order) in products) {
+			cache.sql(
+				"""INSERT INTO dashboard_cache.snapshot_products (snapshot_id, observed_product, product_id, display_name, sort_order)
+				VALUES (:snapshot, :observed, :product, :name, :order)""",
+			)
+				.param("snapshot", snapshotId)
+				.param("observed", product[0])
+				.param("product", product[1])
+				.param("name", product[2])
+				.param("order", order)
+				.update()
+		}
+		return Copied(teams.size, members.size, products.size)
 	}
 
 	private data class Team(val id: UUID, val name: String, val archived: Boolean)
@@ -95,6 +117,7 @@ class SnapshotReferenceCopier(
 		val status: String,
 		val updatedAt: OffsetDateTime,
 		val currentTeamIds: List<UUID>,
+		val plannedVendorIds: List<String>,
 	)
 
 	private companion object {
