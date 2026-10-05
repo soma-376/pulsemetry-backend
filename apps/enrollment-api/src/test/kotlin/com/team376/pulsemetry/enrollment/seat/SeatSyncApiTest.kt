@@ -76,16 +76,17 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
         // Cursor Enterprise 지출(ADR 0050) — 이번 주기(2026-09-01T00:00Z 시작) on-demand 1234.5 센트.
         vendors.on("POST", cursorSpend, reply(200, """{"teamMemberSpend":[{"userId":"user_c1","spendCents":1234.5,"email":"dev@example.test"}],
             "subscriptionCycleStart":1788220800000,"totalPages":1}"""))
-        vendors.on("GET", "/api/v1/organizations/users", reply(200, """{"data":[{"type":"user","id":"user_01","email":"jane@example.test","name":"Jane","role":"user",
+        // 이 서버는 Pulsemetry가 아닌 Anthropic Admin API를 흉내 낸다. 외부 /v1 경로는 앱의 /api/v1 전환 대상이 아니다.
+        vendors.on("GET", "/v1/organizations/users", reply(200, """{"data":[{"type":"user","id":"user_01","email":"jane@example.test","name":"Jane","role":"user",
             "added_at":"2026-06-12T09:14:03Z"}],"has_more":false,"first_id":"user_01","last_id":"user_01"}"""))
-        vendors.on("GET", "/api/v1/organizations/invites", reply(200, """{"data":[{"type":"invite","id":"invite_01","email":"newhire@example.test","role":"user",
+        vendors.on("GET", "/v1/organizations/invites", reply(200, """{"data":[{"type":"invite","id":"invite_01","email":"newhire@example.test","role":"user",
             "invited_at":"2026-07-06T16:20:11Z","expires_at":"2026-07-27T16:20:11Z","accepted_at":null,"status":"pending"}],"has_more":false,"first_id":"invite_01","last_id":"invite_01"}"""))
         // Claude Enterprise 비용 보고서(ADR 0050) — 이번 달 사용 비용 41280 센트.
         vendors.on("GET", costReport, reply(200, """{"data":[{"starting_at":"2026-08-31T15:00:00Z","ending_at":"2026-08-31T16:00:00Z",
             "results":[{"amount":"41280.000000","currency":"USD","cost_type":"tokens","product":"claude_code"}]}],"has_more":false,"next_page":null}"""))
     }
 
-    private val costReport = "/api/v1/organizations/analytics/cost_report"
+    private val costReport = "/v1/organizations/analytics/cost_report"
     private fun billing(vendorId: String) = jdbc.sql("""SELECT period_start, period_end, amount_usd, kind, finalized, source, fetched_at FROM enrollment.vendor_billing_periods
             WHERE vendor_id = :v ORDER BY period_start""").param("v", vendorId)
         .query { rs, _ -> listOf(rs.getTimestamp(1).toInstant(), rs.getTimestamp(2).toInstant(), rs.getBigDecimal(3).stripTrailingZeros().toPlainString(), rs.getString(4),
@@ -152,7 +153,7 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
 
         // Cursor 가 계속 503 — 정한 횟수만큼 시도하고 실패로 남긴다. Claude 는 계속 동기화된다.
         vendors.on("GET", cursorMembers, reply(503, "{}"))
-        vendors.on("GET", "/api/v1/organizations/users", reply(200, """{"data":[],"has_more":false,"first_id":null,"last_id":null}"""))
+        vendors.on("GET", "/v1/organizations/users", reply(200, """{"data":[],"has_more":false,"first_id":null,"last_id":null}"""))
         clock.now = clock.now.plus(Duration.ofHours(7))
         val attempts = vendors.requests(cursorMembers).size
         assertThat(synchronizer.runOnce()).isEqualTo(SeatSynchronizer.Round(applied = 1, failed = 1))
@@ -249,7 +250,7 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
         assertThat(listOf(failing.billing!!.status, failing.billing!!.lastError, failing.sync.status)).containsExactly("failing", "insufficient_permission", "succeeded")
 
         // 좌석 목록이 일시 장애여도 같은 실행이 청구를 읽는다.
-        vendors.on("GET", "/api/v1/organizations/users", reply(503, "{}"))
+        vendors.on("GET", "/v1/organizations/users", reply(503, "{}"))
         vendors.on("GET", costReport, reply(200, """{"data":[],"has_more":false}"""))
         clock.now = clock.now.plus(Duration.ofHours(7))
         assertThat(synchronizer.runOnce()).isEqualTo(SeatSynchronizer.Round(applied = 1, failed = 1))

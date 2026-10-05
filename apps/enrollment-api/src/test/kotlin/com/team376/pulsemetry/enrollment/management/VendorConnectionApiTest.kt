@@ -63,7 +63,7 @@ class VendorConnectionApiTest : AbstractUserAuthApiTest() {
     @BeforeEach fun vendorReplies() {
         vendors.received.clear()
         vendors.on("GET", cursorMembers, reply(200, """{"teamMembers":[]}"""))
-        vendors.on("GET", "/api/v1/organizations/users", reply(200, """{"data":[],"has_more":false,"first_id":null,"last_id":null}"""))
+        vendors.on("GET", "/v1/organizations/users", reply(200, """{"data":[],"has_more":false,"first_id":null,"last_id":null}"""))
     }
 
     private val secret = "fake-vendor-credential-" + "Zq9".repeat(12)
