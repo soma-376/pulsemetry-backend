@@ -10,6 +10,33 @@ HTTP 명세는 [페이지·기능별 API 문서](api/README.md)로 이전했다.
 레포 간 확정 계약은 [문서 허브](../../docs/contracts/README.md)가 우선한다.
 현재 허브 dashboard 계약은 골격이며 이 문서는 구현된 HTTP와 제한을 기록한다.
 
+## API 목록
+
+| 번호 | API | 기능 |
+| --- | --- | --- |
+| 01 | [GET `/api/v1/organizations/{organizationId}/analytics/overview`](api/endpoints/01-get-overview.md) | 개요 조회 |
+| 02 | [GET `/api/v1/organizations/{organizationId}/analytics/teams`](api/endpoints/02-get-team-analytics.md) | 팀 분석 목록 |
+| 03 | [GET `/api/v1/organizations/{organizationId}/analytics/teams/{teamId}`](api/endpoints/03-get-team-detail.md) | 팀 분석 상세 |
+| 04 | [GET `/api/v1/organizations/{organizationId}/analytics/teams/{teamId}/users`](api/endpoints/04-get-team-users.md) | 팀 사용자 |
+| 05 | [GET `/api/v1/organizations/{organizationId}/teams`](api/endpoints/05-list-teams.md) | 현재 팀 선택지 |
+| 06 | [GET `/api/v1/organizations/{organizationId}/members/dashboard`](api/endpoints/06-get-members-dashboard.md) | 구성원 첫 화면 |
+| 07 | [GET `/api/v1/organizations/{organizationId}/members`](api/endpoints/07-list-members.md) | 구성원 목록 |
+| 08 | [GET `/api/v1/organizations/{organizationId}/members/unassigned`](api/endpoints/08-list-unassigned-members.md) | 미배정 구성원 |
+| 09 | [GET `/api/v1/organizations/{organizationId}/seat-reclaim-candidates`](api/endpoints/09-list-reclaim-candidates.md) | 회수 후보 |
+| 10 | [GET `/api/v1/organizations/{organizationId}/members/{memberId}/seats`](api/endpoints/10-get-member-seats.md) | 구성원 좌석 |
+| 11 | [GET `/api/v1/organizations/{organizationId}/vendors/{vendorId}/seats`](api/endpoints/11-list-vendor-seats.md) | 제품 좌석 |
+| 12 | [GET `/api/v1/organizations/{organizationId}/settings`](api/endpoints/12-get-settings.md) | 설정 첫 화면 |
+| 13 | [GET `/api/v1/organizations/{organizationId}/vendors`](api/endpoints/13-list-vendors.md) | 등록 제품 목록 |
+| 14 | [GET `/api/v1/organizations/{organizationId}/vendors/{vendorId}`](api/endpoints/14-get-vendor.md) | 등록 제품 상세 |
+| 15 | [GET `/api/v1/organizations/{organizationId}/installations`](api/endpoints/15-list-installations.md) | 설치 현황 |
+| 16 | [GET `/api/v1/organizations/{organizationId}/alerts`](api/endpoints/16-list-alerts.md) | 알림 목록 |
+| 17 | [GET `/api/v1/organizations/{organizationId}/alerts/{alertId}`](api/endpoints/17-get-alert.md) | 알림 상세 |
+| 18 | [GET `/api/v1/organizations/{organizationId}/operations/{operationId}`](api/endpoints/18-get-operation.md) | 작업 상태 |
+| 19 | [GET `/api/v1/organizations/{organizationId}/ingest-status`](api/endpoints/19-get-ingest-status.md) | 현재 수집 상태 |
+| 20 | [GET `/api/v1/vendor-catalog`](api/endpoints/20-list-vendor-catalog.md) | 카탈로그 검색 |
+| 21 | [GET `/api/v1/vendor-catalog/{vendorId}/plans`](api/endpoints/21-list-vendor-plans.md) | 제품 플랜 조회 |
+| 76 | [GET `/v1/healthz`](api/endpoints/76-get-dashboard-health.md) | 생존 확인 |
+
 ## 5. 운영과 로컬 실행
 
 개발 Compose의 `dev-seed`는 Spring 서버 없이 기존 원천 마이그레이션·A/B/C 시드와

@@ -83,7 +83,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 
 | 문서 | 담는 것 |
 |---|---|
-| `docs/api/README.md` | 전체 엔드포인트와 페이지·기능별 HTTP 명세. 조회·변경과 req/res 스키마를 함께 기록 |
+| `docs/api/README.md` | 번호가 있는 전체 API 목록과 페이지·기능별 길잡이. `endpoints/`에 API별 Request·Response, `reference/`에 기능 규칙·공유 스키마 |
 | `docs/enrollment-server-spec.md` | Enrollment 설정·운영·로컬 실행 및 기존 API 절의 이전 안내 |
 | `docs/dashboard-server-spec.md` | Dashboard 설정·운영·로컬 실행 및 기존 API 절의 이전 안내 |
 | `docs/vendor-connector-evidence.md` · `docs/vendor-connector-verification.md` | 벤더 커넥터의 공식 문서 근거와 실계정 검증 절차 |

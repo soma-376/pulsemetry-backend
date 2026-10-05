@@ -103,7 +103,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--typescript-output', type=Path)
     args = parser.parse_args()
-    files = sorted(API.glob('*.md'))
+    files = sorted(API.rglob('*.md'))
+    numbers = []
+    index = (API / 'README.md').read_text()
     endpoints, definitions, references = [], {}, set()
     json_count = 0
     example_declarations = []
@@ -111,7 +113,25 @@ def main() -> int:
         text = path.read_text()
         if text.count('```') % 2:
             fail(f'{path.name}: 코드 블록 불균형')
-        endpoints.extend(tuple(m) for m in re.findall(r'<!-- endpoint: (\S+) (\S+) (\S+) -->', text))
+        routes = re.findall(r'<!-- endpoint: (\S+) (\S+) (\S+) -->', text)
+        endpoints.extend(tuple(m) for m in routes)
+        if path.parent == API / 'endpoints':
+            number = re.match(r'^(\d{2,})-[a-z0-9-]+\.md$', path.name)
+            if not number or len(routes) != 1:
+                fail(f'{path.name}: 번호 파일명과 단일 API 매핑이 필요함')
+            else:
+                numbers.append(number[1])
+                _, method, route = routes[0]
+                if not text.startswith(f'# {number[1]} {method} `{route}`\n'):
+                    fail(f'{path.name}: 제목의 번호·메서드·경로 불일치')
+            if f'(endpoints/{path.name})' not in index:
+                fail(f'{path.name}: 전체 API 목록 링크 누락')
+            if '## Response' not in text:
+                fail(f'{path.name}: Response 제목 누락')
+            if re.search(r'### (?:Path|Query|Headers|Body)\n\n(?:없음\.|본문 없음\.|필수 인증 헤더 없음\.)', text):
+                fail(f'{path.name}: 사용하지 않는 Request 항목은 생략해야 함')
+        elif routes:
+            fail(f'{path.name}: API 매핑은 endpoints 파일에서만 정의해야 함')
         for language, block in re.findall(r'```([^\n]*)\n([\s\S]*?)```', text):
             if language == 'json':
                 try:
@@ -138,6 +158,9 @@ def main() -> int:
             fail(f'{example.name}: JSON 예시 오류 {error}')
     for name in sorted(references - definitions.keys() - {'Array', 'Record', 'Omit', 'T'}):
         fail(f'정의되지 않은 스키마: {name}')
+    for number, count in Counter(numbers).items():
+        if count != 1:
+            fail(f'API 번호 중복: {number}')
     expected = source_endpoints()
     actual = set(endpoints)
     for item in sorted(expected - actual):
@@ -150,7 +173,7 @@ def main() -> int:
     # Local repository files and anchors must resolve. Sibling-repository links require
     # the documented multi-repo checkout and are intentionally not fetched in CI.
     links = 0
-    for path in files + [ROOT / 'docs/enrollment-server-spec.md', ROOT / 'docs/dashboard-server-spec.md', ROOT / 'AGENTS.md']:
+    for path in files + [ROOT / 'docs/enrollment-server-spec.md', ROOT / 'docs/dashboard-server-spec.md', ROOT / 'AGENTS.md', ROOT / 'docs/user-auth-operations.md', ROOT / 'docs/frontend-e2e-scenarios.md', ROOT / 'docs/module-map.md']:
         text = re.sub(r'```[^\n]*\n[\s\S]*?```', '', path.read_text())
         for url in re.findall(r'\[[^\]]*\]\(([^\s)]+)\)', text):
             if re.match(r'[a-z]+://|mailto:', url):

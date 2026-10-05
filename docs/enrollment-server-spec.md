@@ -20,6 +20,65 @@ HTTP 명세는 [페이지·기능별 API 문서](api/README.md)로 이전했다.
 
 ---
 
+## API 목록
+
+| 번호 | API | 기능 |
+| --- | --- | --- |
+| 22 | [POST `/api/v1/organizations/{organizationId}/teams`](api/endpoints/22-create-team.md) | 팀 생성 |
+| 23 | [PATCH `/api/v1/organizations/{organizationId}/teams/{teamId}`](api/endpoints/23-update-team.md) | 팀 이름 변경 |
+| 24 | [DELETE `/api/v1/organizations/{organizationId}/teams/{teamId}`](api/endpoints/24-archive-team.md) | 팀 보관 |
+| 25 | [POST `/api/v1/organizations/{organizationId}/member-team-assignments`](api/endpoints/25-assign-member-teams.md) | 팀 일괄 배정 |
+| 26 | [PATCH `/api/v1/organizations/{organizationId}/members/{memberId}`](api/endpoints/26-update-member.md) | 구성원 편집 |
+| 27 | [POST `/api/v1/organizations/{organizationId}/invitations/batch`](api/endpoints/27-invite-members.md) | 일괄 초대 |
+| 28 | [POST `/api/v1/organizations/{organizationId}/invitations/{invitationId}/revoke`](api/endpoints/28-revoke-invitation.md) | 초대 취소 |
+| 29 | [POST `/api/v1/organizations/{organizationId}/invitations/{invitationId}/reissue`](api/endpoints/29-reissue-invitation.md) | 초대 재발급 |
+| 30 | [POST `/api/v1/organizations/{organizationId}/members/{memberId}/installation-invitations`](api/endpoints/30-create-installation-invitation.md) | 활성 회원 설치 코드 |
+| 31 | [POST `/api/v1/organizations/{organizationId}/vendors`](api/endpoints/31-create-vendor.md) | 제품 등록 |
+| 32 | [PATCH `/api/v1/organizations/{organizationId}/vendors/{vendorId}`](api/endpoints/32-update-vendor.md) | 제품 이름 변경 |
+| 33 | [PUT `/api/v1/organizations/{organizationId}/vendors/{vendorId}/contract`](api/endpoints/33-save-vendor-contract.md) | 계약 저장 |
+| 34 | [DELETE `/api/v1/organizations/{organizationId}/vendors/{vendorId}/contract`](api/endpoints/34-delete-vendor-contract.md) | 계약 제거 |
+| 35 | [DELETE `/api/v1/organizations/{organizationId}/vendors/{vendorId}`](api/endpoints/35-archive-vendor.md) | 수동 제품 보관 |
+| 36 | [PUT `/api/v1/organizations/{organizationId}/vendors/{vendorId}/connection`](api/endpoints/36-save-vendor-connection.md) | 연결 저장 |
+| 37 | [DELETE `/api/v1/organizations/{organizationId}/vendors/{vendorId}/connection`](api/endpoints/37-delete-vendor-connection.md) | 연결 제거 |
+| 38 | [POST `/api/v1/organizations/{organizationId}/vendors/{vendorId}/connection/verify`](api/endpoints/38-verify-vendor-connection.md) | 연결 검증 |
+| 39 | [POST `/api/v1/organizations/{organizationId}/vendors/{vendorId}/connection/sync`](api/endpoints/39-sync-vendor-connection.md) | 동기화 접수 |
+| 40 | [POST `/api/v1/organizations/{organizationId}/vendors/{vendorId}/seats`](api/endpoints/40-assign-seat.md) | 좌석 배정 |
+| 41 | [PATCH `/api/v1/organizations/{organizationId}/vendors/{vendorId}/seats/{seatId}`](api/endpoints/41-update-seat.md) | 좌석 정보 보정 |
+| 42 | [POST `/api/v1/organizations/{organizationId}/vendors/{vendorId}/seats/{seatId}/release`](api/endpoints/42-release-seat.md) | 수동 좌석 해제 |
+| 43 | [POST `/api/v1/organizations/{organizationId}/vendors/{vendorId}/seats/import`](api/endpoints/43-import-seats.md) | 좌석 CSV 가져오기 |
+| 44 | [POST `/api/v1/organizations/{organizationId}/seat-reclaims/preview`](api/endpoints/44-preview-seat-reclaims.md) | 회수 미리보기 |
+| 45 | [POST `/api/v1/organizations/{organizationId}/seat-reclaims`](api/endpoints/45-reclaim-seats.md) | 좌석 회수 접수 |
+| 46 | [POST `/api/v1/organizations/{organizationId}/seat-reclaims/{operationId}/restore`](api/endpoints/46-restore-seat-reclaims.md) | 회수 복원 접수 |
+| 47 | [POST `/api/v1/organizations/{organizationId}/operations/{operationId}/targets/{targetId}/confirm`](api/endpoints/47-confirm-operation-target.md) | 관리자 조치 확인 |
+| 48 | [POST `/api/v1/organizations/{organizationId}/operations/{operationId}/targets/{targetId}/cancel`](api/endpoints/48-cancel-operation-target.md) | 관리자 조치 취소 |
+| 49 | [POST `/api/v1/organizations/{organizationId}/installation-update-notifications`](api/endpoints/49-notify-installation-update.md) | 설치 업데이트 안내 접수 |
+| 50 | [PATCH `/api/v1/organizations/{organizationId}/settings/alert-rules/{ruleId}`](api/endpoints/50-update-alert-rule.md) | 알림 규칙 변경 |
+| 51 | [POST `/api/v1/organizations/{organizationId}/alerts/{alertId}/acknowledge`](api/endpoints/51-acknowledge-alert.md) | 알림 확인 |
+| 52 | [POST `/api/v1/organizations/{organizationId}/onboarding/complete`](api/endpoints/52-complete-onboarding.md) | 온보딩 완료 |
+| 53 | [PUT `/api/v1/organizations/{organizationId}/collection-policy`](api/endpoints/53-save-collection-policy.md) | 수집·조직 정책 저장 |
+| 54 | [GET `/api/v1/organizations/{organizationId}/invitations`](api/endpoints/54-list-invitations.md) | 초대 목록 |
+| 55 | [GET `/api/v1/organizations/{organizationId}/onboarding`](api/endpoints/55-get-onboarding.md) | 온보딩 상태 |
+| 56 | [POST `/v1/auth/organizations`](api/endpoints/56-discover-organizations.md) | 이메일로 회사 탐색 |
+| 57 | [GET `/v1/auth/oidc/authorize`](api/endpoints/57-authorize-oidc.md) | SSO 시작 |
+| 58 | [GET `/v1/auth/oidc/callback/{registrationId}`](api/endpoints/58-callback-oidc.md) | IdP 콜백 |
+| 59 | [POST `/v1/auth/token`](api/endpoints/59-exchange-token.md) | 서비스 토큰 교환 |
+| 60 | [POST `/v1/auth/cli/token`](api/endpoints/60-exchange-cli-token.md) | 서비스 토큰 교환 |
+| 61 | [POST `/v1/auth/refresh`](api/endpoints/61-refresh-token.md) | 토큰 갱신 |
+| 62 | [POST `/v1/auth/logout`](api/endpoints/62-logout.md) | 서비스 로그아웃 |
+| 63 | [GET `/v1/auth/me`](api/endpoints/63-get-current-user.md) | 현재 사용자 |
+| 64 | [POST `/v1/invitations`](api/endpoints/64-create-admin-invitation.md) | 관리자 키 초대 |
+| 65 | [POST `/v1/invitations/{id}/revoke`](api/endpoints/65-revoke-admin-invitation.md) | 관리자 키 초대 취소 |
+| 66 | [POST `/v1/inquiries`](api/endpoints/66-create-inquiry.md) | 도입 문의 접수 |
+| 67 | [POST `/v1/enroll`](api/endpoints/67-enroll-installation.md) | 설치 등록 |
+| 68 | [POST `/v1/installations/telemetry-token`](api/endpoints/68-refresh-telemetry-token.md) | 수집 토큰 재발급 |
+| 69 | [GET `/v1/manifest`](api/endpoints/69-get-manifest.md) | manifest 재조회 |
+| 70 | [POST `/v1/installations/{installationId}/heartbeat`](api/endpoints/70-send-heartbeat.md) | 설치 보고 |
+| 71 | [GET `/windows`](api/endpoints/71-get-windows-installer.md) | 설치 스크립트 |
+| 72 | [GET `/unix`](api/endpoints/72-get-unix-installer.md) | 설치 스크립트 |
+| 73 | [GET `/bin/{filename}`](api/endpoints/73-download-binary.md) | 바이너리 다운로드 |
+| 74 | [GET `/api/v1/check-updates`](api/endpoints/74-check-updates.md) | 데몬 업데이트 확인 |
+| 75 | [GET `/v1/healthz`](api/endpoints/75-get-enrollment-health.md) | 생존 확인 |
+
 ## 1. 범위
 
 관리자가 발급한 일회성 초대 코드를 검증·소비해 사용자 PC 의 설치(installation)를 만들고,

@@ -5,7 +5,7 @@
 사람 인증은 **표준 OIDC Authorization Code + PKCE** 제공자가 담당한다(허브 ADR 0008).
 Pulsemetry는 사전 등록된 `invited`·`active` 회원만 허용한다. 최초 로그인은 회사 IdP의 검증된 이메일로 sub를 연결하고, 이후에는 `(tenant_id, issuer, sub)`로 식별한다(허브 ADR 0010).
 공개 가입·자동 회원 생성은 없으며 회원 역할/조직은 DB가 권위 원천이다.
-비밀번호는 IdP에만 존재한다. 구 `/signup`·`/login`·`/cli/authorize`는 410이다.
+비밀번호는 IdP에만 존재한다.
 API 필드·응답은 [사용자 인증 API](api/auth.md)를 따른다.
 
 Enrollment(8080)는 OIDC 로그인·자체 토큰 발급·관리 명령, Dashboard(8081)는 자체 JWT·현재 세션 검증을 담당한다.

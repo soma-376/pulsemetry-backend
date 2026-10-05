@@ -1,89 +1,15 @@
 # 공통 HTTP 규칙
 
-[API 길잡이](README.md) · [공통 규칙](common.md) · [공통 스키마](common-schemas.md)
+[전체 API](README.md) · [공통 스키마](common-schemas.md)
 
-## 엔드포인트
+## API 목록
 
-<a id="endpoint-enrollment-api-78"></a>
+| 번호 | API | 기능 | 서버 |
+| --- | --- | --- | --- |
+| 75 | [GET `/v1/healthz`](endpoints/75-get-enrollment-health.md) | 생존 확인 | enrollment-api |
+| 76 | [GET `/v1/healthz`](endpoints/76-get-dashboard-health.md) | 생존 확인 | dashboard-api |
 
-### 생존 확인
-
-<!-- endpoint: enrollment-api GET /v1/healthz -->
-
-```http
-GET /v1/healthz
-```
-
-서버: **enrollment-api** · 성공: **200** · [구현](../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/api/HealthController.kt)
-
-**Path**
-
-없음.
-
-**Headers**
-
-필수 인증 헤더 없음.
-
-**Query**
-
-없음.
-
-**Body**
-
-본문 없음.
-
-**Response**
-
-```ts
-// EnrollmentHealthResponse
-{ status: "ok" | "degraded"; checks: { database: "ok" | "down" } }
-```
-
-[EnrollmentHealthResponse 전체 스키마](common.md#schema-EnrollmentHealthResponse)
-
-오류·검증·부수 효과: [공통 규칙](common.md)과 아래 기능 규칙을 함께 적용한다.
-
-DB 확인 실패는 503 + status=degraded, checks.database=down이다. Dashboard 생존 확인과 본문이 다르다.
-
-<a id="endpoint-dashboard-api-79"></a>
-
-### 생존 확인
-
-<!-- endpoint: dashboard-api GET /v1/healthz -->
-
-```http
-GET /v1/healthz
-```
-
-서버: **dashboard-api** · 성공: **200** · [구현](../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/api/HealthController.kt)
-
-**Path**
-
-없음.
-
-**Headers**
-
-필수 인증 헤더 없음.
-
-**Query**
-
-없음.
-
-**Body**
-
-본문 없음.
-
-**Response**
-
-```ts
-// HealthResponse
-{ status: "ok" }
-```
-
-[HealthResponse 전체 스키마·중첩 타입](common.md#schema-HealthResponse)
-
-오류·검증·부수 효과: [공통 규칙](common.md)과 아래 기능 규칙을 함께 적용한다.
-
+<a id="feature-reference"></a>
 
 ### 관리자 API
 
