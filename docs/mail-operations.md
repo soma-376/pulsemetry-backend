@@ -35,12 +35,15 @@
 | `PULSEMETRY_MAIL_DISPATCH_INTERVAL` | 필수 | 필수 | 발송 작업이 outbox 를 보는 주기(ISO-8601) |
 | `PULSEMETRY_MAIL_RETRY_INTERVAL` | 필수 | 필수 | 일시 실패 뒤 다시 시도하기까지의 간격 |
 | `PULSEMETRY_MAIL_MAX_ATTEMPTS` | 필수 | 필수 | 한 메일의 최대 시도. outbox 시도 하나 = 공급자 요청 하나 |
-| `PULSEMETRY_MAIL_SEND_TIMEOUT` | 필수 | 필수 | SES: API 호출 전체의 제한(한 시도·연결·읽기도 같은 값). SMTP: 연결·읽기·쓰기 각각의 제한. 선점 임대는 이 값의 네 배 |
+| `PULSEMETRY_MAIL_SEND_TIMEOUT` | 필수 | 필수 | SES: **자격 증명 조회와 API 호출을 합친 발송 한 번의 상한**. SMTP: 연결·읽기·쓰기 각각의 제한. 선점 임대는 이 값의 네 배 |
 | `PULSEMETRY_MAIL_SES_REGION` | 필수 | 불필요 | SES 리전(예: `ap-northeast-2` 형식). 다른 AWS 설정에서 추론하지 않는다 |
 | `PULSEMETRY_MAIL_SES_CONFIGURATION_SET` | 선택 | 불필요 | 비우면 요청에서 뺀다. 영문·숫자·`_`·`-` 64자 이하 |
 | `PULSEMETRY_MAIL_SMTP_HOST` · `_PORT` · `_USERNAME` · `_PASSWORD` · `_STARTTLS` | 불필요 | 필수 | SMTP 접속 |
 
 - SES 자격 증명은 SDK 기본 공급자 체인에서 찾는다. 배포에서는 **enrollment-api 태스크 역할**이다. 정적 AWS 키 설정은 없다. 앱은 기동할 때 AWS 에 말하지 않는다 — 리전·권한·identity 오류는 첫 발송에서 드러난다(§4).
+- SDK 의 호출 제한은 자격 증명 조회를 포함하지 않는다(ECS 자격 증명 엔드포인트는 연결·읽기 1초에 다섯 번까지 재시도한다). 그래서 발송 구현이 조회를 전용 스레드에서 `send-timeout` 기한까지만 기다리고
+  남은 시간만 SES 호출에 준다. 기한을 넘기면 SES 에 묻지 않고 `ses_credentials_unavailable`로 실패하고, 조회는 뒤에서 이어져 다음 시도가 그 결과를 쓴다.
+  SES 가 메일을 받을 수 있는 시각은 선점 뒤 `send-timeout` 안이므로 임대(네 배)를 넘긴 중복 발송은 생기지 않는다. `send-timeout`은 자격 증명 첫 조회(태스크 시작 직후)에 걸리는 시간도 감안해 정한다.
 - 업무별로 함께 켜야 하는 설정이 있다 — 초대·설치 안내는 `pulsemetry.management.enabled`와 `PULSEMETRY_INVITATION_ACCEPT_URL`, 문의 통지는 `pulsemetry.inquiries.enabled`와 `PULSEMETRY_INQUIRIES_NOTIFICATION_RECIPIENT`(명세 §8).
 - `PULSEMETRY_MAIL_ENABLED=false`는 **일시 정지가 아니다.** 꺼진 동안 생긴 업무 메일은 적재되지 않는다(발송 상태 `not_sent`/`mail_disabled`).
 - local 프로필은 `smtp`(Compose 의 Mailpit `localhost:1025`, 화면 `localhost:8025`)로 켠다. local 값(5초·1분·3회·10초)은 운영 권장값이 아니다.
@@ -132,6 +135,7 @@ API 와 화면에는 공개 코드(`message_rejected`·`invalid_address`·`send_
 | `failure_detail` | 공개 코드 | 처리 | 운영 조치 |
 |---|---|---|---|
 | `ses_invalid_address` | `invalid_address` | 영구 | 수신자 주소를 고친 뒤 업무 절차로 새 메일 |
+| `ses_credentials_unavailable` | `send_error` | 재시도 | 기한 안에 자격 증명을 얻지 못했다(조회 지연·실패). **SES 에 묻지 않았다.** 태스크 역할·자격 증명 엔드포인트 접근·`send-timeout`을 본다. 로그의 `error`가 `TimeoutException`이면 지연이다 |
 | `ses_message_rejected` | `message_rejected` | 영구 | identity 검증·sandbox 수신자·내용 확인 |
 | `ses_bad_request` | `message_rejected` | 영구 | 요청 형식 문제. 발신 주소·리전·configuration set 이름 확인 |
 | `ses_throttled` | `send_error` | 재시도 | 발송 속도 한도. 인스턴스 수와 발송 주기를 본다 |
@@ -141,7 +145,7 @@ API 와 화면에는 공개 코드(`message_rejected`·`invalid_address`·`send_
 | `ses_auth_failed` | `send_error` | 재시도 | 태스크 역할·권한·서명·토큰 만료 |
 | `ses_unavailable` | `send_error` | 재시도 | SES 5xx 또는 연결 실패(DNS·egress 포함) |
 | `ses_timeout` | `send_error` | 재시도 | 제한 시간 초과. **SES 가 받았는지 알 수 없다** — 재시도가 중복일 수 있다 |
-| `ses_unknown_error` | `send_error` | 재시도 | 분류하지 못한 SDK 오류. 자격 증명을 찾지 못한 경우도 여기나 `ses_unavailable`로 보인다 |
+| `ses_unknown_error` | `send_error` | 재시도 | 분류하지 못한 SDK 오류 |
 | (없음) | `outcome_unknown` | 종료 | 최대 시도를 채운 채 임대가 끝났다. 발송 여부 불명 |
 
 설정·권한 오류도 재시도로 분류된다. 고치지 않고 두면 최대 시도에서 `failed`로 닫히고 본문이 지워진다 — 오래 방치하지 않는다.
@@ -189,7 +193,7 @@ FROM enrollment.mail_outbox GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
 | 테스트 | 확인하는 것 |
 |---|---|
 | `MailDispatchTest` | 실제 PostgreSQL·SMTP — 업무 롤백, 중복 방지, 동시 선점, 재시도·최대 시도, 취소, 만료 임대, 본문 삭제, 결과 기록 실패, 로그 비노출, 필수 설정·provider 검사 |
-| `SesMailTransportTest` | 실제 SDK + 로컬 HTTP 모의 서버(가짜 자격 증명·고정 테스트 리전) — 요청 직렬화, 오류 분류, SDK 단일 시도, 제한 시간, 주소 검사, 클라이언트 닫기, 실제 PostgreSQL outbox 와의 상태 전이·접수 로그 |
+| `SesMailTransportTest` | 실제 SDK + 로컬 HTTP 모의 서버(가짜 자격 증명·고정 테스트 리전) — 요청 직렬화, 오류 분류, SDK 단일 시도, 제한 시간, 주소 검사, 클라이언트 닫기, 실제 PostgreSQL outbox 와의 상태 전이·접수 로그. 늦은 ECS 자격 증명 엔드포인트로 SDK 만으로는 임대를 넘긴다는 재현 조건과, 발송 한 번이 기한 안에 SES 에 묻지 않고 끝나며 늦은 조회가 하나만 돌아 다음 발송에 쓰이는지 |
 | `SesMailConfigTest` | SES 설정만으로 앱이 뜨고 SES 구현을 쓴다(SMTP 설정 없음, AWS 호출 없음) |
 | `InvitationMailApiTest` · `InstallationInvitationApiTest` · `InstallationNotificationApiTest` | 업무 트리거·발송 상태·설치 안내 작업 결과(SMTP) |
 
