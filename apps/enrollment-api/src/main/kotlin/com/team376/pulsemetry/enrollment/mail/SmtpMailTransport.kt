@@ -15,14 +15,17 @@ import org.springframework.mail.MailSendException
 import org.springframework.mail.javamail.JavaMailSender
 import org.springframework.mail.javamail.MimeMessageHelper
 
-/** SMTP 로 한 통을 보낸다. 실패는 다시 시도할 만한 것과 아닌 것으로 나눠 돌려준다. 서버 응답 원문은 싣지 않는다. */
+/**
+ * SMTP 로 한 통을 보낸다 — 로컬·테스트의 발송 구현이다(ADR 0057). 실패는 다시 시도할 만한 것과 아닌 것으로 나눠 돌려준다.
+ * 서버 응답 원문은 싣지 않는다.
+ */
 class SmtpMailTransport(private val sender: JavaMailSender, private val from: String) : MailTransport {
     override fun send(mail: ClaimedMail) {
         try {
             val message = sender.createMimeMessage()
             MimeMessageHelper(message, false, "UTF-8").apply { setFrom(from); setTo(mail.recipient); setSubject(mail.subject); setText(mail.body, false) }
             // 받은 쪽에서 같은 메일의 재전송을 알아볼 수 있게 한다.
-            message.setHeader("X-Pulsemetry-Mail-Id", mail.id.toString())
+            message.setHeader(MAIL_ID_HEADER, mail.id.toString())
             sender.send(message)
         } catch (error: MailException) {
             throw classify(error)

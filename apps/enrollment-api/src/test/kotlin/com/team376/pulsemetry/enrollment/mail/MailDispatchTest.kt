@@ -51,7 +51,7 @@ private const val SECRET = "FAKE-CODE-0001"
  * 주기 작업은 하루 주기로 두어 끼어들지 않게 하고, 테스트가 발송 작업을 직접 돌린다.
  * 재시도 간격 5분, 최대 시도 3회, SMTP 제한 시간 5초(선점 임대 20초)다.
  */
-@SpringBootTest(properties = ["pulsemetry.mail.enabled=true", "pulsemetry.mail.from=$FROM", "pulsemetry.mail.encryption-key=$KEY",
+@SpringBootTest(properties = ["pulsemetry.mail.enabled=true", "pulsemetry.mail.provider=smtp", "pulsemetry.mail.from=$FROM", "pulsemetry.mail.encryption-key=$KEY",
     "pulsemetry.mail.dispatch-interval=PT24H", "pulsemetry.mail.retry-interval=PT5M", "pulsemetry.mail.max-attempts=3", "pulsemetry.mail.send-timeout=PT5S",
     "pulsemetry.mail.smtp.username=test-user", "pulsemetry.mail.smtp.password=test-password", "pulsemetry.mail.smtp.starttls=false"])
 @Import(PostgresContainerConfig::class, AuthClockConfig::class)
@@ -351,6 +351,11 @@ class MailDispatchTest {
         assertThatThrownBy { outboxOf { maxAttempts = 0 } }.isInstanceOf(IllegalArgumentException::class.java)
         assertThatThrownBy { outboxOf { sendTimeout = null } }.hasMessageContaining("pulsemetry.mail.send-timeout")
         assertThatThrownBy { outboxOf { sendTimeout = Duration.ZERO } }.hasMessageContaining("pulsemetry.mail.send-timeout")
+        // 발송 구현은 반드시 고른다. 기본값도 다른 구현으로 넘어가는 일도 없다(ADR 0057).
+        assertThatThrownBy { transportOf { provider = "" } }.hasMessageContaining("pulsemetry.mail.provider")
+        assertThatThrownBy { transportOf { provider = "sendgrid" } }.hasMessageContaining("pulsemetry.mail.provider")
+        // SMTP 를 고르면 SES 리전을 요구하지 않는다.
+        assertThat(transportOf { ses.region = "" }).isInstanceOf(SmtpMailTransport::class.java)
         assertThatThrownBy { transportOf { smtp.host = "" } }.hasMessageContaining("pulsemetry.mail.smtp.host")
         assertThatThrownBy { transportOf { smtp.port = null } }.hasMessageContaining("pulsemetry.mail.smtp.port")
         assertThatThrownBy { transportOf { smtp.port = 70000 } }.hasMessageContaining("pulsemetry.mail.smtp.port")
@@ -382,7 +387,7 @@ class MailDispatchTest {
     }
 
     private fun properties() = MailProperties().apply {
-        enabled = true; from = FROM; encryptionKey = KEY
+        enabled = true; provider = "smtp"; from = FROM; encryptionKey = KEY
         dispatchInterval = Duration.ofHours(24); retryInterval = Duration.ofMinutes(5); maxAttempts = 3; sendTimeout = Duration.ofSeconds(5)
         smtp.host = MailpitServer.host; smtp.port = MailpitServer.smtpPort; smtp.username = "test-user"; smtp.password = "test-password"; smtp.starttls = false
     }

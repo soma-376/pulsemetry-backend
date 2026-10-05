@@ -16,9 +16,16 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
 	implementation("org.springframework.session:spring-session-jdbc")
 	// outbox 의 메일을 SMTP 로 보낸다 (ADR 0037). JavaMailSender 는 설정(pulsemetry.mail.*)으로 직접 만든다.
+	// 로컬·테스트의 발송 구현이고, SES 구현도 주소 검증에 Jakarta Mail 의 InternetAddress 를 쓴다 (ADR 0057).
 	implementation(libs.spring.boot.starter.mail)
 	// 일시 실패와 영구 실패를 SMTP 응답 코드로 가른다. 그 코드는 구현 쪽 예외 타입에 있다.
 	implementation(libs.angus.mail)
+	// 배포 환경은 SES API 로 보낸다 (ADR 0057). 동기 클라이언트만 쓴다 — 비동기 HTTP 구현(Netty)은 싣지 않는다.
+	implementation(platform(libs.awssdk.bom))
+	implementation(libs.awssdk.sesv2) {
+		exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+	}
+	implementation(libs.awssdk.apache.client)
 	implementation(libs.jackson.module.kotlin)
 	// manifest 재동기화가 저장된 정책을 telemetryctl 원본 스키마로 검증한다 (ADR 0019).
 	// 계약 테스트도 같은 검증기를 쓴다.

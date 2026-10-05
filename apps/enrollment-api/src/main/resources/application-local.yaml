@@ -36,6 +36,8 @@ pulsemetry:
   # 암호화 키는 Compose가 만든 local-auth.properties에 있다. 계정은 수신 컨테이너가 아무 값이나 받는다.
   mail:
     enabled: true
+    # 로컬은 SMTP 로 보낸다. 배포 환경의 SES(ADR 0057)는 여기서 쓰지 않는다.
+    provider: smtp
     from: ${PULSEMETRY_MAIL_FROM:no-reply@pulsemetry.example.test}
     dispatch-interval: ${PULSEMETRY_MAIL_DISPATCH_INTERVAL:PT5S}
     retry-interval: ${PULSEMETRY_MAIL_RETRY_INTERVAL:PT1M}

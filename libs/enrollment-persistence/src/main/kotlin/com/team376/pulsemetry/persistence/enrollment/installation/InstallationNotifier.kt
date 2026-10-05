@@ -13,7 +13,7 @@ import java.util.UUID
  *
  * 안내는 **설치를 쓰는 구성원에게 보내는 메일**이다. 원격으로 업데이트하거나 정책을 밀어 넣지 않는다. 본문은 telemetryctl 기본 브랜치에
  * 있는 명령과 동작만 안내한다(ADR 0053) — 지금의 데몬은 새 정책을 스스로 받아 오지 않으므로 다시 설치해야 새 정책이 적용된다고 적는다.
- * 안내 한 통은 작업(`installation_notification`)의 대상 하나이고, 그 대상의 결과는 **메일의 발송 결과**다(`sent` = SMTP 서버가 받음).
+ * 안내 한 통은 작업(`installation_notification`)의 대상 하나이고, 그 대상의 결과는 **메일의 발송 결과**다(`sent` = 메일 공급자가 받음, ADR 0057).
  * 설치가 정책을 적용했다는 뜻이 아니다.
  */
 class InstallationNotifier(
