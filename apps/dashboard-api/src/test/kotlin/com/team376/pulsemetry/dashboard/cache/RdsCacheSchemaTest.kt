@@ -38,12 +38,13 @@ class RdsCacheSchemaTest {
 	@DisplayName("두 번째 적용은 아무것도 하지 않는다 — 이력은 dashboard_cache.flyway_schema_history")
 	fun migrationIsRecorded() {
 		// V1(manifest·참조 복제), V2(완전한 날짜 — ADR 0042), V3(벤더 관측 고정 — ADR 0044), V4(관측 제품 매핑 복제 — ADR 0045), V5(알림 평가 기록 — ADR 0051).
-		assertThat(firstRun).isEqualTo(5)
+		// V6(구성원 사용 예정 제품), V7(폐기한 허용 목록 알림 닫기).
+		assertThat(firstRun).isEqualTo(7)
 		assertThat(secondRun).isZero()
 		// 스키마 생성 행(type = SCHEMA)은 Flyway 가 스키마를 만들 때 따로 남긴다 — 마이그레이션만 센다.
 		assertThat(
 			jdbc.sql("SELECT version FROM dashboard_cache.flyway_schema_history WHERE success AND type = 'SQL'").query(String::class.java).list(),
-		).containsExactly("1", "2", "3", "4", "5")
+		).containsExactly("1", "2", "3", "4", "5", "6", "7")
 	}
 
 	@Test
