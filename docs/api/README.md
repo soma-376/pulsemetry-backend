@@ -113,7 +113,7 @@ E = enrollment-api, D = dashboard-api. 같은 경로라도 서버가 다르면 �
 | 75 | E | GET | `/v1/healthz` | [생존 확인](endpoints/75-get-enrollment-health.md) |
 | 76 | D | GET | `/v1/healthz` | [생존 확인](endpoints/76-get-dashboard-health.md) |
 
-## 문서 유지·검증
+## 문서 유지
 
 각 API는 `endpoints/번호-기능명.md` 한 파일에서 관리한다. 페이지·기능 문서는 API 목록 표를 제공하고, `reference/`는 기능 규칙·공유 스키마를 담는다.
 번호는 전체 API에서 고유하며 새 API는 마지막 번호 다음에 추가한다. 기존 번호를 재사용하거나 재정렬하지 않는다.
@@ -123,12 +123,4 @@ E = enrollment-api, D = dashboard-api. 같은 경로라도 서버가 다르면 �
 API 변경 시 Controller/DTO뿐 아니라 JSON 생성 코드·필터·직렬화 설정과 관련 계약 테스트도 대조한다.
 기존 서버 명세의 번호·앵커는 이전 안내로 유지하여 다른 레포의 링크를 보존한다.
 
-```bash
-python3 tools/check-api-docs.py
-# 선언과 전체 JSON 예시를 함께 tsc로 검사할 때
-python3 tools/check-api-docs.py --typescript-output /tmp/api-docs.ts
-tsc --noEmit --strict --skipLibCheck --target es2022 /tmp/api-docs.ts
-```
-
-문서 검사는 경로·메서드 커버리지, 중복, 응답 타입 정의, 링크·앵커, JSON 문법을 확인한다.
 HTTP 동작·실환경 연동 성공을 보장하는 테스트는 아니다. API 동작을 바꿀 때는 해당 서버 계약 테스트를 별도로 실행한다.
