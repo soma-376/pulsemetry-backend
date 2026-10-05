@@ -340,7 +340,7 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = ["/actuator/health", "/v1/unknown", "/error"])
+	@ValueSource(strings = ["/actuator/health", "/api/v1/unknown", "/error"])
 	@DisplayName("계약 밖 경로는 토큰 유무와 무관하게 404 다 — 인증 복구를 유발하지 않는다")
 	fun unmappedPathsAreDeniedByDefault(path: String) {
 		val seeded = data.seed()
@@ -364,7 +364,7 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 	@Test
 	@DisplayName("헬스 경로는 인증을 지나지 않는다")
 	fun healthzIsOpen() {
-		val request = HttpRequest.newBuilder(URI.create("http://localhost:$port/v1/healthz")).GET().build()
+		val request = HttpRequest.newBuilder(URI.create("http://localhost:$port/api/v1/healthz")).GET().build()
 
 		assertThat(http.send(request, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(200)
 	}

@@ -47,7 +47,7 @@ Cognito 설정 파일은 필수가 아니다. Compose가 만드는 `local-auth.p
 비밀번호는 별도 공유하며 JSON에는 저장하지 않는다. 회원 이메일은 합성 테스트 주소다.
 버전 2 공개 JSON은 실제 개발 Cognito의 issuer·client ID·비밀 참조만 담는다. 사용자 sub·이메일은 내보내지 않는다. 회원 sub는 최초 SSO 로그인에서 연결한다. 기존 DB의 연결은 보존한다.
 
-- 두 Cognito 앱 클라이언트의 callback: `http://localhost:8080/v1/auth/oidc/callback/cognito`
+- 두 Cognito 앱 클라이언트의 callback: `http://localhost:8080/api/v1/auth/oidc/callback/cognito`
 - 프론트 복귀 주소: `http://localhost:3000/auth/callback`
 
 프론트는 기존 BFF 설정을 사용한다. Cognito/프론트 콜백을 서로 바꾸지 않는다.

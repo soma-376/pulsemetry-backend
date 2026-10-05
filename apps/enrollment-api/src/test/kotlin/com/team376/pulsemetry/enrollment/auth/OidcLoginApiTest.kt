@@ -42,7 +42,7 @@ class OidcLoginApiTest : OidcTestSupport() {
         val invalidHints = listOf(arrayOf(""), arrayOf("not-email"), arrayOf("a".repeat(250) + "@example.com"),
             arrayOf("a@b.com", "other@b.com"), arrayOf("a\u0000@b.com"))
         for (hints in invalidHints) {
-            val response = mvc.perform(get("/v1/auth/oidc/authorize").param("tenant_id", tenant.toString())
+            val response = mvc.perform(get("/api/v1/auth/oidc/authorize").param("tenant_id", tenant.toString())
                 .param("redirect_uri", redirect).param("state", "client-state-1234567890")
                 .param("code_challenge", challenge).param("code_challenge_method", "S256")
                 .param("login_hint", *hints)).andReturn().response
@@ -60,7 +60,7 @@ class OidcLoginApiTest : OidcTestSupport() {
 
     @Test fun `비밀 참조가 준비되지 않은 회사는 인증 장애로 반환한다`() {
         sql("UPDATE enrollment.tenants SET oidc_client_secret_ref='config:missing'")
-        val response = mvc.perform(get("/v1/auth/oidc/authorize").param("tenant_id", tenant.toString())
+        val response = mvc.perform(get("/api/v1/auth/oidc/authorize").param("tenant_id", tenant.toString())
             .param("redirect_uri", redirect).param("state", "client-state-1234567890")
             .param("code_challenge", challenge).param("code_challenge_method", "S256")).andReturn().response
         assertThat(response.status).isEqualTo(503)
@@ -104,7 +104,7 @@ class OidcLoginApiTest : OidcTestSupport() {
     @Test fun `비활성 registration은 이메일 탐색과 로그인 시작에서 모두 제외한다`() {
         sql("UPDATE enrollment.tenants SET sso_enabled=false")
         assertThat(mapper.readTree(post("organizations", mapOf("email" to email)).body()).path("organizations").size()).isZero()
-        val response = mvc.perform(get("/v1/auth/oidc/authorize").param("tenant_id", tenant.toString())
+        val response = mvc.perform(get("/api/v1/auth/oidc/authorize").param("tenant_id", tenant.toString())
             .param("redirect_uri", redirect).param("state", "client-state-1234567890")
             .param("code_challenge", challenge).param("code_challenge_method", "S256")).andReturn().response
         assertThat(response.status).isEqualTo(403)
@@ -119,7 +119,7 @@ class OidcLoginApiTest : OidcTestSupport() {
 
     @Test fun `잘못된 시작 요청은 외부 URL로 리다이렉트하지 않는다`() {
         for (target in listOf("https://evil.example/callback", "$redirect?next=evil")) {
-            val response = mvc.perform(get("/v1/auth/oidc/authorize").param("tenant_id", tenant.toString())
+            val response = mvc.perform(get("/api/v1/auth/oidc/authorize").param("tenant_id", tenant.toString())
                 .param("redirect_uri", target).param("state", "client-state-1234567890")
                 .param("code_challenge", challenge).param("code_challenge_method", "S256")).andReturn().response
             assertThat(response.status).isEqualTo(400)
@@ -129,7 +129,7 @@ class OidcLoginApiTest : OidcTestSupport() {
 
     @Test fun `OIDC 임시 쿠키만으로 업무 API에 접근할 수 없다`() {
         val start = begin()
-        assertThat(mvc.perform(get("/v1/auth/me").cookie(start.cookie)).andReturn().response.status).isEqualTo(401)
+        assertThat(mvc.perform(get("/api/v1/auth/me").cookie(start.cookie)).andReturn().response.status).isEqualTo(401)
     }
 
     @Test fun `만료된 JDBC 왕복 세션은 callback을 수용하지 않는다`() {
@@ -139,7 +139,7 @@ class OidcLoginApiTest : OidcTestSupport() {
     }
 
     @Test fun `알 수 없는 조직이나 중복 필수 파라미터는 시작을 거부한다`() {
-        fun request() = get("/v1/auth/oidc/authorize").param("redirect_uri", redirect)
+        fun request() = get("/api/v1/auth/oidc/authorize").param("redirect_uri", redirect)
             .param("state", "client-state-1234567890").param("code_challenge", challenge).param("code_challenge_method", "S256")
         assertThat(mvc.perform(request().param("tenant_id", java.util.UUID.randomUUID().toString())).andReturn().response.status).isEqualTo(403)
         assertThat(mvc.perform(request().param("tenant_id", tenant.toString(), tenant.toString())).andReturn().response.status).isEqualTo(400)
@@ -149,7 +149,7 @@ class OidcLoginApiTest : OidcTestSupport() {
     @Test fun `IdP 취소는 원래 client state와 함께 복귀하고 세션을 폐기한다`() {
         val start = begin()
         val upstreamState = query(start.location).getValue("state")
-        assertFailure(callback(URI("http://localhost:8080/v1/auth/oidc/callback/mock?error=access_denied&state=$upstreamState&redirect_uri=https://evil.test"), start.cookie), "login_cancelled")
+        assertFailure(callback(URI("http://localhost:8080/api/v1/auth/oidc/callback/mock?error=access_denied&state=$upstreamState&redirect_uri=https://evil.test"), start.cookie), "login_cancelled")
     }
 
     private fun assertFailure(result: org.springframework.test.web.servlet.MvcResult, code: String, hasState: Boolean = true) {
@@ -197,7 +197,7 @@ class OidcLoginApiTest : OidcTestSupport() {
 
     @Test fun `탐색 입력 검사와 IP 제한 및 CORS`() {
         assertThat(post("organizations", mapOf("email" to "not-email")).statusCode()).isEqualTo(400)
-        val preflight = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options("/v1/auth/organizations")
+        val preflight = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options("/api/v1/auth/organizations")
             .header("Origin", "http://localhost:3000").header("Access-Control-Request-Method", "POST")
             .header("Access-Control-Request-Headers", "content-type")).andReturn().response
         assertThat(preflight.status).isEqualTo(200)
@@ -227,7 +227,7 @@ class OidcLoginApiTest : OidcTestSupport() {
     }
 
     @Test fun `미등록 이메일로 authorize를 직접 호출해도 IdP로 이동하지 않는다`() {
-        val response = mvc.perform(get("/v1/auth/oidc/authorize").param("tenant_id", tenant.toString())
+        val response = mvc.perform(get("/api/v1/auth/oidc/authorize").param("tenant_id", tenant.toString())
             .param("redirect_uri", redirect).param("state", "client-state-1234567890")
             .param("code_challenge", challenge).param("code_challenge_method", "S256")
             .param("login_hint", "unknown@example.com")).andReturn().response

@@ -1,10 +1,10 @@
-# 56 POST `/v1/auth/organizations`
+# 56 POST `/api/v1/auth/organizations`
 
 이메일로 회사 탐색
 
 [전체 API](../README.md) · [로그인·사용자 인증](../auth.md)
 
-<!-- endpoint: enrollment-api POST /v1/auth/organizations -->
+<!-- endpoint: enrollment-api POST /api/v1/auth/organizations -->
 
 서버: **enrollment-api** · 성공: **200** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/LoginDiscoveryController.kt)
 

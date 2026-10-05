@@ -37,7 +37,7 @@ class ErrorContractApiTest {
 	@Test
 	@DisplayName("알 수 없는 경로는 404 not_found 이고 본문이 에러 계약을 지킨다")
 	fun unknownPathIsNotFound() {
-		val response = send("GET", "/v1/nope")
+		val response = send("GET", "/api/v1/nope")
 
 		assertThat(response.statusCode()).isEqualTo(404)
 		assertThat(errorCode(response)).isEqualTo("not_found")
@@ -47,7 +47,7 @@ class ErrorContractApiTest {
 	@Test
 	@DisplayName("POST 전용 경로에 GET 을 보내면 405 method_not_allowed")
 	fun wrongMethodIsMethodNotAllowed() {
-		val response = send("GET", "/v1/enroll")
+		val response = send("GET", "/api/v1/enroll")
 
 		assertThat(response.statusCode()).isEqualTo(405)
 		assertThat(errorCode(response)).isEqualTo("method_not_allowed")
@@ -57,7 +57,7 @@ class ErrorContractApiTest {
 	@Test
 	@DisplayName("JSON 이 아닌 Content-Type 은 400 invalid_request")
 	fun unsupportedMediaTypeIsInvalidRequest() {
-		val response = send("POST", "/v1/enroll", body = "code=ABCD-EFGH-JKMN", contentType = "text/plain")
+		val response = send("POST", "/api/v1/enroll", body = "code=ABCD-EFGH-JKMN", contentType = "text/plain")
 
 		assertThat(response.statusCode()).isEqualTo(400)
 		assertThat(errorCode(response)).isEqualTo("invalid_request")
@@ -67,7 +67,7 @@ class ErrorContractApiTest {
 	@Test
 	@DisplayName("에러 본문에 요청 내용이 되돌아오지 않는다 (R4)")
 	fun errorBodyDoesNotEchoRequest() {
-		val response = send("POST", "/v1/enroll", body = "code=ABCD-EFGH-JKMN", contentType = "text/plain")
+		val response = send("POST", "/api/v1/enroll", body = "code=ABCD-EFGH-JKMN", contentType = "text/plain")
 
 		assertThat(response.body()).doesNotContain("ABCD-EFGH-JKMN")
 	}

@@ -225,11 +225,11 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
 
     @Test fun `MockMvc에서 위조 forwarded IP로 제한을 우회하지 못한다`() {
         repeat(30) { n ->
-            mvc.perform(post("/v1/auth/refresh").servletPath("/v1/auth/refresh")
+            mvc.perform(post("/api/v1/auth/refresh").servletPath("/api/v1/auth/refresh")
                 .header("X-Forwarded-For", "198.51.100.$n").contentType("application/json")
                 .content("{\"refresh_token\":\"invalid\"}")).andExpect(status().isUnauthorized)
         }
-        mvc.perform(post("/v1/auth/refresh").servletPath("/v1/auth/refresh")
+        mvc.perform(post("/api/v1/auth/refresh").servletPath("/api/v1/auth/refresh")
             .header("X-Forwarded-For", "203.0.113.1").contentType("application/json")
             .content("{\"refresh_token\":\"invalid\"}")).andExpect(status().isTooManyRequests)
     }
@@ -237,7 +237,7 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
     @Test fun `AT 는 HTTP 에서도 발급 330초부터 거절되고 같은 세션의 RT 로 회복한다`() {
         val issued = tokens()
         val start = clock.now
-        fun me(token: String) = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/me")).header("Authorization", "Bearer $token").GET().build(),
+        fun me(token: String) = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/auth/me")).header("Authorization", "Bearer $token").GET().build(),
             HttpResponse.BodyHandlers.ofString())
         // exp − iat = 300(명세 §2.2 토큰 표)에 시계 차이 허용 30초 — 329초는 받고 330초부터 거절한다.
         clock.now = start.plusSeconds(329)

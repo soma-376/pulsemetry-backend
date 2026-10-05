@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController
  * 인증이 없다. 초대 코드 자체가 자격증명이다 — 그래서 코드의 형식 검증과 원자적 소비가 전부다.
  */
 @RestController
-@RequestMapping("/v1")
+@RequestMapping("/api/v1")
 class EnrollmentController(
 	private val enrollmentService: EnrollmentService,
 ) {

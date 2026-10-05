@@ -46,7 +46,7 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter
  *   파이프라인의 503 과 같은 모양이다(허브 §8). 예외를 컨테이너까지 흘리면 안 된다: Boot 의 오류
  *   경로 `/error` 는 OTLP 체인 밖이라 둘째 체인이 받고, 그 `denyAll` 에 걸리면 서버 오류가 경로 거부 응답으로 바뀐다.
  * - **체인은 둘이고 기본은 닫힘이다.** 첫 체인이 [Signal] 의 세 경로를 잡고, 둘째 체인이 나머지
- *   전부를 잡아 `/v1/healthz` 만 열고 그 밖은 `denyAll` 이다. 명시적 `SecurityFilterChain` 빈이
+ *   전부를 잡아 `/api/v1/healthz` 만 열고 그 밖은 `denyAll` 이다. 명시적 `SecurityFilterChain` 빈이
  *   있으면 Boot 의 기본 체인은 물러나므로, 둘째 체인이 없으면 새로 얹는 경로가 인증 없이 열린다.
  *   거부 응답은 허브 계약의 404 이다. 관리 엔드포인트를 얹을 때는 둘째 체인에 그 경로를 명시한다.
  * - **둘째 체인은 ERROR 디스패치만 통과시킨다.** 필터가 잡지 못한 예외가 `/error` 로 갔을 때 Boot 의
@@ -80,7 +80,7 @@ class SecurityConfig {
 	 * **필터를 이 메서드 안에서 만든다. 빈으로 노출하지 마라.**
 	 *
 	 * Boot 은 컨테이너에 등록되지 않은 `Filter` 빈을 발견하면 서블릿 필터로 **모든 경로**에 자동
-	 * 등록한다. 그러면 이 필터가 `/v1/healthz` 까지 잡아 401 을 낸다 — ADR 0011 이 막으려던
+	 * 등록한다. 그러면 이 필터가 `/api/v1/healthz` 까지 잡아 401 을 낸다 — ADR 0011 이 막으려던
 	 * 사고를 손으로 재현하는 셈이다.
 	 *
 	 * 헤더 기본값을 끈 것은 응답을 계약 그대로 두기 위해서다. OTLP 응답의 본문·상태·
@@ -152,7 +152,7 @@ class SecurityConfig {
 	private companion object {
 		val log = LoggerFactory.getLogger(SecurityConfig::class.java)
 
-		const val HEALTH_PATH = "/v1/healthz"
+		const val HEALTH_PATH = "/api/v1/healthz"
 		const val UNAVAILABLE_MESSAGE = "authentication store unavailable"
 
 		/** 경로의 진실원은 수집 모듈이다. 여기서 문자열을 다시 적지 않는다. */

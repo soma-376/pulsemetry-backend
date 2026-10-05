@@ -28,7 +28,7 @@ import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 
 /**
- * `POST /v1/enroll` 통합 테스트.
+ * `POST /api/v1/enroll` 통합 테스트.
  *
  * 실제 서버를 띄우고 실제 HTTP 로 부른다. MockMvc 를 쓰지 않는 이유는 동시성 테스트 때문이다 —
  * 같은 초대 코드로 진짜 동시 요청이 들어왔을 때 정확히 하나만 성공하는지가 이 phase 의 핵심이고,
@@ -548,7 +548,7 @@ class EnrollApiTest {
 
 	private fun postEnroll(body: String): HttpResponse<String> =
 		http.send(
-			HttpRequest.newBuilder(URI.create("http://localhost:$port/v1/enroll"))
+			HttpRequest.newBuilder(URI.create("http://localhost:$port/api/v1/enroll"))
 				.header("Content-Type", "application/json")
 				.POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
 				.build(),

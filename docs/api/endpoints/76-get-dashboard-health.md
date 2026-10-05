@@ -1,10 +1,10 @@
-# 76 GET `/v1/healthz`
+# 76 GET `/api/v1/healthz`
 
 생존 확인
 
 [전체 API](../README.md) · [공통 HTTP 규칙](../common.md)
 
-<!-- endpoint: dashboard-api GET /v1/healthz -->
+<!-- endpoint: dashboard-api GET /api/v1/healthz -->
 
 서버: **dashboard-api** · 성공: **200** · [구현](../../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/api/HealthController.kt)
 

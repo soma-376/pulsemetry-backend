@@ -2,7 +2,7 @@
 
 [API 목록](../invitations.md) · [공통 규칙](../common.md) · [공통 스키마](../common-schemas.md)
 
-### `POST /v1/invitations` 요청·응답
+### `POST /api/v1/invitations` 요청·응답
 
 요청 본문:
 
@@ -40,7 +40,7 @@
 **원본 `code` 는 이 응답에서 딱 한 번만 나간다.** DB 에는 해시만 있어 다시 볼 방법이 없고,
 그래서 재조회 API 를 두지 않는다. 관리자가 이 응답을 잃으면 새로 발급해야 한다.
 
-`POST /v1/invitations/{id}/revoke`는 같은 `X-Admin-Token` 헤더를 사용한다.
+`POST /api/v1/invitations/{id}/revoke`는 같은 `X-Admin-Token` 헤더를 사용한다.
 
 ```ts
 // 요청 본문과 쿼리 파라미터 없음
@@ -89,7 +89,7 @@ type InstallationInvitation = {
 정지 구성원은 409 `member_suspended`, 아직 합류하지 않은 구성원(`invited`)은 409 `member_not_active`다 — 일괄 초대·재발급([기존 §13.3](../../enrollment-server-spec.md#133-초대-목록재발급))으로 코드를 받는다.
 없는 구성원·다른 조직 구성원은 404 `not_found`다.
 새 초대는 기존 초대의 소비 상태를 옮기지 않는다. 72시간 만료이고, 발급 시각을 가입 소비 시각으로 기록해 **설치 전용임을 표시한다**.
-설치(`POST /v1/enroll`)는 다른 초대와 같이 한 번 소비한다. 활성 구성원의 설치는 구성원 상태를 바꾸지 않는다.
+설치(`POST /api/v1/enroll`)는 다른 초대와 같이 한 번 소비한다. 활성 구성원의 설치는 구성원 상태를 바꾸지 않는다.
 그 구성원의 남은 설치 전용 초대(미폐기, 설치 미소비, 가입 소비)는 같은 트랜잭션에서 폐기하고 아직 나가지 않은 메일을 취소한다.
 가입 권한이 남은 초대는 건드리지 않는다. 같은 멱등 키의 재시도는 최초 코드와 발송 상태를 그대로 돌려주고 메일은 한 통이다.
 

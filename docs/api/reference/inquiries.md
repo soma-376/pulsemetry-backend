@@ -2,7 +2,7 @@
 
 [API 목록](../inquiries.md) · [공통 규칙](../common.md) · [공통 스키마](../common-schemas.md)
 
-### `POST /v1/inquiries` 도입 문의 접수
+### `POST /api/v1/inquiries` 도입 문의 접수
 
 로그인 전의 문의 폼이 부르는 공개 경로다. 인증이 없고 **조직·계정·초대를 만들지 않는다** — 접수만 저장한다.
 담당자가 확인한 뒤 첫 관리자를 초대하는 절차는 이 API 밖이다.
@@ -33,7 +33,7 @@
 - **남용 제한**: 출처 주소(서블릿 `remoteAddr`)별로 `rate-limit.window` 안에 `rate-limit.requests`회까지 받는다. 검증에 실패한 요청과 재전송도 센다.
   넘으면 429 `rate_limited`와 `Retry-After`(창이 끝날 때까지의 초)다. preflight(`OPTIONS`)는 세지 않는다.
   제한 상태와 문의 행에는 주소의 SHA-256만 남긴다. forwarded 헤더를 믿지 않으므로 프록시 뒤에서는 프록시 주소 단위의 제한이 된다(사용자 인증의 진입 요청 제한과 같다 — ADR 0018·0052).
-- **CORS**: `/v1/inquiries`는 `pulsemetry.inquiries.allowed-origins`의 출처에만 `POST`·`Content-Type`을 허용하고 `Retry-After`를 노출한다. 사용자 인증의 출처 목록과 따로 둔다.
+- **CORS**: `/api/v1/inquiries`는 `pulsemetry.inquiries.allowed-origins`의 출처에만 `POST`·`Content-Type`을 허용하고 `Retry-After`를 노출한다. 사용자 인증의 출처 목록과 따로 둔다.
 
 오류 본문은 [기존 §7](../../enrollment-server-spec.md#7-에러-계약)의 두 필드 형태다. 문장은 CLI 가 아니라 문의 폼의 사용자에게 보인다.
 요청 수 초과와 제한 상태의 저장소 장애는 컨트롤러 앞의 필터가 쓰며 `Content-Type: application/json;charset=UTF-8`로 문자셋을 명시한다.

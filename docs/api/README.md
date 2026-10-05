@@ -91,27 +91,27 @@ E = enrollment-api, D = dashboard-api. 같은 경로라도 서버가 다르면 �
 | 53 | E | PUT | `/api/v1/organizations/{organizationId}/collection-policy` | [수집·조직 정책 저장](endpoints/53-save-collection-policy.md) |
 | 54 | E | GET | `/api/v1/organizations/{organizationId}/invitations` | [초대 목록](endpoints/54-list-invitations.md) |
 | 55 | E | GET | `/api/v1/organizations/{organizationId}/onboarding` | [온보딩 상태](endpoints/55-get-onboarding.md) |
-| 56 | E | POST | `/v1/auth/organizations` | [이메일로 회사 탐색](endpoints/56-discover-organizations.md) |
-| 57 | E | GET | `/v1/auth/oidc/authorize` | [SSO 시작](endpoints/57-authorize-oidc.md) |
-| 58 | E | GET | `/v1/auth/oidc/callback/{registrationId}` | [IdP 콜백](endpoints/58-callback-oidc.md) |
-| 59 | E | POST | `/v1/auth/token` | [서비스 토큰 교환](endpoints/59-exchange-token.md) |
-| 60 | E | POST | `/v1/auth/cli/token` | [서비스 토큰 교환](endpoints/60-exchange-cli-token.md) |
-| 61 | E | POST | `/v1/auth/refresh` | [토큰 갱신](endpoints/61-refresh-token.md) |
-| 62 | E | POST | `/v1/auth/logout` | [서비스 로그아웃](endpoints/62-logout.md) |
-| 63 | E | GET | `/v1/auth/me` | [현재 사용자](endpoints/63-get-current-user.md) |
-| 64 | E | POST | `/v1/invitations` | [관리자 키 초대](endpoints/64-create-admin-invitation.md) |
-| 65 | E | POST | `/v1/invitations/{id}/revoke` | [관리자 키 초대 취소](endpoints/65-revoke-admin-invitation.md) |
-| 66 | E | POST | `/v1/inquiries` | [도입 문의 접수](endpoints/66-create-inquiry.md) |
-| 67 | E | POST | `/v1/enroll` | [설치 등록](endpoints/67-enroll-installation.md) |
-| 68 | E | POST | `/v1/installations/telemetry-token` | [수집 토큰 재발급](endpoints/68-refresh-telemetry-token.md) |
-| 69 | E | GET | `/v1/manifest` | [manifest 재조회](endpoints/69-get-manifest.md) |
-| 70 | E | POST | `/v1/installations/{installationId}/heartbeat` | [설치 보고](endpoints/70-send-heartbeat.md) |
+| 56 | E | POST | `/api/v1/auth/organizations` | [이메일로 회사 탐색](endpoints/56-discover-organizations.md) |
+| 57 | E | GET | `/api/v1/auth/oidc/authorize` | [SSO 시작](endpoints/57-authorize-oidc.md) |
+| 58 | E | GET | `/api/v1/auth/oidc/callback/{registrationId}` | [IdP 콜백](endpoints/58-callback-oidc.md) |
+| 59 | E | POST | `/api/v1/auth/token` | [서비스 토큰 교환](endpoints/59-exchange-token.md) |
+| 60 | E | POST | `/api/v1/auth/cli/token` | [서비스 토큰 교환](endpoints/60-exchange-cli-token.md) |
+| 61 | E | POST | `/api/v1/auth/refresh` | [토큰 갱신](endpoints/61-refresh-token.md) |
+| 62 | E | POST | `/api/v1/auth/logout` | [서비스 로그아웃](endpoints/62-logout.md) |
+| 63 | E | GET | `/api/v1/auth/me` | [현재 사용자](endpoints/63-get-current-user.md) |
+| 64 | E | POST | `/api/v1/invitations` | [관리자 키 초대](endpoints/64-create-admin-invitation.md) |
+| 65 | E | POST | `/api/v1/invitations/{id}/revoke` | [관리자 키 초대 취소](endpoints/65-revoke-admin-invitation.md) |
+| 66 | E | POST | `/api/v1/inquiries` | [도입 문의 접수](endpoints/66-create-inquiry.md) |
+| 67 | E | POST | `/api/v1/enroll` | [설치 등록](endpoints/67-enroll-installation.md) |
+| 68 | E | POST | `/api/v1/installations/telemetry-token` | [수집 토큰 재발급](endpoints/68-refresh-telemetry-token.md) |
+| 69 | E | GET | `/api/v1/manifest` | [manifest 재조회](endpoints/69-get-manifest.md) |
+| 70 | E | POST | `/api/v1/installations/{installationId}/heartbeat` | [설치 보고](endpoints/70-send-heartbeat.md) |
 | 71 | E | GET | `/windows` | [설치 스크립트](endpoints/71-get-windows-installer.md) |
 | 72 | E | GET | `/unix` | [설치 스크립트](endpoints/72-get-unix-installer.md) |
 | 73 | E | GET | `/bin/{filename}` | [바이너리 다운로드](endpoints/73-download-binary.md) |
 | 74 | E | GET | `/api/v1/check-updates` | [데몬 업데이트 확인](endpoints/74-check-updates.md) |
-| 75 | E | GET | `/v1/healthz` | [생존 확인](endpoints/75-get-enrollment-health.md) |
-| 76 | D | GET | `/v1/healthz` | [생존 확인](endpoints/76-get-dashboard-health.md) |
+| 75 | E | GET | `/api/v1/healthz` | [생존 확인](endpoints/75-get-enrollment-health.md) |
+| 76 | D | GET | `/api/v1/healthz` | [생존 확인](endpoints/76-get-dashboard-health.md) |
 
 ## 문서 유지·검증
 

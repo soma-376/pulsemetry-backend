@@ -25,10 +25,10 @@ class AuthFilterErrorResponseTest : AbstractUserAuthApiTest() {
     /** 명세 §11: 모든 인증 오류의 `message`. */
     private val specMessage = "사용자 인증 요청을 처리할 수 없습니다."
 
-    private fun manifest(rt: String): HttpResponse<ByteArray> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/manifest"))
+    private fun manifest(rt: String): HttpResponse<ByteArray> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/manifest"))
         .header("Authorization", "Bearer $rt").GET().build(), HttpResponse.BodyHandlers.ofByteArray())
 
-    private fun exchangeBytes(): HttpResponse<ByteArray> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/token"))
+    private fun exchangeBytes(): HttpResponse<ByteArray> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/auth/token"))
         .header("Content-Type", "application/json")
         .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(mapOf("code" to "invalid-code", "redirect_uri" to redirect, "code_verifier" to "x".repeat(43)))))
         .build(), HttpResponse.BodyHandlers.ofByteArray())
