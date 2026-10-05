@@ -4,7 +4,7 @@
 `settings.gradle.kts`에 모듈을 추가하거나 패키지를 새로 만들기 전에 이 문서를 본다.
 
 결정의 **배경과 대안**은 ADR에 있다. 이 문서는 "무엇이 어떻게 나뉘어 있는가"만 다룬다.
-HTTP 계약은 [Enrollment 서버 명세](enrollment-server-spec.md)와 [Dashboard 서버 명세](dashboard-server-spec.md)에 나눈다.
+HTTP 계약은 [페이지·기능별 API 문서](api/README.md)에 모으고 각 엔드포인트의 담당 서버를 표시한다.
 온보딩·정책·초대 명령은 enrollment-api/management, 카탈로그 조회는 dashboard-api/api,
 공통 카탈로그와 온보딩 영속성은 enrollment-persistence/management가 소유한다(ADR 0029).
 카탈로그 기준 데이터는 `enrollment.vendor_catalog_vendors`·`vendor_catalog_products`·`vendor_catalog_plans`에 있다(ADR 0035).

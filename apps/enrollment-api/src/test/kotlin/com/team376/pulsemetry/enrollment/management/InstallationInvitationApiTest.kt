@@ -69,7 +69,6 @@ class InstallationInvitationApiTest : AbstractUserAuthApiTest() {
     private fun enrollWith(code: String): HttpResponse<String> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/enroll"))
         .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(mapOf("code" to code, "platform" to "macos")))).build(),
         HttpResponse.BodyHandlers.ofString())
-    private fun signupWith(email: String, code: String) = post("signup", mapOf("code" to code, "email" to email, "password" to "removed-password-auth"))
     private fun listed(token: String, invitation: String): JsonNode = json(manage("GET", "/invitations?limit=100", null, token)).path("items").toList()
         .single { it.path("invitationId").asString() == invitation }
     private fun invitationCount() = jdbc.sql("SELECT count(*) FROM enrollment.invitations").query(Int::class.java).single()
@@ -106,7 +105,6 @@ class InstallationInvitationApiTest : AbstractUserAuthApiTest() {
             "로그인에는 쓸 수 없습니다")
         assertThat(text).doesNotContain(ACCEPT_URL, "#code=", "계정 만들기\n")
 
-        assertThat(signupWith("laptop@example.test", code).statusCode()).isEqualTo(410)
         val enrolled = enrollWith(code)
         assertThat(enrolled.statusCode()).withFailMessage(enrolled.body()).isEqualTo(201)
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.installations WHERE member_id=:id").param("id", target).query(Int::class.java).single()).isEqualTo(1)

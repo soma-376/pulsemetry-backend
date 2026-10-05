@@ -9,7 +9,7 @@ Playwright 테스트 코드는 프론트 레포에 작성하고 실제 Spring AP
 
 ## 기준과 범위
 
-- API 필드·상태 코드: [Enrollment 서버 명세](enrollment-server-spec.md), [Dashboard 서버 명세](dashboard-server-spec.md).
+- API 필드·상태 코드: [페이지·기능별 API 문서](api/README.md).
 - 시드와 실행 절차: [개발용 시드](../tools/dev-seed/README.md).
 - 레포 간 기준: [대시보드 계약](../../docs/contracts/dashboard-api.md).
   허브 계약을 기준으로 실제 화면 배선과 검증 결과를 대조한다. 이 문서는 새 계약을 확정하지 않는다.
@@ -90,7 +90,7 @@ C의 분석 데이터 시나리오는 유지하지만, 실제 브라우저 로�
 | ID | 화면·준비 | 사용자 행동 | 기대 결과 |
 | --- | --- | --- | --- |
 | AUTH-01 | 로그인, A owner | 회사 계정으로 계속 → IdP 로그인 | OIDC callback·state·PKCE·token 교환 후 me/개요 200. 토큰 URL 노출 없음. 실제 서버·DB 조회까지 확인 |
-| AUTH-02 | IdP 로그인 페이지 | 잘못된 비밀번호 입력 | IdP가 로그인 거부, Pulsemetry 토큰 미발급. 구 backend login은 항상 410 |
+| AUTH-02 | IdP 로그인 페이지 | 잘못된 비밀번호 입력 | IdP가 로그인 거부, Pulsemetry 토큰 미발급 |
 | AUTH-03 | 비로그인 새 컨텍스트 | `/overview`, `/teams`, `/members`, `/settings` 직접 접근 | 로그인 유도, 보호 데이터 미노출. 토큰 없는 API 요청은 401 |
 | AUTH-04 | 로그인 완료 | 로그아웃 후 뒤로 가기·보호 URL 재접근 | 로그인 요구, 캐시의 조직 데이터가 다시 나타나지 않음. 로그아웃 세션의 기존 AT로 조회해도 401 |
 | AUTH-05 | 사전 등록된 member 역할의 OIDC 시험 회원 | 로그인 후 대시보드 진입·관리 요청 | 접근 불가 안내, 해당 API 403, 데이터·관리 버튼 이용 불가 |
