@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.enrollment.mail
 
+import com.sun.net.httpserver.HttpServer
 import com.team376.pulsemetry.connector.vendor.MockVendorServer
 import com.team376.pulsemetry.connector.vendor.reply
 import com.team376.pulsemetry.enrollment.auth.AuthTestClock
@@ -28,15 +29,24 @@ import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.PlatformTransactionManager
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider
+import software.amazon.awssdk.auth.credentials.ContainerCredentialsProvider
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+import software.amazon.awssdk.core.exception.SdkClientException
 import software.amazon.awssdk.regions.Region
+import software.amazon.awssdk.services.sesv2.model.SendEmailRequest
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.json.JsonMapper
+import java.io.IOException
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.URI
 import java.time.Duration
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 private const val PATH = "/v2/email/outbound-emails"
 private const val FROM = "no-reply@example.test"
@@ -77,10 +87,17 @@ class SesMailTransportTest {
         server.close()
     }
 
-    private fun transport(configurationSet: String? = null, timeout: Duration = this.timeout, endpoint: URI = server.base) =
-        SesMailTransport(SesMailTransport.client(Region.US_EAST_1, timeout) {
-            it.endpointOverride(endpoint).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("AKIDPULSEMETRYTEST", "test-secret-not-real")))
-        }, FROM, configurationSet).also(transports::add)
+    private val fakeCredentials = StaticCredentialsProvider.create(AwsBasicCredentials.create("AKIDPULSEMETRYTEST", "test-secret-not-real"))
+
+    private fun transport(configurationSet: String? = null, timeout: Duration = this.timeout, endpoint: URI = server.base,
+        credentials: AwsCredentialsProvider = fakeCredentials) =
+        SesMailTransport.create(Region.US_EAST_1, timeout, FROM, configurationSet, credentials) { it.endpointOverride(endpoint) }.also(transports::add)
+
+    private fun <T> timed(block: () -> T): Pair<T, Duration> {
+        val began = System.nanoTime()
+        val result = block()
+        return result to Duration.ofNanos(System.nanoTime() - began)
+    }
 
     private fun mail(recipient: String = RECIPIENT, attempt: Int = 1) =
         ClaimedMail(UUID.randomUUID(), "invitation", recipient, SUBJECT, "초대 코드: $SECRET\n코드는 72시간 동안 유효합니다.", attempt)
@@ -196,7 +213,83 @@ class SesMailTransportTest {
         assertThat(server.requests(PATH)).isEmpty()
     }
 
-    @Test fun `닫으면 SDK 클라이언트도 닫혀 더 보내지 않는다`() {
+    @Test fun `재현 조건 — SDK 의 호출 제한 시간은 자격 증명 조회를 기다리는 시간을 포함하지 않는다`() {
+        // 발송 구현의 기한 없이 SDK 에만 맡기면 선점 임대를 넘긴다. 아래 회귀 테스트가 같은 조건으로 막는지 본다.
+        server.on("POST", PATH, accepted())
+        SlowCredentialsEndpoint(hangs = 2).use { ecs ->
+            withContainerCredentials(ecs) {
+                val timeout = Duration.ofMillis(400)
+                val credentials = ContainerCredentialsProvider.builder().build()
+                SesMailTransport.client(Region.US_EAST_1, timeout, credentials) { it.endpointOverride(server.base) }.use { client ->
+                    val request = SendEmailRequest.builder().fromEmailAddress(FROM).destination { it.toAddresses(RECIPIENT) }
+                        .content { content -> content.simple { it.subject { s -> s.data(SUBJECT) }.body { b -> b.text { t -> t.data("본문") } } } }.build()
+                    val (_, elapsed) = timed { client.sendEmail(request) }
+                    // ECS 엔드포인트가 두 번 응답하지 않아(읽기 1초씩) 세 번째에 받는다 — 호출 제한(0.4초)과 임대(1.6초)를 모두 넘긴다.
+                    assertThat(elapsed).isGreaterThan(timeout.multipliedBy(4))
+                    assertThat(ecs.requests.get()).isEqualTo(3)
+                }
+                credentials.close()
+            }
+        }
+        assertThat(server.requests(PATH)).hasSize(1)
+    }
+
+    @Test fun `자격 증명 조회가 늦으면 기한 안에 SES 에 묻지 않고 실패하고 늦은 조회는 하나만 돌아 다음 발송이 그 결과를 쓴다`(output: CapturedOutput) {
+        server.on("POST", PATH, accepted("0100019a-after-credentials"))
+        SlowCredentialsEndpoint(hangs = 2).use { ecs ->
+            withContainerCredentials(ecs) {
+                val timeout = Duration.ofMillis(300)
+                val lease = timeout.multipliedBy(4)
+                val ses = transport(timeout = timeout, credentials = ContainerCredentialsProvider.builder().build())
+
+                val (first, firstElapsed) = timed { failureOf { ses.send(mail()) } }
+                assertThat(Triple(first.permanent, first.code, first.detail)).isEqualTo(Triple(false, "send_error", "ses_credentials_unavailable"))
+                // 발송 한 번은 제한 시간 안에 끝난다 — 임대보다 훨씬 짧다.
+                assertThat(firstElapsed).isGreaterThanOrEqualTo(timeout.minusMillis(20)).isLessThan(lease.dividedBy(2))
+                // 조회가 끝나지 않은 동안의 다음 발송은 같은 조회를 기다린다. 새 조회를 띄우지 않는다.
+                val (second, secondElapsed) = timed { failureOf { ses.send(mail()) } }
+                assertThat(second.detail).isEqualTo("ses_credentials_unavailable")
+                assertThat(secondElapsed).isLessThan(lease.dividedBy(2))
+                assertThat(ecs.requests.get()).isEqualTo(1)
+                // 자격 증명이 없으면 SES 에 묻지 않는다 — 늦게 끝난 조회가 메일을 보내는 일도 없다.
+                assertThat(server.requests(PATH)).isEmpty()
+
+                // 뒤에서 이어진 조회가 세 번째 요청에 받는다. 그 결과(공급자의 캐시)로 다음 발송이 기한 안에 나간다.
+                val deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos()
+                while (ecs.requests.get() < 3 && System.nanoTime() < deadline) Thread.sleep(20)
+                val (_, thirdElapsed) = timed { ses.send(mail()) }
+                assertThat(thirdElapsed).isLessThan(timeout)
+                assertThat(ecs.requests.get()).isEqualTo(3)
+                val request = server.requests(PATH).single()
+                assertThat(request.header("Authorization")).contains("Credential=AKIDECSMOCK/")
+                assertThat(request.header("X-Amz-Security-Token")).isEqualTo("ecs-session-token")
+            }
+        }
+        assertThat(output.all).contains("detail=ses_credentials_unavailable status=null request_id=null error=TimeoutException")
+            .doesNotContain("ecs-secret-not-real", "ecs-session-token")
+    }
+
+    @Test fun `자격 증명 조회에 쓴 시간만큼 SES 호출의 제한이 줄어 발송 한 번이 제한 시간을 넘지 않는다`() {
+        server.on("POST", PATH, { Thread.sleep(1_500); MockVendorServer.Reply(200, """{"MessageId":"late"}""") })
+        val timeout = Duration.ofMillis(600)
+        // 조회에 0.4초가 걸린다. SES 호출에 남는 시간은 0.2초다 — 호출마다 0.6초를 주면 발송 한 번이 1초가 된다.
+        // 같은 공급자가 클라이언트에도 걸려 있다. SDK 가 요청에 실은 자격 증명 대신 그것을 다시 조회해도 1초를 넘는다.
+        val slow = AwsCredentialsProvider { Thread.sleep(400); AwsBasicCredentials.create("AKIDSLOWLOOKUP", "test-secret-not-real") }
+        val (failure, elapsed) = timed { failureOf { transport(timeout = timeout, credentials = slow).send(mail()) } }
+        assertThat(Triple(failure.permanent, failure.code, failure.detail)).isEqualTo(Triple(false, "send_error", "ses_timeout"))
+        assertThat(elapsed).isLessThan(Duration.ofMillis(850))
+        assertThat(server.requests(PATH)).hasSize(1)
+    }
+
+    @Test fun `자격 증명을 찾지 못하면 SES 에 묻지 않고 일시 실패다`() {
+        server.on("POST", PATH, accepted())
+        val missing = AwsCredentialsProvider { throw SdkClientException.create("Unable to load credentials (test)") }
+        val failure = failureOf { transport(credentials = missing).send(mail()) }
+        assertThat(Triple(failure.permanent, failure.code, failure.detail)).isEqualTo(Triple(false, "send_error", "ses_credentials_unavailable"))
+        assertThat(server.requests(PATH)).isEmpty()
+    }
+
+    @Test fun `닫으면 더 보내지 않는다`() {
         server.on("POST", PATH, accepted())
         val ses = transport()
         ses.close()
@@ -301,6 +394,51 @@ class SesMailTransportTest {
         assertThat(output.all).contains("mail_id=${queued.id} kind=invitation attempt=2 provider_message_id=0100019a-second")
     }
 }
+
+/**
+ * ECS 태스크 역할의 자격 증명 엔드포인트 대역. 처음 [hangs] 번은 SDK 의 읽기 제한(1초)보다 오래 응답하지 않고 그다음에 가짜 임시 자격 증명을 준다.
+ * 응답하지 않는 요청이 뒤 요청을 막지 않게 요청마다 스레드를 쓴다.
+ */
+private class SlowCredentialsEndpoint(private val hangs: Int) : AutoCloseable {
+    private val pool = Executors.newCachedThreadPool()
+    private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+    val requests = AtomicInteger()
+
+    init {
+        server.executor = pool
+        server.createContext("/credentials") { exchange ->
+            try {
+                if (requests.incrementAndGet() <= hangs) Thread.sleep(1_500)
+                val expiration = Instant.now().plus(Duration.ofHours(1)).truncatedTo(ChronoUnit.SECONDS)
+                val body = """{"AccessKeyId":"AKIDECSMOCK","SecretAccessKey":"ecs-secret-not-real","Token":"ecs-session-token","Expiration":"$expiration"}""".toByteArray()
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            } catch (_: IOException) {
+                // SDK 가 읽기 제한으로 끊은 요청이다.
+            } finally { exchange.close() }
+        }
+        server.start()
+    }
+
+    val uri: String get() = "http://127.0.0.1:${server.address.port}/credentials"
+
+    override fun close() {
+        server.stop(0)
+        pool.shutdownNow()
+    }
+}
+
+/** SDK 의 컨테이너 자격 증명 공급자가 [endpoint] 를 보게 한다(시스템 속성은 환경 변수보다 먼저 읽힌다). 끝나면 되돌린다. */
+private fun withContainerCredentials(endpoint: SlowCredentialsEndpoint, block: () -> Unit) {
+    val previous = System.getProperty(CONTAINER_CREDENTIALS_URI)
+    System.setProperty(CONTAINER_CREDENTIALS_URI, endpoint.uri)
+    try { block() } finally {
+        if (previous == null) System.clearProperty(CONTAINER_CREDENTIALS_URI) else System.setProperty(CONTAINER_CREDENTIALS_URI, previous)
+    }
+}
+
+private const val CONTAINER_CREDENTIALS_URI = "aws.containerCredentialsFullUri"
 
 /** 배포와 같은 조립 — SES 설정만으로 뜬다. SMTP 계정은 없다. 발송 작업은 하루 주기라 이 테스트에서 AWS 를 부르지 않는다. */
 @SpringBootTest(properties = ["pulsemetry.mail.enabled=true", "pulsemetry.mail.provider=ses", "pulsemetry.mail.from=$FROM", "pulsemetry.mail.encryption-key=$KEY",

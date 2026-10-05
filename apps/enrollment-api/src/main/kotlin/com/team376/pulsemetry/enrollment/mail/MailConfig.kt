@@ -125,14 +125,17 @@ class MailConfig {
         return SmtpMailTransport(sender, properties.from)
     }
 
-    /** 자격 증명은 기본 공급자 체인(배포에서는 task role)이다. 정적 키 설정을 두지 않는다. */
+    /**
+     * 자격 증명은 기본 공급자 체인(배포에서는 task role)이다. 정적 키 설정을 두지 않는다.
+     * 발송 한 번(자격 증명 조회 포함)은 send-timeout 안에 끝난다 — 선점 임대(네 배)는 그 위의 여유다(`SesMailTransport`).
+     */
     private fun sesTransport(properties: MailProperties, timeout: Duration): MailTransport {
         val ses = properties.ses
         require(ses.region.isNotBlank()) { missing("ses.region") }
         require(REGION.matches(ses.region)) { "pulsemetry.mail.ses.region 이 리전 이름이 아니다" }
         val configurationSet = ses.configurationSet.takeIf { it.isNotBlank() }
         require(configurationSet == null || CONFIGURATION_SET.matches(configurationSet)) { "pulsemetry.mail.ses.configuration-set 이 configuration set 이름이 아니다" }
-        return SesMailTransport(SesMailTransport.client(Region.of(ses.region), timeout), properties.from, configurationSet)
+        return SesMailTransport.create(Region.of(ses.region), timeout, properties.from, configurationSet)
     }
 
     @Bean
