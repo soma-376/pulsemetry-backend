@@ -105,7 +105,11 @@ class BootstrapApiTest {
 		assertThat(body).contains("enroll --invite")
 		// 자동 실행 등록은 telemetryctl 몫이다 — 스크립트가 따로 심으면 등록이 두 벌 생긴다.
 		assertThat(body).doesNotContain("schtasks /Create /SC ONLOGON /TN Pulsemetry")
-		assertThat(body).doesNotContain("Start-Process")
+		assertThat(body).contains("/bin/pulsemetry_gui_windows_")
+		assertThat(body).contains("& \$exe register-product")
+		assertThat(body).contains("& \$exe enroll --invite")
+		assertThat(body).contains("Start-Process -FilePath \$gui")
+		assertThat(body).doesNotContain("Start-Process -FilePath \$exe")
 	}
 
 	@Test

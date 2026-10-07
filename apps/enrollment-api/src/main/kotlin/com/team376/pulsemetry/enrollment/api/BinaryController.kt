@@ -15,9 +15,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * CLI 바이너리 서빙 (PLAN.md §6.6).
+ * CLI·GUI 배포 파일 서빙 (허브 ADR 0017, 로컬 ADR 0053).
  *
- * 방어는 **화이트리스트 하나뿐**이다. 요청한 이름이 [ALLOWED_FILENAMES] 의 6개 중 하나와
+ * 방어는 **화이트리스트 하나뿐**이다. 요청한 이름이 CLI [ALLOWED_FILENAMES] 또는 GUI [GUI_FILENAMES] 중 하나와
  * 정확히 같지 않으면 그 자리에서 404 다.
  *
  * `..` 를 문자열 치환으로 지우거나 경로를 정규화해서 막으려 하지 마라 (A9).
@@ -36,11 +36,12 @@ class BinaryController(
 
 	@GetMapping("/bin/{filename}")
 	fun download(@PathVariable filename: String): ResponseEntity<Resource> {
-		if (filename !in ALLOWED_FILENAMES) return ResponseEntity.notFound().build()
+		if (filename !in ALLOWED_FILENAMES && filename !in GUI_FILENAMES) return ResponseEntity.notFound().build()
 
 		val file: Path = if (release.present()) {
 			release.asset(filename)?.file ?: return ResponseEntity.notFound().build()
 		} else {
+			if (filename in GUI_FILENAMES) return ResponseEntity.notFound().build()
 			Path.of(properties.binaries.dir).resolve(filename)
 		}
 		if (!Files.isRegularFile(file)) return ResponseEntity.notFound().build()
@@ -70,5 +71,12 @@ class BinaryController(
 			"pulsemetry_linux_amd64",
 			"pulsemetry_linux_arm64",
 		)
+        /** 제거 도구를 포함한 GUI 패키지. CLI 업데이트 대상 목록과 구분한다. */
+        val GUI_FILENAMES: Set<String> = setOf(
+            "pulsemetry_gui_windows_amd64.exe", "pulsemetry_gui_windows_arm64.exe",
+            "pulsemetry_gui_darwin_amd64.dmg", "pulsemetry_gui_darwin_arm64.dmg",
+            "pulsemetry_gui_linux_amd64.AppImage", "pulsemetry_gui_linux_arm64.AppImage",
+        )
+
 	}
 }

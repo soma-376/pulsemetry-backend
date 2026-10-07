@@ -23,15 +23,47 @@ case "$(uname -m)" in
 	*) echo "지원하지 않는 아키텍처입니다: $(uname -m)" >&2; exit 1 ;;
 esac
 
+# 양쪽 파일을 먼저 내려받아 GUI가 없는 릴리스에서는 설치 상태를 바꾸지 않는다.
+work_dir=$(mktemp -d)
+mount_dir=""
+cleanup() {
+    if [ -n "$mount_dir" ]; then hdiutil detach "$mount_dir" >/dev/null 2>&1 || true; fi
+    rm -rf "$work_dir"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+case "$os" in darwin) gui_ext=dmg ;; linux) gui_ext=AppImage ;; esac
+curl -fsSL "$PULSEMETRY_SERVER/bin/pulsemetry_${os}_${arch}" -o "$work_dir/pulsemetry"
+curl -fsSL "$PULSEMETRY_SERVER/bin/pulsemetry_gui_${os}_${arch}.$gui_ext" -o "$work_dir/gui.$gui_ext"
+
 install_dir="$HOME/.pulsemetry/bin"
 mkdir -p "$install_dir"
 exe="$install_dir/pulsemetry"
+chmod +x "$work_dir/pulsemetry"
+# 같은 파일 시스템 안에서 rename해 실행 중인 바이너리를 덮어쓰지 않는다.
+cp "$work_dir/pulsemetry" "$install_dir/.pulsemetry-install"
+chmod 700 "$install_dir/.pulsemetry-install"
+mv -f "$install_dir/.pulsemetry-install" "$exe"
 
-echo "Pulsemetry 를 내려받는 중입니다... (${os}_${arch})"
-curl -fsSL "$PULSEMETRY_SERVER/bin/pulsemetry_${os}_${arch}" -o "$exe"
-chmod +x "$exe"
+if [ "$os" = darwin ]; then
+    mount_dir="$work_dir/mount"
+    mkdir -p "$mount_dir" "$HOME/Applications"
+    hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$work_dir/gui.dmg" >/dev/null
+    test ! -L "$HOME/Applications/Pulsemetry.app"
+    ditto "$mount_dir/Pulsemetry.app" "$HOME/Applications/Pulsemetry.app"
+    gui="$HOME/Applications/Pulsemetry.app/Contents/MacOS/Pulsemetry"
+else
+    gui_dir="$HOME/.local/share/pulsemetry"
+    mkdir -p "$gui_dir"
+    gui="$gui_dir/Pulsemetry.AppImage"
+    cp "$work_dir/gui.AppImage" "$gui_dir/.Pulsemetry-install.AppImage"
+    chmod 700 "$gui_dir/.Pulsemetry-install.AppImage"
+    mv -f "$gui_dir/.Pulsemetry-install.AppImage" "$gui"
+fi
 
+# 등록에 실패하면 연결 설정을 만들기 전에 중단한다.
+"$exe" register-product
+"$gui" --register-product
 "$exe" enroll --invite "$PULSEMETRY_INVITE_CODE" --server "$PULSEMETRY_SERVER"
-
-echo 'Pulsemetry 설치가 끝났습니다.'
-echo 'daemon 자동 실행 등록은 enroll 이 처리했습니다 — 해제하려면 pulsemetry autostart disable 을 쓰세요.'
+nohup "$gui" >/dev/null 2>&1 </dev/null &
+echo 'Pulsemetry 설치가 끝났습니다. 앱 설정 또는 Uninstall Pulsemetry에서 제거할 수 있습니다.'

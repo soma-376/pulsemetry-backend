@@ -12,15 +12,26 @@ $env:PULSEMETRY_SERVER = '__PULSEMETRY_SERVER__'
 
 if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $arch = 'arm64' } else { $arch = 'amd64' }
 
-$installDir = Join-Path $env:LOCALAPPDATA 'Pulsemetry\bin'
-New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-$exe = Join-Path $installDir 'pulsemetry.exe'
-
-Write-Host "Pulsemetry 를 내려받는 중입니다... ($arch)"
-Invoke-WebRequest -Uri "$env:PULSEMETRY_SERVER/bin/pulsemetry_windows_$arch.exe" -OutFile $exe
-
-& $exe enroll --invite $env:PULSEMETRY_INVITE_CODE --server $env:PULSEMETRY_SERVER
-
-Write-Host 'Pulsemetry 설치가 끝났습니다.'
-Write-Host 'Windows 는 daemon 자동 실행 등록이 아직 지원되지 않습니다.'
-Write-Host "필요할 때마다 `"$exe`" daemon 을 직접 실행하세요."
+$workDir = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
+New-Item -ItemType Directory -Path $workDir | Out-Null
+try {
+    $cliDownload = Join-Path $workDir 'pulsemetry.exe'
+    $installer = Join-Path $workDir 'Pulsemetry-setup.exe'
+    Invoke-WebRequest -Uri "$env:PULSEMETRY_SERVER/bin/pulsemetry_windows_$arch.exe" -OutFile $cliDownload
+    Invoke-WebRequest -Uri "$env:PULSEMETRY_SERVER/bin/pulsemetry_gui_windows_$arch.exe" -OutFile $installer
+    $setup = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+    if ($setup.ExitCode -ne 0) { throw "Pulsemetry 설치 실패: $($setup.ExitCode)" }
+    $installDir = Join-Path $env:LOCALAPPDATA 'Pulsemetry\bin'
+    New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+    $exe = Join-Path $installDir 'pulsemetry.exe'
+    Copy-Item -LiteralPath $cliDownload -Destination $exe -Force
+    & $exe register-product
+    if ($LASTEXITCODE -ne 0) { throw '제거용 설치 기록 저장에 실패했습니다.' }
+    & $exe enroll --invite $env:PULSEMETRY_INVITE_CODE --server $env:PULSEMETRY_SERVER
+    if ($LASTEXITCODE -ne 0) { throw 'Pulsemetry 연결에 실패했습니다. 앱 제거 메뉴에서 설치를 해제할 수 있습니다.' }
+    $gui = Join-Path $env:LOCALAPPDATA 'Programs\Pulsemetry\Pulsemetry.exe'
+    Start-Process -FilePath $gui
+    Write-Host 'Pulsemetry 설치가 끝났습니다. 설정 > 앱 > Pulsemetry > 제거에서 제거할 수 있습니다.'
+} finally {
+    Remove-Item -LiteralPath $workDir -Recurse -Force
+}

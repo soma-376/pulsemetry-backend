@@ -538,21 +538,33 @@ ADR 0004 가 요구한 기록처다 — 스키마가 설계도(`rdb-schema/dbdia
 스크립트 본문은 `apps/enrollment-api/src/main/resources/bootstrap/` 의 리소스 파일이며
 `__PULSEMETRY_INVITE_CODE__` · `__PULSEMETRY_SERVER__` 두 자리만 치환된다.
 
+부트스트랩은 CLI와 GUI 패키지를 먼저 다운로드한다. 사용자 범위에 설치하고 독립 제거 도구를
+등록한 뒤 enroll을 실행한다. 성공하면 GUI를 시작한다. Windows NSIS는 사용자별 고정 경로를
+사용하고, macOS는 `~/Applications`, Linux는 `~/.local/share/pulsemetry`에 GUI를 설치한다.
+제거 도구 등록 실패 시 초대 코드를 소비하지 않는다. 데몬 자동 시작은 enroll이 소유한다.
+스크립트의 순서·실패 중단은 `python3 tools/test-bootstrap.py`로 임시 HOME에서 검증한다.
+
 ### 6.2 `GET /bin/{filename}`
 
-아래 여섯 개와의 **문자열 동등 비교만** 한다.
+아래 CLI 공개 이름 6개와 GUI 패키지 이름 6개의 **문자열 동등 비교만** 한다.
 
 ```text
 pulsemetry_windows_amd64.exe   pulsemetry_windows_arm64.exe
 pulsemetry_darwin_amd64        pulsemetry_darwin_arm64
 pulsemetry_linux_amd64         pulsemetry_linux_arm64
+pulsemetry_gui_windows_amd64.exe    pulsemetry_gui_windows_arm64.exe
+pulsemetry_gui_darwin_amd64.dmg     pulsemetry_gui_darwin_arm64.dmg
+pulsemetry_gui_linux_amd64.AppImage pulsemetry_gui_linux_arm64.AppImage
 ```
 
 목록에 없으면 404.
 
 파일의 출처는 ADR 0053이다. `pulsemetry.binaries.dir`에 telemetryctl 릴리스 디렉터리(`v<SemVer>`, §6.3)가 있으면 공개 이름을 그 릴리스의
 데몬 자산 `pulsemetry_cli_{os}_{arch}`(Windows만 `.exe`)로 대응하고, `SHA256SUMS`와 해시가 같은 파일만 내려준다. 그 릴리스에 없는 대상은 404다.
-릴리스 디렉터리가 하나도 없으면 공개 이름 그대로의 파일을 내려주고, 파일이 없으면 404다.
+GUI는 같은 릴리스에서 패키지 이름 그대로 찾고 동일하게 체크섬을 검증한다. GUI는 데몬 업데이트
+대상에 포함하지 않는다. 새 부트스트랩 배포 전 CLI·GUI 12개 파일과 `SHA256SUMS`를 함께 배치해야 한다.
+릴리스 디렉터리가 하나도 없으면 CLI만 공개 이름 그대로의 파일을 내려주고, 파일이 없으면 404다.
+체크섬 없는 평면 GUI 파일은 서빙하지 않는다. 설치·제거 계약은 허브 ADR 0017을 따른다.
 `..` 를 문자열 치환으로 지우거나 경로를 정규화해 방어하지 않는다 — 인코딩 변형에 언젠가 뚫린다.
 
 응답 헤더는 `Content-Type: application/octet-stream` 과 함께

@@ -92,7 +92,7 @@ class DaemonRelease(properties: PulsemetryProperties) {
     /** [filename] 은 호출자가 허용 목록으로 걸러 준 공개 이름이다. 이 서버의 릴리스에서 확인한 그 대상의 자산을 돌려준다. */
     fun asset(filename: String): Asset? = try {
         val release = latest()
-        val assetName = filename.replaceFirst(PUBLIC_PREFIX, ASSET_PREFIX)
+        val assetName = if (filename in BinaryController.GUI_FILENAMES) filename else filename.replaceFirst(PUBLIC_PREFIX, ASSET_PREFIX)
         val expected = release?.let { sums(it.second)?.get(assetName) }
         val file = release?.second?.resolve(assetName)
         if (release == null || expected == null || file == null || sha256(file) != expected) null else Asset(release.first, file)

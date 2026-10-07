@@ -116,8 +116,9 @@ class BinaryApiTest {
 		assertThat(darwin.body()).isEqualTo("darwin-0.2.0")
 		assertThat(darwin.headers().firstValue("Content-Disposition")).hasValue("attachment; filename=\"pulsemetry_darwin_arm64\"")
 		assertThat(get("/bin/pulsemetry_windows_amd64.exe").body()).isEqualTo("windows-0.2.0")
-		// 릴리스에 없는 대상, 릴리스 자산 이름, SHA256SUMS·GUI 패키지는 내려주지 않는다.
-		for (path in listOf("/bin/pulsemetry_linux_amd64", "/bin/pulsemetry_cli_darwin_arm64", "/bin/SHA256SUMS", "/bin/pulsemetry_gui_darwin_arm64.dmg")) {
+		assertThat(get("/bin/pulsemetry_gui_darwin_arm64.dmg").body()).isEqualTo("gui")
+		// 릴리스에 없는 대상, CLI 내부 자산 이름과 SHA256SUMS는 내려주지 않는다.
+		for (path in listOf("/bin/pulsemetry_linux_amd64", "/bin/pulsemetry_cli_darwin_arm64", "/bin/SHA256SUMS")) {
 			assertThat(get(path).statusCode()).describedAs(path).isEqualTo(404)
 		}
 	}
@@ -135,6 +136,27 @@ class BinaryApiTest {
 		// 판이 가장 높은 릴리스가 이 서버의 릴리스다.
 		release("0.10.0", mapOf("pulsemetry_cli_darwin_arm64" to "darwin-0.10.0"))
 		assertThat(get("/bin/pulsemetry_darwin_arm64").body()).isEqualTo("darwin-0.10.0")
+	}
+
+    @Test
+    @DisplayName("GUI 패키지도 동일 릴리스의 체크섬을 확인해 서빙한다")
+    fun servesVerifiedGuiPackages() {
+        val assets = BinaryController.GUI_FILENAMES.associateWith { "GUI for $it" }
+        release("0.2.0", assets)
+        assets.forEach { (name, content) ->
+            val response = get("/bin/$name")
+            assertThat(response.statusCode()).describedAs(name).isEqualTo(200)
+            assertThat(response.body()).isEqualTo(content)
+        }
+        Files.writeString(binariesDir.resolve("v0.2.0/pulsemetry_gui_darwin_arm64.dmg"), "tampered")
+        assertThat(get("/bin/pulsemetry_gui_darwin_arm64.dmg").statusCode()).isEqualTo(404)
+    }
+
+	@Test
+	@DisplayName("GUI는 체크섬 없는 구형 평면 파일을 내려주지 않는다")
+	fun rejectsUnverifiedFlatGui() {
+		place("pulsemetry_gui_darwin_arm64.dmg", "unverified")
+		assertThat(get("/bin/pulsemetry_gui_darwin_arm64.dmg").statusCode()).isEqualTo(404)
 	}
 
 	// ── 404 ──────────────────────────────────────────────────────────────────
