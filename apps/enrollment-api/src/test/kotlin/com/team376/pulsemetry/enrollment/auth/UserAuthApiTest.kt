@@ -167,11 +167,11 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
         assertThat(r.headers().firstValue("Cache-Control").orElse("")).contains("no-store")
     }
 
-    @Test fun `비밀번호 API는 410이고 컬럼이 존재하지 않는다`() {
+    @Test fun `제거한 인증 경로는 매핑되지 않고 비밀번호 컬럼이 존재하지 않는다`() {
         for (path in listOf("signup", "login", "cli/authorize")) {
             val response=post(path, mapOf("password" to "do-not-echo", "email" to email))
-            assertThat(response.statusCode()).isEqualTo(410)
-            assertThat(response.body()).contains("auth_method_removed").doesNotContain("do-not-echo", email)
+            assertThat(response.statusCode()).isEqualTo(404)
+            assertThat(response.body()).doesNotContain("do-not-echo", email)
         }
         assertThat(jdbc.sql("SELECT count(*) FROM information_schema.columns WHERE table_schema='enrollment' AND table_name='members' AND column_name='password_hash'").query(Int::class.java).single()).isZero()
     }

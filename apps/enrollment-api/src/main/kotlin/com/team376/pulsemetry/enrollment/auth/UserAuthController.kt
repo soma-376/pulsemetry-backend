@@ -2,7 +2,6 @@ package com.team376.pulsemetry.enrollment.auth
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.team376.pulsemetry.security.user.AuthRateLimiter
-import com.team376.pulsemetry.security.user.UserAuthException
 import com.team376.pulsemetry.security.user.UserAuthService
 import com.team376.pulsemetry.security.user.UserTokens
 import jakarta.servlet.http.HttpServletRequest
@@ -18,9 +17,6 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/v1/auth")
 @ConditionalOnProperty(prefix = "pulsemetry.user-auth", name = ["enabled"], havingValue = "true")
 class UserAuthController(private val auth: UserAuthService, private val limiter: AuthRateLimiter) {
-    // 폐기 경로는 본문을 파싱하지 않는다. 비밀번호 DTO/로그를 남기지 않는다.
-    @PostMapping("/signup", "/login", "/cli/authorize")
-    fun passwordAuthenticationRemoved(): Nothing = throw UserAuthException("auth_method_removed", 410)
     @PostMapping("/token", "/cli/token")
     fun exchange(@RequestBody r: CodeRequest) = TokenResponse.from(auth.exchange(r.code, r.redirectUri, r.codeVerifier))
     // RT 를 가진 요청은 RT 를 소비하기 전에 세션 단위로 센다(ADR 0052).

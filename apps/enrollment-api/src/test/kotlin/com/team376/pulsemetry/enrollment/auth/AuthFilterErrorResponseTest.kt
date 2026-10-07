@@ -28,9 +28,9 @@ class AuthFilterErrorResponseTest : AbstractUserAuthApiTest() {
     private fun manifest(rt: String): HttpResponse<ByteArray> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/manifest"))
         .header("Authorization", "Bearer $rt").GET().build(), HttpResponse.BodyHandlers.ofByteArray())
 
-    private fun loginBytes(email: String = this.email): HttpResponse<ByteArray> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/login"))
+    private fun exchangeBytes(): HttpResponse<ByteArray> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/token"))
         .header("Content-Type", "application/json")
-        .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(mapOf("tenant_id" to tenant, "email" to email, "password" to "removed-password-auth"))))
+        .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(mapOf("code" to "invalid-code", "redirect_uri" to redirect, "code_verifier" to "x".repeat(43)))))
         .build(), HttpResponse.BodyHandlers.ofByteArray())
 
     private fun assertAuthError(response: HttpResponse<ByteArray>, status: Int, code: String, retryAfter: Boolean = true) {
@@ -60,8 +60,8 @@ class AuthFilterErrorResponseTest : AbstractUserAuthApiTest() {
     }
 
     @Test fun `필터가 쓰는 진입 요청 제한의 429도 UTF-8 JSON이다`() {
-        repeat(30) { assertThat(loginBytes("nobody-$it@example.test").statusCode()).isEqualTo(410) }
-        val limited = loginBytes("nobody-30@example.test")
+        repeat(30) { assertThat(exchangeBytes().statusCode()).isEqualTo(401) }
+        val limited = exchangeBytes()
         assertAuthError(limited, 429, "rate_limited")
         assertThat(limited.headers().firstValue("Retry-After")).hasValue("60")
     }
@@ -69,10 +69,10 @@ class AuthFilterErrorResponseTest : AbstractUserAuthApiTest() {
     @Test fun `제한 상태를 읽지 못한 503도 UTF-8 JSON이고 auth_unavailable과 Retry-After를 주며 예외 원문을 싣지 않는다`() {
         sql("ALTER TABLE enrollment.auth_attempts RENAME TO auth_attempts_unavailable")
         try {
-            val response = loginBytes()
+            val response = exchangeBytes()
             assertAuthError(response, 503, "auth_unavailable")
             assertThat(response.headers().firstValue("Retry-After")).hasValue("1")
-            assertThat(String(response.body(), StandardCharsets.UTF_8)).doesNotContain("auth_attempts", "relation", "SQL", "removed-password-auth")
+            assertThat(String(response.body(), StandardCharsets.UTF_8)).doesNotContain("auth_attempts", "relation", "SQL", "invalid-code")
         } finally { sql("ALTER TABLE enrollment.auth_attempts_unavailable RENAME TO auth_attempts") }
     }
 }
