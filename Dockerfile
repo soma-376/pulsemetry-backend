@@ -33,6 +33,7 @@ COPY libs/telemetry-adapter/build.gradle.kts libs/telemetry-adapter/
 COPY libs/telemetry-enricher/build.gradle.kts libs/telemetry-enricher/
 COPY libs/telemetry-persistence/build.gradle.kts libs/telemetry-persistence/
 COPY libs/telemetry-ops-persistence/build.gradle.kts libs/telemetry-ops-persistence/
+COPY libs/vendor-connector/build.gradle.kts libs/vendor-connector/
 COPY tools/dev-seed/build.gradle.kts tools/dev-seed/
 
 

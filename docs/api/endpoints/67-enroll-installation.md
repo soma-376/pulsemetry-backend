@@ -30,10 +30,6 @@ Content-Type: application/json
   operating_environment?: string | null; // deprecated
   device_id?: string | null; // deprecated, 무시
   tools_detected?: string[] | null; // deprecated, 무시
-  platform?: string | null;
-  architecture?: string | null;
-  hostname?: string | null;
-  client_version?: string | null;
 }
 ```
 
