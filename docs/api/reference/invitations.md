@@ -55,13 +55,14 @@
 
 초대는 최대 100명, role은 `admin`·`member`, `teamId`는 UUID 또는 null이다.
 발급 결과의 `status`는 코드 발급만 말한다. **발급은 발송이 아니다** — 초대 메일의 상태는 `delivery`가 따로 말한다(ADR 0038).
-메일 기능(`pulsemetry.mail.enabled`)이 켜져 있으면 발급과 같은 트랜잭션에서 초대 메일을 outbox에 적재하고(`delivery.status=queued`), 발송 작업이 SMTP로 보낸다(ADR 0037).
+메일 기능(`pulsemetry.mail.enabled`)이 켜져 있으면 발급과 같은 트랜잭션에서 초대 메일을 outbox에 적재하고(`delivery.status=queued`), 발송 작업이 설정된 발송 구현(로컬 SMTP·배포 SES)으로 보낸다(ADR 0037 · 0058).
 메일에는 조직 이름·설치 코드·만료 시각, 회사 SSO 로그인 주소(`pulsemetry.management.invitation-accept-url`), 설치 명령([기존 §2.1](../../enrollment-server-spec.md#21-post-v1invitations-요청응답)의 `install_commands`와 같은 형태)이 담긴다. 로그인 주소와 제목에는 코드가 없다.
 SSO 통합 후 메일의 로그인 안내는 회사 로그인 주소만 사용하며 초대 코드를 붙이지 않는다. 다음 가입 관련 필드는 과거 이력 호환용이다.
 메일은 그 코드에 남은 용도만 안내한다(ADR 0055) — 가입 권한이 없으면 수락 링크를, 설치를 마쳤으면 설치 명령을 싣지 않는다. 가입 권한이 없는 코드의 메일 제목은 `Pulsemetry 설치 코드`다.
 메일 기능이 꺼져 있으면 `delivery`는 `{status:"not_sent", reason:"mail_disabled"}`다. **적재되지 않은 메일을 `queued`로 내지 않는다.** 그때는 `issued`의 코드를 관리자가 직접 전달한다.
-`sent`는 SMTP 서버가 메시지를 받았다는 뜻이고 수신함 도착을 뜻하지 않는다. 실패 코드는 `recipient_rejected` · `message_rejected` · `invalid_address`(재시도하지 않음),
+`sent`는 메일 공급자(SMTP 서버·SES)가 메시지를 받았다는 뜻이고 수신함 도착·반송 없음을 뜻하지 않는다. 실패 코드는 `recipient_rejected` · `message_rejected` · `invalid_address`(재시도하지 않음),
 `recipient_deferred` · `smtp_deferred` · `smtp_auth_failed` · `smtp_unavailable` · `send_error`(재시도), `outcome_unknown`이다.
+SES의 실패는 이 어휘 안의 `invalid_address` · `message_rejected`(영구)와 `send_error`(재시도)로만 나온다 — SES 세부 분류는 API에 내지 않는다(ADR 0058).
 같은 멱등 키의 재시도는 저장된 응답을 그대로 돌려주므로 `delivery`도 최초 시점의 값이고 메일은 한 통이다. 최신 발송 상태는 목록([기존 §13.3](../../enrollment-server-spec.md#133-초대-목록재발급))에서 본다.
 초대 취소(`revoke`)는 그 초대의 아직 보내지 않은 메일을 취소한다(`cancelled`). 이미 나간 메일은 되돌리지 못하고, 그 안의 코드는 폐기돼 쓸 수 없다.
 신규 초대의 기본 만료는 72시간이다. 기존 초대가 있으면 `already_invited`이며 기존 원본 코드를 재조회하지 않는다.
@@ -210,7 +211,7 @@ type Delivery = {
   reason: "mail_disabled" | "not_queued" | null; // not_sent일 때만 값이 있다
   queuedAt: string | null;      // 적재 시각
   lastAttemptAt: string | null; // 마지막 발송 시도 시각
-  sentAt: string | null;        // SMTP 서버가 받은 시각. sent일 때만 값이 있다
+  sentAt: string | null;        // 메일 공급자(SMTP 서버·SES)가 받은 시각. sent일 때만 값이 있다
   failureCode: string | null;   // 실패 분류 코드. 재시도 대기(queued) 중에는 마지막 시도의 사유
   attempts: number;
 };

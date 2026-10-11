@@ -40,7 +40,7 @@ private const val INSTALL_BASE = "https://get.pulsemetry.example.com"
         "pulsemetry.inquiries.enabled=true", "pulsemetry.inquiries.duplicate-window=PT10M", "pulsemetry.inquiries.rate-limit.requests=20",
         "pulsemetry.inquiries.rate-limit.window=PT1M", "pulsemetry.inquiries.allowed-origins=http://localhost:3000",
         "pulsemetry.inquiries.notification-recipient=$STAFF",
-        "pulsemetry.mail.enabled=true", "pulsemetry.mail.from=no-reply@example.test", "pulsemetry.mail.encryption-key=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+        "pulsemetry.mail.enabled=true", "pulsemetry.mail.provider=smtp", "pulsemetry.mail.from=no-reply@example.test", "pulsemetry.mail.encryption-key=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
         "pulsemetry.mail.dispatch-interval=PT24H", "pulsemetry.mail.retry-interval=PT5M", "pulsemetry.mail.max-attempts=3", "pulsemetry.mail.send-timeout=PT5S",
         "pulsemetry.mail.smtp.username=test-user", "pulsemetry.mail.smtp.password=test-password", "pulsemetry.mail.smtp.starttls=false"])
 class InvitationMailApiTest : AbstractUserAuthApiTest() {
