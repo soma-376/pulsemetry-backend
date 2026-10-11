@@ -2,7 +2,7 @@
 
 메일 발송의 설정 계약, 배포 환경(SES)을 준비하는 인프라 작업에 넘길 조건, 실제 발송 확인 절차, 전환·복구 절차를 담는다.
 결정은 [ADR 0037](adr/0037-메일은-outbox에-적재하고-enrollment-api의-발송-작업이-SMTP로-보낸다.md)(outbox)과
-[ADR 0057](adr/0057-배포-환경의-메일은-SES-API로-보내고-발송-구현은-설정으로-고른다.md)(발송 구현 선택·SES)이 정한다. API 의 발송 상태는 `enrollment-server-spec.md` §12 가 정한다.
+[ADR 0058](adr/0058-배포-환경의-메일은-SES-API로-보내고-발송-구현은-설정으로-고른다.md)(발송 구현 선택·SES)이 정한다. API의 발송 상태는 [초대 API 공통 규칙](api/reference/invitations.md)이 정한다.
 
 > **검증 상태.** 이 저장소의 코드는 로컬·CI 에서 AWS 계정 없이 검증했다 — SMTP 는 메일 수신 컨테이너(Mailpit)로, SES 는 실제 SDK 를 로컬 HTTP 모의 서버에 붙여서다.
 > **실제 SES 로 보낸 적은 없다.** 리전·발신 주소·identity·IAM·DNS 는 아직 정해지지 않았고 인프라 코드도 바뀌지 않았다. CI 성공을 실제 발송 확인으로 읽지 않는다 — 실제 확인은 §5 다.
@@ -20,7 +20,7 @@
 | 끝난 메일(`sent`·`failed`·`cancelled`)의 본문은 지운다 | 끝난 메일의 자동 재발송 — 본문이 없다. 업무 절차(초대 재발급 등)로 새 메일을 만든다 |
 
 설치 업데이트 안내의 `succeeded`도 메일이 공급자에게 접수됐다는 뜻이고 설치가 새 정책을 적용했다는 뜻이 아니다.
-`POST /v1/invitations`(관리자 API 키 경로)는 메일을 적재하지 않는다.
+`POST /api/v1/invitations`(관리자 API 키 경로)는 메일을 적재하지 않는다.
 
 ## 2. 설정 계약
 
@@ -34,7 +34,7 @@
 | `PULSEMETRY_MAIL_ENCRYPTION_KEY` | 필수 | 필수 | 대기 중인 본문의 AES-256-GCM 키(Base64 32바이트). **SES 자격 증명이 아니다** — 역할로 보내도 필요하다 |
 | `PULSEMETRY_MAIL_DISPATCH_INTERVAL` | 필수 | 필수 | 발송 작업이 outbox 를 보는 주기(ISO-8601) |
 | `PULSEMETRY_MAIL_RETRY_INTERVAL` | 필수 | 필수 | 일시 실패 뒤 다시 시도하기까지의 간격 |
-| `PULSEMETRY_MAIL_MAX_ATTEMPTS` | 필수 | 필수 | 한 메일의 최대 시도. outbox 시도 하나 = 공급자 요청 하나 |
+| `PULSEMETRY_MAIL_MAX_ATTEMPTS` | 필수 | 필수 | 한 메일의 최대 outbox 시도 횟수. SES SDK는 요청을 한 번만 시도하며, 자격 증명 조회 실패 등으로 공급자 요청 없이 끝나는 outbox 시도도 있다 |
 | `PULSEMETRY_MAIL_SEND_TIMEOUT` | 필수 | 필수 | SES: **자격 증명 조회와 API 호출을 합친 발송 한 번의 상한**. SMTP: 연결·읽기·쓰기 각각의 제한. 선점 임대는 이 값의 네 배 |
 | `PULSEMETRY_MAIL_SES_REGION` | 필수 | 불필요 | SES 리전(예: `ap-northeast-2` 형식). 다른 AWS 설정에서 추론하지 않는다 |
 | `PULSEMETRY_MAIL_SES_CONFIGURATION_SET` | 선택 | 불필요 | 비우면 요청에서 뺀다. 영문·숫자·`_`·`-` 64자 이하 |
@@ -181,7 +181,7 @@ FROM enrollment.mail_outbox GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
 2. SES identity·production access 필요 여부·IAM·DNS·피드백·한도를 먼저 준비하고 테스트 수신자로 확인한다(§5).
 3. `provider`를 고를 수 있는 버전을 배포한 뒤 provider 를 바꾼다. **발신 주소와 outbox 암호화 키는 유지한다.** 키 교체를 공급자 전환에 섞지 않는다 — 키를 바꾸면 대기 중인 메일은 본문을 읽지 못해 실패로 끝난다.
 4. 전환 중에는 옛 설정의 프로세스와 새 설정의 프로세스가 큐를 나눠 보낼 수 있다. 공급자를 엄격히 나눠야 하면 승인된 짧은 중단 구간에 옛 프로세스를 모두 내리고, 보내던 메일이 끝났거나 임대가 끝난 것을 확인한 뒤 SES 프로세스를 올린다.
-   무중단 전환이 반드시 필요하면 업무 적재와 발송 선점을 따로 멈추는 제어를 먼저 설계한다(ADR 0057 Follow-up).
+   무중단 전환이 반드시 필요하면 업무 적재와 발송 선점을 따로 멈추는 제어를 먼저 설계한다(ADR 0058 Follow-up).
 5. `PULSEMETRY_MAIL_ENABLED=false`를 "메일을 보존한 채 잠시 멈춤"으로 쓰지 않는다 — 그동안의 업무 메일이 적재되지 않는다.
 6. 새 초대·재발급·문의·설치 안내를 지정한 계정으로 확인하고 대기열 누적·실패 코드·반송·신고를 지켜본다.
 7. 장애가 나면 설정·권한 문제(`ses_auth_failed`·`ses_configuration_error`·`ses_sending_disabled`)인지 공급자 장애(`ses_unavailable`·`ses_timeout`·`ses_throttled`)인지 먼저 가른다.

@@ -39,11 +39,11 @@ abstract class AbstractAuthRateLimitApiTest : AbstractUserAuthApiTest() {
         return http.send(builder.method(method, if (body == null) HttpRequest.BodyPublishers.noBody()
             else HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build(), HttpResponse.BodyHandlers.ofString())
     }
-    protected fun refreshFrom(origin: String, rt: String) = send("POST", "/v1/auth/refresh", mapOf("refresh_token" to rt), origin = origin)
-    protected fun logout(rt: String) = send("POST", "/v1/auth/logout", mapOf("refresh_token" to rt))
-    protected fun me(at: String?) = send("GET", "/v1/auth/me", bearer = at)
-    protected fun manifest(rt: String?) = send("GET", "/v1/manifest", bearer = rt)
-    protected fun unknownExchange(n: Int, origin: String? = null) = send("POST", "/v1/auth/token",
+    protected fun refreshFrom(origin: String, rt: String) = send("POST", "/api/v1/auth/refresh", mapOf("refresh_token" to rt), origin = origin)
+    protected fun logout(rt: String) = send("POST", "/api/v1/auth/logout", mapOf("refresh_token" to rt))
+    protected fun me(at: String?) = send("GET", "/api/v1/auth/me", bearer = at)
+    protected fun manifest(rt: String?) = send("GET", "/api/v1/manifest", bearer = rt)
+    protected fun unknownExchange(n: Int, origin: String? = null) = send("POST", "/api/v1/auth/token",
         mapOf("code" to "invalid-$n", "redirect_uri" to redirect, "code_verifier" to verifier), origin = origin)
     protected fun nextRefreshToken(response: HttpResponse<String>): String {
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200)

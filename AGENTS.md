@@ -32,9 +32,9 @@ libs/telemetry-ops-persistence/ 수집 운영 기록의 RDS 쪽 — telemetry_op
 libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설명 · 조립 검사 (ADR 0048). Spring 없음
 ```
 
-**소유하는 것**: `POST /v1/enroll`, `POST /v1/installations/telemetry-token`, `GET /v1/manifest`, `POST /v1/invitations`,
-설치 보고 `POST /v1/installations/{installationId}/heartbeat`, 데몬 업데이트 확인 `GET /api/v1/check-updates`, 도입 문의 `POST /v1/inquiries`,
-부트스트랩 스크립트·바이너리 서빙(`GET /windows|/unix|/bin/{f}`), manifest 저장, 조직 관리 명령(`/api/v1/organizations/{id}/…` — 명세 §12·§13),
+**소유하는 것**: `POST /api/v1/enroll`, `POST /api/v1/installations/telemetry-token`, `GET /api/v1/manifest`, `POST /api/v1/invitations`,
+설치 보고 `POST /api/v1/installations/{installationId}/heartbeat`, 데몬 업데이트 확인 `GET /api/v1/check-updates`, 도입 문의 `POST /api/v1/inquiries`,
+부트스트랩 스크립트·바이너리 서빙(`GET /windows|/unix|/bin/{f}`), manifest 저장, 조직 관리 명령(`/api/v1/organizations/{id}/…` — `docs/api/README.md`의 기능별 명세),
 그리고 **enrollment 스키마의 진실원(Flyway)**. 조회(분석·설정·좌석·알림·작업 상태)는 `:apps:dashboard-api`가 맡는다.
 
 **현재 구현과 남은 범위** — 작업 트리의 코드 기준이며, 운영 배포나 실제 DB 적용 완료를 뜻하지 않는다.
@@ -44,10 +44,10 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | 사람 계정·로그인 | 표준 OIDC 구현. 개발·데모는 Cognito, 외부 계정 없는 테스트는 모의 OIDC | 비밀번호 API 대신 사전 등록 회원을 최초 SSO의 검증된 이메일로 연결하고 이후 issuer/sub로 식별한다. dashboard-api는 자체 JWT·현재 세션을 검증한다. 허브 ADR 0010·0013, `docs/user-auth-operations.md` 참고. 프론트 BFF·OIDC 배선은 구현됐으며 CLI 배선·운영 배포·SAML은 별도 |
 | 수집 정책·온보딩 | 최초 생성·수정·완료 상태 구현 | `PUT /collection-policy`가 최초 manifest를 만들거나 새 판을 저장하고, 회수 기준·집계 보존을 manifest 와 따로 저장한다. 서버가 기존 설치에 밀어 넣지 않는다. telemetryctl 기본 브랜치의 데몬은 새 정책을 스스로 받지 않는다 — 이미 설치된 기기는 다시 설치해야 새 판을 받는다(ADR 0053). ADR 0029·0032·0033·0046 |
 | 설치 보고·업데이트 확인 | 서버 구현됨. 데몬 쪽은 업데이트 확인만 있다 | 설치 보고 수신(수집 구간·적용 판), 업데이트 확인(telemetryctl 릴리스 디렉터리와 `SHA256SUMS`로 판 확인), 정책 적용 현황·업데이트 안내 메일. telemetryctl 기본 브랜치에는 보고 송신·RT 재조회·CLI 로그인이 없어 그 데몬의 설치는 적용 판 확인 불가다. ADR 0040·0043·0053, 허브 `contracts/daemon-updates.md` |
-| 메일 | 구현됨. 설정으로 활성화 | 초대 메일·문의 통지·설치 업데이트 안내를 outbox 로 적재하고 enrollment-api 의 발송 작업이 보낸다 — 로컬·테스트는 SMTP(Mailpit), 배포는 SES API(`pulsemetry.mail.provider`). SES 는 모의 서버로만 검증했고 실제 발송과 인프라 준비(리전·identity·태스크 역할·비밀)는 남았다(`docs/mail-operations.md`). ADR 0037·0038·0043·0057 |
+| 메일 | 구현됨. 설정으로 활성화 | 초대 메일·문의 통지·설치 업데이트 안내를 outbox 로 적재하고 enrollment-api 의 발송 작업이 보낸다 — 로컬·테스트는 SMTP(Mailpit), 배포는 SES API(`pulsemetry.mail.provider`). SES 는 모의 서버로만 검증했고 실제 발송과 인프라 준비(리전·identity·태스크 역할·비밀)는 남았다(`docs/mail-operations.md`). ADR 0037·0038·0043·0058 |
 | 좌석·벤더 연결·청구 | 구현됨. 벤더 연결은 설정으로 활성화 | 좌석 원장·수동 기록·CSV, 커넥터 동기화(Claude Enterprise·Cursor Enterprise — Copilot·Gemini 는 커넥터가 없다, ADR 0054)·회수·복원(관리자 조치), 벤더 청구 누계. 실계정 검증은 남았다(`docs/vendor-connector-verification.md`). ADR 0048·0049·0050 |
 | 알림 | 구현됨 | 규칙 켜기(enrollment-api)·등록 제품 기준 사용 알림(허브 ADR 0008), 주기 평가·개요 미확인 수·확인(dashboard-api 평가 + enrollment-api 확인). 한도 초과는 근거가 없어 켤 수 없다. ADR 0051 |
-| 대시보드 API | 개요·팀·구성원·설정·카탈로그·수집 상태·좌석·알림·작업 상태 조회 구현 | `docs/dashboard-server-spec.md` 참고. 관리 쓰기는 enrollment-api가 맡는다. 기간 완전성·비교(ADR 0042), 수집 상태 판정(ADR 0041). API 구현과 프론트 전체 배선·E2E 완료는 별개 |
+| 대시보드 API | 개요·팀·구성원·설정·카탈로그·수집 상태·좌석·알림·작업 상태 조회 구현 | `docs/api/README.md` 참고. 관리 쓰기는 enrollment-api가 맡는다. 기간 완전성·비교(ADR 0042), 수집 상태 판정(ADR 0041). API 구현과 프론트 전체 배선·E2E 완료는 별개 |
 | 텔레메트리 파이프라인 이관 | **코드는 끝났다. 배포만 남았다** | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다 — 남은 것은 infra 가 이 앱을 배포하고 collector 컨테이너를 내리는 일이다(PROJ-106) |
 
 **파이프라인은 이 레포의 단일 앱이다**(허브 ADR 0004·0005 — 배포 단위 하나, OTel Collector 바이너리 없음).
@@ -73,7 +73,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 소스 주석 다수가 존재한 적 없는 `PLAN.md §6.2 / A5 / R4 / L11`을 인용한다.
 **그 인용도 스펙이 아니다.** 주석이 가리키는 문서는 실재하지 않는다.
 
-**후속(미착수)** — 이 인용들을 실제 권위 문서의 절(명세 `docs/enrollment-server-spec.md`,
+**후속(미착수)** — 이 인용들을 실제 권위 문서의 절(명세 `docs/api/README.md`,
 `docs/adr/`, 허브 계약)로 교체하거나 삭제하는 정리가 남아 있다. 규모는 소스 기준
 **44개 파일 / 58곳**(`grep -rn 'PLAN\.md' apps libs`)이라 PROJ-79 정합 라운드에서
 의도적으로 유보했다. 정리 전까지는 어떤 `PLAN.md §…` 인용도 근거로 읽지 않는다 —
@@ -83,8 +83,9 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 
 | 문서 | 담는 것 |
 |---|---|
-| `docs/enrollment-server-spec.md` | 설치·설치 보고·업데이트 확인·사용자 인증·온보딩·조직 관리(좌석·벤더 연결·알림 규칙 포함)·문의·메일 명세 |
-| `docs/dashboard-server-spec.md` | 분석·설정·카탈로그·수집 상태·좌석·알림·작업 상태 조회 명세 |
+| `docs/api/README.md` | 번호가 있는 전체 API 목록과 페이지·기능별 길잡이. `endpoints/`에 API별 Request·Response, `reference/`에 기능 규칙·공유 스키마 |
+| `docs/enrollment-server-spec.md` | Enrollment 설정·운영·로컬 실행 및 기존 API 절의 이전 안내 |
+| `docs/dashboard-server-spec.md` | Dashboard 설정·운영·로컬 실행 및 기존 API 절의 이전 안내 |
 | `docs/vendor-connector-evidence.md` · `docs/vendor-connector-verification.md` | 벤더 커넥터의 공식 문서 근거와 실계정 검증 절차 |
 | `tools/mock-vendor/README.md` | 로컬 모의 벤더 서버(벤더 연결·회수·복원 E2E) |
 | `docs/user-auth-operations.md` | 사용자 인증 활성화·키·세션 운영 |
@@ -183,7 +184,7 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   거부가 400, 일시 장애(보강·ClickHouse·수집 운영 기록)와 분류되지 않은 예외가 503이다. 영구 실패 push도
   수신 ledger·요약에 기록한 뒤 400이고, 기록이 실패하면 503이다(ADR 0021). 행을 옮기면 허브
   `contracts/telemetry-ingest.md` §8을 같은 커밋에서 고친다.
-- **`:apps:telemetry-ingest`의 OTLP 밖 경로는 기본 닫힘이다.** 둘째 `SecurityFilterChain`이 `/v1/healthz`만
+- **`:apps:telemetry-ingest`의 OTLP 밖 경로는 기본 닫힘이다.** 둘째 `SecurityFilterChain`이 `/api/v1/healthz`만
   열고 나머지는 `denyAll`이다. 관리 엔드포인트를 얹으려면 그 체인에 경로를 명시한다. 예외는 ERROR
   디스패치 하나다 — 내부 오류는 원래 서버 오류 응답을 보존한다. 외부의 계약 밖 요청은
   `denyAll`을 유지하며 `404 text/plain`으로 거부한다(허브 계약 §8).
@@ -203,11 +204,11 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
 - **계약 테스트는 원격 telemetryctl 기본 브랜치에 있는 스키마만 원본으로 읽는다.** PR CI 는 그 브랜치의 `contracts` 를 체크아웃해
   `PULSEMETRY_CONTRACTS_DIR` 로 넘긴다(`.github/workflows/build.yml` — 이 워크플로를 고쳐 맞추지 않는다). 지금 그곳에는
   `enrollment-envelope`·`enrollment-manifest` 둘뿐이고 `ContractSchemas` 는 그 둘만 등록한다. 원격에 스키마가 없는 API 는
-  명세가 오라클이다 — 설치 보고는 `docs/enrollment-server-spec.md` §4.5 의 표, 재조회 봉투와 AT 클레임은 §11·§11.1 의 표,
+  명세가 오라클이다 — 설치 보고·재조회 봉투는 `docs/api/enrollment.md`, 사용자 인증은 `docs/api/auth.md`,
   업데이트 확인은 원격 telemetryctl 의 `internal/updatecheck/client.go` 가 읽는 것. 원격에 없는 스키마를 로컬 체크아웃에서 읽거나
   저장소로 복사해 오라클로 쓰지 마라 — 로컬에서 녹색이고 CI 에서 죽는다. Gradle 의 기본 계약 경로는 형제 `../telemetryctl/contracts` 이므로,
   CI 와 같은 조건으로 돌리려면 `PULSEMETRY_CONTRACTS_DIR` 을 원격 기본 브랜치의 `contracts` 로 둔다.
-- **`GET /v1/manifest`는 사용자 RT만 받고 한 서버 트랜잭션에서 정책과 토큰을 회전한다**(ADR 0019 · 허브 ADR 0008).
+- **`GET /api/v1/manifest`는 사용자 RT만 받고 한 서버 트랜잭션에서 정책과 토큰을 회전한다**(ADR 0019 · 허브 ADR 0008).
   AT·`pit_`·`ptt_`는 받지 않는다. 로컬 적용 완료를 보장하지 않으며 OTLP는 여전히 `ptt_`다. 상태를 바꾸는 GET이라
   캐시·프리페치·자동 재시도를 걸지 않는다. 저장된 정책은 빌드 때 jar에 넣은 telemetryctl 원본 스키마로 검증한다 —
   그래서 `:apps:enrollment-api`의 Gradle 빌드와 이미지 빌드(named context `telemetry-contracts`)에는 계약 디렉터리가 필요하다.
@@ -215,7 +216,7 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   따로다. 응답·로그·예외 메시지·테스트 fixture에 평문을 싣지 않는다 — 연결 명령이 PUT인 것도 멱등 기록(요청 해시·응답)을 남기지 않기 위해서다.
   dashboard-api는 `VendorConnections`로 비밀 아닌 열만 읽는다. 옛 키는 `vendor_connections.credential_key_id`가 그 키를 쓰는 행이 없을 때만 뺀다.
 - **메일은 outbox 다**(ADR 0037). 업무 쓰기와 같은 트랜잭션에서 적재하고 enrollment-api 의 발송 작업이 선점해 보낸다 — 명령 안에서 메일 공급자를 부르지 않는다.
-  발송 구현은 `pulsemetry.mail.provider`(`smtp`·`ses`)로 고르고 자동 fallback 은 없다(ADR 0057). SES SDK 는 **한 번만 시도**한다 — 재시도는 outbox 가 갖는다.
+  발송 구현은 `pulsemetry.mail.provider`(`smtp`·`ses`)로 고르고 자동 fallback 은 없다(ADR 0058). SES SDK 는 **한 번만 시도**한다 — 재시도는 outbox 가 갖는다.
   **SDK 의 `apiCallTimeout`은 자격 증명 조회를 포함하지 않는다.** `SesMailTransport`가 조회를 `send-timeout` 기한까지만 기다리고 남은 시간만 호출에 준다 —
   이 순서를 빼면 늦은 ECS 자격 증명 조회로 발송이 선점 임대를 넘겨 같은 메일이 두 번 나간다.
   공개 실패 코드는 ADR 0037 어휘 그대로이고 SES 세부는 `failure_detail`(`ses_*`)과 로그에만 둔다. AWS 오류 메시지 원문과 SES 접수 ID 를 DB 에 넣지 않는다.

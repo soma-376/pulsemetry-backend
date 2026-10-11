@@ -34,7 +34,7 @@ abstract class OidcTestSupport : AbstractUserAuthApiTest() {
 
     data class RoundTrip(val location: URI, val cookie: Cookie)
     protected fun begin(loginHint: String? = null): RoundTrip {
-        val result = mvc.perform(get("/v1/auth/oidc/authorize")
+        val result = mvc.perform(get("/api/v1/auth/oidc/authorize")
             .param("tenant_id", tenant.toString()).param("redirect_uri", redirect)
             .param("state", "client-state-1234567890").param("code_challenge", challenge)
             .param("code_challenge_method", "S256").apply {
@@ -43,7 +43,7 @@ abstract class OidcTestSupport : AbstractUserAuthApiTest() {
         assertThat(result.status).withFailMessage(result.contentAsString).isEqualTo(302)
         assertThat(result.getHeader("Cache-Control")).contains("no-store")
         val cookie = result.getHeaders("Set-Cookie").single { it.startsWith("PULSEMETRY_OIDC=") }
-        assertThat(cookie).contains("HttpOnly", "SameSite=Lax", "Path=/v1/auth/oidc")
+        assertThat(cookie).contains("HttpOnly", "SameSite=Lax", "Path=/api/v1/auth/oidc")
         val uri = URI(result.getHeader("Location")!!)
         assertThat(query(uri)).containsKeys("state", "nonce", "code_challenge")
         assertThat(query(uri)["code_challenge_method"]).isEqualTo("S256")
@@ -69,7 +69,7 @@ abstract class OidcTestSupport : AbstractUserAuthApiTest() {
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200)
         val accessToken = mapper.readTree(response.body()).path("access_token").asString()
         assertThat(accessToken).isNotBlank()
-        val me = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/me"))
+        val me = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/auth/me"))
             .header("Authorization", "Bearer $accessToken").GET().build(), HttpResponse.BodyHandlers.ofString())
         assertThat(me.statusCode()).withFailMessage(me.body()).isEqualTo(200)
         assertThat(mapper.readTree(me.body()).path("memberId").asString()).isEqualTo(member.toString())

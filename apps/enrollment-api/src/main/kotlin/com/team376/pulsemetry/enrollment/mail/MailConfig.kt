@@ -32,7 +32,7 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
 /**
- * 메일 발송 설정 (ADR 0037 · 0057). 켰을 때 아래 값은 기본값이 없는 필수값이다.
+ * 메일 발송 설정 (ADR 0037 · 0058). 켰을 때 아래 값은 기본값이 없는 필수값이다.
  * 발송 구현([provider])별 값은 고른 구현의 것만 본다 — SES 를 고르면 SMTP 계정을, SMTP 를 고르면 SES 리전을 요구하지 않는다.
  */
 @ConfigurationProperties("pulsemetry.mail")
@@ -88,7 +88,7 @@ class MailConfig {
     }
 
     /**
-     * 고른 발송 구현 하나를 만든다(ADR 0057). 만들 때 SMTP 서버나 AWS 에 말하지 않는다.
+     * 고른 발송 구현 하나를 만든다(ADR 0058). 만들 때 SMTP 서버나 AWS 에 말하지 않는다.
      * SES 구현은 SDK 클라이언트를 갖고 있어 컨텍스트가 닫힐 때 함께 닫힌다(`AutoCloseable`).
      */
     @Bean

@@ -31,7 +31,7 @@ data class MailDelivery(val id: UUID, val dedupKey: String, val kind: String, va
 /** 발송 작업이 선점한 메일. [attempt] 는 이번이 몇 번째 시도인지다. */
 class ClaimedMail(val id: UUID, val kind: String, val recipient: String, val subject: String, val body: String, val attempt: Int)
 
-/** 실제로 보내는 쪽. 구현(SMTP·SES)은 앱이 준다(ADR 0057). 보내지 못하면 [MailTransportFailure] 를 던진다. */
+/** 실제로 보내는 쪽. 구현(SMTP·SES)은 앱이 준다(ADR 0058). 보내지 못하면 [MailTransportFailure] 를 던진다. */
 fun interface MailTransport {
     fun send(mail: ClaimedMail)
 }

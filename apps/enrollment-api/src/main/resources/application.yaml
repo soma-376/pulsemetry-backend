@@ -86,7 +86,7 @@ pulsemetry:
       max-attempts: ${PULSEMETRY_VENDOR_CONNECTIONS_HTTP_MAX_ATTEMPTS:}
       retry-backoff: ${PULSEMETRY_VENDOR_CONNECTIONS_HTTP_RETRY_BACKOFF:}
       max-retry-wait: ${PULSEMETRY_VENDOR_CONNECTIONS_HTTP_MAX_RETRY_WAIT:}
-  # 메일 발송(ADR 0037 · 0057). 켜면 공통 값과 고른 발송 구현(provider)의 값이 모두 필요하다 — 비어 있으면 기동이 실패한다.
+  # 메일 발송(ADR 0037 · 0058). 켜면 공통 값과 고른 발송 구현(provider)의 값이 모두 필요하다 — 비어 있으면 기동이 실패한다.
   # provider 는 smtp(로컬·테스트) 또는 ses(배포)다. 기본값이 없다 — 배포 환경에서 명시한다.
   mail:
     enabled: ${PULSEMETRY_MAIL_ENABLED:false}

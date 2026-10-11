@@ -59,7 +59,7 @@ private const val KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 private const val AWS_MESSAGE = "Email address is not verified: $RECIPIENT $SECRET"
 
 /**
- * SES 발송 구현을 **실제 SDK** 로 검증한다 (ADR 0057). SDK 는 로컬 HTTP 모의 서버(JDK 내장, 벤더 커넥터 테스트와 같은 것)에 말하고,
+ * SES 발송 구현을 **실제 SDK** 로 검증한다 (ADR 0058). SDK 는 로컬 HTTP 모의 서버(JDK 내장, 벤더 커넥터 테스트와 같은 것)에 말하고,
  * 자격 증명은 가짜 고정값, 리전은 테스트용으로 고정한다 — 외부 AWS 로 나가지 않는다.
  * outbox 와 묶은 검증은 실제 PostgreSQL 이다. 메일 기능이 꺼진 기본 컨텍스트를 쓰고 outbox 는 테스트가 직접 만든다.
  */

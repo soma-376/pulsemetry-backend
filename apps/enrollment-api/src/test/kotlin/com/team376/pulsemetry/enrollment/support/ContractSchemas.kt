@@ -23,7 +23,7 @@ import java.nio.file.Path
  * **원격 telemetryctl develop 에 있는 파일만 등록한다** — `enrollment-envelope` 와 `enrollment-manifest` 둘이다.
  * CI 는 telemetryctl 기본 브랜치의 `contracts` 를 체크아웃해 이 디렉터리로 넘긴다(`.github/workflows/build.yml`).
  * 그곳에 없는 파일을 미리 읽으면 계약을 쓰는 첫 테스트부터 전부 죽는다. 원격에 스키마가 없는 서버 소유 API(설치 보고,
- * `GET /v1/manifest` 재조회, 사용자 토큰)와 업데이트 확인은 `docs/enrollment-server-spec.md` 의 표와 원격 데몬 코드를 오라클로 쓴다 —
+ * `GET /api/v1/manifest` 재조회, 사용자 토큰)와 업데이트 확인은 `docs/enrollment-server-spec.md` 의 표와 원격 데몬 코드를 오라클로 쓴다 —
  * 각 테스트의 KDoc 이 근거를 적는다.
  */
 object ContractSchemas {
@@ -55,13 +55,13 @@ object ContractSchemas {
 	private fun read(fileName: String): String =
 		Files.readString(contractsDir.resolve(fileName))
 
-	/** `POST /v1/enroll` 성공 응답 봉투. */
+	/** `POST /api/v1/enroll` 성공 응답 봉투. */
 	fun enrollmentSchema(): Schema = registry.getSchema(SchemaLocation.of("$ENVELOPE_ID#/\$defs/enrollment"))
 
-	/** `POST /v1/enroll` 요청 본문. */
+	/** `POST /api/v1/enroll` 요청 본문. */
 	fun enrollRequestSchema(): Schema = registry.getSchema(SchemaLocation.of("$ENVELOPE_ID#/\$defs/enroll_request"))
 
-	/** `POST /v1/installations/telemetry-token` 응답. */
+	/** `POST /api/v1/installations/telemetry-token` 응답. */
 	fun telemetryTokenResponseSchema(): Schema =
 		registry.getSchema(SchemaLocation.of("$ENVELOPE_ID#/\$defs/telemetry_token_response"))
 

@@ -167,11 +167,11 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
         assertThat(r.headers().firstValue("Cache-Control").orElse("")).contains("no-store")
     }
 
-    @Test fun `비밀번호 API는 410이고 컬럼이 존재하지 않는다`() {
+    @Test fun `제거한 인증 경로는 매핑되지 않고 비밀번호 컬럼이 존재하지 않는다`() {
         for (path in listOf("signup", "login", "cli/authorize")) {
             val response=post(path, mapOf("password" to "do-not-echo", "email" to email))
-            assertThat(response.statusCode()).isEqualTo(410)
-            assertThat(response.body()).contains("auth_method_removed").doesNotContain("do-not-echo", email)
+            assertThat(response.statusCode()).isEqualTo(404)
+            assertThat(response.body()).doesNotContain("do-not-echo", email)
         }
         assertThat(jdbc.sql("SELECT count(*) FROM information_schema.columns WHERE table_schema='enrollment' AND table_name='members' AND column_name='password_hash'").query(Int::class.java).single()).isZero()
     }
@@ -225,11 +225,11 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
 
     @Test fun `MockMvc에서 위조 forwarded IP로 제한을 우회하지 못한다`() {
         repeat(30) { n ->
-            mvc.perform(post("/v1/auth/refresh").servletPath("/v1/auth/refresh")
+            mvc.perform(post("/api/v1/auth/refresh").servletPath("/api/v1/auth/refresh")
                 .header("X-Forwarded-For", "198.51.100.$n").contentType("application/json")
                 .content("{\"refresh_token\":\"invalid\"}")).andExpect(status().isUnauthorized)
         }
-        mvc.perform(post("/v1/auth/refresh").servletPath("/v1/auth/refresh")
+        mvc.perform(post("/api/v1/auth/refresh").servletPath("/api/v1/auth/refresh")
             .header("X-Forwarded-For", "203.0.113.1").contentType("application/json")
             .content("{\"refresh_token\":\"invalid\"}")).andExpect(status().isTooManyRequests)
     }
@@ -237,7 +237,7 @@ class UserAuthApiTest : AbstractUserAuthApiTest() {
     @Test fun `AT 는 HTTP 에서도 발급 330초부터 거절되고 같은 세션의 RT 로 회복한다`() {
         val issued = tokens()
         val start = clock.now
-        fun me(token: String) = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/me")).header("Authorization", "Bearer $token").GET().build(),
+        fun me(token: String) = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/auth/me")).header("Authorization", "Bearer $token").GET().build(),
             HttpResponse.BodyHandlers.ofString())
         // exp − iat = 300(명세 §2.2 토큰 표)에 시계 차이 허용 30초 — 329초는 받고 330초부터 거절한다.
         clock.now = start.plusSeconds(329)

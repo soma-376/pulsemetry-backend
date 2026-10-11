@@ -16,7 +16,7 @@ import org.springframework.mail.javamail.JavaMailSender
 import org.springframework.mail.javamail.MimeMessageHelper
 
 /**
- * SMTP 로 한 통을 보낸다 — 로컬·테스트의 발송 구현이다(ADR 0057). 실패는 다시 시도할 만한 것과 아닌 것으로 나눠 돌려준다.
+ * SMTP 로 한 통을 보낸다 — 로컬·테스트의 발송 구현이다(ADR 0058). 실패는 다시 시도할 만한 것과 아닌 것으로 나눠 돌려준다.
  * 서버 응답 원문은 싣지 않는다.
  */
 class SmtpMailTransport(private val sender: JavaMailSender, private val from: String) : MailTransport {

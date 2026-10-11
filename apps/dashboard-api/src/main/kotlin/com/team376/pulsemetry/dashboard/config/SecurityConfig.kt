@@ -38,7 +38,7 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter
  *
  * ## 나머지 — 닫힘
  *
- * 둘째 체인이 그 밖의 전부를 잡아 `/v1/healthz` 만 열고 `denyAll` 이다. 거부는 404 `not_found` 다 — API 자원이 아닌
+ * 둘째 체인이 그 밖의 전부를 잡아 `/api/v1/healthz` 만 열고 `denyAll` 이다. 거부는 404 `not_found` 다 — API 자원이 아닌
  * 경로에 인증을 요구해 존재를 알리지 않는다. 명시적 `SecurityFilterChain` 빈이 있으면 Boot 의 기본 체인이 물러나므로,
  * 둘째 체인이 없으면 새로 얹는 경로가 인증 없이 열린다. 경로를 얹을 때는 첫 체인의 접두 아래에 두거나 여기에 명시한다.
  *
@@ -69,7 +69,7 @@ class SecurityConfig {
 
 	/**
 	 * **필터를 이 메서드 안에서 만든다. 빈으로 노출하지 마라.** Boot 은 등록되지 않은 `Filter` 빈을 모든 경로에
-	 * 자동 등록하므로, 빈이 되면 이 필터가 `/v1/healthz` 까지 잡는다.
+	 * 자동 등록하므로, 빈이 되면 이 필터가 `/api/v1/healthz` 까지 잡는다.
 	 */
 	@Bean
 	@Order(1)
@@ -131,6 +131,6 @@ class SecurityConfig {
 	private companion object {
 		const val ORGANIZATION_PATHS = "/api/v1/organizations/**"
 		const val CATALOG_PATHS = "/api/v1/vendor-catalog/**"
-		const val HEALTH_PATH = "/v1/healthz"
+		const val HEALTH_PATH = "/api/v1/healthz"
 	}
 }

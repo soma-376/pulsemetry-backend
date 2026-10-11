@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 
 /**
- * `POST /v1/enroll` 요청 본문.
+ * `POST /api/v1/enroll` 요청 본문.
  *
  * `telemetryctl/contracts/enrollment-envelope.schema.json` 의 `$defs.enroll_request` 와 1:1 이다.
  * 계약이 서버를 규정한다 — 여기가 맞지 않으면 **서버를 고친다** (PLAN.md R3).

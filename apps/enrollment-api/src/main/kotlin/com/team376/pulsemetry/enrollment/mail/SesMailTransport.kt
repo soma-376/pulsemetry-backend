@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
 /**
- * SES API(`SendEmail`)로 한 통을 보낸다 — 배포 환경의 발송 구현이다(ADR 0057).
+ * SES API(`SendEmail`)로 한 통을 보낸다 — 배포 환경의 발송 구현이다(ADR 0058).
  *
  * **발송 한 번은 [timeout] 안에 끝난다 — 자격 증명 조회까지 포함해서다.** SDK 의 호출 제한 시간(`apiCallTimeout`)은
  * 자격 증명 조회를 포함하지 않는다. 기본 공급자 체인은 호출 스레드를 막고 조회하며(ECS 태스크 역할 엔드포인트는 연결·읽기 1초에

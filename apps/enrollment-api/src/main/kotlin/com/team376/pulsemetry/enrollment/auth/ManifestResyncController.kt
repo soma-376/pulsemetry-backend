@@ -18,7 +18,7 @@ import java.util.Collections
 @ConditionalOnProperty(prefix = "pulsemetry.user-auth", name = ["enabled"], havingValue = "true")
 class ManifestResyncController(private val auth: UserAuthService, private val repository: UserAuthRepository,
     private val mapper: ObjectMapper, private val contract: ManifestContractValidator, private val limiter: AuthRateLimiter) {
-    @GetMapping("/v1/manifest")
+    @GetMapping("/api/v1/manifest")
     fun resync(request: HttpServletRequest): ManifestResyncResponse {
         val headers = Collections.list(request.getHeaders("Authorization"))
         val token = headers.singleOrNull()?.takeIf { it.startsWith("Bearer ", ignoreCase = true) }?.substring(7)

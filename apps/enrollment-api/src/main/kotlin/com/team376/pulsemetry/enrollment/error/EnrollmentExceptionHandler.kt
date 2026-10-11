@@ -35,7 +35,7 @@ class EnrollmentExceptionHandler {
 		asErrorResponse(EnrollmentException.malformedBody())
 
 	/**
-	 * 경로 변수의 타입이 안 맞을 때 (`/v1/invitations/not-a-uuid/revoke`).
+	 * 경로 변수의 타입이 안 맞을 때 (`/api/v1/invitations/not-a-uuid/revoke`).
 	 * Spring 기본 응답은 ProblemDetail 이라 우리 에러 계약과 모양이 다르다 — 여기서 통일한다.
 	 */
 	@ExceptionHandler(MethodArgumentTypeMismatchException::class)
@@ -44,7 +44,7 @@ class EnrollmentExceptionHandler {
 	): ResponseEntity<ErrorResponse> = asErrorResponse(EnrollmentException.malformedBody())
 
 	/**
-	 * 어떤 핸들러에도 걸리지 않은 경로 (`GET /v1/nope`).
+	 * 어떤 핸들러에도 걸리지 않은 경로 (`GET /api/v1/nope`).
 	 *
 	 * CLI 는 non-2xx 본문을 그대로 터미널에 출력하므로 Spring 기본 응답이 나가면
 	 * 사용자가 계약과 다른 모양의 본문을 보게 된다.
@@ -53,7 +53,7 @@ class EnrollmentExceptionHandler {
 	fun handleNoResource(exception: NoResourceFoundException): ResponseEntity<ErrorResponse> =
 		asErrorResponse(EnrollmentException.notFound())
 
-	/** 경로는 맞지만 메서드가 다를 때 (`GET /v1/enroll`). */
+	/** 경로는 맞지만 메서드가 다를 때 (`GET /api/v1/enroll`). */
 	@ExceptionHandler(HttpRequestMethodNotSupportedException::class)
 	fun handleMethodNotSupported(
 		exception: HttpRequestMethodNotSupportedException,

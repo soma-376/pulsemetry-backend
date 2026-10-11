@@ -137,7 +137,7 @@ data class HeartbeatResponse(
 @RestController
 @ConditionalOnProperty(prefix = "pulsemetry.heartbeat", name = ["enabled"], havingValue = "true")
 class HeartbeatController(private val service: HeartbeatService, private val mapper: ObjectMapper) {
-    @PostMapping("/v1/installations/{installationId}/heartbeat")
+    @PostMapping("/api/v1/installations/{installationId}/heartbeat")
     fun heartbeat(
         @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) authorization: String?,
         @PathVariable installationId: String,

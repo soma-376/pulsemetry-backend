@@ -1,4 +1,4 @@
-# 0057. 배포 환경의 메일은 SES API로 보내고 발송 구현은 설정으로 고른다
+# 0058. 배포 환경의 메일은 SES API로 보내고 발송 구현은 설정으로 고른다
 
 ## Status
 
@@ -152,4 +152,4 @@ SDK가 스스로 재시도하거나 자격 증명 조회를 기한 없이 기다
 ## References
 - [ADR 0011](0011-라이브러리-모듈은-spring-조립을-앱에-위임한다.md) · [ADR 0012](0012-원본-아카이브를-S3에-쓰고-파일-구현은-로컬에만-남긴다.md) · [ADR 0037](0037-메일은-outbox에-적재하고-enrollment-api의-발송-작업이-SMTP로-보낸다.md) · [ADR 0038](0038-초대-메일은-코드를-본문과-링크의-fragment에만-싣고-발송-상태를-발급과-따로-낸다.md) · [ADR 0043](0043-설치-업데이트-안내는-구성원에게-보내는-메일이고-결과는-발송-결과다.md) · [ADR 0055](0055-활성-구성원의-설치-코드는-가입-권한을-닫은-새-초대로-발급한다.md)
 - `apps/enrollment-api/.../mail/MailConfig.kt` · `SesMailTransport.kt` · `SmtpMailTransport.kt`, `libs/enrollment-persistence/.../mail/MailOutbox.kt`
-- `docs/enrollment-server-spec.md` §8(설정) · §12(초대 발송 상태·설치 업데이트 안내), `docs/mail-operations.md`
+- `docs/enrollment-server-spec.md` §8(설정), `docs/api/reference/invitations.md`(초대 발송 상태), `docs/api/reference/installations.md`(설치 업데이트 안내), `docs/mail-operations.md`

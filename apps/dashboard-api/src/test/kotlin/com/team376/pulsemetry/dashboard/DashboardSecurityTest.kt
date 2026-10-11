@@ -25,11 +25,17 @@ class DashboardSecurityTest : AbstractDashboardApiTest() {
 	@Test
 	@DisplayName("생존 확인은 인증 없이 200 이다")
 	fun healthzIsOpen() {
-		val response = http.send("/v1/healthz")
+		val response = http.send("/api/v1/healthz")
 
 		assertThat(response.statusCode()).isEqualTo(200)
 		assertThat(DashboardHttp.json(response).path("status").asString()).isEqualTo("ok")
 		assertThat(response.headers().firstValue("X-Request-Id")).isPresent
+	}
+
+	@Test
+	@DisplayName("옛 /v1/healthz 경로는 열지 않는다")
+	fun legacyHealthzIsClosed() {
+		assertThat(http.send("/v1/healthz").statusCode()).isEqualTo(404)
 	}
 
 	@Test
@@ -78,8 +84,8 @@ class DashboardSecurityTest : AbstractDashboardApiTest() {
 		"GET, /",
 		"GET, /api/v1/teams",
 		"GET, /api/v1/organization",
-		"GET, /v1/enroll",
-		"GET, /v1/healthz/extra",
+		"GET, /api/v1/enroll",
+		"GET, /api/v1/healthz/extra",
 		"GET, /actuator/health",
 		"GET, /error",
 		"POST, /logout",
@@ -105,7 +111,7 @@ class DashboardSecurityTest : AbstractDashboardApiTest() {
 	@Test
 	@DisplayName("열린 경로에 다른 메서드를 쓰면 405 method_not_allowed 다")
 	fun wrongMethodOnHealthzIs405() {
-		val response = http.send("/v1/healthz", method = "POST")
+		val response = http.send("/api/v1/healthz", method = "POST")
 
 		assertThat(response.statusCode()).isEqualTo(405)
 		assertErrorBody(response, "method_not_allowed")
@@ -124,7 +130,7 @@ class DashboardSecurityTest : AbstractDashboardApiTest() {
 	@ValueSource(strings = ["has space", "semi;colon", "slash/value"])
 	@DisplayName("형식이 어긋난 X-Request-Id 는 서버 UUID 로 바꾼다")
 	fun nonConformingRequestIdIsReplaced(incoming: String) {
-		val response = http.send("/v1/healthz", headers = mapOf("X-Request-Id" to incoming))
+		val response = http.send("/api/v1/healthz", headers = mapOf("X-Request-Id" to incoming))
 
 		val id = response.headers().firstValue("X-Request-Id").orElseThrow()
 		assertThat(id).isNotEqualTo(incoming)
@@ -135,11 +141,11 @@ class DashboardSecurityTest : AbstractDashboardApiTest() {
 	@DisplayName("128자를 넘는 X-Request-Id 는 받지 않는다")
 	fun overlongRequestIdIsReplaced() {
 		val incoming = "a".repeat(129)
-		val response = http.send("/v1/healthz", headers = mapOf("X-Request-Id" to incoming))
+		val response = http.send("/api/v1/healthz", headers = mapOf("X-Request-Id" to incoming))
 
 		assertThat(response.headers().firstValue("X-Request-Id")).isNotEqualTo(incoming)
 		val exact = "b".repeat(128)
-		assertThat(http.send("/v1/healthz", headers = mapOf("X-Request-Id" to exact)).headers().firstValue("X-Request-Id"))
+		assertThat(http.send("/api/v1/healthz", headers = mapOf("X-Request-Id" to exact)).headers().firstValue("X-Request-Id"))
 			.hasValue(exact)
 	}
 

@@ -351,7 +351,7 @@ class MailDispatchTest {
         assertThatThrownBy { outboxOf { maxAttempts = 0 } }.isInstanceOf(IllegalArgumentException::class.java)
         assertThatThrownBy { outboxOf { sendTimeout = null } }.hasMessageContaining("pulsemetry.mail.send-timeout")
         assertThatThrownBy { outboxOf { sendTimeout = Duration.ZERO } }.hasMessageContaining("pulsemetry.mail.send-timeout")
-        // 발송 구현은 반드시 고른다. 기본값도 다른 구현으로 넘어가는 일도 없다(ADR 0057).
+        // 발송 구현은 반드시 고른다. 기본값도 다른 구현으로 넘어가는 일도 없다(ADR 0058).
         assertThatThrownBy { transportOf { provider = "" } }.hasMessageContaining("pulsemetry.mail.provider")
         assertThatThrownBy { transportOf { provider = "sendgrid" } }.hasMessageContaining("pulsemetry.mail.provider")
         // SMTP 를 고르면 SES 리전을 요구하지 않는다.

@@ -83,7 +83,7 @@ abstract class AbstractUserAuthApiTest {
     }
 
     protected fun post(path: String, body: Any): HttpResponse<String> = http.send(HttpRequest.newBuilder(
-        URI("http://localhost:$port/v1/auth/$path")).header("Content-Type", "application/json")
+        URI("http://localhost:$port/api/v1/auth/$path")).header("Content-Type", "application/json")
         .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build(), HttpResponse.BodyHandlers.ofString())
     protected fun provisionMember() {
         jdbc.sql("UPDATE enrollment.tenants SET oidc_issuer=:issuer,oidc_client_id='test',oidc_client_secret_ref='config:mock',sso_enabled=true WHERE id=:id")
@@ -109,7 +109,7 @@ abstract class AbstractUserAuthApiTest {
     protected fun refresh(rt: String) = post("refresh", mapOf("refresh_token" to rt))
     protected fun sql(query: String) { jdbc.sql(query).update() }
 
-    protected fun enroll(): HttpResponse<String> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/enroll"))
+    protected fun enroll(): HttpResponse<String> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/enroll"))
         .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(
             mapOf("code" to code, "platform" to "macos")))).build(), HttpResponse.BodyHandlers.ofString())
 

@@ -4,7 +4,7 @@
 `settings.gradle.kts`에 모듈을 추가하거나 패키지를 새로 만들기 전에 이 문서를 본다.
 
 결정의 **배경과 대안**은 ADR에 있다. 이 문서는 "무엇이 어떻게 나뉘어 있는가"만 다룬다.
-HTTP 계약은 [Enrollment 서버 명세](enrollment-server-spec.md)와 [Dashboard 서버 명세](dashboard-server-spec.md)에 나눈다.
+HTTP 계약은 [페이지·기능별 API 문서](api/README.md)에 모으고 각 엔드포인트의 담당 서버를 표시한다.
 온보딩·정책·초대 명령은 enrollment-api/management, 카탈로그 조회는 dashboard-api/api,
 공통 카탈로그와 온보딩 영속성은 enrollment-persistence/management가 소유한다(ADR 0029).
 카탈로그 기준 데이터는 `enrollment.vendor_catalog_vendors`·`vendor_catalog_products`·`vendor_catalog_plans`에 있다(ADR 0035).
@@ -49,7 +49,7 @@ pulsemetry-backend
 │   │                                ├ auth/           사용자 인증 HTTP·필터·키 설정
 │   │                                ├ inquiry/        로그인 전 도입 문의 접수 HTTP·출처별 제한 필터
 │   │                                ├ installation/   설치 보고(heartbeat) 수신 — 본문 해석·적용 확인·기록 (ADR 0040). telemetryctl 기본 브랜치에 송신 없음 (ADR 0053)
-│   │                                ├ mail/           메일 설정 바인딩·발송 구현(SMTP·SES)·발송 작업의 주기 실행 (ADR 0037·0057)
+│   │                                ├ mail/           메일 설정 바인딩·발송 구현(SMTP·SES)·발송 작업의 주기 실행 (ADR 0037·0058)
 │   │                                ├ update/         데몬 업데이트 확인 — 릴리스 디렉터리의 판과 SHA256SUMS 확인·SemVer 비교, /bin 서빙과 같은 확인 (허브 ADR 0011, ADR 0053)
 │   │                                ├ seat/           벤더 연결 설정·커넥터 조립·좌석 동기화와 회수·복원 벤더 제어의 주기 실행 (ADR 0048·0049·0050)
 │   │                                └ management/     온보딩·정책·팀·초대·제품·계약·좌석·벤더 연결·알림 규칙·알림 확인 관리 HTTP
@@ -124,7 +124,7 @@ dashboard-api(커넥터 설명의 capability 표시). 역할 이름은 `connecto
 쓰기 소유 표는 바뀌지 않고, `:libs:enrollment-persistence`의 분할 트리거(6절)도 당겨지지 않는다. 화면별 조회는 모듈이 아니라 이 앱 안의
 패키지다. 인증 포트(`DashboardAuthenticator`)에는 `:libs:security`의 사용자 검증을 잇는 어댑터가 구현돼 있다(ADR 0026).
 `pulsemetry.user-auth.enabled=false`이면 보호 요청을 거부하며, 활성화하면 공개키와 현재 계정·세션으로 AT를 검증한다.
-필터 체인은 `/api/v1/organizations/**`와 `/api/v1/vendor-catalog/**`를 보호하고 `/v1/healthz`만 공개한다.
+필터 체인은 `/api/v1/organizations/**`와 `/api/v1/vendor-catalog/**`를 보호하고 `/api/v1/healthz`만 공개한다.
 계약 밖 경로는 404로 거부한다.
 `dashboard_cache`의 쓰는 주체는 이 앱 하나라 쓰기 소유가 앱에 있고, DDL도 이 앱이 기동 때 캐시 계정으로 적용한다 — ClickHouse는
 `clickhouse/dashboard-cache/`의 멱등 파일 전량(ADR 0015 규약), RDS는 `db/dashboard-cache/`의 별도 Flyway 인스턴스(이력
@@ -136,7 +136,7 @@ snapshot 이 아니라서 snapshot 정리 작업은 지우지 않는다.
 
 | 작업 | 앱·패키지 | 근거 |
 | --- | --- | --- |
-| 메일 발송(초대·문의 통지·설치 업데이트 안내) | enrollment-api `mail/` | ADR 0037·0043·0057 |
+| 메일 발송(초대·문의 통지·설치 업데이트 안내) | enrollment-api `mail/` | ADR 0037·0043·0058 |
 | 좌석 동기화·청구 누계 읽기·회수·복원의 벤더 제어 | enrollment-api `seat/`(한 주기 작업, 제어가 먼저) | ADR 0048·0049·0050 |
 | snapshot 정리 | dashboard-api `snapshot/` | ADR 0023 |
 | 알림 평가 | dashboard-api `alert/` | ADR 0051 |

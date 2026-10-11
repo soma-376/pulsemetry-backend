@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController
  * 인증 실패의 사유를 상태코드로 구분해 주면 그것도 정보 노출이다.
  */
 @RestController
-@RequestMapping("/v1")
+@RequestMapping("/api/v1")
 class TelemetryTokenController(
 	private val telemetryTokenService: TelemetryTokenService,
 ) {

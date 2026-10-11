@@ -21,7 +21,7 @@ import java.util.UUID
  * 누락도 401 로 처리한다 — 헤더가 없다는 이유로 400 을 주면 인증 실패와 형식 오류가 뒤섞인다.
  */
 @RestController
-@RequestMapping("/v1/invitations")
+@RequestMapping("/api/v1/invitations")
 class InvitationAdminController(
 	private val adminAuthenticator: AdminAuthenticator,
 	private val invitationAdminService: InvitationAdminService,

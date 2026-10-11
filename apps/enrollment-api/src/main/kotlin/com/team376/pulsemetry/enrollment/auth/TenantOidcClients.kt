@@ -39,7 +39,7 @@ class TenantOidcClients(private val repository: UserAuthRepository, private val 
             val registration = ClientRegistrations.fromIssuerLocation(configuration.issuer)
                 .registrationId(configuration.tenantId.toString())
                 .clientId(configuration.clientId).clientSecret(secret).scope("openid", "profile", "email")
-                .redirectUri("${properties.callbackBaseUrl.trimEnd('/')}/v1/auth/oidc/callback/${properties.callbackRegistrationId}").build()
+                .redirectUri("${properties.callbackBaseUrl.trimEnd('/')}/api/v1/auth/oidc/callback/${properties.callbackRegistrationId}").build()
             cache[configuration.tenantId] = Cached(configuration, secret, registration)
             return registration
         } catch (_: Exception) {

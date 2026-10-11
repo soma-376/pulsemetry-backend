@@ -5,8 +5,8 @@
 사람 인증은 **표준 OIDC Authorization Code + PKCE** 제공자가 담당한다(허브 ADR 0008).
 Pulsemetry는 사전 등록된 `invited`·`active` 회원만 허용한다. 최초 로그인은 회사 IdP의 검증된 이메일로 sub를 연결하고, 이후에는 `(tenant_id, issuer, sub)`로 식별한다(허브 ADR 0010).
 공개 가입·자동 회원 생성은 없으며 회원 역할/조직은 DB가 권위 원천이다.
-비밀번호는 IdP에만 존재한다. 구 `/signup`·`/login`·`/cli/authorize`는 410이다.
-API 필드·응답은 [Enrollment 명세 §11](enrollment-server-spec.md#11-사용자-인증)을 따른다.
+비밀번호는 IdP에만 존재한다.
+API 필드·응답은 [사용자 인증 API](api/auth.md)를 따른다.
 
 Enrollment(8080)는 OIDC 로그인·자체 토큰 발급·관리 명령, Dashboard(8081)는 자체 JWT·현재 세션 검증을 담당한다.
 IdP access/ID token을 서비스 API에 보내지 않는다. OIDC 임시 쿠키 역시 업무 API 인증에 쓰지 않는다.
@@ -26,7 +26,7 @@ true이면 검증된 ID Token의 비어 있지 않은 email과 boolean email_ver
 
 1. 고객사 IdP 관리자와 issuer·클라이언트 등록·계정 식별자·접근 정책을 확인한다.
 2. confidential OIDC client에 Authorization Code와 S256 PKCE를 설정한다.
-   callback을 `https://auth.example.com/v1/auth/oidc/callback/oidc`처럼 정확히 등록한다.
+   callback을 `https://auth.example.com/api/v1/auth/oidc/callback/oidc`처럼 정확히 등록한다.
    사용하지 않는 가입·password grant·implicit flow는 비활성화한다.
 3. 회사에 접근을 허용할 회원의 이메일·역할을 사전 등록한다. 신규 회원 sub는 NULL로 두며 미리 수집하지 않는다.
    최초 연결은 회사가 검증한 이메일의 현재 소유자를 이 회원으로 인정한다. 이미 연결된 sub는 자동 교체하지 않는다.
@@ -102,7 +102,7 @@ RSA 2048비트 이상, 개인키 PKCS8·공개키 X509 PEM을 사용한다. 운�
 ## 쿠키와 세션
 
 OIDC state/nonce/upstream PKCE 및 최종 복귀 요청을 JDBC 임시 세션에 보관한다.
-기본 10분, HttpOnly·SameSite=Lax·HTTPS Secure, Path=/v1/auth/oidc이다.
+기본 10분, HttpOnly·SameSite=Lax·HTTPS Secure, Path=/api/v1/auth/oidc이다.
 성공/실패 시 폐기하며 Spring Security 로그인 컨텍스트/IdP 토큰을 장기 저장하지 않는다.
 여러 인스턴스도 공유 DB로 왕복할 수 있으며 같은 배포 버전/클라이언트 설정이 필요하다.
 Spring Session이 만료 행을 정리한다. 로그인 흐름을 마친 뒤 API 쿠키 세션은 생기지 않는다.
@@ -136,8 +136,8 @@ RT 이력은 세션 만료 전 지우지 않는다.
 
 | 범주 | 요청 | 단위 | 설정 키(기본) |
 | --- | --- | --- | --- |
-| 진입 | 회사 탐색·OIDC 인가·콜백·코드 교환, 아래 자격 보유가 아닌 `/v1/auth/*` 전부 | remoteAddr | `rate-limit.entry.requests`·`window`(30회·60초) |
-| 자격 보유 | RT 갱신·로그아웃·`GET /v1/manifest`·`GET /v1/auth/me` | 세션 | `rate-limit.session.requests`·`window`(30회·60초) |
+| 진입 | 회사 탐색·OIDC 인가·콜백·코드 교환, 아래 자격 보유가 아닌 `/api/v1/auth/*` 전부 | remoteAddr | `rate-limit.entry.requests`·`window`(30회·60초) |
+| 자격 보유 | RT 갱신·로그아웃·`GET /api/v1/manifest`·`GET /api/v1/auth/me` | 세션 | `rate-limit.session.requests`·`window`(30회·60초) |
 
 토큰이 없거나 형식이 틀렸거나 모르는 토큰은 진입 한도로 센다. 자격 보유 요청의 429는 RT를 소비하기 전에 나므로
 클라이언트는 `Retry-After` 뒤에 같은 RT로 다시 요청한다. 한도는 고정 창이며 요청 수는 1 이상, 창은 1초 이상이어야 기동한다.
@@ -173,7 +173,7 @@ V28의 비밀번호 삭제는 비가역이다. **구 비밀번호 버전 앱만 
 
 ## manifest 재동기화
 
-`GET /v1/manifest`는 사용자 RT를 회전한다. CDN/API Gateway에서 이 경로를 캐시하거나 재시도하지 않도록 한다.
+`GET /api/v1/manifest`는 사용자 RT를 회전한다. CDN/API Gateway에서 이 경로를 캐시하거나 재시도하지 않도록 한다.
 503/409로 트랜잭션이 실패하면 RT 소비는 롤백된다. 연결 종료 등 응답 유실은 성공 여부를 알 수 없으므로 재로그인한다.
 로컬 파일·키링의 적용 완료를 서버 성공과 동일시하지 않는다. OTLP `ptt_` 갱신과 사용자 RT 회전은 별개다.
 
@@ -194,4 +194,4 @@ docker buildx build --target enrollment-api \
 
 CI의 PR 검증과 develop 배포는 telemetryctl 기본 브랜치를 체크아웃해 그 `contracts`를 쓴다(ref를 고정하지 않는다).
 계약 테스트는 telemetryctl 기본 브랜치에 있는 `enrollment-envelope`·`enrollment-manifest` 두 스키마만 원본으로 읽는다. 사용자 토큰 봉투·AT 클레임·재조회 봉투의 오라클은
-[명세](enrollment-server-spec.md) §11·§11.1의 표다 — 원격 기본 브랜치에 없는 스키마를 읽게 하면 CI가 죽는다.
+[인증 API](api/auth.md)와 [manifest 재조회](api/enrollment.md)의 표다 — 원격 기본 브랜치에 없는 스키마를 읽게 하면 CI가 죽는다.

@@ -76,6 +76,7 @@ class SeatSyncApiTest : AbstractUserAuthApiTest() {
         // Cursor Enterprise 지출(ADR 0050) — 이번 주기(2026-09-01T00:00Z 시작) on-demand 1234.5 센트.
         vendors.on("POST", cursorSpend, reply(200, """{"teamMemberSpend":[{"userId":"user_c1","spendCents":1234.5,"email":"dev@example.test"}],
             "subscriptionCycleStart":1788220800000,"totalPages":1}"""))
+        // 이 서버는 Pulsemetry가 아닌 Anthropic Admin API를 흉내 낸다. 외부 /v1 경로는 앱의 /api/v1 전환 대상이 아니다.
         vendors.on("GET", "/v1/organizations/users", reply(200, """{"data":[{"type":"user","id":"user_01","email":"jane@example.test","name":"Jane","role":"user",
             "added_at":"2026-06-12T09:14:03Z"}],"has_more":false,"first_id":"user_01","last_id":"user_01"}"""))
         vendors.on("GET", "/v1/organizations/invites", reply(200, """{"data":[{"type":"invite","id":"invite_01","email":"newhire@example.test","role":"user",
