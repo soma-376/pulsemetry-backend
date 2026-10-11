@@ -40,7 +40,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * `GET /v1/manifest` 재동기화(명세 §11.1, ADR 0019). 봉투의 오라클은 명세다 — 5키, 나머지 네 키는 §11 의 TokenResponse,
+ * `GET /api/v1/manifest` 재동기화(명세 §11.1, ADR 0019). 봉투의 오라클은 명세다 — 5키, 나머지 네 키는 §11 의 TokenResponse,
  * AT 클레임은 §11 의 클레임 표. 봉투 안의 `manifest` 만 원격 telemetryctl develop 의 `enrollment-manifest` 스키마 원본으로 본다
  * (원격에는 재조회 봉투·클레임의 스키마가 없다).
  */
@@ -74,10 +74,10 @@ class ManifestResyncApiTest {
         val tokens = auth.tokens(requireNotNull(repository.member(member)),session)
         old=mapper.valueToTree(mapOf("access_token" to tokens.accessToken,"refresh_token" to tokens.refreshToken))
     }
-    private fun post(path:String,body:Any)=http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/$path"))
+    private fun post(path:String,body:Any)=http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/auth/$path"))
         .header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build(),HttpResponse.BodyHandlers.ofString())
     private fun get(token:String=old["refresh_token"].asString(),condition:Boolean=false):HttpResponse<String> {
-        val b=HttpRequest.newBuilder(URI("http://localhost:$port/v1/manifest")).header("Authorization","Bearer $token")
+        val b=HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/manifest")).header("Authorization","Bearer $token")
         if(condition) b.header("If-None-Match","*").header("If-Modified-Since","Wed, 09 Sep 2099 00:00:00 GMT")
         return http.send(b.GET().build(),HttpResponse.BodyHandlers.ofString())
     }
@@ -130,7 +130,7 @@ class ManifestResyncApiTest {
     @Test fun `AT와 설치 토큰은 재동기화 자격증명이 아니다`() {
         for(t in listOf(old["access_token"].asString(),"pit_"+"a".repeat(43),"ptt_"+"a".repeat(43),""))
             assertThat(get(t).statusCode()).isEqualTo(401)
-        val missing=http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/manifest")).GET().build(),HttpResponse.BodyHandlers.ofString())
+        val missing=http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/manifest")).GET().build(),HttpResponse.BodyHandlers.ofString())
         assertThat(missing.statusCode()).isEqualTo(401)
         assertThat(get().statusCode()).isEqualTo(200)
     }

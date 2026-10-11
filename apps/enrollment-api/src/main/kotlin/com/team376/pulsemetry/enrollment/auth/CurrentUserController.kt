@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @ConditionalOnProperty(prefix = "pulsemetry.user-auth", name = ["enabled"], havingValue = "true")
 class CurrentUserController(private val auth: UserAuthService, private val jdbc: JdbcClient, private val limiter: AuthRateLimiter) {
-    @GetMapping("/v1/auth/me")
+    @GetMapping("/api/v1/auth/me")
     fun me(@RequestHeader("Authorization", required = false) header: String?, request: HttpServletRequest): CurrentUser {
         val token = header?.takeIf { it.startsWith("Bearer ") }?.removePrefix("Bearer ")
         // AT 의 세션 단위로 센다. 토큰이 없거나 검증에 실패하면 진입 버킷이다(ADR 0052).

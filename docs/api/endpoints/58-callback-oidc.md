@@ -1,10 +1,10 @@
-# 58 GET `/v1/auth/oidc/callback/{registrationId}`
+# 58 GET `/api/v1/auth/oidc/callback/{registrationId}`
 
 IdP 콜백
 
 [전체 API](../README.md) · [로그인·사용자 인증](../auth.md)
 
-<!-- endpoint: enrollment-api GET /v1/auth/oidc/callback/{registrationId} -->
+<!-- endpoint: enrollment-api GET /api/v1/auth/oidc/callback/{registrationId} -->
 
 서버: **enrollment-api** · 성공: **302** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/OidcLoginConfig.kt)
 

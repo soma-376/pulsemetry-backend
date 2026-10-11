@@ -68,7 +68,7 @@ class InquiryConfig {
 @RestController
 @ConditionalOnProperty(prefix = "pulsemetry.inquiries", name = ["enabled"], havingValue = "true")
 class InquiryController(private val store: InquiryStore) {
-    @PostMapping("/v1/inquiries")
+    @PostMapping("/api/v1/inquiries")
     fun receive(@RequestBody body: InquiryRequest, request: HttpServletRequest): ResponseEntity<InquiryReceipt> =
         ResponseEntity.status(201).header("Cache-Control", "no-store").body(store.receive(body.company, body.email, request.remoteAddr))
 }
@@ -104,7 +104,7 @@ class InquiryErrors {
 
 /** 본문을 읽기 전에 출처별 한도를 센다. 빈으로 노출하지 않는다 — 보안 체인이 문의 경로에만 건다. */
 class InquiryRequestFilter(private val store: InquiryStore) : OncePerRequestFilter() {
-    override fun shouldNotFilter(request: HttpServletRequest) = request.servletPath != "/v1/inquiries" || request.method == "OPTIONS"
+    override fun shouldNotFilter(request: HttpServletRequest) = request.servletPath != "/api/v1/inquiries" || request.method == "OPTIONS"
     override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
         try {
             store.limit(request.remoteAddr)

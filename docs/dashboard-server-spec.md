@@ -35,7 +35,7 @@ HTTP 명세는 [페이지·기능별 API 문서](api/README.md)로 이전했다.
 | 19 | [GET `/api/v1/organizations/{organizationId}/ingest-status`](api/endpoints/19-get-ingest-status.md) | 현재 수집 상태 |
 | 20 | [GET `/api/v1/vendor-catalog`](api/endpoints/20-list-vendor-catalog.md) | 카탈로그 검색 |
 | 21 | [GET `/api/v1/vendor-catalog/{vendorId}/plans`](api/endpoints/21-list-vendor-plans.md) | 제품 플랜 조회 |
-| 76 | [GET `/v1/healthz`](api/endpoints/76-get-dashboard-health.md) | 생존 확인 |
+| 76 | [GET `/api/v1/healthz`](api/endpoints/76-get-dashboard-health.md) | 생존 확인 |
 
 ## 5. 운영과 로컬 실행
 

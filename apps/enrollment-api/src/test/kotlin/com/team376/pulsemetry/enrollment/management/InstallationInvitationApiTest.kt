@@ -66,7 +66,7 @@ class InstallationInvitationApiTest : AbstractUserAuthApiTest() {
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200)
         return json(response)
     }
-    private fun enrollWith(code: String): HttpResponse<String> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/enroll"))
+    private fun enrollWith(code: String): HttpResponse<String> = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/enroll"))
         .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(mapOf("code" to code, "platform" to "macos")))).build(),
         HttpResponse.BodyHandlers.ofString())
     private fun listed(token: String, invitation: String): JsonNode = json(manage("GET", "/invitations?limit=100", null, token)).path("items").toList()

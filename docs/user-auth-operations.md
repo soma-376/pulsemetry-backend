@@ -26,7 +26,7 @@ true이면 검증된 ID Token의 비어 있지 않은 email과 boolean email_ver
 
 1. 고객사 IdP 관리자와 issuer·클라이언트 등록·계정 식별자·접근 정책을 확인한다.
 2. confidential OIDC client에 Authorization Code와 S256 PKCE를 설정한다.
-   callback을 `https://auth.example.com/v1/auth/oidc/callback/oidc`처럼 정확히 등록한다.
+   callback을 `https://auth.example.com/api/v1/auth/oidc/callback/oidc`처럼 정확히 등록한다.
    사용하지 않는 가입·password grant·implicit flow는 비활성화한다.
 3. 회사에 접근을 허용할 회원의 이메일·역할을 사전 등록한다. 신규 회원 sub는 NULL로 두며 미리 수집하지 않는다.
    최초 연결은 회사가 검증한 이메일의 현재 소유자를 이 회원으로 인정한다. 이미 연결된 sub는 자동 교체하지 않는다.
@@ -102,7 +102,7 @@ RSA 2048비트 이상, 개인키 PKCS8·공개키 X509 PEM을 사용한다. 운�
 ## 쿠키와 세션
 
 OIDC state/nonce/upstream PKCE 및 최종 복귀 요청을 JDBC 임시 세션에 보관한다.
-기본 10분, HttpOnly·SameSite=Lax·HTTPS Secure, Path=/v1/auth/oidc이다.
+기본 10분, HttpOnly·SameSite=Lax·HTTPS Secure, Path=/api/v1/auth/oidc이다.
 성공/실패 시 폐기하며 Spring Security 로그인 컨텍스트/IdP 토큰을 장기 저장하지 않는다.
 여러 인스턴스도 공유 DB로 왕복할 수 있으며 같은 배포 버전/클라이언트 설정이 필요하다.
 Spring Session이 만료 행을 정리한다. 로그인 흐름을 마친 뒤 API 쿠키 세션은 생기지 않는다.
@@ -136,8 +136,8 @@ RT 이력은 세션 만료 전 지우지 않는다.
 
 | 범주 | 요청 | 단위 | 설정 키(기본) |
 | --- | --- | --- | --- |
-| 진입 | 회사 탐색·OIDC 인가·콜백·코드 교환, 아래 자격 보유가 아닌 `/v1/auth/*` 전부 | remoteAddr | `rate-limit.entry.requests`·`window`(30회·60초) |
-| 자격 보유 | RT 갱신·로그아웃·`GET /v1/manifest`·`GET /v1/auth/me` | 세션 | `rate-limit.session.requests`·`window`(30회·60초) |
+| 진입 | 회사 탐색·OIDC 인가·콜백·코드 교환, 아래 자격 보유가 아닌 `/api/v1/auth/*` 전부 | remoteAddr | `rate-limit.entry.requests`·`window`(30회·60초) |
+| 자격 보유 | RT 갱신·로그아웃·`GET /api/v1/manifest`·`GET /api/v1/auth/me` | 세션 | `rate-limit.session.requests`·`window`(30회·60초) |
 
 토큰이 없거나 형식이 틀렸거나 모르는 토큰은 진입 한도로 센다. 자격 보유 요청의 429는 RT를 소비하기 전에 나므로
 클라이언트는 `Retry-After` 뒤에 같은 RT로 다시 요청한다. 한도는 고정 창이며 요청 수는 1 이상, 창은 1초 이상이어야 기동한다.
@@ -173,7 +173,7 @@ V28의 비밀번호 삭제는 비가역이다. **구 비밀번호 버전 앱만 
 
 ## manifest 재동기화
 
-`GET /v1/manifest`는 사용자 RT를 회전한다. CDN/API Gateway에서 이 경로를 캐시하거나 재시도하지 않도록 한다.
+`GET /api/v1/manifest`는 사용자 RT를 회전한다. CDN/API Gateway에서 이 경로를 캐시하거나 재시도하지 않도록 한다.
 503/409로 트랜잭션이 실패하면 RT 소비는 롤백된다. 연결 종료 등 응답 유실은 성공 여부를 알 수 없으므로 재로그인한다.
 로컬 파일·키링의 적용 완료를 서버 성공과 동일시하지 않는다. OTLP `ptt_` 갱신과 사용자 RT 회전은 별개다.
 

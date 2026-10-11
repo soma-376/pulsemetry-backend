@@ -76,7 +76,7 @@ class OidcLoginConfig {
     @Bean
     fun cookieSerializer(p: OidcProperties) = DefaultCookieSerializer().apply {
         setCookieName("PULSEMETRY_OIDC")
-        setCookiePath("/v1/auth/oidc")
+        setCookiePath("/api/v1/auth/oidc")
         setUseHttpOnlyCookie(true)
         setUseSecureCookie(URI(p.callbackBaseUrl).scheme == "https")
         setSameSite("Lax")
@@ -87,7 +87,7 @@ class OidcLoginConfig {
     fun oidcSecurity(http: HttpSecurity, p: OidcProperties, clients: TenantOidcClients,
         auth: UserAuthService, limiter: AuthRateLimiter): SecurityFilterChain {
         val resolver = LoginRequestResolver(clients, auth)
-        http.securityMatcher("/v1/auth/oidc/**")
+        http.securityMatcher("/api/v1/auth/oidc/**")
             .authorizeHttpRequests { it.anyRequest().permitAll() }
             .csrf { it.disable() }.formLogin { it.disable() }.httpBasic { it.disable() }.logout { it.disable() }
             .requestCache { it.disable() }
@@ -111,7 +111,7 @@ class OidcLoginConfig {
                         }
                     })
                     .authorizationEndpoint { it.authorizationRequestResolver(resolver) }
-                    .redirectionEndpoint { it.baseUri("/v1/auth/oidc/callback/*") }
+                    .redirectionEndpoint { it.baseUri("/api/v1/auth/oidc/callback/*") }
                     .successHandler { request, response, authentication ->
                         val session = request.getSession(false)
                         val flow = session?.getAttribute(FLOW_KEY) as? LoginFlow
@@ -166,12 +166,12 @@ private class LoginFlow(val tenantId: UUID, val registrationId: String, val redi
 
 private class LoginRequestResolver(private val clients: TenantOidcClients,
     private val auth: UserAuthService) : OAuth2AuthorizationRequestResolver {
-    private val delegate = DefaultOAuth2AuthorizationRequestResolver(clients, "/v1/auth/oidc/authorize").apply {
+    private val delegate = DefaultOAuth2AuthorizationRequestResolver(clients, "/api/v1/auth/oidc/authorize").apply {
         setAuthorizationRequestCustomizer(OAuth2AuthorizationRequestCustomizers.withPkce())
     }
 
     override fun resolve(request: HttpServletRequest): OAuth2AuthorizationRequest? {
-        if (request.requestURI.removePrefix(request.contextPath) != "/v1/auth/oidc/authorize") return null
+        if (request.requestURI.removePrefix(request.contextPath) != "/api/v1/auth/oidc/authorize") return null
         if (request.method != "GET") throw UserAuthException("invalid_request", 400)
         fun parameter(name: String): String {
             val values = request.getParameterValues(name)
@@ -221,7 +221,7 @@ private class OidcRequestGuard(private val limiter: AuthRateLimiter, private val
         response.setHeader("Referrer-Policy", "no-referrer")
         try {
             limiter.entry(request.remoteAddr)
-            if (request.requestURI.removePrefix(request.contextPath).startsWith("/v1/auth/oidc/callback/")) {
+            if (request.requestURI.removePrefix(request.contextPath).startsWith("/api/v1/auth/oidc/callback/")) {
                 val session = request.getSession(false)
                 val flow = session?.getAttribute(FLOW_KEY) as? LoginFlow
                 if (flow != null && clients.configuration(flow.tenantId) != flow.configuration) {

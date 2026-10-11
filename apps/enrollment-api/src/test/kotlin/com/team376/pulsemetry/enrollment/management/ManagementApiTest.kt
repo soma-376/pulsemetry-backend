@@ -278,7 +278,7 @@ class ManagementApiTest : AbstractUserAuthApiTest() {
 
     @Test fun `내 정보는 토큰의 조직이며 허용 origin만 CORS에 통과한다`() {
         val token = adminToken()
-        val me = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/auth/me")).header("Authorization", "Bearer $token").GET().build(), HttpResponse.BodyHandlers.ofString())
+        val me = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/auth/me")).header("Authorization", "Bearer $token").GET().build(), HttpResponse.BodyHandlers.ofString())
         assertThat(me.statusCode()).isEqualTo(200)
         assertThat(mapper.readTree(me.body()).path("organizationId").asString()).isEqualTo(tenant.toString())
         for ((origin, status) in listOf("http://localhost:3000" to 200, "https://untrusted.example" to 403)) {

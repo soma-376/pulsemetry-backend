@@ -32,8 +32,8 @@ libs/telemetry-ops-persistence/ 수집 운영 기록의 RDS 쪽 — telemetry_op
 libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설명 · 조립 검사 (ADR 0048). Spring 없음
 ```
 
-**소유하는 것**: `POST /v1/enroll`, `POST /v1/installations/telemetry-token`, `GET /v1/manifest`, `POST /v1/invitations`,
-설치 보고 `POST /v1/installations/{installationId}/heartbeat`, 데몬 업데이트 확인 `GET /api/v1/check-updates`, 도입 문의 `POST /v1/inquiries`,
+**소유하는 것**: `POST /api/v1/enroll`, `POST /api/v1/installations/telemetry-token`, `GET /api/v1/manifest`, `POST /api/v1/invitations`,
+설치 보고 `POST /api/v1/installations/{installationId}/heartbeat`, 데몬 업데이트 확인 `GET /api/v1/check-updates`, 도입 문의 `POST /api/v1/inquiries`,
 부트스트랩 스크립트·바이너리 서빙(`GET /windows|/unix|/bin/{f}`), manifest 저장, 조직 관리 명령(`/api/v1/organizations/{id}/…` — `docs/api/README.md`의 기능별 명세),
 그리고 **enrollment 스키마의 진실원(Flyway)**. 조회(분석·설정·좌석·알림·작업 상태)는 `:apps:dashboard-api`가 맡는다.
 
@@ -183,7 +183,7 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   거부가 400, 일시 장애(보강·ClickHouse·수집 운영 기록)와 분류되지 않은 예외가 503이다. 영구 실패 push도
   수신 ledger·요약에 기록한 뒤 400이고, 기록이 실패하면 503이다(ADR 0021). 행을 옮기면 허브
   `contracts/telemetry-ingest.md` §8을 같은 커밋에서 고친다.
-- **`:apps:telemetry-ingest`의 OTLP 밖 경로는 기본 닫힘이다.** 둘째 `SecurityFilterChain`이 `/v1/healthz`만
+- **`:apps:telemetry-ingest`의 OTLP 밖 경로는 기본 닫힘이다.** 둘째 `SecurityFilterChain`이 `/api/v1/healthz`만
   열고 나머지는 `denyAll`이다. 관리 엔드포인트를 얹으려면 그 체인에 경로를 명시한다. 예외는 ERROR
   디스패치 하나다 — 내부 오류는 원래 서버 오류 응답을 보존한다. 외부의 계약 밖 요청은
   `denyAll`을 유지하며 `404 text/plain`으로 거부한다(허브 계약 §8).
@@ -207,7 +207,7 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   업데이트 확인은 원격 telemetryctl 의 `internal/updatecheck/client.go` 가 읽는 것. 원격에 없는 스키마를 로컬 체크아웃에서 읽거나
   저장소로 복사해 오라클로 쓰지 마라 — 로컬에서 녹색이고 CI 에서 죽는다. Gradle 의 기본 계약 경로는 형제 `../telemetryctl/contracts` 이므로,
   CI 와 같은 조건으로 돌리려면 `PULSEMETRY_CONTRACTS_DIR` 을 원격 기본 브랜치의 `contracts` 로 둔다.
-- **`GET /v1/manifest`는 사용자 RT만 받고 한 서버 트랜잭션에서 정책과 토큰을 회전한다**(ADR 0019 · 허브 ADR 0008).
+- **`GET /api/v1/manifest`는 사용자 RT만 받고 한 서버 트랜잭션에서 정책과 토큰을 회전한다**(ADR 0019 · 허브 ADR 0008).
   AT·`pit_`·`ptt_`는 받지 않는다. 로컬 적용 완료를 보장하지 않으며 OTLP는 여전히 `ptt_`다. 상태를 바꾸는 GET이라
   캐시·프리페치·자동 재시도를 걸지 않는다. 저장된 정책은 빌드 때 jar에 넣은 telemetryctl 원본 스키마로 검증한다 —
   그래서 `:apps:enrollment-api`의 Gradle 빌드와 이미지 빌드(named context `telemetry-contracts`)에는 계약 디렉터리가 필요하다.

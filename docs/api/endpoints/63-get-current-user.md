@@ -1,10 +1,10 @@
-# 63 GET `/v1/auth/me`
+# 63 GET `/api/v1/auth/me`
 
 현재 사용자
 
 [전체 API](../README.md) · [로그인·사용자 인증](../auth.md)
 
-<!-- endpoint: enrollment-api GET /v1/auth/me -->
+<!-- endpoint: enrollment-api GET /api/v1/auth/me -->
 
 서버: **enrollment-api** · 성공: **200** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/CurrentUserController.kt)
 

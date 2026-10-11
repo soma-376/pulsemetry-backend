@@ -124,7 +124,7 @@ dashboard-api(커넥터 설명의 capability 표시). 역할 이름은 `connecto
 쓰기 소유 표는 바뀌지 않고, `:libs:enrollment-persistence`의 분할 트리거(6절)도 당겨지지 않는다. 화면별 조회는 모듈이 아니라 이 앱 안의
 패키지다. 인증 포트(`DashboardAuthenticator`)에는 `:libs:security`의 사용자 검증을 잇는 어댑터가 구현돼 있다(ADR 0026).
 `pulsemetry.user-auth.enabled=false`이면 보호 요청을 거부하며, 활성화하면 공개키와 현재 계정·세션으로 AT를 검증한다.
-필터 체인은 `/api/v1/organizations/**`와 `/api/v1/vendor-catalog/**`를 보호하고 `/v1/healthz`만 공개한다.
+필터 체인은 `/api/v1/organizations/**`와 `/api/v1/vendor-catalog/**`를 보호하고 `/api/v1/healthz`만 공개한다.
 계약 밖 경로는 404로 거부한다.
 `dashboard_cache`의 쓰는 주체는 이 앱 하나라 쓰기 소유가 앱에 있고, DDL도 이 앱이 기동 때 캐시 계정으로 적용한다 — ClickHouse는
 `clickhouse/dashboard-cache/`의 멱등 파일 전량(ADR 0015 규약), RDS는 `db/dashboard-cache/`의 별도 Flyway 인스턴스(이력

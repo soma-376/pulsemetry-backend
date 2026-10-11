@@ -12,7 +12,7 @@
 
 ### 로그인 페이지 — 이메일 회사 탐색
 
-`POST /v1/auth/organizations` (`user-auth.enabled=true`, `oidc.enabled=true`)
+`POST /api/v1/auth/organizations` (`user-auth.enabled=true`, `oidc.enabled=true`)
 
 요청 본문:
 
@@ -38,7 +38,7 @@
 
 ### 로그인 페이지 — SSO 시작
 
-`GET /v1/auth/oidc/authorize`
+`GET /api/v1/auth/oidc/authorize`
 
 `pulsemetry.oidc.enabled=true`도 필요하다. 비밀번호를 Pulsemetry로 보내지 않고 브라우저를 이 주소로 이동한다.
 조직별로 서버에 등록한 IdP만 사용한다. 신규 회원·조직을 자동 생성하지 않으며 미연결 회원만 검증된 회사 이메일로 연결한다.
@@ -58,7 +58,7 @@ code_challenge_method=S256
 ```http
 Cache-Control: no-store
 Referrer-Policy: no-referrer
-Set-Cookie: PULSEMETRY_OIDC=<opaque>; Path=/v1/auth/oidc; HttpOnly; SameSite=Lax; Secure
+Set-Cookie: PULSEMETRY_OIDC=<opaque>; Path=/api/v1/auth/oidc; HttpOnly; SameSite=Lax; Secure
 Location: https://sso.example.com/authorize?...
 ```
 
@@ -74,7 +74,7 @@ userinfo·query·fragment가 붙은 주소, 와일드카드 호스트, 임의 �
 
 ### IdP callback → 프론트 callback 페이지
 
-`GET /v1/auth/oidc/callback/{registrationId}` (개발 등록 이름: `cognito`)
+`GET /api/v1/auth/oidc/callback/{registrationId}` (개발 등록 이름: `cognito`)
 
 IdP가 호출하는 경로다. 프론트에서 직접 code를 만들거나 이 경로로 토큰을 POST하지 않는다.
 
@@ -96,7 +96,7 @@ sub 충돌·다른 sub로의 교체·미등록·정지·중복 이메일은 거�
 ```http
 Cache-Control: no-store
 Location: http://localhost:3000/auth/callback?code=uac_<one-time-code>&state=<client-state>
-Set-Cookie: PULSEMETRY_OIDC=; Path=/v1/auth/oidc; Max-Age=0; HttpOnly; SameSite=Lax; Secure
+Set-Cookie: PULSEMETRY_OIDC=; Path=/api/v1/auth/oidc; Max-Age=0; HttpOnly; SameSite=Lax; Secure
 ```
 
 프론트는 보관한 state와 일치하는지 먼저 확인하고 [기존 §11.3](../../enrollment-server-spec.md#113-callback-페이지--서비스-토큰-교환)에서 code를 교환한다.
@@ -124,7 +124,7 @@ Location: http://localhost:3000/auth/callback?error=login_expired
 
 ### callback 페이지 — 서비스 토큰 교환
 
-`POST /v1/auth/token` (`POST /v1/auth/cli/token`도 같은 계약)
+`POST /api/v1/auth/token` (`POST /api/v1/auth/cli/token`도 같은 계약)
 
 요청 본문:
 
@@ -152,7 +152,7 @@ Location: http://localhost:3000/auth/callback?error=login_expired
 
 ### 공통 — 로그인 유지·로그아웃·현재 사용자
 
-`POST /v1/auth/refresh`
+`POST /api/v1/auth/refresh`
 
 ```jsonc
 // 요청 본문
@@ -169,7 +169,7 @@ Location: http://localhost:3000/auth/callback?error=login_expired
 }
 ```
 
-`POST /v1/auth/logout`
+`POST /api/v1/auth/logout`
 
 ```jsonc
 // 요청 본문
@@ -183,7 +183,7 @@ Location: http://localhost:3000/auth/callback?error=login_expired
 
 현재 Pulsemetry 세션만 폐기한다. IdP 브라우저 SSO 세션을 로그아웃시키지는 않는다.
 
-`GET /v1/auth/me`
+`GET /api/v1/auth/me`
 
 ```http
 Authorization: Bearer <access_token>

@@ -6,8 +6,8 @@
 
 | 번호 | API | 기능 | 서버 |
 | --- | --- | --- | --- |
-| 75 | [GET `/v1/healthz`](endpoints/75-get-enrollment-health.md) | 생존 확인 | enrollment-api |
-| 76 | [GET `/v1/healthz`](endpoints/76-get-dashboard-health.md) | 생존 확인 | dashboard-api |
+| 75 | [GET `/api/v1/healthz`](endpoints/75-get-enrollment-health.md) | 생존 확인 | enrollment-api |
+| 76 | [GET `/api/v1/healthz`](endpoints/76-get-dashboard-health.md) | 생존 확인 | dashboard-api |
 
 <a id="feature-reference"></a>
 
@@ -19,7 +19,7 @@
 
 헤더가 없든 값이 틀리든 똑같이 401 `unauthorized` 다. 둘을 구분해 주지 않는다.
 
-`X-Admin-Token` 을 통과해도 `POST /v1/invitations` 는 아래 경우 전부 **403 `forbidden`** 이다
+`X-Admin-Token` 을 통과해도 `POST /api/v1/invitations` 는 아래 경우 전부 **403 `forbidden`** 이다
 (404 가 아니다 — 어느 member 가 존재하는지 알려 주지 않는다).
 
 - `created_by_member_id` 가 존재하지 않는다
@@ -117,7 +117,7 @@ ManagementController의 POST 명령에는 `Idempotency-Key`(영숫자·`_`·`-`,
 - 성공은 `application/json`, camelCase DTO이며 별도 공통 data 봉투가 없다. nullable 필드는 유지한다.
 - 금액은 USD decimal 문자열이다. null을 0으로 바꾸거나 환산 비용을 실제 청구액으로 표현하지 않는다.
 - 허용된 프론트 origin에 GET/OPTIONS CORS를 제공하며 쿠키 인증을 사용하지 않는다.
-- `GET /v1/healthz`는 인증 없는 생존 확인이다. 쿼리 파라미터는 없다.
+- `GET /api/v1/healthz`는 인증 없는 생존 확인이다. 쿼리 파라미터는 없다.
 
 ```json
 { "status": "ok" }

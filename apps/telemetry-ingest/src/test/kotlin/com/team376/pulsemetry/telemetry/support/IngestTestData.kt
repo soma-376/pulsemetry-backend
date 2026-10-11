@@ -31,7 +31,7 @@ import javax.sql.DataSource
  * 수집 운영 기록의 `telemetry_ops` 스키마도 여기서 적용한다. 운영에서는 `:apps:enrollment-api` 기동이 적용하고
  * ingest 는 적용하지 않는다(ADR 0021 §3) — 테스트 컨테이너에는 그 주체가 없다.
  *
- * **`POST /v1/enroll` 을 부르지 않는다.** 그 엔드포인트는 `:apps:enrollment-api` 에 있고
+ * **`POST /api/v1/enroll` 을 부르지 않는다.** 그 엔드포인트는 `:apps:enrollment-api` 에 있고
  * 앱끼리는 의존하지 않으므로 이 컨텍스트에 올릴 수 없다. 토큰은 발급과 검증이 공유하는
  * [TelemetryTokenHasher] 로 직접 만든다 — 두 앱을 잇는 진짜 앵커는 그 해셔의 고정 벡터
  * 테스트다. 데몬까지 태우는 진짜 E2E 는 수동 절차로 남는다(`docs/enrollment-server-spec.md` §10.1).

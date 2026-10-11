@@ -1,10 +1,10 @@
-# 69 GET `/v1/manifest`
+# 69 GET `/api/v1/manifest`
 
 manifest 재조회
 
 [전체 API](../README.md) · [CLI 설치 등록·배포](../enrollment.md)
 
-<!-- endpoint: enrollment-api GET /v1/manifest -->
+<!-- endpoint: enrollment-api GET /api/v1/manifest -->
 
 서버: **enrollment-api** · 성공: **200** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/ManifestResyncController.kt)
 

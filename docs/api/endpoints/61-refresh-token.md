@@ -1,10 +1,10 @@
-# 61 POST `/v1/auth/refresh`
+# 61 POST `/api/v1/auth/refresh`
 
 토큰 갱신
 
 [전체 API](../README.md) · [로그인·사용자 인증](../auth.md)
 
-<!-- endpoint: enrollment-api POST /v1/auth/refresh -->
+<!-- endpoint: enrollment-api POST /api/v1/auth/refresh -->
 
 서버: **enrollment-api** · 성공: **200** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/UserAuthController.kt)
 

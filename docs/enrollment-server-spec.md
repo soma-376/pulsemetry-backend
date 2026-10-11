@@ -58,26 +58,26 @@ HTTP 명세는 [페이지·기능별 API 문서](api/README.md)로 이전했다.
 | 53 | [PUT `/api/v1/organizations/{organizationId}/collection-policy`](api/endpoints/53-save-collection-policy.md) | 수집·조직 정책 저장 |
 | 54 | [GET `/api/v1/organizations/{organizationId}/invitations`](api/endpoints/54-list-invitations.md) | 초대 목록 |
 | 55 | [GET `/api/v1/organizations/{organizationId}/onboarding`](api/endpoints/55-get-onboarding.md) | 온보딩 상태 |
-| 56 | [POST `/v1/auth/organizations`](api/endpoints/56-discover-organizations.md) | 이메일로 회사 탐색 |
-| 57 | [GET `/v1/auth/oidc/authorize`](api/endpoints/57-authorize-oidc.md) | SSO 시작 |
-| 58 | [GET `/v1/auth/oidc/callback/{registrationId}`](api/endpoints/58-callback-oidc.md) | IdP 콜백 |
-| 59 | [POST `/v1/auth/token`](api/endpoints/59-exchange-token.md) | 서비스 토큰 교환 |
-| 60 | [POST `/v1/auth/cli/token`](api/endpoints/60-exchange-cli-token.md) | 서비스 토큰 교환 |
-| 61 | [POST `/v1/auth/refresh`](api/endpoints/61-refresh-token.md) | 토큰 갱신 |
-| 62 | [POST `/v1/auth/logout`](api/endpoints/62-logout.md) | 서비스 로그아웃 |
-| 63 | [GET `/v1/auth/me`](api/endpoints/63-get-current-user.md) | 현재 사용자 |
-| 64 | [POST `/v1/invitations`](api/endpoints/64-create-admin-invitation.md) | 관리자 키 초대 |
-| 65 | [POST `/v1/invitations/{id}/revoke`](api/endpoints/65-revoke-admin-invitation.md) | 관리자 키 초대 취소 |
-| 66 | [POST `/v1/inquiries`](api/endpoints/66-create-inquiry.md) | 도입 문의 접수 |
-| 67 | [POST `/v1/enroll`](api/endpoints/67-enroll-installation.md) | 설치 등록 |
-| 68 | [POST `/v1/installations/telemetry-token`](api/endpoints/68-refresh-telemetry-token.md) | 수집 토큰 재발급 |
-| 69 | [GET `/v1/manifest`](api/endpoints/69-get-manifest.md) | manifest 재조회 |
-| 70 | [POST `/v1/installations/{installationId}/heartbeat`](api/endpoints/70-send-heartbeat.md) | 설치 보고 |
+| 56 | [POST `/api/v1/auth/organizations`](api/endpoints/56-discover-organizations.md) | 이메일로 회사 탐색 |
+| 57 | [GET `/api/v1/auth/oidc/authorize`](api/endpoints/57-authorize-oidc.md) | SSO 시작 |
+| 58 | [GET `/api/v1/auth/oidc/callback/{registrationId}`](api/endpoints/58-callback-oidc.md) | IdP 콜백 |
+| 59 | [POST `/api/v1/auth/token`](api/endpoints/59-exchange-token.md) | 서비스 토큰 교환 |
+| 60 | [POST `/api/v1/auth/cli/token`](api/endpoints/60-exchange-cli-token.md) | 서비스 토큰 교환 |
+| 61 | [POST `/api/v1/auth/refresh`](api/endpoints/61-refresh-token.md) | 토큰 갱신 |
+| 62 | [POST `/api/v1/auth/logout`](api/endpoints/62-logout.md) | 서비스 로그아웃 |
+| 63 | [GET `/api/v1/auth/me`](api/endpoints/63-get-current-user.md) | 현재 사용자 |
+| 64 | [POST `/api/v1/invitations`](api/endpoints/64-create-admin-invitation.md) | 관리자 키 초대 |
+| 65 | [POST `/api/v1/invitations/{id}/revoke`](api/endpoints/65-revoke-admin-invitation.md) | 관리자 키 초대 취소 |
+| 66 | [POST `/api/v1/inquiries`](api/endpoints/66-create-inquiry.md) | 도입 문의 접수 |
+| 67 | [POST `/api/v1/enroll`](api/endpoints/67-enroll-installation.md) | 설치 등록 |
+| 68 | [POST `/api/v1/installations/telemetry-token`](api/endpoints/68-refresh-telemetry-token.md) | 수집 토큰 재발급 |
+| 69 | [GET `/api/v1/manifest`](api/endpoints/69-get-manifest.md) | manifest 재조회 |
+| 70 | [POST `/api/v1/installations/{installationId}/heartbeat`](api/endpoints/70-send-heartbeat.md) | 설치 보고 |
 | 71 | [GET `/windows`](api/endpoints/71-get-windows-installer.md) | 설치 스크립트 |
 | 72 | [GET `/unix`](api/endpoints/72-get-unix-installer.md) | 설치 스크립트 |
 | 73 | [GET `/bin/{filename}`](api/endpoints/73-download-binary.md) | 바이너리 다운로드 |
 | 74 | [GET `/api/v1/check-updates`](api/endpoints/74-check-updates.md) | 데몬 업데이트 확인 |
-| 75 | [GET `/v1/healthz`](api/endpoints/75-get-enrollment-health.md) | 생존 확인 |
+| 75 | [GET `/api/v1/healthz`](api/endpoints/75-get-enrollment-health.md) | 생존 확인 |
 
 ## 1. 범위
 
@@ -88,11 +88,11 @@ HTTP 명세는 [페이지·기능별 API 문서](api/README.md)로 이전했다.
 사용자 흐름:
 
 ```text
-관리자가 POST /v1/invitations 로 초대 코드 발급 → 사용자에게 전달
+관리자가 POST /api/v1/invitations 로 초대 코드 발급 → 사용자에게 전달
   → 사용자가 터미널에 한 줄 설치 명령 붙여넣기
   → GET /windows?code=... (또는 /unix?code=...) 가 설치 스크립트 반환
   → 스크립트가 GET /bin/{filename} 로 아키텍처에 맞는 바이너리 다운로드
-  → 바이너리가 POST /v1/enroll 호출 → 자격증명 + manifest 수신
+  → 바이너리가 POST /api/v1/enroll 호출 → 자격증명 + manifest 수신
   → Codex/Claude 설정 충돌 검사 → 백업 → OTel 키 병합 → daemon 자동 실행 등록 → 완료
 ```
 
@@ -103,11 +103,11 @@ HTTP 명세는 [페이지·기능별 API 문서](api/README.md)로 이전했다.
 설치된 데몬의 주기 보고(heartbeat)는 §4.5가 받는다. 그 값으로 수집 상태와 적용 현황을 판정하는 것은 조회 API의 몫이다.
 telemetryctl 기본 브랜치의 데몬은 등록(§4.2)·토큰 재발급(§4.3)·OTLP 전달·업데이트 확인(§6.3)을 한다. 설치 보고 송신·manifest 재조회(§11.1)·CLI 로그인(§11)은
 데몬 쪽 구현이 없다 — 서버 경로만 있다(ADR 0053).
-초대 이메일은 조직 관리 API의 초대(§12·§13.3)가 보낸다. 관리자 키 경로(`POST /v1/invitations`)는 메일을 보내지 않고 설치 명령을 응답으로 돌려준다.
+초대 이메일은 조직 관리 API의 초대(§12·§13.3)가 보낸다. 관리자 키 경로(`POST /api/v1/invitations`)는 메일을 보내지 않고 설치 명령을 응답으로 돌려준다.
 
 ---
 
-### 2.5 생존 확인 — `GET /v1/healthz`
+### 2.5 생존 확인 — `GET /api/v1/healthz`
 
 ```ts
 // 쿼리 파라미터 없음
@@ -231,7 +231,7 @@ GUI 패키지는 받지 않아도 된다(서빙하지 않는다). 새 릴리스�
 
 ### 9.3 헬스체크
 
-`GET /v1/healthz` 는 `SELECT 1` 로 DB 를 확인한다.
+`GET /api/v1/healthz` 는 `SELECT 1` 로 DB 를 확인한다.
 
 ```json
 {"status": "ok", "checks": {"database": "ok"}}
@@ -373,7 +373,7 @@ E2E_DAEMON_STAGE_DIR=<단계 디렉터리> npx playwright test --config=playwrig
 
 | 단계 | 데몬 쪽이 하는 것과 `<단계>.ready` | 화면이 확인하는 것(대시보드 명세 "공통 헤더 수집 현황"·"정책 적용 현황") |
 | --- | --- | --- |
-| `enrolled` | 초대 발급 → 실제 `POST /v1/enroll`과 설정 적용. `{installationId}` | 헤더 "수신 대기"(수신 이력 없음), 정책 적용 현황 "확인 불가 1대"·근거 없음 1대(설치 보고도 적용 확인 기록도 없음 — 대시보드 명세 `appliedEvidence` `none`), 설치 행의 근거 "근거 없음"·근거 시각 "-" |
+| `enrolled` | 초대 발급 → 실제 `POST /api/v1/enroll`과 설정 적용. `{installationId}` | 헤더 "수신 대기"(수신 이력 없음), 정책 적용 현황 "확인 불가 1대"·근거 없음 1대(설치 보고도 적용 확인 기록도 없음 — 대시보드 명세 `appliedEvidence` `none`), 설치 행의 근거 "근거 없음"·근거 시각 "-" |
 | `collecting` | 전달기로 OTLP 로그 한 묶음 → ingest 2xx. `{installationId}` | 헤더 "수집 상태 확인 불가"·"수집 기기의 보고가 없어 판정할 수 없습니다"와 마지막 수신 — 수신이 있어도 보고 없이 정상이라고 하지 않는다 |
 | `updates` | 업데이트 확인 → 릴리스의 판·업데이트 있음, 릴리스를 치우면 미지원. `{latestVersion}` | 없음(데몬 쪽 상태) |
 
@@ -432,19 +432,19 @@ organization_onboarding에는 정책 확인자·시각과 완료자만 남는다
 
 <a id="21-post-v1invitations-요청응답"></a>
 
-### 2.1 `POST /v1/invitations` 요청·응답
+### 2.1 `POST /api/v1/invitations` 요청·응답
 
 → [초대·설치 코드](api/invitations.md)
 
 <a id="22-cli-설치-등록--post-v1enroll"></a>
 
-### 2.2 CLI 설치 등록 — `POST /v1/enroll`
+### 2.2 CLI 설치 등록 — `POST /api/v1/enroll`
 
 → [CLI 설치 등록·배포](api/enrollment.md)
 
 <a id="23-텔레메트리-토큰-재발급--post-v1installationstelemetry-token"></a>
 
-### 2.3 텔레메트리 토큰 재발급 — `POST /v1/installations/telemetry-token`
+### 2.3 텔레메트리 토큰 재발급 — `POST /api/v1/installations/telemetry-token`
 
 → [CLI 설치 등록·배포](api/enrollment.md)
 
@@ -456,7 +456,7 @@ organization_onboarding에는 정책 확인자·시각과 완료자만 남는다
 
 <a id="22-post-v1inquiries-도입-문의-접수"></a>
 
-### 2.2 `POST /v1/inquiries` 도입 문의 접수
+### 2.2 `POST /api/v1/inquiries` 도입 문의 접수
 
 → [도입 문의](api/inquiries.md)
 
@@ -510,7 +510,7 @@ organization_onboarding에는 정책 확인자·시각과 완료자만 남는다
 
 <a id="45-설치-보고--post-v1installationsinstallation_idheartbeat"></a>
 
-### 4.5 설치 보고 — `POST /v1/installations/{installation_id}/heartbeat`
+### 4.5 설치 보고 — `POST /api/v1/installations/{installation_id}/heartbeat`
 
 → [CLI 설치 등록·배포](api/enrollment.md)
 

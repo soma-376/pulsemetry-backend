@@ -1,10 +1,10 @@
-# 68 POST `/v1/installations/telemetry-token`
+# 68 POST `/api/v1/installations/telemetry-token`
 
 수집 토큰 재발급
 
 [전체 API](../README.md) · [CLI 설치 등록·배포](../enrollment.md)
 
-<!-- endpoint: enrollment-api POST /v1/installations/telemetry-token -->
+<!-- endpoint: enrollment-api POST /api/v1/installations/telemetry-token -->
 
 서버: **enrollment-api** · 성공: **200** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/api/TelemetryTokenController.kt)
 

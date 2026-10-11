@@ -68,7 +68,7 @@ class InvitationMailApiTest : AbstractUserAuthApiTest() {
     private fun listed(invitation: String): JsonNode = mapper.readTree(manage("GET", "/invitations?limit=100", null, token).body()).path("items").toList()
         .single { it.path("invitationId").asString() == invitation }.path("delivery")
     private fun mailsTo(email: String) = MailpitServer.received().filter { MailpitServer.recipients(it) == listOf(email) }
-    private fun install(email: String, code: String): Int = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI("http://localhost:$port/v1/enroll"))
+    private fun install(email: String, code: String): Int = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI("http://localhost:$port/api/v1/enroll"))
         .header("Content-Type", "application/json").POST(java.net.http.HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(mapOf("code" to code, "platform" to "macos")))).build(), java.net.http.HttpResponse.BodyHandlers.ofString()).statusCode()
     private fun outboxStatus(invitation: String) = outbox.delivery("invitation:$invitation")?.status
 
@@ -198,7 +198,7 @@ class InvitationMailApiTest : AbstractUserAuthApiTest() {
     }
 
     @Test fun `문의가 접수되면 담당자에게 통지가 도착하고 재전송은 통지를 다시 만들지 않는다`() {
-        fun inquire() = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/v1/inquiries")).header("Content-Type", "application/json")
+        fun inquire() = http.send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/inquiries")).header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(mapOf("company" to "코드웍스", "email" to "Lead@Example.test")))).build(), HttpResponse.BodyHandlers.ofString())
         val first = inquire()
         assertThat(first.statusCode()).isEqualTo(201)

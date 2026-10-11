@@ -2,7 +2,7 @@
 
 [API 목록](../enrollment.md) · [공통 규칙](../common.md) · [공통 스키마](../common-schemas.md)
 
-### CLI 설치 등록 — `POST /v1/enroll`
+### CLI 설치 등록 — `POST /api/v1/enroll`
 
 요청 본문. `invite`, `installer_version`, `operating_environment`, `device_id`, `tools_detected`는
 구버전 클라이언트 호환 필드다. 새 클라이언트는 앞의 다섯 필드만 보낸다.
@@ -48,7 +48,7 @@
 }
 ```
 
-### 텔레메트리 토큰 재발급 — `POST /v1/installations/telemetry-token`
+### 텔레메트리 토큰 재발급 — `POST /api/v1/installations/telemetry-token`
 
 요청 본문과 쿼리 파라미터는 없다. 장기 설치 토큰을 헤더에 보낸다.
 
@@ -107,7 +107,7 @@ enroll 요청의 `platform` 은 클라이언트가 `runtime.GOOS` 를 그대로 
 
 ### 정규화
 
-`POST /v1/enroll` 은 입력을 정규화한다: 앞뒤 공백 제거 → 대문자 → 하이픈이 없으면 4자마다 삽입.
+`POST /api/v1/enroll` 은 입력을 정규화한다: 앞뒤 공백 제거 → 대문자 → 하이픈이 없으면 4자마다 삽입.
 그러고도 정규식을 만족하지 못하면 400 `invalid_request` 다.
 
 `GET /windows`·`GET /unix` 는 **정규화하지 않고** 정규식 검증만 한다([기존 §6.1](../../enrollment-server-spec.md#61-get-windows-get-unix) 참조).
@@ -144,7 +144,7 @@ WHERE code_hash = :codeHash
 **enroll 성공은 대상 멤버의 `invited → active` 전환 이벤트다.** OTLP 경로의
 auth-proxy(ai-telemetry-pipeline)가 `invited`·`suspended` 멤버의 토큰을 거부하므로,
 이 전환 없이는 발급된 telemetry token 이 전부 401 이 된다. 재발급([기존 §4.3](../../enrollment-server-spec.md#43-2단-토큰-모델과-봉투-분리)의
-`POST /v1/installations/telemetry-token`)도 같은 전환을 보정한다 — pit_ 인증이 과거
+`POST /api/v1/installations/telemetry-token`)도 같은 전환을 보정한다 — pit_ 인증이 과거
 enroll 완료의 증명이기 때문이다. 전환은 `invited` 에서만 일어난다. `suspended` 는
 어느 경로도 건드리지 않는다 — 정지 해제는 관리자의 결정이지 설치의 부수효과가 아니다.
 
@@ -188,7 +188,7 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 토큰과 초대 코드 원본을 **로그에 남기지 않는다.** 에러 응답에도 담지 않는다 —
 파싱 실패 메시지에는 요청 본문 조각이 섞여 있어 그대로 흘리면 코드가 새어 나간다.
 
-### 설치 보고 — `POST /v1/installations/{installation_id}/heartbeat`
+### 설치 보고 — `POST /api/v1/installations/{installation_id}/heartbeat`
 
 데몬이 생존, 적용한 manifest 판, 수집 경로의 상태를 주기적으로 보고한다. 데몬의 동작은
 허브 `contracts/enrollment-api.md` [기존 §7](../../enrollment-server-spec.md#7-에러-계약)이 정하고, 서버가 받는 요청·응답의 필드는 아래 두 표가 정한다 — 서버의 계약 테스트(`HeartbeatApiTest`)가 이 표를 오라클로 쓴다.
@@ -413,7 +413,7 @@ pulsemetry_linux_amd64         pulsemetry_linux_arm64
 
 ### manifest 재동기화
 
-`GET /v1/manifest`는 `Authorization: Bearer <사용자 RT>`를 받고 정책과 토큰의 5키 봉투
+`GET /api/v1/manifest`는 `Authorization: Bearer <사용자 RT>`를 받고 정책과 토큰의 5키 봉투
 (`manifest`·`access_token`·`refresh_token`·`token_type`·`expires_in`)를 반환한다.
 허브 `contracts/user-auth.md`가 계약이다. 봉투 안의 `manifest`는 원격 telemetryctl의 `contracts/enrollment-manifest.schema.json`을 만족하고,
 나머지 네 키는 [기존 §11](../../enrollment-server-spec.md#11-사용자-인증)의 TokenResponse와 같다. 원격 telemetryctl develop에는 이 봉투의 JSON Schema도 재조회 클라이언트도 아직 없다.

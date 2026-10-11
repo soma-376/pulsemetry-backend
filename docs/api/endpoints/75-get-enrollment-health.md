@@ -1,10 +1,10 @@
-# 75 GET `/v1/healthz`
+# 75 GET `/api/v1/healthz`
 
 생존 확인
 
 [전체 API](../README.md) · [공통 HTTP 규칙](../common.md)
 
-<!-- endpoint: enrollment-api GET /v1/healthz -->
+<!-- endpoint: enrollment-api GET /api/v1/healthz -->
 
 서버: **enrollment-api** · 성공: **200** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/api/HealthController.kt)
 

@@ -6,7 +6,7 @@
 
 | 번호 | API | 기능 | 서버 |
 | --- | --- | --- | --- |
-| 66 | [POST `/v1/inquiries`](endpoints/66-create-inquiry.md) | 도입 문의 접수 | enrollment-api |
+| 66 | [POST `/api/v1/inquiries`](endpoints/66-create-inquiry.md) | 도입 문의 접수 | enrollment-api |
 
 <a id="feature-reference"></a>
 

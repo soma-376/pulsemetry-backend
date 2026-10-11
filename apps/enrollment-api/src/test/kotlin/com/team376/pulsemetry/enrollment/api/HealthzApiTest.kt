@@ -19,7 +19,7 @@ import java.sql.Connection
 import java.sql.SQLException
 
 /**
- * `GET /v1/healthz` (PLAN.md §6.4).
+ * `GET /api/v1/healthz` (PLAN.md §6.4).
  *
  * 정상 경로는 실제 HTTP 로, 장애 경로는 컨트롤러를 직접 만들어 확인한다 —
  * 테스트 도중 컨테이너를 죽이면 같은 컨텍스트를 쓰는 다른 테스트까지 무너진다.
@@ -39,7 +39,7 @@ class HealthzApiTest {
 	@Test
 	@DisplayName("DB 가 살아 있으면 200 과 status=ok")
 	fun healthyReturnsOk() {
-		val response = get("/v1/healthz")
+		val response = get("/api/v1/healthz")
 
 		assertThat(response.statusCode()).isEqualTo(200)
 		val body = objectMapper.readTree(response.body())
@@ -50,7 +50,7 @@ class HealthzApiTest {
 	@Test
 	@DisplayName("본문은 status·checks 두 필드뿐이다")
 	fun bodyShape() {
-		val body = objectMapper.readTree(get("/v1/healthz").body())
+		val body = objectMapper.readTree(get("/api/v1/healthz").body())
 
 		assertThat(body.propertyNames()).containsExactlyInAnyOrder("status", "checks")
 		assertThat(body.get("checks").propertyNames()).containsExactly("database")
@@ -59,7 +59,14 @@ class HealthzApiTest {
 	@Test
 	@DisplayName("인증 없이 호출된다")
 	fun requiresNoAuthentication() {
-		assertThat(get("/v1/healthz").statusCode()).isEqualTo(200)
+		assertThat(get("/api/v1/healthz").statusCode()).isEqualTo(200)
+	}
+
+	@Test
+	@DisplayName("옛 /v1 경로는 별칭으로 제공하지 않는다")
+	fun legacyV1PathsAreNotAvailable() {
+		assertThat(get("/v1/healthz").statusCode()).isEqualTo(404)
+		assertThat(get("/v1/enroll").statusCode()).isEqualTo(404)
 	}
 
 	@Test

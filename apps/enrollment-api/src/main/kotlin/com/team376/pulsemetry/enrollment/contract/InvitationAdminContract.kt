@@ -6,7 +6,7 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * `POST /v1/invitations` 요청 (PLAN.md §6.5).
+ * `POST /api/v1/invitations` 요청 (PLAN.md §6.5).
  *
  * telemetryctl 계약이 아니라 서버가 정의하는 관리자용 계약이다.
  * 필수 필드가 없으면 Jackson 이 역직렬화에서 실패하고 400 `invalid_request` 가 된다.
@@ -32,7 +32,7 @@ data class CreateInvitationRequest(
 )
 
 /**
- * `POST /v1/invitations` 응답 (201).
+ * `POST /api/v1/invitations` 응답 (201).
  *
  * **원본 [code] 는 여기서 딱 한 번만 나간다.** DB 에는 해시만 있으므로 다시 볼 방법이 없고,
  * 그래서 재조회 API 를 만들지 않는다 (PLAN.md R4). 관리자가 이 응답을 잃으면 새로 발급해야 한다.

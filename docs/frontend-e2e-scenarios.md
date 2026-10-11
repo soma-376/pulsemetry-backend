@@ -26,7 +26,7 @@ Playwright 테스트 코드는 프론트 레포에 작성하고 실제 Spring AP
 ## 실행 전 통과해야 할 조건
 
 1. 로그인·로그아웃·세션 갱신·현재 사용자 조회가 실제 API에 연결되어야 한다.
-   `/v1/auth/oidc/authorize` → IdP → backend callback → 프론트 callback → BFF의 `/v1/auth/token` 교환 경로를 검증한다.
+   `/api/v1/auth/oidc/authorize` → IdP → backend callback → 프론트 callback → BFF의 `/api/v1/auth/token` 교환 경로를 검증한다.
    state/PKCE를 검증하고 비밀번호는 IdP에만 입력한다. 기존 seed-login 통과를 새 OIDC 통과로 대신하지 않는다.
 2. 브라우저는 동일 출처의 `/api/bff/dashboard/...`·`/api/bff/enrollment/...`·`/api/bff/auth/...`를 호출한다.
    BFF가 backend에 Bearer 토큰을 붙이며, 브라우저에는 암호화 HttpOnly 세션 쿠키만 저장한다. BFF의 Origin·요청 헤더 검증도 확인한다.

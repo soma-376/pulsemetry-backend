@@ -14,6 +14,6 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 class HealthController {
 
-	@GetMapping("/v1/healthz")
+	@GetMapping("/api/v1/healthz")
 	fun healthz(): Map<String, String> = mapOf("status" to "ok")
 }

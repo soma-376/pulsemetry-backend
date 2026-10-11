@@ -10,14 +10,14 @@ import org.springframework.web.bind.annotation.RestController
 import javax.sql.DataSource
 
 /**
- * `GET /v1/healthz` (PLAN.md §6.4).
+ * `GET /api/v1/healthz` (PLAN.md §6.4).
  *
  * 인증이 없다. 헬스체커가 **초당** 호출하므로 이 클래스는 아무것도 로그하지 않는다 —
  * 로그 한 줄이 곧 하루 수만 줄이고, 그 소음에 진짜 사고가 묻힌다.
  * 실패는 503 이라는 응답 자체로 드러나며, 그걸 보는 건 모니터링의 몫이다.
  */
 @RestController
-@RequestMapping("/v1")
+@RequestMapping("/api/v1")
 class HealthController(dataSource: DataSource) {
 
 	/**

@@ -1,10 +1,10 @@
-# 67 POST `/v1/enroll`
+# 67 POST `/api/v1/enroll`
 
 설치 등록
 
 [전체 API](../README.md) · [CLI 설치 등록·배포](../enrollment.md)
 
-<!-- endpoint: enrollment-api POST /v1/enroll -->
+<!-- endpoint: enrollment-api POST /api/v1/enroll -->
 
 서버: **enrollment-api** · 성공: **201** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/api/EnrollmentController.kt)
 

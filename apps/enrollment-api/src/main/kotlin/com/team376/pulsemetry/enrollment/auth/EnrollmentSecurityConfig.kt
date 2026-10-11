@@ -48,8 +48,8 @@ class EnrollmentSecurityConfig {
                 exposedHeaders = listOf("Location", "ETag", "Retry-After", "X-Request-Id")
                 allowCredentials = false
             }
-            source.registerCorsConfiguration("/v1/auth/**", cors)
-            source.registerCorsConfiguration("/v1/manifest", cors)
+            source.registerCorsConfiguration("/api/v1/auth/**", cors)
+            source.registerCorsConfiguration("/api/v1/manifest", cors)
             source.registerCorsConfiguration("/api/v1/organizations/**", cors)
             // Filter 빈으로 노출하지 않는다. Boot의 전역 자동 등록을 피한다.
             http.addFilterBefore(UserAuthRequestFilter(auth), AuthorizationFilter::class.java)
@@ -57,7 +57,7 @@ class EnrollmentSecurityConfig {
         // 문의 접수는 사용자 인증과 따로 켠다. 출처 목록도 따로 받는다.
         val inquiryStore = inquiries.ifAvailable
         if (inquiryStore != null) {
-            source.registerCorsConfiguration("/v1/inquiries", CorsConfiguration().apply {
+            source.registerCorsConfiguration("/api/v1/inquiries", CorsConfiguration().apply {
                 allowedOrigins = inquiryProperties.getObject().allowedOrigins
                 allowedMethods = listOf("POST", "OPTIONS")
                 allowedHeaders = listOf("Content-Type")
@@ -73,7 +73,7 @@ class EnrollmentSecurityConfig {
 
 /** 토큰 없는 진입을 IP 로 센다. 자격을 가진 요청은 컨트롤러가 토큰을 읽은 뒤 세션으로 센다(ADR 0052). */
 private class UserAuthRequestFilter(private val limiter: AuthRateLimiter) : OncePerRequestFilter() {
-    override fun shouldNotFilter(request: HttpServletRequest) = !request.servletPath.startsWith("/v1/auth/") && request.servletPath != "/v1/manifest"
+    override fun shouldNotFilter(request: HttpServletRequest) = !request.servletPath.startsWith("/api/v1/auth/") && request.servletPath != "/api/v1/manifest"
     override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
         response.setHeader("Cache-Control", "no-store")
         response.setHeader("Pragma", "no-cache")
@@ -88,8 +88,8 @@ private class UserAuthRequestFilter(private val limiter: AuthRateLimiter) : Once
         }
     }
     private fun credential(request: HttpServletRequest) = when (request.servletPath) {
-        "/v1/auth/refresh", "/v1/auth/logout" -> request.method == "POST"
-        "/v1/auth/me", "/v1/manifest" -> request.method == "GET" || request.method == "HEAD"
+        "/api/v1/auth/refresh", "/api/v1/auth/logout" -> request.method == "POST"
+        "/api/v1/auth/me", "/api/v1/manifest" -> request.method == "GET" || request.method == "HEAD"
         else -> false
     }
     private fun writeError(response: HttpServletResponse, status: Int, code: String, retry: Long?) =

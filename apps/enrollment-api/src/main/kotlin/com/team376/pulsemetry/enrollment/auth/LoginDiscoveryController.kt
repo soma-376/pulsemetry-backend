@@ -8,11 +8,11 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RestController
 import java.util.Locale
 
-/** 이메일은 경로 탐색일 뿐 인증이 아니다. /v1/auth 필터가 no-store와 IP 제한을 적용한다. */
+/** 이메일은 경로 탐색일 뿐 인증이 아니다. /api/v1/auth 필터가 no-store와 IP 제한을 적용한다. */
 @RestController
 @ConditionalOnProperty(prefix = "pulsemetry.oidc", name = ["enabled"], havingValue = "true")
 class LoginDiscoveryController(private val repository: UserAuthRepository) {
-    @PostMapping("/v1/auth/organizations")
+    @PostMapping("/api/v1/auth/organizations")
     fun discover(@RequestBody request: LoginEmail): Map<String, Any> {
         val email = request.email.trim().lowercase(Locale.ROOT)
         if (email.length > 254 || !email.matches(Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")))

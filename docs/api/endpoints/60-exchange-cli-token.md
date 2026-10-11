@@ -1,10 +1,10 @@
-# 60 POST `/v1/auth/cli/token`
+# 60 POST `/api/v1/auth/cli/token`
 
 서비스 토큰 교환
 
 [전체 API](../README.md) · [로그인·사용자 인증](../auth.md)
 
-<!-- endpoint: enrollment-api POST /v1/auth/cli/token -->
+<!-- endpoint: enrollment-api POST /api/v1/auth/cli/token -->
 
 서버: **enrollment-api** · 성공: **200** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/UserAuthController.kt)
 

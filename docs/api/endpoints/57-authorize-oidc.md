@@ -1,10 +1,10 @@
-# 57 GET `/v1/auth/oidc/authorize`
+# 57 GET `/api/v1/auth/oidc/authorize`
 
 SSO 시작
 
 [전체 API](../README.md) · [로그인·사용자 인증](../auth.md)
 
-<!-- endpoint: enrollment-api GET /v1/auth/oidc/authorize -->
+<!-- endpoint: enrollment-api GET /api/v1/auth/oidc/authorize -->
 
 서버: **enrollment-api** · 성공: **302** · [구현](../../../apps/enrollment-api/src/main/kotlin/com/team376/pulsemetry/enrollment/auth/OidcLoginConfig.kt)
 

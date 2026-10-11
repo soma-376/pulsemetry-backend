@@ -13,7 +13,7 @@ import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 
 /**
- * `POST /v1/installations/telemetry-token` — 장기 자격증명으로 교체 가능한 토큰을 다시 받는다 (PLAN.md §6.3).
+ * `POST /api/v1/installations/telemetry-token` — 장기 자격증명으로 교체 가능한 토큰을 다시 받는다 (PLAN.md §6.3).
  *
  * 2단 토큰 모델의 핵심 동선이다 (L7): OS 키링에만 있는 `installation_token` 을 제시하면
  * OTLP 헤더에 실을 `telemetry_token` 을 새로 내준다. 기존 토큰은 전부 폐기되므로

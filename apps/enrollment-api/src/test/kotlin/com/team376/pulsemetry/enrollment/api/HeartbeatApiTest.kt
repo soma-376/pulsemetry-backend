@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit
 private const val RUN = "b3f1c2a49d5e4f60a1b2c3d4e5f60718"
 
 /**
- * `POST /v1/installations/{installation_id}/heartbeat` (명세 §4.5, 허브 `contracts/enrollment-api.md` §7, ADR 0040). 실제 HTTP 와 PostgreSQL 로 본다.
+ * `POST /api/v1/installations/{installation_id}/heartbeat` (명세 §4.5, 허브 `contracts/enrollment-api.md` §7, ADR 0040). 실제 HTTP 와 PostgreSQL 로 본다.
  * 기대값은 명세에서 온다 — 요청·응답의 필드·타입·필수성은 명세 §4.5 의 두 표다. 이 경로는 서버가 소유한 API 이고 원격 telemetryctl develop 에는
  * 이 경로의 JSON Schema 도 송신 클라이언트도 없다. 그래서 각 본문이 받아들여지는지는 그 표에서 손으로 정한 값을 쓴다. 주기 5분, `Retry-After` 7초, 이력 보존 30일.
  */
@@ -84,7 +84,7 @@ class HeartbeatApiTest {
     }
 
     private fun post(body: String, id: Any = installation, authorization: String? = "Bearer $token", contentType: String = "application/json"): HttpResponse<String> {
-        val builder = HttpRequest.newBuilder(URI("http://localhost:$port/v1/installations/$id/heartbeat")).header("Content-Type", contentType)
+        val builder = HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/installations/$id/heartbeat")).header("Content-Type", contentType)
         authorization?.let { builder.header("Authorization", it) }
         return http.send(builder.POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
     }
