@@ -10,8 +10,8 @@
   같은 세션의 이벤트가 두 팀에 귀속되면(이벤트 시점 소속) 팀마다 따로 센다. 날짜는 조회 시간대의 자정 경계다.
 - 값은 시작일부터 그날까지 **모든 날이 완전**(위 판정)하고 그 팀의 **세션 없는 사용 행이 없을 때만** 있다. 한 번 끊기면 그 뒤의 완전한 날도 null이다 —
   끊긴 뒤의 값을 앞의 누적에 이어 붙이지 않는다. 사용이 없는 완전한 날은 앞날의 값 그대로다(첫날이면 0).
-- 마지막 날의 값이 있으면 그 기간의 팀 `current.sessionCount`와 같다. 기간 세션 수를 날짜로 나누거나 보간해 만들지 않는다.
-- 같은 snapshot 의 사용량 행에서 계산하므로 목록과 상세가 같다. 이 규칙을 더하면서 판정 규칙 판을 `dashboard-v4`로 올렸다 — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
+- 마지막 날의 값이 있으면 그 기간의 팀 `metrics.sessionCount.value`와 같다. 기간 세션 수를 날짜로 나누거나 보간해 만들지 않는다.
+- 같은 snapshot 의 사용량 행에서 계산하므로 목록과 상세가 같다. 이 규칙을 더하면서 판정 규칙 판을 `dashboard-v6`로 올렸다 — 이전 판의 snapshot ID 는 409 `snapshot_expired`다.
 
 
 ## 응답 스키마
@@ -26,6 +26,8 @@
 
 ```ts
 type TeamModelUsage = {
+  status: "complete" | "partial" | "unavailable";
+  reasons: string[];
   modelId: string;
   displayName: string;
   equivalentCostUsd: string | null;
@@ -55,6 +57,8 @@ type TeamModelMix = {
 
 ```ts
 type TeamTrendPoint = {
+  status: "complete" | "partial" | "unavailable";
+  reasons: string[];
   date: string;
   observation: "complete" | "partial" | "unobserved";
   equivalentCostUsd: string | null;
@@ -73,8 +77,7 @@ type TeamTrendPoint = {
 type TeamAnalytics = {
   teamId: string | null;
   teamName: string;
-  current: Usage | null;
-  previous: Usage | null;
+  metrics: TeamMetrics;
   modelMix: Section<TeamModelMix>;
   trend: Array<TeamTrendPoint>;
   products: Array<ProductUsage>;
@@ -89,6 +92,8 @@ type TeamAnalytics = {
 
 ```ts
 type ScatterModel = {
+  status: "complete" | "partial" | "unavailable";
+  reasons: string[];
   modelId: string;
   displayName: string;
   equivalentCostUsd: string | null;
@@ -118,11 +123,10 @@ type ModelScatter = {
 
 ```ts
 type TeamsResponse = {
-  meta: AnalyticsMeta;
+  meta: TeamMeta;
   comparison: Comparison;
-  ingest: Ingest;
   attributionBasis: string;
-  totals: UsagePair;
+  totals: TeamMetrics;
   sort: string;
   teams: Page<TeamAnalytics>;
   unassigned: TeamAnalytics;
@@ -138,7 +142,7 @@ type TeamsResponse = {
 
 ```ts
 type TeamDetailResponse = {
-  meta: AnalyticsMeta;
+  meta: TeamMeta;
   comparison: Comparison;
   team: TeamAnalytics;
 };
@@ -154,9 +158,9 @@ type TeamDetailResponse = {
 type TeamUser = {
   memberId: string;
   account: string;
-  usage: Usage;
+  usage: TeamUserUsage;
   mainModel: ModelRef | null;
-  cache: CacheUsage;
+  cacheHitRatio: Value<number>;
   lastUsedAt: string | null;
 };
 ```
@@ -174,20 +178,6 @@ type ModelRef = {
 };
 ```
 
-### CacheUsage
-
-[DTO 근거](../../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/analytics/TeamsResponses.kt)
-
-<a id="schema-CacheUsage"></a>
-
-```ts
-type CacheUsage = {
-  readTokens: number | null;
-  eligibleInputTokens: number | null;
-  hitRatio: number | null;
-};
-```
-
 ### TeamUsersSummary
 
 [DTO 근거](../../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/analytics/TeamsResponses.kt)
@@ -196,11 +186,9 @@ type CacheUsage = {
 
 ```ts
 type TeamUsersSummary = {
-  usage: Usage | null;
+  usage: TeamSummaryUsage;
   averageEquivalentCostUsd: string | null;
-  cacheReadTokens: number | null;
-  cacheEligibleInputTokens: number | null;
-  cacheHitRatio: number | null;
+  cacheHitRatio: Value<number>;
   unidentifiedEquivalentCostUsd: string | null;
 };
 ```
@@ -213,7 +201,7 @@ type TeamUsersSummary = {
 
 ```ts
 type TeamUsersResponse = {
-  meta: AnalyticsMeta;
+  meta: TeamMeta;
   team: TeamRef;
   summary: TeamUsersSummary;
   users: Page<TeamUser>;
@@ -277,8 +265,26 @@ type TeamSaved = { teamId: string; teamName: string; version: number };
 - [Section](../common-schemas.md#schema-Section)
 - [TeamRef](../common-schemas.md#schema-TeamRef)
 - [Usage](../common-schemas.md#schema-Usage)
-- [UsagePair](overview.md#schema-UsagePair)
 
 ## 전체 JSON 응답 예시
 
 [TeamsResponse 예시](../examples/teams-response.example.json)는 가상 데이터이며 현재 DTO의 전체 키를 포함한다. 실서버 응답 캡처나 운영 검증 결과가 아니다.
+
+## 화면 값과 사유
+
+<a id="schema-TeamMeta"></a>
+
+```ts
+type TeamMeta = { organizationId:string; startDate:string; endDate:string; timeZone:string; dayCount:number; dataThrough:string|null; dataState:string; currentCoverage:Coverage; snapshotId:string };
+type Value<T> = { value:T|null; status:"complete"|"partial"|"unavailable"; reasons:string[] };
+type Metric<T> = Value<T> & { comparison:{status:"available"|"unavailable"|"disabled"; reasons:string[]; previousValue:T|null; absoluteChange:T|null; percentChange:number|null; change:"increase"|"decrease"|"unchanged"|"new"|null} };
+type TeamMetrics = {
+ activeUsers:Value<number>; equivalentCostUsd:Metric<string>; totalTokens:Metric<number>; sessionCount:Metric<number>;
+ equivalentCostPerUserUsd:Metric<string>; equivalentCostPerSessionUsd:Value<string>; tokensPerUser:Value<number>;
+ sessionsPerUser:Value<number>; tokensPerSession:Value<number>; effectiveCostPerMillionTokensUsd:Value<string>;
+};
+type TeamUserUsage = { sessionCount:Value<number>; totalTokens:Value<number>; equivalentCostUsd:Value<string> };
+type TeamSummaryUsage = TeamUserUsage & { activeUsers:Value<number> };
+```
+
+값과 증감은 개요와 같은 판정기를 사용한다. 분모가 0이면 값을 비우고 `zero_denominator`를 반환한다. 미식별 사용량을 식별 인원으로 나누지 않는다. 기간·수집·단가·세션·토큰 결손은 상세 사유를 유지한다. 모델의 상태는 좌표와 팀 수의 근거, 추이 상태는 날짜별 값과 누적 세션 근거를 표현한다. 저장소 요청 실패는 HTTP 오류이며 지표 상태로 숨기지 않는다.

@@ -218,13 +218,13 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 	fun membersDashboard() {
 		val org = organization()
 		val body = ok(org.tenant, "/members/dashboard?$period")
-		with(body.at("/summary/seats")) {
-			assertThat(path("availability").asString()).isEqualTo("available")
-			// 계약 10 + 5, 보유 = Claude 6(해제된 gil 제외) + Cursor 1, 미배정 = (10-6) + (5-1). 미연결·관측 불가 좌석이 있어 기간 중 사용은 판정하지 않는다.
-			assertThat(listOf(at("/data/contracted").asLong(), at("/data/assigned").asLong(), at("/data/unallocated").asLong(), at("/data/reclaimCandidates").asLong()))
-				.containsExactly(15L, 7L, 8L, 2L)
-			assertThat(listOf(at("/data/activeInPeriod").isNull, at("/data/inactiveAssigned").isNull, at("/data/estimatedMonthlySavingsUsd").isNull)).containsOnly(true)
+		with(body.at("/summary/reclaimCandidates")) {
+			assertThat(path("status").asString()).isEqualTo("partial")
+			assertThat(path("value").asLong()).isEqualTo(2)
+			assertThat(path("reasons").toList().map { it.asString() }).contains("observation_incomplete")
 		}
+		assertThat(body.path("summary").has("seats")).isFalse()
+
 		val states = body.at("/members/items").toList().associate { it.path("memberId").asString() to it.path("seatState").asString() }
 		assertThat(listOf("dana", "admin", "gil", "nobody").map { states.getValue(org.members.getValue(it).toString()) }).containsExactly("assigned", "assigned", "reclaimed", "unassigned")
 		assertThat(body.at("/reclaimCandidates/data/items").toList().map { it.path("seatAssignmentId").asString() })
@@ -234,13 +234,14 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		// 좌석을 기록하지 않은 제품(OpenAI)을 등록하면 그 제품만 unavailable — 요약은 partial, 좌석 없는 사람은 없다고 말할 수 없어 unknown 이다.
 		register(org.tenant, org.admin, "openai_biz", "business", 3)
 		val later = ok(org.tenant, "/members/dashboard?$period")
-		assertThat(later.at("/summary/seats/availability").asString() to later.at("/summary/seats/reason").asString()).isEqualTo("partial" to "seat_source_not_recorded")
+		assertThat(later.at("/summary/reclaimCandidates/status").asString()).isEqualTo("partial")
+		assertThat(later.at("/summary/reclaimCandidates/reasons").toList().map { it.asString() }).contains("observation_incomplete")
 		assertThat(later.at("/members/items").toList().first { it.path("memberId").asString() == org.members.getValue("nobody").toString() }.path("seatState").asString())
 			.isEqualTo("unknown")
 	}
 
 	@Test
-	@DisplayName("기간 중 사용·비활성 — 모든 보유 좌석이 구성원에 이어지고 관측 가능한 제품이며 기간이 완전할 때만 센다")
+	@DisplayName("구성원 응답은 기간 내 사용한 사람의 값만 반환하고 사용하지 않는 좌석 기간 집계를 포함하지 않는다")
 	fun periodActivity() {
 		val org = organization(withCursor = false)
 		// 판정할 수 없는 좌석(미연결 외부 계정·설치 없는 fox)을 해제해 둔다.
@@ -250,16 +251,19 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		}
 		val eliInPeriod = now.atZone(QueryReader.SEOUL).toLocalDate().minusDays(3).atTime(10, 0).atZone(QueryReader.SEOUL).toInstant()
 		SourceFixtures.insertEvents(org.tenant, used(org.tenant, org.members.getValue("eli"), eliInPeriod, "eli-period"))
-		val seats = ok(org.tenant, "/members/dashboard?$period").at("/summary/seats/data")
-		// 보유 = dana·eli·hana·ivy. 기간(8일 전~2일 전) 안에 쓴 것은 eli 하나.
-		assertThat(listOf(seats.path("assigned").asLong(), seats.path("activeInPeriod").asLong(), seats.path("inactiveAssigned").asLong())).containsExactly(4L, 1L, 3L)
+		val body = ok(org.tenant, "/members/dashboard?$period")
+		val rows = body.at("/members/items").toList().associateBy { it.path("memberId").asString() }
+		assertThat(rows.getValue(org.members.getValue("eli").toString()).path("periodUsage").isNull).isFalse()
+		assertThat(rows.getValue(org.members.getValue("dana").toString()).path("periodUsage").isNull).isTrue()
+		assertThat(body.path("summary").has("seats")).isFalse()
+
 	}
 
 	@Test
 	@DisplayName("연결의 동기화가 실패 중이거나 기준보다 오래되면 그 제품의 원장은 낡았다고 표시한다 — 성공한 적이 없으면 없다")
 	fun staleConnector() {
 		val org = organization()
-		fun seatSection() = ok(org.tenant, "/members/dashboard?$period").at("/summary/seats").let { it.path("availability").asString() to it.path("reason").asString() }
+		fun seatSection() = ok(org.tenant, "/vendors/${org.cursor}/seats").let { it.path("ledgerAvailability").asString() to it.path("ledgerReason").asString() }
 		fun connection(sql: String, at: Instant? = null) = DashboardTestStores.writer.sql("UPDATE enrollment.vendor_connections SET $sql WHERE vendor_id = :v")
 			.param("v", org.cursor!!).also { if (at != null) it.param("at", Timestamp.from(at)) }.update()
 		connection("last_sync_failed_at = :at, last_sync_error = 'vendor_unavailable'", ago(0, 1))
@@ -267,7 +271,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		connection("last_sync_failed_at = NULL, last_sync_error = NULL, last_sync_succeeded_at = :at", ago(2))
 		assertThat(seatSection()).isEqualTo("partial" to "seat_sync_outdated")
 		connection("last_sync_succeeded_at = NULL")
-		assertThat(seatSection()).describedAs("Claude 는 여전히 쓸 수 있다").isEqualTo("partial" to "seat_sync_pending")
+		assertThat(seatSection()).isEqualTo("unavailable" to "seat_sync_pending")
 		val cursorSeat = ok(org.tenant, "/members/${org.members.getValue("admin")}/seats").at("/seats/0")
 		assertThat(cursorSeat.path("ledgerAvailability").asString() to cursorSeat.path("ledgerReason").asString()).isEqualTo("unavailable" to "seat_sync_pending")
 	}
@@ -277,19 +281,19 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 	fun settingsSeats() {
 		val org = organization()
 		val settings = ok(org.tenant, "/settings")
-		assertThat(settings.at("/summary/assignedSeats").asLong()).isEqualTo(7)
-		assertThat(ok(org.tenant, "/members/dashboard?$period").at("/summary/seats/data/assigned").asLong()).describedAs("구성원 화면과 같은 원장").isEqualTo(7)
-		assertThat(settings.at("/summary/activeSeats7d").isNull).describedAs("미연결·관측 불가 좌석이 있다").isTrue()
+		assertThat(settings.at("/summary/assignedSeats/value").asLong()).isEqualTo(7)
+		assertThat(ok(org.tenant, "/vendors/${org.claude}/seats").at("/seats/items").toList().count { it.path("state").asString() == "assigned" }).isEqualTo(6)
+		assertThat(settings.at("/summary/activeSeats7d/value").isNull).describedAs("미연결·관측 불가 좌석이 있다").isTrue()
 		val vendors = settings.at("/vendors/items").toList().associateBy { it.path("vendorId").asString() }
-		assertThat(vendors.getValue(org.claude).path("seats").let { listOf(it.path("availability").asString(), it.at("/data/assigned").asLong(), it.at("/data/contracted").asLong(), it.at("/data/unallocated").asLong()) })
-			.containsExactly("available", 6L, 10L, 4L)
-		assertThat(vendors.getValue(org.cursor!!).path("seats").let { listOf(it.path("availability").asString(), it.at("/data/assigned").asLong(), it.at("/data/unallocated").asLong()) })
-			.containsExactly("available", 1L, 4L)
+		assertThat(vendors.getValue(org.claude).at("/assignedSeats/value").asLong()).isEqualTo(6)
+		assertThat(vendors.getValue(org.claude).at("/contractSeats/value").asLong()).isEqualTo(10)
+		assertThat(vendors.getValue(org.cursor!!).at("/assignedSeats/value").asLong()).isEqualTo(1)
+		assertThat(settings.at("/summary/activeSeats7d/reasons").toList().map { it.asString() }).contains("seat_unlinked", "product_unobservable")
 		JsonStructure.assertMatches("settings-response.example.json", settings)
 
 		// 관측 가능한 제품뿐이어도 구성원에 잇지 않은 좌석(외부 계정)이 있으면 판정할 수 없다.
 		val only = organization(withCursor = false)
-		fun activeSeats7d() = ok(only.tenant, "/settings").at("/summary/activeSeats7d")
+		fun activeSeats7d() = ok(only.tenant, "/settings").at("/summary/activeSeats7d/value")
 		fun release(name: String) {
 			val seat = ledger(ago(1)).seat(only.tenant, only.seats.getValue(name))!!
 			ledger(ago(1)).release(only.tenant, seat.id, only.admin, SeatSource.MANUAL, seat.version)
@@ -305,7 +309,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		val released = ok(only.tenant, "/settings")
 		val asOf = Instant.parse(released.at("/meta/asOf").asString())
 		val yesterdaySettled = !asOf.isBefore(asOf.atZone(QueryReader.SEOUL).toLocalDate().atStartOfDay(QueryReader.SEOUL).toInstant().plus(Duration.ofHours(1)))
-		val zero = released.at("/summary/activeSeats7d")
+		val zero = released.at("/summary/activeSeats7d/value")
 		if (yesterdaySettled) assertThat(zero.isNumber && zero.asLong() == 0L).describedAs(zero.toString()).isTrue()
 		else assertThat(zero.isNull).describedAs("어제가 확정 대기 안 — $asOf").isTrue()
 		// 좌석 없는 구성원의 설치가 5일 전부터 보고하지 않으면 창이 완전하지 않다 — 센 좌석이 없으니 0 이라고 말할 수 없다.
@@ -315,7 +319,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		assertThat(activeSeats7d().isNull).isTrue()
 		// 좌석을 기록하지 않은 제품은 그 제품만 unavailable 이다.
 		val openai = register(only.tenant, only.admin, "openai_biz", "business", 3, effectiveFrom = "2099-01-01")
-		fun openaiSeats() = ok(only.tenant, "/settings").at("/vendors/items").toList().single { it.path("vendorId").asString() == openai }.path("seats")
+		fun openaiSeats() = ok(only.tenant, "/vendors/$openai").at("/vendor/seats")
 		assertThat(openaiSeats().let { it.path("availability").asString() to it.path("reason").asString() }).isEqualTo("unavailable" to "seat_source_not_recorded")
 		// 좌석을 기록하면 쓸 수 있다 — 계약이 아직 시작하지 않았으므로 계약 좌석·미배정은 모른다.
 		ledger(ago(1)).assign(only.tenant, openai, only.admin, SeatSource.MANUAL, "dana-${only.tenant.toString().take(8)}@example.test")
@@ -329,7 +333,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 		SourceFixtures.insertManifest(unrecorded, 1, owner, signals = """{"logs":true,"metrics":true,"traces":true}""", activatedAt = ago(90))
 		register(unrecorded, owner, "openai_biz", "business", 3)
 		with(ok(unrecorded, "/settings").path("summary")) {
-			assertThat(listOf(path("assignedSeats").isNull, path("activeSeats7d").isNull)).containsOnly(true)
+			assertThat(listOf(at("/assignedSeats/value").isNull, at("/activeSeats7d/value").isNull)).containsOnly(true)
 		}
 	}
 
@@ -337,53 +341,14 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 	@DisplayName("개요 — 좌석 범위는 유효한 계약·쓸 수 있는 원장·관측 매핑이 있는 제품이고, 좌석료는 월 요금 × 일수 / 30 추정이며 회수 검토 수를 싣는다")
 	fun overviewSeats() {
 		val org = organization()
-		val seats = ok(org.tenant, "/analytics/overview?$period").path("seats")
-		// Cursor 은 관측 매핑이 없어 범위 밖 — partial.
-		assertThat(listOf(seats.path("availability").asString(), seats.path("reason").asString(), seats.path("allocationMethod").asString()))
-			.containsExactly("partial", "product_unobservable", "estimated_30_day")
-		assertThat(seats.path("scopeVendorIds").toList().map { it.asString() }).containsExactly(org.claude)
-		with(seats.path("current")) {
-			assertThat(path("contractedSeats").asLong()).isEqualTo(10)
-			assertThat(path("activeSeats").isNull).describedAs("미연결 좌석이 있다").isTrue()
-			assertThat(path("monthlyFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("300")
-			assertThat(path("allocatedFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("70")
-			// 기간(8일 전~2일 전) 안의 claude_code 사용은 eli 의 1달러뿐이다.
-			assertThat(path("equivalentCostUsd").asString().toBigDecimal()).isEqualByComparingTo("1")
-			assertThat(path("efficiency").asDouble()).isCloseTo(1.0 / 70.0, Offset.offset(1e-9))
-		}
-		// 비교 기간(앞 주)도 완전해 그 기간 끝의 계약·원장으로 따로 계산한다 — 그 주의 claude_code 사용은 hana·ivy 의 2달러다.
-		assertThat(seats.at("/previous/contractedSeats").asLong()).isEqualTo(10)
-		assertThat(seats.at("/previous/equivalentCostUsd").asString().toBigDecimal()).isEqualByComparingTo("2")
-		assertThat(seats.path("reclaimEstimate").isNull).describedAs("회수 가능 조건이 없다").isTrue()
-		assertThat(seats.path("reclaimCandidates").asLong()).isEqualTo(2)
-		assertThat(ok(org.tenant, "/members/dashboard?$period").at("/summary/seats/data/reclaimCandidates").asLong()).describedAs("구성원 화면과 같은 후보").isEqualTo(2)
-		JsonStructure.assertMatches("overview-response.example.json", ok(org.tenant, "/analytics/overview?$period"))
+        val overview = ok(org.tenant, "/analytics/overview?$period")
+        assertThat(overview.has("seats")).isFalse()
+        // 좌석 후보 기능은 구성원·좌석 전용 API에 남는다.
+        assertThat(ok(org.tenant, "/members/dashboard?$period").at("/summary/reclaimCandidates/value").asLong()).isEqualTo(2)
+        assertThat(ok(org.tenant, "/seat-reclaim-candidates").at("/candidates/data/totalCount").asInt()).isEqualTo(2)
+        val none = DashboardTestStores.insertTenant()
+        assertThat(ok(none, "/analytics/overview?$period").has("seats")).isFalse()
 
-		// 사용이 없는 완전한 기간의 환산가치는 0(효율 0)이고, 수집 근거가 없는 기간은 좌석 값을 만들지 않는다 — 환산가치를 모르면 비교할 수 없다.
-		val today = now.atZone(QueryReader.SEOUL).toLocalDate()
-		fun overviewSeats(from: Long, to: Long) = ok(org.tenant, "/analytics/overview?startDate=${today.minusDays(from)}&endDate=${today.minusDays(to)}&timeZone=Asia/Seoul").path("seats")
-		with(overviewSeats(40, 34).path("current")) {
-			assertThat(path("equivalentCostUsd").asString().toBigDecimal()).isEqualByComparingTo("0")
-			assertThat(path("efficiency").asDouble()).isZero()
-		}
-		val beforeInstall = overviewSeats(75, 69)
-		assertThat(beforeInstall.path("availability").asString() to beforeInstall.path("reason").asString()).isEqualTo("unavailable" to "source_not_available")
-		assertThat(beforeInstall.path("current").isNull).isTrue()
-
-		// 계약이 아직 시작하지 않은 제품(OpenAI)의 후보는 범위 밖이다 — 조직의 후보는 셋이지만 개요의 회수 검토 수는 범위(Claude)의 둘이다.
-		val openai = register(org.tenant, org.admin, "openai_biz", "business", 3, effectiveFrom = "2099-01-01")
-		ledger(ago(60)).assign(org.tenant, openai, org.admin, SeatSource.MANUAL, "dana-${org.tenant.toString().take(8)}@example.test")
-		assertThat(ok(org.tenant, "/seat-reclaim-candidates").at("/candidates/data/totalCount").asInt()).isEqualTo(3)
-		val scoped = ok(org.tenant, "/analytics/overview?$period").path("seats")
-		assertThat(scoped.path("scopeVendorIds").toList().map { it.asString() }).containsExactly(org.claude)
-		assertThat(scoped.path("reclaimCandidates").asLong()).isEqualTo(2)
-
-		// 유효한 계약이 없으면 좌석 section 자체가 해당 없다.
-		val none = DashboardTestStores.insertTenant()
-		SourceFixtures.setSummary(none, firstReceivedAt = ago(90))
-		val body = ok(none, "/analytics/overview?$period").path("seats")
-		assertThat(body.path("availability").asString() to body.path("reason").asString()).isEqualTo("unavailable" to "not_applicable")
-		assertThat(body.path("current").isNull).isTrue()
 	}
 
 	@Test

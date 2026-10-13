@@ -1,10 +1,8 @@
 package com.team376.pulsemetry.dashboard.alert
 
-import com.team376.pulsemetry.dashboard.analytics.AnalyticsFrames
 import com.team376.pulsemetry.dashboard.analytics.Availability
-import com.team376.pulsemetry.dashboard.analytics.CurrentMeta
 import com.team376.pulsemetry.dashboard.analytics.CurrentStateTokens
-import com.team376.pulsemetry.dashboard.analytics.OverviewResponse
+import com.team376.pulsemetry.dashboard.analytics.*
 import com.team376.pulsemetry.dashboard.analytics.Page
 import com.team376.pulsemetry.dashboard.error.DashboardException
 import com.team376.pulsemetry.dashboard.error.ErrorCode
@@ -13,7 +11,6 @@ import com.team376.pulsemetry.dashboard.organization.Organization
 import com.team376.pulsemetry.dashboard.request.PageCursor
 import com.team376.pulsemetry.dashboard.request.PageCursorCodec
 import com.team376.pulsemetry.dashboard.request.PageRequest
-import com.team376.pulsemetry.dashboard.request.QueryReader
 import com.team376.pulsemetry.persistence.enrollment.alert.AlertRules
 import org.springframework.jdbc.core.simple.JdbcClient
 import java.time.Clock
@@ -40,12 +37,12 @@ class AlertService(
 	}
 
 	/** 개요의 "보안 경보 및 알림". 평가한 적이 없으면 unavailable 과 사유다(켜진 규칙이 없거나 아직 평가 전). */
-	fun overview(tenant: UUID, now: Instant): OverviewResponse.Alerts {
+	fun overview(tenant: UUID, now: Instant): AnalyticsAlerts {
 		val state = state(tenant)
 		// asOf 는 마지막 평가 시각이고, 평가 기록이 없을 때만 응답 시각이다.
-		if (state.availability != Availability.AVAILABLE) return OverviewResponse.Alerts(state.availability, state.reason, (state.asOf ?: now).toString(), null, null, null)
+		if (state.availability != Availability.AVAILABLE) return AnalyticsAlerts(state.availability, state.reason, (state.asOf ?: now).toString(), null, null, null)
 		val open = unacknowledged(tenant)
-		return OverviewResponse.Alerts(Availability.AVAILABLE, null, state.asOf!!.toString(), open.size.toLong(),
+		return AnalyticsAlerts(Availability.AVAILABLE, null, state.asOf!!.toString(), open.size.toLong(),
 			open.count { it.category == SECURITY }.toLong(), open.count { it.category == COST }.toLong())
 	}
 
@@ -70,7 +67,7 @@ class AlertService(
 		val items = all.drop(start).take(page.limit)
 		val next = if (start + items.size < all.size) codec.encode(PageCursor(token.value, scope, listOf(items.last().occurredAt.toString(), items.last().alertId.toString()))) else null
 		val accounts = accounts(organization.id, items.flatMap { it.memberIds })
-		return AlertsResponse(meta(organization, now, token), evaluation(organization.id), Page(items.map { item(it, acks[it.alertId], accounts) }, all.size, next))
+		return AlertsResponse(meta(organization, token), evaluation(organization.id, category), Page(items.map { item(it, acks[it.alertId], accounts) }, all.size, next))
 	}
 
 	fun detail(organization: Organization, alertId: String): AlertResponse {
@@ -78,18 +75,32 @@ class AlertService(
 		val id = runCatching { UUID.fromString(alertId) }.getOrNull() ?: throw DashboardException(ErrorCode.NOT_FOUND)
 		val alert = store.find(organization.id, id) ?: throw DashboardException(ErrorCode.NOT_FOUND)
 		val token = tokens.issue(KIND, organization.id, now)
-		return AlertResponse(meta(organization, now, token), item(alert, acknowledgements(organization.id)[alert.alertId], accounts(organization.id, alert.memberIds)))
+		return AlertResponse(meta(organization, token), item(alert, acknowledgements(organization.id)[alert.alertId], accounts(organization.id, alert.memberIds)))
 	}
 
-	/** 규칙마다 마지막 평가. 켠 규칙 중 평가 기록이 없는 것은 대기다. */
-	fun evaluation(tenant: UUID): AlertsEvaluation {
-		val state = state(tenant)
-		val evaluations = store.evaluations(tenant).associateBy { it.ruleId }
-		return AlertsEvaluation(state.availability, state.reason, state.asOf?.toString(), AlertRules.rules(source, tenant).map { rule ->
-			val evaluation = evaluations[rule.ruleId]?.takeIf { it.ruleVersion == rule.version || !rule.enabled }
-			AlertRuleEvaluation(rule.ruleId, rule.enabled, evaluation?.evaluatedAt?.toString(), evaluation?.status, evaluation?.reason,
-				evaluation?.windowStart?.toString(), evaluation?.windowEnd?.toString())
-		})
+	/** 목록 필터에 해당하는 규칙의 평가 결과만 축약한다. 저장된 평가·판정은 바꾸지 않는다. */
+	fun evaluation(tenant: UUID, category: String? = null): AlertsEvaluation {
+		val rules = AlertRules.rules(source, tenant).filter { category == null || it.category == category }
+		val ids = rules.map { it.ruleId }.toSet()
+		val evaluations = store.evaluations(tenant).filter { it.ruleId in ids }.associateBy { it.ruleId }
+		val enabled = rules.filter { it.enabled }
+		val reasons = enabled.mapNotNull { rule ->
+			val evaluation = evaluations[rule.ruleId]?.takeIf { it.ruleVersion == rule.version }
+			when (evaluation?.status) {
+				null -> EVALUATION_PENDING
+				"evaluated" -> null
+				else -> evaluation.reason ?: "evaluation_error"
+			}
+		}.distinct()
+		val successful = enabled.count { rule -> evaluations[rule.ruleId]?.let { it.ruleVersion == rule.version && it.status == "evaluated" } == true }
+		val status = when {
+			reasons.isNotEmpty() -> if (successful > 0) "partial" else "unavailable"
+			evaluations.isEmpty() -> "unavailable"
+			else -> "complete"
+		}
+		return AlertsEvaluation(status,
+			if (reasons.isEmpty() && evaluations.isEmpty()) listOf(Availability.EVALUATION_NOT_CONFIGURED) else reasons,
+			evaluations.values.maxOfOrNull { it.evaluatedAt }?.toString())
 	}
 
 	private data class State(val availability: String, val reason: String?, val asOf: Instant?)
@@ -113,12 +124,12 @@ class AlertService(
 		return store.alerts(tenant).filter { it.alertId !in acks }
 	}
 
-	private data class Ack(val at: Instant, val by: UUID)
+	private data class Ack(val at: Instant)
 
 	private fun acknowledgements(tenant: UUID): Map<UUID, Ack> =
-		source.sql("SELECT alert_id, acknowledged_at, acknowledged_by FROM enrollment.alert_acknowledgements WHERE tenant_id = :tenant")
+		source.sql("SELECT alert_id, acknowledged_at FROM enrollment.alert_acknowledgements WHERE tenant_id = :tenant")
 			.param("tenant", tenant)
-			.query { rs, _ -> rs.getObject("alert_id", UUID::class.java) to Ack(rs.getTimestamp("acknowledged_at").toInstant(), rs.getObject("acknowledged_by", UUID::class.java)) }
+			.query { rs, _ -> rs.getObject("alert_id", UUID::class.java) to Ack(rs.getTimestamp("acknowledged_at").toInstant()) }
 			.list().toMap()
 
 	/** 구성원 ID → 계정(이메일). 그 조직의 구성원만. */
@@ -146,13 +157,13 @@ class AlertService(
 			eventCount = alert.eventCount.takeIf { rolling },
 			memberCount = alert.memberIds.size.toLong().takeIf { rolling },
 			members = alert.memberIds.map { AlertMember(it, accounts[it]) },
-			summary = alert.summary,
-			acknowledgement = ack?.let { AlertAcknowledgement(it.at.toString(), it.by.toString()) },
+			evidence = AlertEvidence.from(alert),
+			acknowledgement = ack?.let { AlertAcknowledgement(it.at.toString()) },
 		)
 	}
 
-	private fun meta(organization: Organization, now: Instant, token: CurrentStateTokens.Token) =
-		CurrentMeta(organization.id.toString(), now.toString(), token.asOf.toString(), token.value, AnalyticsFrames.USD, QueryReader.SEOUL_ID)
+	private fun meta(organization: Organization, token: CurrentStateTokens.Token) =
+		AlertsMeta(organization.id.toString(), token.asOf.toString(), token.value)
 
 	companion object {
 		const val KIND = "alerts"
@@ -165,16 +176,15 @@ class AlertService(
 	}
 }
 
-data class AlertsResponse(val meta: CurrentMeta, val evaluation: AlertsEvaluation, val alerts: Page<AlertItem>)
+data class AlertsResponse(val meta: AlertsMeta, val evaluation: AlertsEvaluation, val alerts: Page<AlertItem>)
 
-data class AlertResponse(val meta: CurrentMeta, val alert: AlertItem)
+data class AlertResponse(val meta: AlertsMeta, val alert: AlertItem)
 
-/** 평가 상태 — 개요의 `alerts` 와 같은 가용성·사유와, 규칙마다 마지막 평가. */
-data class AlertsEvaluation(val availability: String, val reason: String?, val asOf: String?, val rules: List<AlertRuleEvaluation>)
+/** 현재 목록의 기준 시각과 페이지 연속 조회 토큰. */
+data class AlertsMeta(val organizationId: String, val asOf: String, val snapshotId: String)
 
-/** [status] 가 `not_evaluated` 면 [reason] 이 왜 평가하지 않았는지다 — 0건과 다르다. 평가 기록이 없으면 셋 다 null 이다. */
-data class AlertRuleEvaluation(val ruleId: String, val enabled: Boolean, val evaluatedAt: String?, val status: String?, val reason: String?,
-	val windowStart: String?, val windowEnd: String?)
+/** 규칙별 내부 기록 대신 현재 목록의 평가 상태와 사유만 반환한다. */
+data class AlertsEvaluation(val status: String, val reasons: List<String>, val asOf: String?)
 
 /**
  * 알림 하나. [subject]·[eventCount]·[memberCount] 는 24시간 규칙(모델·도구)만 있다 — 급증은 조직의 판정이라 null 이다.
@@ -194,10 +204,33 @@ data class AlertItem(
 	val eventCount: Long?,
 	val memberCount: Long?,
 	val members: List<AlertMember>,
-	val summary: Map<String, Any?>,
+	val evidence: AlertEvidence?,
 	val acknowledgement: AlertAcknowledgement?,
 )
 
 data class AlertMember(val memberId: String, val account: String?)
 
-data class AlertAcknowledgement(val acknowledgedAt: String, val acknowledgedBy: String)
+data class AlertAcknowledgement(val acknowledgedAt: String)
+
+/** 저장된 summary 전체를 노출하지 않고 화면이 표시하는 근거만 투영한다. */
+sealed interface AlertEvidence {
+	val kind: String
+
+	companion object {
+		fun from(alert: StoredAlert): AlertEvidence? {
+			if (alert.ruleId != AlertRules.SPEND_SPIKE) return UsageAlertEvidence(
+				(alert.summary["productName"] as? String)?.takeIf { it.isNotBlank() } ?: alert.subject)
+			val summary = alert.summary
+			val start = summary["currentStartDate"] as? String ?: return null
+			val end = summary["currentEndDate"] as? String ?: return null
+			val current = summary["currentCostUsd"]?.toString()?.toBigDecimalOrNull() ?: return null
+			val previous = summary["previousCostUsd"]?.toString()?.toBigDecimalOrNull() ?: return null
+			val ratio = (summary["increaseRatio"] as? Number)?.toDouble()?.takeIf { it.isFinite() } ?: return null
+			return SpendAlertEvidence(start, end, current.toPlainString(), previous.toPlainString(), ratio)
+		}
+	}
+}
+
+data class UsageAlertEvidence(val targetName: String) : AlertEvidence { override val kind = "usage" }
+data class SpendAlertEvidence(val startDate: String, val endDate: String, val currentCostUsd: String,
+	val previousCostUsd: String, val increaseRatio: Double) : AlertEvidence { override val kind = "spend" }

@@ -11,6 +11,7 @@ import com.team376.pulsemetry.dashboard.support.SourceFixtures
 import com.team376.pulsemetry.dashboard.support.SourceFixtures.Event
 import com.team376.pulsemetry.dashboard.support.TestDashboardAuthenticator
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.data.Offset.offset
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -91,7 +92,7 @@ class MembersApiTest : AbstractDashboardApiTest() {
 		val body = ok(org.tenant, "/members/dashboard?$week")
 		val alice = body.at("/members/items").list().first { it.path("memberId").asString() == org.alice.toString() }
 		assertThat(alice.path("plannedVendorIds")[0].asString()).isEqualTo("planned-product")
-		assertThat(body.at("/summary/seats/availability").asString()).isEqualTo("unavailable")
+		assertThat(body.at("/summary/reclaimCandidates/status").asString()).isEqualTo("unavailable")
 		// 동일 snapshot의 후속 조회는 변경 전 선택을 유지한다.
 		DashboardTestStores.writer.sql("UPDATE enrollment.members SET planned_vendor_ids='{}' WHERE id=:id").param("id", org.alice).update()
 		val snapshot = body.at("/meta/snapshotId").asString()
@@ -113,12 +114,12 @@ class MembersApiTest : AbstractDashboardApiTest() {
 		assertThat(members.map { it.path("memberId").asString() }).containsExactly(org.alice.toString(), org.bob.toString(), *unused.toTypedArray())
 		assertThat(body.at("/summary/rosterMembers").asInt()).isEqualTo(4)
 		assertThat(body.at("/summary/unassignedMembers").asInt()).isEqualTo(1)
-		assertThat(body.at("/summary/activeUsers").asInt()).isEqualTo(2)
+		assertThat(body.at("/summary/activeUsers/value").asInt()).isEqualTo(2)
 		// 기간 전체 비용(미식별 포함) = 3 + 2 + 0.5, 이벤트 당시 미배분 = bob 2 + 미식별 0.5.
-		assertThat(BigDecimal(body.at("/summary/periodTotalEquivalentCostUsd").asString())).isEqualByComparingTo("5.5")
-		assertThat(BigDecimal(body.at("/summary/periodUnassignedEquivalentCostUsd").asString())).isEqualByComparingTo("2.5")
-		assertThat(body.at("/summary/seats/availability").asString()).isEqualTo("unavailable")
-		assertThat(body.at("/summary/seats/reason").asString()).isEqualTo("not_applicable")
+		assertThat(body.at("/summary/periodUnassignedCostShare/value").asDouble()).isCloseTo(2.5 / 5.5, offset(0.000001))
+		assertThat(BigDecimal(body.at("/summary/periodUnassignedEquivalentCostUsd/value").asString())).isEqualByComparingTo("2.5")
+		assertThat(body.at("/summary/reclaimCandidates/status").asString()).isEqualTo("unavailable")
+		assertThat(body.at("/summary/reclaimCandidates/reasons/0").asString()).isEqualTo("not_applicable")
 		assertThat(body.at("/policy/idleDays").asInt()).isEqualTo(14)
 		assertThat(body.at("/policy/version").asLong()).isZero()
 		assertThat(listOf("invite", "assignTeam", "reclaimSeats", "restoreSeats").map { body.at("/capabilities/$it").asBoolean() }).containsOnly(false)
@@ -129,14 +130,29 @@ class MembersApiTest : AbstractDashboardApiTest() {
 		assertThat(alice.path("role").asString()).isEqualTo("admin")
 		assertThat(alice.path("displayName").asString()).isEqualTo("앨리스")
 		assertThat(alice.at("/team/teamName").asString()).isEqualTo("플랫폼")
-		assertThat(alice.at("/periodUsage/equivalentCostUsd").asString()).isEqualTo("3.000000")
-		assertThat(alice.path("observation").asString()).isEqualTo("partial")
+		assertThat(alice.at("/periodUsage/equivalentCostUsd/value").asString()).isEqualTo("3.000000")
+		assertThat(alice.at("/periodUsage/equivalentCostUsd/status").asString()).isEqualTo("partial")
 		assertThat(alice.path("seatState").asString()).isEqualTo("unknown")
 		val carol = members.first { it.path("memberId").asString() == org.carol.toString() }
 		assertThat(carol.path("periodUsage").isNull).isTrue()
 		assertThat(carol.path("lastUsedAt").isNull).isTrue()
 		assertThat(carol.path("status").asString()).isEqualTo("suspended")
 		assertThat(carol.path("displayName").asString()).isEqualTo("carol@example.test")
+	}
+
+	@Test
+	@DisplayName("화면 전용 응답은 필요한 필드만 갖고 사용량의 값·상태·사유를 보존한다")
+	fun screenContract() {
+		val org = seed()
+		val body = ok(org.tenant, "/members/dashboard?$week")
+		assertThat(body.properties().map { it.key }).containsExactlyInAnyOrder("meta", "summary", "policy", "capabilities", "members", "unassigned", "reclaimCandidates")
+		assertThat(body.path("meta").properties().map { it.key }).containsExactlyInAnyOrder("organizationId", "asOf", "startDate", "endDate", "snapshotId")
+		assertThat(body.path("summary").properties().map { it.key }).containsExactlyInAnyOrder("rosterMembers", "activeUsers", "unassignedMembers", "periodUnassignedEquivalentCostUsd", "periodUnassignedCostShare", "reclaimCandidates")
+		val usage = body.at("/members/items/0/periodUsage")
+		assertThat(usage.properties().map { it.key }).containsExactlyInAnyOrder("equivalentCostUsd", "sessionCount")
+		assertThat(usage.path("equivalentCostUsd").properties().map { it.key }).containsExactlyInAnyOrder("value", "status", "reasons")
+		assertThat(usage.at("/equivalentCostUsd/reasons").list().map { it.asString() }).contains("current_period_incomplete")
+		assertThat(body.at("/summary/activeUsers/reasons").list().map { it.asString() }).contains("member_identity_missing")
 	}
 
 	@Test
@@ -197,12 +213,12 @@ class MembersApiTest : AbstractDashboardApiTest() {
 
 		val body = ok(tenant, "/members/dashboard?$week")
 
-		assertThat(body.at("/meta/dataState").asString()).isEqualTo("never_observed")
+		assertThat(body.at("/meta/asOf").asString()).isNotBlank()
 		assertThat(body.at("/members/items").size()).isEqualTo(1)
 		assertThat(body.at("/members/items/0/periodUsage").isNull).isTrue()
-		assertThat(body.at("/members/items/0/observation").asString()).isEqualTo("unobserved")
-		assertThat(body.at("/summary/activeUsers").isNull).isTrue()
-		assertThat(body.at("/summary/periodTotalEquivalentCostUsd").isNull).isTrue()
+		assertThat(body.at("/summary/activeUsers/reasons/0").asString()).isEqualTo("no_data")
+		assertThat(body.at("/summary/activeUsers/value").isNull).isTrue()
+		assertThat(body.at("/summary/periodUnassignedCostShare/value").isNull).isTrue()
 	}
 
 	@Test

@@ -95,30 +95,30 @@ class PeriodCompletenessApiTest : AbstractDashboardApiTest() {
 		assertThat(Instant.parse(body.at("/meta/dataThrough").asString())).isEqualTo(kst("2026-09-14T00:00:00"))
 
 		val comparison = body.at("/comparison")
-		assertThat(comparison.path("status").asString()).isEqualTo("available")
-		assertThat(comparison.path("reason").isNull).isTrue()
+		assertThat(body.at("/summary/equivalentCostUsd/comparison/status").asString()).isEqualTo("available")
+		assertThat(body.at("/summary/equivalentCostUsd/comparison/reasons").size()).isZero()
 		assertThat(comparison.at("/coverage/status").asString()).isEqualTo("complete")
 		assertThat(comparison.at("/coverage/observedDays").asInt()).isEqualTo(7)
 		assertThat(comparison.path("startDate").asString() to comparison.path("endDate").asString()).isEqualTo("2026-08-31" to "2026-09-06")
 
-		assertThat(body.at("/usage/current/equivalentCostUsd").asString()).isEqualTo("50.000000")
-		assertThat(body.at("/usage/current/activeUsers").asLong()).isEqualTo(1)
-		assertThat(body.at("/usage/previous/equivalentCostUsd").asString()).isEqualTo("10.000000")
-		assertThat(body.at("/usage/previous/sessionCount").asLong()).isEqualTo(1)
+		assertThat(body.at("/summary/equivalentCostUsd/value").asString()).isEqualTo("50.000000")
+		assertThat(body.at("/summary/activeUsers/value").asLong()).isEqualTo(1)
+		assertThat(body.at("/summary/equivalentCostUsd/comparison/previousValue").asString()).isEqualTo("10.000000")
+		assertThat(body.at("/summary/sessionCount/comparison/previousValue").asLong()).isEqualTo(1)
 
 		// 일별 추이: 사용이 없던 완전한 날은 0, 사용이 있던 날은 그 값이다. 모든 날이 complete 다.
 		assertThat(body.at("/trend/points").toList().map { it.path("observation").asString() }.toSet()).containsExactly("complete")
 		val empty = point(body, "/trend/points", "2026-09-07")
-		assertThat(empty.path("equivalentCostUsd").asString() to empty.path("totalTokens").asLong()).isEqualTo("0.000000" to 0L)
-		assertThat(point(body, "/trend/points", "2026-09-08").path("equivalentCostUsd").asString()).isEqualTo("30.000000")
+		assertThat(empty.at("/equivalentCostUsd/value").asString() to empty.at("/totalTokens/value").asLong()).isEqualTo("0.000000" to 0L)
+		assertThat(point(body, "/trend/points", "2026-09-08").at("/equivalentCostUsd/value").asString()).isEqualTo("30.000000")
 
 		// 팀: 이전 값은 같은 팀 ID 로, 이전에 사용이 없던 미배정은 0 이다(신규).
 		val top = body.at("/teamUsage/topTeams").single()
 		assertThat(top.path("teamId").asString()).isEqualTo(org.team.toString())
-		assertThat(top.at("/current/equivalentCostUsd").asString() to top.at("/previous/equivalentCostUsd").asString()).isEqualTo("30.000000" to "10.000000")
-		assertThat(body.at("/teamUsage/unassigned/current/equivalentCostUsd").asString()).isEqualTo("20.000000")
-		assertThat(body.at("/teamUsage/unassigned/previous/equivalentCostUsd").asString()).isEqualTo("0.000000")
-		assertThat(body.at("/teamUsage/unassigned/previous/activeUsers").asLong()).isZero()
+		assertThat(top.at("/equivalentCostUsd/value").asString() to top.at("/equivalentCostUsd/comparison/previousValue").asString()).isEqualTo("30.000000" to "10.000000")
+		assertThat(body.at("/teamUsage/unassigned/equivalentCostUsd/value").asString()).isEqualTo("20.000000")
+		assertThat(body.at("/teamUsage/unassigned/equivalentCostUsd/comparison/previousValue").asString()).isEqualTo("0.000000")
+		assertThat(body.at("/teamUsage/unassigned/equivalentCostUsd/comparison/change").asString()).isEqualTo("new")
 
 		// 응답 키 구조는 화면 요청서의 예시와 같다.
 		JsonStructure.assertMatches("overview-response.example.json", body)
@@ -133,19 +133,19 @@ class PeriodCompletenessApiTest : AbstractDashboardApiTest() {
 		assertThat(list.at("/meta/dataState").asString()).isEqualTo("ready")
 		assertThat(Instant.parse(list.at("/meta/dataThrough").asString())).isEqualTo(kst("2026-09-14T00:00:00"))
 		assertThat(list.at("/comparison/status").asString()).isEqualTo("available")
-		assertThat(list.at("/totals/previous/equivalentCostUsd").asString()).isEqualTo("10.000000")
+		assertThat(list.at("/totals/equivalentCostUsd/comparison/previousValue").asString()).isEqualTo("10.000000")
 		val team = list.at("/teams/items").single()
-		assertThat(team.at("/current/equivalentCostUsd").asString() to team.at("/previous/equivalentCostUsd").asString()).isEqualTo("30.000000" to "10.000000")
-		assertThat(list.at("/unassigned/previous/equivalentCostUsd").asString()).isEqualTo("0.000000")
+		assertThat(team.at("/metrics/equivalentCostUsd/value").asString() to team.at("/metrics/equivalentCostUsd/comparison/previousValue").asString()).isEqualTo("30.000000" to "10.000000")
+		assertThat(list.at("/unassigned/metrics/equivalentCostUsd/comparison/previousValue").asString()).isEqualTo("0.000000")
 		// 팀 추이의 사용이 없던 완전한 날은 0 이다.
 		val day = point(team, "/trend", "2026-09-10")
 		assertThat(day.path("observation").asString() to day.path("equivalentCostUsd").asString()).isEqualTo("complete" to "0.000000")
 
 		val detail = ok(org.tenant, "/analytics/teams/${org.team}?$week&snapshotId=$snapshotId")
-		assertThat(detail.at("/team/previous/equivalentCostUsd").asString()).isEqualTo("10.000000")
+		assertThat(detail.at("/team/metrics/equivalentCostUsd/comparison/previousValue").asString()).isEqualTo("10.000000")
 		assertThat(detail.at("/comparison/status").asString()).isEqualTo("available")
 		val users = ok(org.tenant, "/analytics/teams/${org.team}/users?$week&snapshotId=$snapshotId")
-		assertThat(users.at("/summary/usage/equivalentCostUsd").asString()).isEqualTo("30.000000")
+		assertThat(users.at("/summary/usage/equivalentCostUsd/value").asString()).isEqualTo("30.000000")
 
 		JsonStructure.assertMatches("teams-response.example.json", list)
 	}
@@ -164,16 +164,19 @@ class PeriodCompletenessApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/meta/currentCoverage/status").asString()).isEqualTo("partial")
 		// 9/10 은 완전하지도 관측되지도 않았다. 나머지 여섯 날은 완전하다.
 		assertThat(body.at("/meta/currentCoverage/observedDays").asInt()).isEqualTo(6)
+		assertThat(body.at("/summary/equivalentCostUsd/reasons").toList().map { it.asString() }).contains("collection_gap")
+		assertThat(point(body, "/trend/points", "2026-09-10").at("/equivalentCostUsd/reasons").toList().map { it.asString() }).contains("collection_gap")
+
 		assertThat(Instant.parse(body.at("/meta/dataThrough").asString())).isEqualTo(kst("2026-09-10T00:00:00"))
-		assertThat(body.at("/comparison/status").asString() to body.at("/comparison/reason").asString()).isEqualTo("unavailable" to "source_not_available")
-		assertThat(body.at("/usage/previous").isNull).isTrue()
-		assertThat(body.at("/teamUsage/topTeams").single().path("previous").isNull).isTrue()
-		assertThat(body.at("/teamUsage/unassigned/previous").isNull).isTrue()
+		assertThat(body.at("/summary/equivalentCostUsd/comparison/status").asString() to body.at("/summary/equivalentCostUsd/comparison/reasons/0").asString()).isEqualTo("unavailable" to "current_period_incomplete")
+		assertThat(body.at("/summary/equivalentCostUsd/comparison/previousValue").isNull).isTrue()
+		assertThat(body.at("/teamUsage/topTeams").single().at("/equivalentCostUsd/comparison/previousValue").isNull).isTrue()
+		assertThat(body.at("/teamUsage/unassigned/equivalentCostUsd/comparison/previousValue").isNull).isTrue()
 		// 부분 기간의 합계는 알려진 값이다. 0 으로 채우지 않는다.
-		assertThat(body.at("/usage/current/equivalentCostUsd").asString()).isEqualTo("50.000000")
-		assertThat(point(body, "/trend/points", "2026-09-10").let { it.path("observation").asString() to it.path("equivalentCostUsd").isNull })
+		assertThat(body.at("/summary/equivalentCostUsd/value").asString()).isEqualTo("50.000000")
+		assertThat(point(body, "/trend/points", "2026-09-10").let { it.path("observation").asString() to it.at("/equivalentCostUsd/value").isNull })
 			.isEqualTo("unobserved" to true)
-		assertThat(point(body, "/trend/points", "2026-09-11").path("equivalentCostUsd").asString()).isEqualTo("0.000000")
+		assertThat(point(body, "/trend/points", "2026-09-11").at("/equivalentCostUsd/value").asString()).isEqualTo("0.000000")
 	}
 
 	@Test
@@ -187,10 +190,10 @@ class PeriodCompletenessApiTest : AbstractDashboardApiTest() {
 		val body = ok(org.tenant, "/analytics/overview?$week")
 		assertThat(body.at("/meta/dataState").asString()).isEqualTo("ready")
 		assertThat(body.at("/comparison/coverage/status").asString()).isEqualTo("partial")
-		assertThat(body.at("/comparison/status").asString()).isEqualTo("unavailable")
-		assertThat(body.at("/usage/previous").isNull).isTrue()
+		assertThat(body.at("/summary/equivalentCostUsd/comparison/status").asString()).isEqualTo("unavailable")
+		assertThat(body.at("/summary/equivalentCostUsd/comparison/previousValue").isNull).isTrue()
 		// 현재 기간은 완전하다 — 사용이 없던 날도 0 이다.
-		assertThat(point(body, "/trend/points", "2026-09-12").path("equivalentCostUsd").asString()).isEqualTo("0.000000")
+		assertThat(point(body, "/trend/points", "2026-09-12").at("/equivalentCostUsd/value").asString()).isEqualTo("0.000000")
 	}
 
 	@Test
@@ -200,7 +203,7 @@ class PeriodCompletenessApiTest : AbstractDashboardApiTest() {
 		val registered = SourceFixtures.insertInstallation(org.tenant, org.member)
 		SourceFixtures.setInstallationTimes(registered, kst("2026-09-10T12:00:00"))
 		SourceFixtures.insertSegment(registered, kst("2026-09-10T12:00:00"), kst("2026-09-20T00:00:00"))
-		assertThat(ok(org.tenant, "/analytics/overview?$week").at("/comparison/status").asString()).isEqualTo("available")
+		assertThat(ok(org.tenant, "/analytics/overview?$week").at("/summary/equivalentCostUsd/comparison/status").asString()).isEqualTo("available")
 
 		// 등록부터 1분 늦게 듣기 시작했다 — 그 1분은 덮이지 않았다.
 		DashboardTestStores.writer.sql("UPDATE enrollment.installation_collection_segments SET from_at = :from WHERE installation_id = :id")
@@ -228,9 +231,9 @@ class PeriodCompletenessApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/meta/dataState").asString()).isEqualTo("partial")
 		assertThat(body.at("/meta/currentCoverage/status").asString() to body.at("/meta/currentCoverage/observedDays").asInt()).isEqualTo("partial" to 1)
 		assertThat(body.at("/meta/dataThrough").isNull).isTrue()
-		assertThat(body.at("/comparison/status").asString()).isEqualTo("unavailable")
+		assertThat(body.at("/summary/equivalentCostUsd/comparison/status").asString()).isEqualTo("unavailable")
 		assertThat(point(body, "/trend/points", "2026-09-08").path("observation").asString()).isEqualTo("partial")
-		assertThat(point(body, "/trend/points", "2026-09-09").let { it.path("observation").asString() to it.path("totalTokens").isNull }).isEqualTo("unobserved" to true)
+		assertThat(point(body, "/trend/points", "2026-09-09").let { it.path("observation").asString() to it.at("/totalTokens/value").isNull }).isEqualTo("unobserved" to true)
 	}
 
 	@Test

@@ -78,8 +78,9 @@ class VendorBillingApiTest : AbstractDashboardApiTest() {
 	}
 
 	private fun metered(settings: JsonNode, vendorId: String): JsonNode =
-		settings.at("/vendors/items").toList().single { it.path("vendorId").asString() == vendorId }.path("meteredMonthToDate")
+		ok(UUID.fromString(settings.at("/meta/organizationId").asString()), "/vendors/$vendorId").at("/vendor/meteredMonthToDate")
 	private fun section(node: JsonNode) = node.path("availability").asString() to node.path("reason").takeUnless { it.isNull }?.asString()
+	private fun valueState(node: JsonNode) = node.path("status").asString() to node.path("reasons").firstOrNull()?.asString()
 
 	@Test
 	@DisplayName("벤더 청구 누계만 원천이다 — 환산 비용·계약액과 다른 값이 그대로 나오고, 청구를 구현하지 않은 제품·연결 없는 제품은 그 제품만 사유와 함께 없다")
@@ -109,8 +110,8 @@ class VendorBillingApiTest : AbstractDashboardApiTest() {
 		assertThat(section(metered(settings, cursor))).describedAs("청구를 구현했지만 연결이 없다").isEqualTo("unavailable" to "billing_source_not_connected")
 		// 한 제품이라도 없으면 합계를 부분합으로 내지 않는다.
 		with(settings.at("/summary/meteredMonthToDate")) {
-			assertThat(section(this)).isEqualTo("partial" to "billing_not_supported")
-			assertThat(path("data").path("actualBilledUsd").isNull && path("data").path("equivalentCostUsd").isNull).isTrue()
+			assertThat(valueState(this)).isEqualTo("unavailable" to "billing_not_supported")
+			assertThat(path("value").isNull).isTrue()
 		}
 		assertThat(section(ok(tenant, "/vendors/$claude").at("/vendor/meteredMonthToDate"))).describedAs("상세도 같은 값").isEqualTo("available" to null)
 	}
@@ -154,18 +155,18 @@ class VendorBillingApiTest : AbstractDashboardApiTest() {
 		billed(tenant, cursor, cursorConnection, cycleStart, fetched, "24.50125487", "usage_spend", fetched)
 		with(ok(tenant, "/settings")) {
 			assertThat(metered(this, cursor).path("data").path("billingKind").asString()).isEqualTo("usage_spend")
-			assertThat(section(at("/summary/meteredMonthToDate"))).isEqualTo("partial" to "billing_periods_differ")
-			assertThat(at("/summary/meteredMonthToDate/data/actualBilledUsd").isNull).isTrue()
+			assertThat(valueState(at("/summary/meteredMonthToDate"))).isEqualTo("unavailable" to "billing_periods_differ")
+			assertThat(at("/summary/meteredMonthToDate/value").isNull).isTrue()
 		}
 		// 주기가 달력 달과 같은 기간이면 더한다.
 		DashboardTestStores.writer.sql("UPDATE enrollment.vendor_billing_periods SET period_start = :start WHERE vendor_id = :v")
 			.param("start", Timestamp.from(monthStart)).param("v", cursor).update()
 		with(ok(tenant, "/settings").at("/summary/meteredMonthToDate")) {
-			assertThat(section(this)).isEqualTo("available" to null)
-			assertThat(path("data").path("actualBilledUsd").asString().toBigDecimal()).isEqualByComparingTo("124.75125487")
+			assertThat(valueState(this)).isEqualTo("complete" to null)
+			assertThat(path("value").asString().toBigDecimal()).isEqualByComparingTo("124.75125487")
 		}
 		// 등록 제품이 없으면 해당 없다.
 		val (empty, _) = organization()
-		assertThat(section(ok(empty, "/settings").at("/summary/meteredMonthToDate"))).isEqualTo("unavailable" to "not_applicable")
+		assertThat(valueState(ok(empty, "/settings").at("/summary/meteredMonthToDate"))).isEqualTo("unavailable" to "not_applicable")
 	}
 }

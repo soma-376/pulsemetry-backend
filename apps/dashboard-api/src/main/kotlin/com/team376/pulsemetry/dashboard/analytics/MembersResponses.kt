@@ -9,30 +9,33 @@ data class Member(
 	val role: String,
 	val status: String,
 	val version: Long,
-	val periodUsage: Usage?,
+	val periodUsage: MemberUsage?,
 	val lastUsedAt: String?,
-	val observation: String,
 	val seatState: String,
 	val plannedVendorIds: List<String> = emptyList(),
 )
 
-data class SeatSummary(
-	val contracted: Long,
-	val assigned: Long,
-	val unallocated: Long,
-	val activeInPeriod: Long?,
-	val inactiveAssigned: Long?,
-	val reclaimCandidates: Long?,
-	val estimatedMonthlySavingsUsd: String?,
+/** 화면에서 표시하는 사용량만 제공한다. 미관측 구성원의 periodUsage는 null이다. */
+data class MemberUsage(
+	val equivalentCostUsd: OverviewResponse.Value<String>,
+	val sessionCount: OverviewResponse.Value<Long>,
+)
+
+data class MembersMeta(
+	val organizationId: String,
+	val asOf: String,
+	val startDate: String,
+	val endDate: String,
+	val snapshotId: String,
 )
 
 data class MemberSummary(
 	val rosterMembers: Long,
-	val activeUsers: Long?,
+	val activeUsers: OverviewResponse.Value<Long>,
 	val unassignedMembers: Long,
-	val periodUnassignedEquivalentCostUsd: String?,
-	val periodTotalEquivalentCostUsd: String?,
-	val seats: Section<SeatSummary>,
+	val periodUnassignedEquivalentCostUsd: OverviewResponse.Value<String>,
+	val periodUnassignedCostShare: OverviewResponse.Value<Double>,
+	val reclaimCandidates: OverviewResponse.Value<Long>,
 )
 
 /**
@@ -131,9 +134,7 @@ data class IdlePolicy(val idleDays: Int, val version: Long)
 data class MemberCapabilities(val invite: Boolean, val assignTeam: Boolean, val reclaimSeats: Boolean, val restoreSeats: Boolean)
 
 data class MembersResponse(
-	val meta: AnalyticsMeta,
-	val asOf: String,
-	val ingest: OverviewResponse.Ingest,
+	val meta: MembersMeta,
 	val summary: MemberSummary,
 	val policy: IdlePolicy,
 	val capabilities: MemberCapabilities,
@@ -142,7 +143,7 @@ data class MembersResponse(
 	val reclaimCandidates: Section<Page<ReclaimCandidate>>,
 )
 
-data class MemberListResponse(val meta: AnalyticsMeta, val members: Page<Member>)
+data class MemberListResponse(val meta: MembersMeta, val members: Page<Member>)
 
 data class ReclaimCandidatesResponse(
 	val meta: CurrentMeta,

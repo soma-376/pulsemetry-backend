@@ -32,11 +32,9 @@ Authorization: Bearer <Pulsemetry access_token>
 // SettingsResponse
 {
   meta: CurrentMeta;
-  ingest: Ingest;
   capabilities: SettingsCapabilities;
   summary: SettingsSummary;
-  catalog: Catalog;
-  vendors: Page<Vendor>;
+  vendors: Page<SettingsVendorRow>;
   collectionPolicy: CollectionPolicy;
   policyRollout: PolicyRollout;
   alertRules: Array<AlertRule>;

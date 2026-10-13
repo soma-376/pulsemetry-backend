@@ -44,7 +44,7 @@ Authorization: Bearer <Pulsemetry access_token>
 ```ts
 // TeamDetailResponse
 {
-  meta: AnalyticsMeta;
+  meta: TeamMeta;
   comparison: Comparison;
   team: TeamAnalytics;
 }

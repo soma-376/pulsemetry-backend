@@ -151,15 +151,13 @@ class AnalyticsConfig {
 		properties: DashboardApiProperties,
 		source: JdbcClient,
 		observations: VendorObservations,
-		frames: AnalyticsFrames,
 		tokens: CurrentStateTokens,
 		codec: PageCursorCodec,
 		mapper: ObjectMapper,
 		clock: Clock,
-		catalog: VendorCatalog,
 		seats: SeatService,
 	): SettingsService = SettingsService(
-		source, observations, frames, tokens, codec, mapper, OrganizationPolicies(source, properties.members.idleDays), clock, managementEnabled, catalog,
+		source, observations, tokens, codec, mapper, OrganizationPolicies(source, properties.members.idleDays), clock, managementEnabled,
 		// 안내는 enrollment-api 가 메일로 보낸다(ADR 0043). 두 앱이 같은 설정 값을 받는다.
 		notificationsEnabled = managementEnabled && mailEnabled,
 		seats = seats,
@@ -168,6 +166,6 @@ class AnalyticsConfig {
 	)
 
 	@Bean
-	fun overviewService(frames: AnalyticsFrames, aggregator: UsageAggregator, references: SnapshotReferences, seats: SeatService, alerts: AlertService): OverviewService =
-		OverviewService(frames, aggregator, references, seats, alerts)
+	fun overviewService(frames: AnalyticsFrames, aggregator: UsageAggregator, references: SnapshotReferences): OverviewService =
+		OverviewService(frames, aggregator, references)
 }

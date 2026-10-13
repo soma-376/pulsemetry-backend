@@ -12,95 +12,93 @@
     "currentCoverage": {
       "status": "complete",
       "observedDays": 7
-    },
-    "pricingVersion": "example-rate-v1"
+    }
   },
   "comparison": {
     "mode": "prev_week",
     "startDate": "2026-08-31",
     "endDate": "2026-09-06",
-    "status": "available",
-    "reason": null,
     "coverage": {
       "status": "complete",
       "observedDays": 7
     }
   },
-  "ingest": {
-    "status": "healthy",
-    "reason": null,
-    "asOf": "2026-09-14T00:00:00Z",
-    "firstObservedAt": "2026-07-12T15:00:00Z",
-    "lastReceivedAt": "2026-09-13T23:57:00Z",
-    "windowMinutes": 15,
-    "activeInstallations": 128,
-    "observedMembers": 117,
-    "eligibleMembers": 154,
-    "coverageRatio": 0.7597402597402597
-  },
-  "usage": {
-    "current": {
-      "activeUsers": 100,
-      "sessionCount": 1000,
-      "tokens": {
-        "inputUncached": 50000000,
-        "output": 20000000,
-        "cacheRead": 25000000,
-        "cacheWrite": 5000000,
-        "total": 100000000
-      },
-      "equivalentCostUsd": "5000.000000"
+  "summary": {
+    "activeUsers": {
+      "value": 100,
+      "status": "complete",
+      "reasons": [],
+      "comparison": {
+        "status": "available",
+        "reasons": [],
+        "previousValue": 90,
+        "absoluteChange": 10,
+        "percentChange": 11.11111111111111,
+        "change": "increase"
+      }
     },
-    "previous": {
-      "activeUsers": 90,
-      "sessionCount": 800,
-      "tokens": {
-        "inputUncached": 40000000,
-        "output": 16000000,
-        "cacheRead": 20000000,
-        "cacheWrite": 4000000,
-        "total": 80000000
-      },
-      "equivalentCostUsd": "4000.000000"
+    "equivalentCostUsd": {
+      "value": "5000.000000",
+      "status": "complete",
+      "reasons": [],
+      "comparison": {
+        "status": "available",
+        "reasons": [],
+        "previousValue": "4000.000000",
+        "absoluteChange": "1000.000000",
+        "percentChange": 25.0,
+        "change": "increase"
+      }
+    },
+    "sessionCount": {
+      "value": 1000,
+      "status": "complete",
+      "reasons": [],
+      "comparison": {
+        "status": "available",
+        "reasons": [],
+        "previousValue": 800,
+        "absoluteChange": 200,
+        "percentChange": 25.0,
+        "change": "increase"
+      }
+    },
+    "equivalentCostPerUserUsd": {
+      "value": "50.000000",
+      "status": "complete",
+      "reasons": [],
+      "comparison": {
+        "status": "available",
+        "reasons": [],
+        "previousValue": "44.44444444444444444444444444",
+        "absoluteChange": "5.55555555555555555555555556",
+        "percentChange": 12.5,
+        "change": "increase"
+      }
+    },
+    "totalTokens": {
+      "value": 100000000,
+      "status": "complete",
+      "reasons": [],
+      "comparison": {
+        "status": "available",
+        "reasons": [],
+        "previousValue": 80000000,
+        "absoluteChange": 20000000,
+        "percentChange": 25.0,
+        "change": "increase"
+      }
+    },
+    "sessionsPerUser": {
+      "value": 10.0,
+      "status": "complete",
+      "reasons": []
+    },
+    "equivalentCostPerSessionUsd": {
+      "value": "5.000000",
+      "status": "complete",
+      "reasons": []
     }
-  },
-  "seats": {
-    "availability": "available",
-    "reason": null,
-    "scopeVendorIds": [
-      "vendor-a",
-      "vendor-b"
-    ],
-    "allocationMethod": "estimated_30_day",
-    "current": {
-      "contractedSeats": 148,
-      "activeSeats": 100,
-      "monthlyFeeUsd": "4800.000000",
-      "allocatedFeeUsd": "1120.000000",
-      "equivalentCostUsd": "5000.000000",
-      "efficiency": 4.464285714285714
-    },
-    "previous": {
-      "contractedSeats": 148,
-      "activeSeats": 90,
-      "monthlyFeeUsd": "4800.000000",
-      "allocatedFeeUsd": "1120.000000",
-      "equivalentCostUsd": "4000.000000",
-      "efficiency": 3.5714285714285716
-    },
-    "reclaimEstimate": {
-      "idleSeats": 48,
-      "monthlySavingsUsd": "960.000000",
-      "efficiencyAfterReclaim": 5.580357142857143
-    }
-  },
-  "alerts": {
-    "availability": "available",
-    "reason": null,
-    "asOf": "2026-09-14T00:00:00Z",
-    "unacknowledgedTotal": 5,
-    "security": 2,
-    "cost": 3
   },
   "trend": {
     "bucket": "day",
@@ -108,159 +106,234 @@
       {
         "date": "2026-09-07",
         "observation": "complete",
-        "equivalentCostUsd": "700.000000",
-        "allocatedSeatCostUsd": "160.000000",
-        "totalTokens": 14000000
+        "equivalentCostUsd": {
+          "value": "700.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 14000000,
+          "status": "complete",
+          "reasons": []
+        }
       },
       {
         "date": "2026-09-08",
         "observation": "complete",
-        "equivalentCostUsd": "800.000000",
-        "allocatedSeatCostUsd": "160.000000",
-        "totalTokens": 16000000
+        "equivalentCostUsd": {
+          "value": "800.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 16000000,
+          "status": "complete",
+          "reasons": []
+        }
       },
       {
         "date": "2026-09-09",
         "observation": "complete",
-        "equivalentCostUsd": "900.000000",
-        "allocatedSeatCostUsd": "160.000000",
-        "totalTokens": 18000000
+        "equivalentCostUsd": {
+          "value": "900.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 18000000,
+          "status": "complete",
+          "reasons": []
+        }
       },
       {
         "date": "2026-09-10",
         "observation": "complete",
-        "equivalentCostUsd": "600.000000",
-        "allocatedSeatCostUsd": "160.000000",
-        "totalTokens": 12000000
+        "equivalentCostUsd": {
+          "value": "600.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 12000000,
+          "status": "complete",
+          "reasons": []
+        }
       },
       {
         "date": "2026-09-11",
         "observation": "complete",
-        "equivalentCostUsd": "1000.000000",
-        "allocatedSeatCostUsd": "160.000000",
-        "totalTokens": 20000000
+        "equivalentCostUsd": {
+          "value": "1000.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 20000000,
+          "status": "complete",
+          "reasons": []
+        }
       },
       {
         "date": "2026-09-12",
         "observation": "complete",
-        "equivalentCostUsd": "500.000000",
-        "allocatedSeatCostUsd": "160.000000",
-        "totalTokens": 10000000
+        "equivalentCostUsd": {
+          "value": "500.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 10000000,
+          "status": "complete",
+          "reasons": []
+        }
       },
       {
         "date": "2026-09-13",
         "observation": "complete",
-        "equivalentCostUsd": "500.000000",
-        "allocatedSeatCostUsd": "160.000000",
-        "totalTokens": 10000000
+        "equivalentCostUsd": {
+          "value": "500.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 10000000,
+          "status": "complete",
+          "reasons": []
+        }
       }
     ]
   },
   "modelMix": {
-    "availability": "available",
-    "reason": null,
     "models": [
       {
         "modelId": "vendor-a/model-pro",
         "displayName": "Model Pro",
-        "equivalentCostUsd": "2300.000000",
-        "totalTokens": 46000000,
-        "effectiveCostPerMillionTokensUsd": "50.000000"
+        "equivalentCostUsd": {
+          "value": "2300.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 46000000,
+          "status": "complete",
+          "reasons": []
+        },
+        "effectiveCostPerMillionTokensUsd": {
+          "value": "50.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "costShare": {
+          "value": 0.46,
+          "status": "complete",
+          "reasons": []
+        }
       },
       {
         "modelId": "vendor-a/model-standard",
         "displayName": "Model Standard",
-        "equivalentCostUsd": "1700.000000",
-        "totalTokens": 34000000,
-        "effectiveCostPerMillionTokensUsd": "50.000000"
+        "equivalentCostUsd": {
+          "value": "1700.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 34000000,
+          "status": "complete",
+          "reasons": []
+        },
+        "effectiveCostPerMillionTokensUsd": {
+          "value": "50.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "costShare": {
+          "value": 0.34,
+          "status": "complete",
+          "reasons": []
+        }
       },
       {
         "modelId": "vendor-b/model-code",
         "displayName": "Model Code",
-        "equivalentCostUsd": "600.000000",
-        "totalTokens": 12000000,
-        "effectiveCostPerMillionTokensUsd": "50.000000"
+        "equivalentCostUsd": {
+          "value": "600.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 12000000,
+          "status": "complete",
+          "reasons": []
+        },
+        "effectiveCostPerMillionTokensUsd": {
+          "value": "50.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "costShare": {
+          "value": 0.12,
+          "status": "complete",
+          "reasons": []
+        }
       },
       {
         "modelId": "vendor-a/model-fast",
         "displayName": "Model Fast",
-        "equivalentCostUsd": "250.000000",
-        "totalTokens": 5000000,
-        "effectiveCostPerMillionTokensUsd": "50.000000"
+        "equivalentCostUsd": {
+          "value": "250.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 5000000,
+          "status": "complete",
+          "reasons": []
+        },
+        "effectiveCostPerMillionTokensUsd": {
+          "value": "50.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "costShare": {
+          "value": 0.05,
+          "status": "complete",
+          "reasons": []
+        }
       },
       {
         "modelId": "vendor-b/model-mini",
         "displayName": "Model Mini",
-        "equivalentCostUsd": "150.000000",
-        "totalTokens": 3000000,
-        "effectiveCostPerMillionTokensUsd": "50.000000"
-      }
-    ]
-  },
-  "waste": {
-    "availability": "unavailable",
-    "reason": "methodology_not_available",
-    "methodologyVersion": null,
-    "totalMonthlyEquivalentCostUsd": null,
-    "items": [
-      {
-        "kind": "cache_miss",
-        "availability": "unavailable",
-        "reason": "methodology_not_available",
-        "currentEquivalentCostUsd": null,
-        "previousEquivalentCostUsd": null,
-        "monthlyEquivalentCostUsd": null,
-        "previousMonthlyEquivalentCostUsd": null,
-        "rate": null,
-        "rateDefinition": null
-      },
-      {
-        "kind": "retry_or_abort",
-        "availability": "unavailable",
-        "reason": "methodology_not_available",
-        "currentEquivalentCostUsd": null,
-        "previousEquivalentCostUsd": null,
-        "monthlyEquivalentCostUsd": null,
-        "previousMonthlyEquivalentCostUsd": null,
-        "rate": null,
-        "rateDefinition": null
-      },
-      {
-        "kind": "excessive_context",
-        "availability": "unavailable",
-        "reason": "methodology_not_available",
-        "currentEquivalentCostUsd": null,
-        "previousEquivalentCostUsd": null,
-        "monthlyEquivalentCostUsd": null,
-        "previousMonthlyEquivalentCostUsd": null,
-        "rate": null,
-        "rateDefinition": null
+        "equivalentCostUsd": {
+          "value": "150.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "totalTokens": {
+          "value": 3000000,
+          "status": "complete",
+          "reasons": []
+        },
+        "effectiveCostPerMillionTokensUsd": {
+          "value": "50.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "costShare": {
+          "value": 0.03,
+          "status": "complete",
+          "reasons": []
+        }
       }
     ]
   },
   "teamUsage": {
-    "availability": "available",
-    "reason": null,
-    "ranking": "equivalentCostUsd_desc",
     "attributionBasis": "event_time",
     "totalTeamCount": 4,
     "topTeams": [
       {
         "teamId": "team_platform",
         "teamName": "플랫폼",
-        "current": {
-          "activeUsers": 40,
-          "equivalentCostUsd": "2000.000000"
-        },
-        "previous": {
-          "activeUsers": 35,
-          "equivalentCostUsd": "1400.000000"
-        },
-        "topModel": {
-          "modelId": "vendor-a/model-pro",
-          "displayName": "Model Pro",
-          "share": 0.6
-        },
         "products": [
           {
             "kind": "claude_team",
@@ -270,47 +343,57 @@
             "kind": "openai_biz",
             "displayName": "ChatGPT / Codex (OpenAI)"
           }
-        ]
+        ],
+        "activeUsers": {
+          "value": 40,
+          "status": "complete",
+          "reasons": []
+        },
+        "equivalentCostUsd": {
+          "value": "2000.000000",
+          "status": "complete",
+          "reasons": [],
+          "comparison": {
+            "status": "available",
+            "reasons": [],
+            "previousValue": "1400.000000",
+            "absoluteChange": "600.000000",
+            "percentChange": 42.857142857142854,
+            "change": "increase"
+          }
+        }
       },
       {
         "teamId": "team_payments",
         "teamName": "결제",
-        "current": {
-          "activeUsers": 25,
-          "equivalentCostUsd": "1400.000000"
-        },
-        "previous": {
-          "activeUsers": 25,
-          "equivalentCostUsd": "1200.000000"
-        },
-        "topModel": {
-          "modelId": "vendor-a/model-pro",
-          "displayName": "Model Pro",
-          "share": 0.6
-        },
         "products": [
           {
             "kind": "claude_team",
             "displayName": "Claude (Anthropic)"
           }
-        ]
+        ],
+        "activeUsers": {
+          "value": 25,
+          "status": "complete",
+          "reasons": []
+        },
+        "equivalentCostUsd": {
+          "value": "1400.000000",
+          "status": "complete",
+          "reasons": [],
+          "comparison": {
+            "status": "available",
+            "reasons": [],
+            "previousValue": "1200.000000",
+            "absoluteChange": "200.000000",
+            "percentChange": 16.666666666666668,
+            "change": "increase"
+          }
+        }
       },
       {
         "teamId": "team_data",
         "teamName": "데이터",
-        "current": {
-          "activeUsers": 20,
-          "equivalentCostUsd": "800.000000"
-        },
-        "previous": {
-          "activeUsers": 15,
-          "equivalentCostUsd": "700.000000"
-        },
-        "topModel": {
-          "modelId": "vendor-a/model-standard",
-          "displayName": "Model Standard",
-          "share": 0.5
-        },
         "products": [
           {
             "kind": "claude_team",
@@ -320,23 +403,28 @@
             "kind": "openai_biz",
             "displayName": "ChatGPT / Codex (OpenAI)"
           }
-        ]
+        ],
+        "activeUsers": {
+          "value": 20,
+          "status": "complete",
+          "reasons": []
+        },
+        "equivalentCostUsd": {
+          "value": "800.000000",
+          "status": "complete",
+          "reasons": [],
+          "comparison": {
+            "status": "available",
+            "reasons": [],
+            "previousValue": "700.000000",
+            "absoluteChange": "100.000000",
+            "percentChange": 14.285714285714286,
+            "change": "increase"
+          }
+        }
       }
     ],
-    "otherTeams": {
-      "count": 1,
-      "currentEquivalentCostUsd": "500.000000",
-      "previousEquivalentCostUsd": "400.000000"
-    },
     "unassigned": {
-      "current": {
-        "activeUsers": 5,
-        "equivalentCostUsd": "300.000000"
-      },
-      "previous": {
-        "activeUsers": 5,
-        "equivalentCostUsd": "300.000000"
-      },
       "products": [
         {
           "kind": "claude_team",
@@ -346,37 +434,26 @@
           "kind": null,
           "displayName": null
         }
-      ]
+      ],
+      "activeUsers": {
+        "value": 5,
+        "status": "complete",
+        "reasons": []
+      },
+      "equivalentCostUsd": {
+        "value": "300.000000",
+        "status": "complete",
+        "reasons": [],
+        "comparison": {
+          "status": "available",
+          "reasons": [],
+          "previousValue": "300.000000",
+          "absoluteChange": "0.000000",
+          "percentChange": 0.0,
+          "change": "unchanged"
+        }
+      }
     }
   },
-  "productUsage": {
-    "availability": "available",
-    "reason": null,
-    "products": [
-      {
-        "kind": "claude_team",
-        "displayName": "Claude (Anthropic)",
-        "activeUsers": 77,
-        "sessionCount": 740,
-        "totalTokens": 74000000,
-        "equivalentCostUsd": "3700.000000"
-      },
-      {
-        "kind": "openai_biz",
-        "displayName": "ChatGPT / Codex (OpenAI)",
-        "activeUsers": 28,
-        "sessionCount": 240,
-        "totalTokens": 24000000,
-        "equivalentCostUsd": "1200.000000"
-      },
-      {
-        "kind": null,
-        "displayName": null,
-        "activeUsers": 1,
-        "sessionCount": 20,
-        "totalTokens": 2000000,
-        "equivalentCostUsd": "100.000000"
-      }
-    ]
-  }
+  "errors": []
 }

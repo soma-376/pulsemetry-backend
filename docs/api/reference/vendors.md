@@ -235,7 +235,7 @@ type VendorSeats = {
 ```ts
 type VendorsResponse = {
   meta: CurrentMeta;
-  vendors: Page<Vendor>;
+  vendors: Page<SettingsVendorRow>;
 };
 ```
 
@@ -300,3 +300,5 @@ monthlyFeePerSeatUsd는 음수 없는 십진 문자열(소수점 이하 최대 1
 ## 직렬화·검증 근거
 
 - [ManagementStore.kt](../../../libs/enrollment-persistence/src/main/kotlin/com/team376/pulsemetry/persistence/enrollment/management/ManagementStore.kt)
+
+`GET /vendors`의 목록 행은 [SettingsVendorRow](settings.md#schema-SettingsVendorRow)이며 단건 상세 `Vendor`와 구분한다.

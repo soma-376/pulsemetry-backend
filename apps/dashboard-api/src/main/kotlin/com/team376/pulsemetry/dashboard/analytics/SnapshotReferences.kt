@@ -39,6 +39,13 @@ class SnapshotReferences(
 			.query { rs, _ -> rs.getObject("complete_date", LocalDate::class.java) }
 			.set()
 
+	/** snapshot을 만든 시점의 날짜별 수집 미완료 사유(허브 ADR 0018). */
+	fun incompleteReasons(snapshot: SnapshotManifestStore.Manifest): Map<LocalDate, List<String>> =
+		cache.sql("SELECT observed_date, reasons FROM dashboard_cache.snapshot_incomplete_days WHERE snapshot_id = :snapshot")
+			.param("snapshot", snapshot.snapshotId)
+			.query { rs, _ -> rs.getObject("observed_date", LocalDate::class.java) to rs.getString("reasons").split(",") }
+			.list().toMap()
+
 	/** build 때의 로스터 한 사람. [role]·[status] 는 enrollment 의 값 그대로다. */
 	data class RosterMember(
 		val id: UUID,

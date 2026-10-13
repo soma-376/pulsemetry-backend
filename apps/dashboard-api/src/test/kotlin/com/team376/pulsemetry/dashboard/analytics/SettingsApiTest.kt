@@ -90,7 +90,7 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		SourceFixtures.insertContract(tenant, "openai", status = "expired", startsAt = "2025-01-01", endsAt = "2025-12-31")
 		val registered = listOf("claude_team", "openai_biz").map { kind ->
             val id = UUID.randomUUID().toString()
-            DashboardTestStores.writer.sql("INSERT INTO enrollment.managed_vendors (tenant_id,vendor_id,kind,source,created_at) VALUES (:tenant,:id,:kind,'manual',now())")
+            DashboardTestStores.writer.sql("INSERT INTO enrollment.managed_vendors (tenant_id,vendor_id,kind,source,created_at) VALUES (:tenant,:id,:kind,'manual','2026-01-01')")
                 .param("tenant", tenant).param("id", id).param("kind", kind).update()
             val contract = if (kind == "claude_team") """{"version":1,"planId":"team","effectiveFrom":"2026-01-01","effectiveTo":null,"termNote":null,"tiers":[{"tierId":"standard","label":"표준","seats":2,"monthlyFeePerSeatUsd":"30"}],"monthlySeatFeeUsd":"60","confirmedAt":"2026-01-01T00:00:00Z","confirmedBy":"$admin"}""" else null
             DashboardTestStores.writer.sql("INSERT INTO enrollment.vendor_contract_versions (tenant_id,vendor_id,version,display_name,contract,recorded_at,recorded_by) VALUES (:tenant,:id,1,:kind,CAST(:contract AS jsonb),'2026-01-01',:admin)")
@@ -98,6 +98,29 @@ class SettingsApiTest : AbstractDashboardApiTest() {
             id
         }
         return Org(tenant, applied, outdated, unknown, registered, v2, v3)
+	}
+
+	@Test
+	fun contractInputStatusUsesAllRegisteredContractsWithoutUsageOrPolicyDependencies() {
+		val org = seed()
+		var body = ok(org.tenant, "/contract-input-status")
+		assertThat(body.path("requiredCount").asInt()).isEqualTo(1)
+		assertThat(body.at("/vendors/0/vendorId").asString()).isEqualTo(org.registered[1])
+		assertThat(body.at("/vendors/0/missingFields").list().map { it.asString() }).containsExactly("planId", "seats", "monthlyFeePerSeatUsd")
+		assertThat(ok(org.tenant, "/vendors/${org.registered[1]}").at("/vendor/contractInput/status").asString()).isEqualTo("required")
+		// 현재 입력 여부를 읽으므로 기존 설정 snapshot이 있어도 저장된 새 버전을 즉시 반영한다.
+		DashboardTestStores.writer.sql("""
+			UPDATE enrollment.vendor_contract_versions target SET contract=(SELECT contract FROM enrollment.vendor_contract_versions WHERE tenant_id=:tenant AND vendor_id=:source)
+			 || '{"effectiveTo":"2026-01-02","monthlySeatFeeUsd":"0"}'::jsonb
+			WHERE target.tenant_id=:tenant AND target.vendor_id=:target
+		""").param("tenant", org.tenant).param("source", org.registered[0]).param("target", org.registered[1]).update()
+		body = ok(org.tenant, "/contract-input-status")
+		assertThat(body.path("requiredCount").asInt()).isZero()
+		assertThat(body.path("vendors").size()).isZero()
+		DashboardTestStores.writer.sql("UPDATE enrollment.vendor_contract_versions SET contract=NULL,archived=true WHERE tenant_id=:tenant").param("tenant", org.tenant).update()
+		assertThat(ok(org.tenant, "/contract-input-status").path("requiredCount").asInt()).isZero()
+		assertThat(ok(DashboardTestStores.insertTenant(), "/contract-input-status").path("requiredCount").asInt()).isZero()
+		assertThat(get(org.tenant, "/contract-input-status", Role.MEMBER).statusCode()).isEqualTo(403)
 	}
 
 	@Test
@@ -110,7 +133,8 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/collectionPolicy/version").asLong()).isEqualTo(3)
 		assertThat(body.at("/collectionPolicy/collectRawContent").asBoolean()).isFalse()
 		assertThat(body.at("/collectionPolicy/reclaimIdleDays").asInt()).isEqualTo(14)
-		assertThat(listOf("/collectionPolicy/aggregateRetentionMonths", "/collectionPolicy/rawContentRetentionDays").map { body.at(it).isNull }).containsOnly(true)
+		assertThat(body.at("/collectionPolicy/aggregateRetentionMonths").isNull).isTrue()
+		assertThat(body.at("/collectionPolicy").has("rawContentRetentionDays")).isFalse()
 		assertThat(body.at("/policyRollout/desiredVersion").asLong()).isEqualTo(3)
 		assertThat(body.at("/policyRollout/eligibleInstallations").asLong()).isEqualTo(3)
 		assertThat(body.at("/policyRollout/appliedInstallations").asLong()).isEqualTo(1)
@@ -130,15 +154,16 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/alertRules/0/comparisonWindow").asString()).isEqualTo("preceding_7_calendar_days")
 		assertThat(listOf("editContracts", "editCollectionPolicy", "editAlertRules", "notifyInstallations").map { body.at("/capabilities/$it").asBoolean() })
 			.containsOnly(false)
-		assertThat(body.at("/catalog/kinds").list().map { it.path("kind").asString() }).containsExactly("anthropic", "google", "openai")
-		assertThat(body.at("/catalog/plans").size()).isZero()
-		assertThat(body.at("/summary/configuredVendors").asLong()).isEqualTo(1)
-		assertThat(body.at("/summary/unconfiguredVendors").asLong()).isEqualTo(1)
-		assertThat(listOf("/summary/activeSeats7d", "/summary/meteredMonthToDate/data").map { body.at(it).isNull })
+		assertThat(body.has("catalog")).isFalse()
+		assertThat(body.has("ingest")).isFalse()
+		assertThat(body.path("summary").has("configuredVendors")).isFalse()
+		assertThat(body.at("/summary/unconfiguredVendors/value").asLong()).isEqualTo(1)
+		assertThat(listOf("/summary/activeSeats7d/value", "/summary/meteredMonthToDate/value").map { body.at(it).isNull })
 			.containsOnly(true)
-		assertThat(body.at("/summary/monthlySeatFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("60")
-		assertThat(body.at("/summary/contractedSeats").asLong()).isEqualTo(2)
-		assertThat(body.at("/ingest/status").asString()).isEqualTo("unknown")
+		assertThat(body.at("/summary/monthlySeatFeeUsd/value").asString().toBigDecimal()).isEqualByComparingTo("60")
+		assertThat(body.at("/summary/contractedSeats/value").asLong()).isEqualTo(2)
+		assertThat(body.at("/summary/monthlySeatFeeUsd/status").asString()).isEqualTo("partial")
+		assertThat(body.at("/summary/monthlySeatFeeUsd/reasons").list().map { it.asString() }).containsExactly("contract_missing")
 	}
 
 	@Test
@@ -162,11 +187,11 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		SourceFixtures.insertEvents(org.tenant, Event("${org.tenant}-codex", seen, product = "codex", serviceName = "codex-app-server", memberId = UUID.randomUUID()))
 		val vendors = ok(org.tenant, "/vendors").at("/vendors/items").list().associateBy { it.path("vendorId").asString() }
 		assertThat(vendors.keys).containsExactlyElementsOf(org.registered.sorted())
-		val claude = vendors.getValue(org.registered[0])
+		val claude = ok(org.tenant, "/vendors/${org.registered[0]}").path("vendor")
 		assertThat(claude.path("state").asString()).isEqualTo("configured")
 		assertThat(claude.at("/contract/monthlySeatFeeUsd").asString()).isEqualTo("60")
 		assertThat(claude.path("contractStatus").asString()).isEqualTo("active")
-		val openai = vendors.getValue(org.registered[1])
+		val openai = ok(org.tenant, "/vendors/${org.registered[1]}").path("vendor")
 		assertThat(openai.path("state").asString()).isEqualTo("needs_review")
 		assertThat(openai.path("contract").isNull).isTrue()
 		assertThat(openai.path("contractStatus").asString()).isEqualTo("missing")
@@ -185,13 +210,15 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		SourceFixtures.insertEvents(org.tenant, Event("${org.tenant}-a", recent(), memberId = UUID.randomUUID()))
 		val settings = ok(org.tenant, "/settings")
 		val snapshotId = settings.at("/meta/snapshotId").asString()
-		val first = settings.at("/vendors/items").list().associate { it.path("vendorId").asString() to observation(it) }
-		assertThat(first.getValue(org.registered[0])[2]).isEqualTo("1")
+		val rows = settings.at("/vendors/items").list()
+		assertThat(rows.all { !it.has("contract") && !it.has("activeUsers7d") && !it.has("seatSource") }).isTrue()
+		val first = observation(ok(org.tenant, "/vendors/${org.registered[0]}?snapshotId=$snapshotId").path("vendor"))
+		assertThat(first[2]).isEqualTo("1")
 		// 고정 뒤에 들어온 관측은 같은 기준 시각의 값을 바꾸지 않는다.
 		SourceFixtures.insertEvents(org.tenant, Event("${org.tenant}-b", recent(), memberId = UUID.randomUUID()))
-		val listed = ok(org.tenant, "/vendors?snapshotId=$snapshotId").at("/vendors/items").list().associate { it.path("vendorId").asString() to observation(it) }
-		assertThat(listed).isEqualTo(first)
-		assertThat(observation(ok(org.tenant, "/vendors/${org.registered[0]}?snapshotId=$snapshotId").at("/vendor"))).isEqualTo(first.getValue(org.registered[0]))
+		val listed = ok(org.tenant, "/vendors?snapshotId=$snapshotId").at("/vendors/items").list()
+		assertThat(listed).isEqualTo(rows)
+		assertThat(observation(ok(org.tenant, "/vendors/${org.registered[0]}?snapshotId=$snapshotId").at("/vendor"))).isEqualTo(first)
 		// 새 기준 시각은 다시 계산한다.
 		assertThat(ok(org.tenant, "/vendors/${org.registered[0]}").at("/vendor/activeUsers7d").asLong()).isEqualTo(2)
 		// 관측 고정이 없는 기준 시각(이전 판이 발급한 것)은 만료다 — 다시 계산해 섞지 않는다.
@@ -199,11 +226,11 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		assertThat(get(org.tenant, "/vendors?snapshotId=$stale").statusCode()).isEqualTo(409)
 		assertThat(get(org.tenant, "/vendors/${org.registered[0]}?snapshotId=$stale").statusCode()).isEqualTo(409)
 		// 좌석 수를 관측 사용자 수로 채우지 않는다.
-		assertThat(settings.at("/summary/activeSeats7d").isNull).isTrue()
+		assertThat(settings.at("/summary/activeSeats7d/value").isNull).isTrue()
 	}
 
 	@Test
-	@DisplayName("관측됐지만 등록하지 않은 카탈로그 제품은 감지된 제품으로, 매핑 없는 관측은 어떤 제품에도 넣지 않고 따로 보인다")
+	@DisplayName("설정은 등록 제품만 반환하고 화면에 없는 감지 제품·미분류 관측을 싣지 않는다")
 	fun detectedAndUnmapped() {
 		val tenant = DashboardTestStores.insertTenant()
 		SourceFixtures.setSummary(tenant, firstReceivedAt = kst("2026-09-01T00:00:00"))
@@ -217,20 +244,12 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		val body = ok(tenant, "/settings")
 
 		assertThat(body.at("/vendors/items").size()).isZero()
-		val detected = body.at("/summary/detectedProducts").list()
-		assertThat(detected.map { listOf(it.path("kind").asString(), it.path("displayName").asString(), it.path("state").asString()) })
-			.containsExactly(listOf("openai_biz", "ChatGPT / Codex (OpenAI)", "detected_unconfigured"))
-		assertThat(observation(detected.single())).containsExactly("\"$seen\"", "\"$seen\"", "1", "1", "\"partial\"")
-		val unmapped = body.at("/summary/unmappedObservations")
-		assertThat(unmapped.path("observedProducts").list().map { it.asString() }).containsExactly("unknown")
-		assertThat(observation(unmapped)).containsExactly("\"$seen\"", "\"$seen\"", "1", "1", "\"partial\"")
-		// 등록·계약 합계는 등록 제품만 센다.
-		assertThat(listOf(body.at("/summary/configuredVendors").asLong(), body.at("/summary/unconfiguredVendors").asLong())).containsExactly(0L, 0L)
-		// 관측이 없는 조직에는 감지된 제품도 매핑 없는 관측도 없다.
-		val quiet = seed()
-		val empty = ok(quiet.tenant, "/settings")
-		assertThat(empty.at("/summary/detectedProducts").size()).isZero()
-		assertThat(empty.at("/summary/unmappedObservations").isNull).isTrue()
+		assertThat(body.path("summary").has("detectedProducts")).isFalse()
+		assertThat(body.path("summary").has("unmappedObservations")).isFalse()
+		// 화면에 없는 감지 목록을 싣지 않고 등록·계약 합계는 등록 제품만 센다.
+		assertThat(body.at("/summary/unconfiguredVendors/value").asLong()).isZero()
+		assertThat(body.at("/summary/monthlySeatFeeUsd/value").asString().toBigDecimal()).isEqualByComparingTo("0")
+
 	}
 
 	@Test
@@ -378,8 +397,8 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 	fun alertRuleCapability() {
 		val org = seed()
 		val organization = requireNotNull(organizations.find(org.tenant))
-		fun service(management: Boolean) = AnalyticsConfig().settingsService(management, false, properties, source, observations, frames, tokens, codec,
-			mapper, clock, catalog, seats)
+		fun service(management: Boolean) = AnalyticsConfig().settingsService(management, false, properties, source, observations, tokens, codec,
+			mapper, clock, seats)
 		assertThat(service(management = true).settings(organization).capabilities.editAlertRules).isTrue()
 		assertThat(service(management = false).settings(organization).capabilities.editAlertRules).isFalse()
 	}
@@ -392,8 +411,8 @@ class SettingsApiTest : AbstractDashboardApiTest() {
 		val parked = SourceFixtures.insertInstallation(org.tenant, suspended)
 		val organization = requireNotNull(organizations.find(org.tenant))
 		// 앱 조립과 같은 경로로 만든다 — 관리 기능과 메일이 모두 켜져야 채널이 있다.
-		fun service(management: Boolean, mail: Boolean) = AnalyticsConfig().settingsService(management, mail, properties, source, observations, frames, tokens, codec,
-			mapper, clock, catalog, seats)
+		fun service(management: Boolean, mail: Boolean) = AnalyticsConfig().settingsService(management, mail, properties, source, observations, tokens, codec,
+			mapper, clock, seats)
 		fun notifiable(service: SettingsService) = service.installations(organization, null, PageRequest(100, null), null).installations.items
 			.associate { it.installationId to it.canNotify }
 
@@ -443,8 +462,8 @@ class SettingsApiTest : AbstractDashboardApiTest() {
         assertThat(vendor.path("state").asString()).isEqualTo("needs_review")
         assertThat(vendor.path("contract").path("monthlySeatFeeUsd").asString()).isEqualTo("60")
         val settings = ok(org.tenant, "/settings")
-        assertThat(settings.at("/summary/monthlySeatFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("0")
-        assertThat(settings.at("/summary/contractedSeats").asLong()).isZero()
+        assertThat(settings.at("/summary/monthlySeatFeeUsd/value").asString().toBigDecimal()).isEqualByComparingTo("0")
+        assertThat(settings.at("/summary/contractedSeats/value").asLong()).isZero()
         assertThat(settings.at("/vendors/items").list().single { it.path("vendorId").asString() == org.registered[0] }.path("contractStatus").asString()).isEqualTo("expired")
     }
 
@@ -458,9 +477,9 @@ class SettingsApiTest : AbstractDashboardApiTest() {
             DashboardTestStores.writer.sql("UPDATE enrollment.vendor_contract_versions target SET contract=(SELECT contract FROM enrollment.vendor_contract_versions WHERE tenant_id=:tenant AND vendor_id=:source) || CAST(:dates AS jsonb) WHERE target.tenant_id=:tenant AND target.vendor_id=:target")
                 .param("tenant", org.tenant).param("source", org.registered[0]).param("target", org.registered[1]).param("dates", dates).update()
             val settings = ok(org.tenant, "/settings")
-            assertThat(settings.at("/summary/monthlySeatFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("60")
-            assertThat(settings.at("/summary/contractedSeats").asLong()).isEqualTo(2)
-            assertThat(settings.at("/summary/unconfiguredVendors").asLong()).isEqualTo(1)
+            assertThat(settings.at("/summary/monthlySeatFeeUsd/value").asString().toBigDecimal()).isEqualByComparingTo("60")
+            assertThat(settings.at("/summary/contractedSeats/value").asLong()).isEqualTo(2)
+            assertThat(settings.at("/summary/unconfiguredVendors/value").asLong()).isEqualTo(1)
         }
     }
 
@@ -469,8 +488,8 @@ class SettingsApiTest : AbstractDashboardApiTest() {
         DashboardTestStores.writer.sql("UPDATE enrollment.vendor_contract_versions SET archived=true WHERE tenant_id=:tenant")
             .param("tenant", org.tenant).update()
         val settings = ok(org.tenant, "/settings")
-        assertThat(settings.at("/summary/monthlySeatFeeUsd").asString().toBigDecimal()).isEqualByComparingTo("0")
-        assertThat(settings.at("/summary/contractedSeats").asLong()).isZero()
+        assertThat(settings.at("/summary/monthlySeatFeeUsd/value").asString().toBigDecimal()).isEqualByComparingTo("0")
+        assertThat(settings.at("/summary/contractedSeats/value").asLong()).isZero()
     }
 
 }

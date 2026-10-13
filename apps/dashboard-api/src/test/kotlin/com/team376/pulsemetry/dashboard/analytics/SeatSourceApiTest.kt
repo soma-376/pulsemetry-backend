@@ -75,7 +75,7 @@ class SeatSourceApiTest : AbstractDashboardApiTest() {
 		}
 
 	private fun sourceOf(body: JsonNode, vendorId: String): JsonNode =
-		body.at("/vendors/items").toList().single { it.path("vendorId").asString() == vendorId }.path("seatSource")
+		ok(UUID.fromString(body.at("/meta/organizationId").asString()), "/vendors/$vendorId?snapshotId=${body.at("/meta/snapshotId").asString()}").at("/vendor/seatSource")
 
 	@Test
 	@DisplayName("우선순위 표대로 권위를 낸다 — 연결 있음은 커넥터, 커넥터 플랜에 연결 없음은 수동 임시, 커넥터 없는 플랜은 수동")
@@ -116,7 +116,9 @@ class SeatSourceApiTest : AbstractDashboardApiTest() {
 		assertThat(settings.toString()).doesNotContain(ciphertext).doesNotContain("credential_key")
 		JsonStructure.assertMatches("settings-response.example.json", settings)
 
-		// 목록·상세도 같은 값이다.
+		// 목록은 좌석 원천·자격증명 메타를 싣지 않고 상세에서만 읽는다.
+		assertThat(settings.at("/vendors/items").toList().any { it.has("seatSource") }).isFalse()
+		// 같은 기준 시각의 상세는 같은 값이다.
 		val snapshot = settings.at("/meta/snapshotId").asString()
 		assertThat(sourceOf(ok(org.tenant, "/vendors?snapshotId=$snapshot"), cursor)).isEqualTo(sourceOf(settings, cursor))
 		assertThat(ok(org.tenant, "/vendors/$cursor?snapshotId=$snapshot").at("/vendor/seatSource")).isEqualTo(sourceOf(settings, cursor))

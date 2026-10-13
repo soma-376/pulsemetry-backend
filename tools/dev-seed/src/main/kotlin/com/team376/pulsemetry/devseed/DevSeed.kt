@@ -74,17 +74,17 @@ internal data class SeedCommand(val command: String, val asOf: LocalDate?, val s
                     require(args.size <= 1) { "init의 날짜·시나리오는 Compose 환경변수로 지정하세요." }
                     date = environment["PULSEMETRY_LOCAL_SEED_DATE"].takeUnless { it.isNullOrBlank() }
                         ?.let(LocalDate::parse) ?: LocalDate.now(seoul)
-                    selection = environment["PULSEMETRY_LOCAL_SEED_SCENARIOS"] ?: "A,B,C"
+                    selection = environment["PULSEMETRY_LOCAL_SEED_SCENARIOS"].takeUnless { it.isNullOrBlank() } ?: DEFAULT_SCENARIOS
                 }
                 "reset" -> {
                     require(args.size in 1..2) { "인자: reset [$SCENARIO_CHOICES 중 고른 목록]" }
                     date = null
-                    selection = args.getOrNull(1) ?: "A,B,C"
+                    selection = args.getOrNull(1) ?: DEFAULT_SCENARIOS
                 }
                 else -> {
                     require(args.size in 2..3) { "인자: $command YYYY-MM-DD [$SCENARIO_CHOICES 중 고른 목록]" }
                     date = LocalDate.parse(args[1])
-                    selection = args.getOrNull(2) ?: "A,B,C"
+                    selection = args.getOrNull(2) ?: DEFAULT_SCENARIOS
                 }
             }
             val scenarios = selection.split(',').map(String::trim).distinct()

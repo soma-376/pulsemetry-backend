@@ -42,7 +42,7 @@ Authorization: Bearer <Pulsemetry access_token>
 // VendorsResponse
 {
   meta: CurrentMeta;
-  vendors: Page<Vendor>;
+  vendors: Page<SettingsVendorRow>;
 }
 ```
 

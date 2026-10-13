@@ -48,7 +48,7 @@ product_not_registered는 1 events·rolling_24_hours다. 기존 비용 규칙의
 - 평가는 지난 평가가 끝난 시각부터 확정 대기(`completeness.settle-after`) 전까지를 이어서 읽는다. 켠 뒤 처음은 급증은 켠 날의 전날, 24시간 규칙은 켠 시각의 24시간 전부터다.
 - 알림에는 무엇(제품 ID·제품명, 급증의 두 기간 비용)·언제·누가(구성원 ID·계정)·몇 건만 싣는다. 본문·마스킹된 값은 싣지 않는다.
 
-새 제품 알림의 subject는 카탈로그 제품 ID이며 summary는 productId·productName·events·threshold다. 공급자·모델로 계약 제품이나 개인 결제를 추정하지 않는다. 이전 규칙의 알림과 확인 이력은 원래 식별자로 유지한다.
+새 제품 알림의 subject는 카탈로그 제품 ID이며 화면용 evidence는 usage·제품명이다. 저장된 summary는 조회에서 직접 노출하지 않는다. 공급자·모델로 계약 제품이나 개인 결제를 추정하지 않는다. 이전 규칙의 알림과 확인 이력은 원래 식별자로 유지한다.
 
 **개요 `alerts`** — 조회 기간과 무관한 지금의 미확인 수. 미확인 = 임계값에 이른 알림 중 확인 기록이 없는 것.
 
@@ -71,11 +71,9 @@ product_not_registered는 1 events·rolling_24_hours다. 기존 비용 규칙의
 ```ts
 // GET O/alerts?status=unacknowledged(기본)|acknowledged|all&category=security|cost&limit=20(최대 100)&cursor&snapshotId
 type AlertsResponse = {
-  meta: CurrentMeta;                       // snapshotId 는 현재 상태 토큰
-  evaluation: { availability: "available" | "unavailable"; reason: string | null;  // 개요 alerts 와 같은 판정
-    asOf: string | null;                   // 마지막 평가 시각. 평가 기록이 없으면 null — evaluation_pending 이어도 앞선 평가가 있으면 그 시각
-    rules: { ruleId: string; enabled: boolean; evaluatedAt: string | null; status: "evaluated" | "not_evaluated" | "failed" | null;
-      reason: string | null; windowStart: string | null; windowEnd: string | null }[] };
+  meta: AlertsMeta;
+  evaluation: { status: "complete" | "partial" | "unavailable";
+    reasons: string[]; asOf: string | null };
   alerts: Page<Alert>;                     // 최근 발생 순(occurredAt 내림차순)
 };
 type Alert = {
@@ -84,12 +82,26 @@ type Alert = {
   occurredAt: string; lastSeenAt: string; windowStart: string; windowEnd: string;
   subject: string | null; eventCount: number | null; memberCount: number | null;   // 급증은 null
   members: { memberId: string; account: string | null }[];
-  summary: Record<string, unknown>;        // 급증: currentStartDate·currentEndDate·previousStartDate·previousEndDate·currentCostUsd·previousCostUsd·increaseRatio·threshold
-                                           // 모델·도구: model|tool·events·threshold
-  acknowledgement: { acknowledgedAt: string; acknowledgedBy: string } | null;
+  evidence: { kind: "usage"; targetName: string }
+    | { kind: "spend"; startDate: string; endDate: string;
+        currentCostUsd: string; previousCostUsd: string; increaseRatio: number }
+    | null;                              // 과거 비용 근거가 불완전하면 null, 0으로 만들지 않는다
+  acknowledgement: { acknowledgedAt: string } | null;
 };
-// GET O/alerts/{alertId} → { meta, alert: Alert }. 없거나 다른 조직의 알림은 404
+type AlertsMeta = { organizationId: string; asOf: string; snapshotId: string };
+// GET O/alerts/{alertId} → { meta: AlertsMeta, alert: Alert }. 없거나 다른 조직의 알림은 404
 ```
+
+### 현재 화면에 맞춘 조회 계약
+
+목록·상세는 운영·보안과 헤더 알림 드로어가 공유한다. 페이지네이션·상태 필터·범주 필터와 확인 명령은 유지한다. 메타의 미사용 생성 시각·통화·시간대, 규칙별 내부 평가 창, 원본 summary, 목록의 확인자 ID를 제거한다. 확인 명령의 acknowledgedBy는 명령 결과이므로 유지한다. 프론트와 서버를 함께 반영한다.
+
+- evaluation은 category에 해당하는 현재 규칙만 요약한다. category를 생략하면 전체 범주다. 켜진 규칙의 현재 판 평가가 없으면 evaluation_pending, not_evaluated·failed이면 저장된 사유를 반환한다. 규칙이 모두 꺼져도 남은 평가 이력은 유지한다.
+- 사유가 없고 평가 이력이 있으면 complete, 성공한 켜진 규칙과 미평가/실패 규칙이 섞이면 partial, 성공한 켜진 규칙이 하나도 없으면 unavailable이다. 평가 이력이 전혀 없고 대기하는 규칙도 없으면 evaluation_not_configured다.
+- reasons는 중복 없는 코드 목록이고 asOf는 해당 범주의 마지막 평가 시각이다. 평가하지 않은 회차를 알림 0건으로 해석하지 않는다. 저장·평가 규칙과 확인 원장은 바꾸지 않는다.
+- 목록은 이미 발생한 알림 이력이므로 평가 상태가 unavailable이어도 조회·확인을 유지한다. 화면은 별도의 검사 정보 영역을 다시 만들지 않고 빈 목록의 평가 불가 사유에 사용한다.
+- evidence는 화면에 표시하는 제품·모델·도구 이름 또는 비용 비교 값만 담는다. 위반 수·구성원 수는 기존 필드만 사용하고 summary의 임계값·중복 수·이전 기간 날짜를 반복하지 않는다.
+- CSV도 같은 상태·범주의 알림, 화면 요약과 평가 상태/사유만 내보낸다. 숨겨진 규칙별 평가 기록은 내보내지 않는다.
 
 ## 응답 스키마
 
@@ -146,25 +158,11 @@ type AlertAcknowledgement = { alertId: string; version: number; acknowledgedAt: 
 <a id="schema-AlertResponse"></a>
 
 ```ts
-type AlertResponse = { meta: CurrentMeta; alert: Alert };
-```
-
-현재 평가하는 summary 구조는 ruleId로 구분한다. 과거 폐기 규칙의 알림은 기존 summary를 보존한다.
-
-<a id="schema-ProductAlertSummary"></a>
-<a id="schema-SpendAlertSummary"></a>
-
-```ts
-type ProductAlertSummary = { productId: string; productName: string; events: number; threshold: number };
-type SpendAlertSummary = {
-  currentStartDate: string; currentEndDate: string; previousStartDate: string; previousEndDate: string;
-  currentCostUsd: string; previousCostUsd: string; increaseRatio: number; threshold: number;
-};
+type AlertResponse = { meta: AlertsMeta; alert: Alert };
 ```
 
 ## 연관 스키마
 
-- [CurrentMeta](../common-schemas.md#schema-CurrentMeta)
 - [Page](../common-schemas.md#schema-Page)
 
 ## 직렬화·검증 근거

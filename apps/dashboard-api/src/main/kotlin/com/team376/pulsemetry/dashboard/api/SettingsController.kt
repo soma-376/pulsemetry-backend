@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.dashboard.api
 
+import com.team376.pulsemetry.dashboard.analytics.ContractInputStatusResponse
 import com.team376.pulsemetry.dashboard.analytics.InstallationsResponse
 import com.team376.pulsemetry.dashboard.analytics.SettingsResponse
 import com.team376.pulsemetry.dashboard.analytics.SettingsService
@@ -26,6 +27,10 @@ class SettingsController(
 	private val settings: SettingsService,
 	private val codec: PageCursorCodec,
 ) {
+
+	@GetMapping("/api/v1/organizations/{organizationId}/contract-input-status")
+	fun contractInputStatus(@AuthenticationPrincipal principal: DashboardPrincipal, @PathVariable organizationId: String): ContractInputStatusResponse =
+		settings.contractInputStatus(access.require(principal, organizationId, DashboardAction.ORGANIZATION_SETTINGS))
 
 	@GetMapping("/api/v1/organizations/{organizationId}/settings")
 	fun settings(@AuthenticationPrincipal principal: DashboardPrincipal, @PathVariable organizationId: String): SettingsResponse =

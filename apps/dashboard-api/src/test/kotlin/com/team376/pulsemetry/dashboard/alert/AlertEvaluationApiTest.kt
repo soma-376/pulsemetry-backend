@@ -38,6 +38,10 @@ import java.util.concurrent.TimeUnit
  * 테스트 설정의 확정 대기는 1시간이다. 평가는 시각을 바꿔 끼운 평가기로 직접 부른다(주기 실행은 테스트에서 돌지 않는다).
  */
 class AlertEvaluationApiTest : AbstractDashboardApiTest() {
+    @org.springframework.beans.factory.annotation.Autowired
+    private lateinit var alertService: AlertService
+    private fun overviewAlerts(tenant: UUID) = tools.jackson.databind.json.JsonMapper.builder().build().valueToTree<tools.jackson.databind.JsonNode>(alertService.overview(tenant, Instant.now()))
+
 
 	@Autowired private lateinit var source: JdbcClient
 	@Autowired private lateinit var reader: ClickHouseSourceReader
@@ -218,11 +222,11 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		val clock = MutableClock(kst("2026-09-14T00:00:00"))
 		evaluator(clock).evaluate(org.tenant)
 		assertThat(store.evaluations(org.tenant)).isEmpty()
-		assertThat(ok(org.tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").at("/alerts").let { it.path("availability").asString() to it.path("reason").asString() })
+		assertThat(overviewAlerts(org.tenant).let { it.path("availability").asString() to it.path("reason").asString() })
 			.isEqualTo("unavailable" to "evaluation_not_configured")
 
 		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
-		assertThat(ok(org.tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").at("/alerts/reason").asString()).isEqualTo("evaluation_pending")
+		assertThat(overviewAlerts(org.tenant).path("reason").asString()).isEqualTo("evaluation_pending")
 		assertThat(evaluator(clock).runOnce()).isGreaterThanOrEqualTo(1)
 		assertThat(alerts(org).map { it.ruleId to it.subject }).containsExactly("product_not_registered" to "claude_team")
 	}
@@ -242,7 +246,7 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		val all = alerts(org)
 		assertThat(all.map { it.ruleId }).containsExactlyInAnyOrder("spend_spike", "product_not_registered", "product_not_registered")
 
-		val overview = ok(org.tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").at("/alerts")
+		val overview = overviewAlerts(org.tenant)
 		assertThat(listOf(overview.path("availability").asString(), overview.path("unacknowledgedTotal").asLong(), overview.path("security").asLong(), overview.path("cost").asLong()))
 			.containsExactly("available", 3L, 2L, 1L)
 		assertThat(overview.path("reason").isNull).isTrue()
@@ -257,17 +261,25 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		assertThat(listed.map { it.path("ruleId").asString() + ":" + it.path("subject").asString() }).containsExactly("spend_spike:", "product_not_registered:openai_biz", "product_not_registered:claude_team")
 		assertThat(listed[0].path("subject").isNull && listed[0].path("eventCount").isNull).isTrue()
 		assertThat(listed[1].path("members").toList().map { it.path("account").asString() }).allMatch { it.startsWith("member-") }
-		assertThat(page.at("/evaluation/rules").toList().filter { it.path("enabled").asBoolean() }.map { it.path("ruleId").asString() to it.path("status").asString() })
-			.containsExactlyInAnyOrder("spend_spike" to "evaluated", "product_not_registered" to "evaluated")
+		assertThat(page.at("/evaluation/status").asString()).isEqualTo("complete")
+		assertThat(page.at("/evaluation/reasons").size()).isZero()
+		assertThat(page.path("meta").properties().map { it.key }).containsExactlyInAnyOrder("organizationId", "asOf", "snapshotId")
+		assertThat(page.path("evaluation").has("rules")).isFalse()
+		assertThat(listed[0].has("summary")).isFalse()
+		assertThat(listed[0].at("/evidence/kind").asString()).isEqualTo("spend")
+		assertThat(listed[0].path("evidence").properties().map { it.key }).containsExactlyInAnyOrder("kind", "startDate", "endDate", "currentCostUsd", "previousCostUsd", "increaseRatio")
+		assertThat(listed[1].at("/evidence/kind").asString()).isEqualTo("usage")
+		assertThat(listed[1].at("/evidence/targetName").asString()).isNotBlank()
+
 
 		val opus = all.single { it.subject == "claude_team" }
 		acknowledge(org, opus.alertId, opus.version)
-		val after = ok(org.tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").at("/alerts")
+		val after = overviewAlerts(org.tenant)
 		assertThat(listOf(after.path("unacknowledgedTotal").asLong(), after.path("security").asLong(), after.path("cost").asLong())).containsExactly(2L, 1L, 1L)
 		assertThat(ok(org.tenant, "/alerts?status=acknowledged").at("/alerts/items").toList().map { it.path("alertId").asString() }).containsExactly(opus.alertId.toString())
 		assertThat(ok(org.tenant, "/alerts?category=cost").at("/alerts/items").toList().map { it.path("ruleId").asString() }).containsExactly("spend_spike")
 		val detail = ok(org.tenant, "/alerts/${opus.alertId}").at("/alert")
-		assertThat(detail.path("acknowledgement").path("acknowledgedBy").asString()).isEqualTo(org.owner.toString())
+		assertThat(detail.path("acknowledgement").properties().map { it.key }).containsExactly("acknowledgedAt")
 		assertThat(detail.path("version").asLong()).isEqualTo(opus.version)
 
 		// 다른 조직의 경로로는 보이지 않는다.
@@ -286,7 +298,7 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
 		enable(org, "spend_spike", kst("2026-09-10T00:00:00"))
 		val clock = MutableClock(kst("2026-09-14T01:30:00"))
-		fun overview() = ok(org.tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").at("/alerts")
+		fun overview() = overviewAlerts(org.tenant)
 		fun evaluation() = ok(org.tenant, "/alerts?status=all").at("/evaluation")
 
 		// 첫 회차 도중 — 한 규칙만 기록됐다. 아직 평가하지 않은 규칙을 0건으로 읽히게 두지 않는다(ADR 0051 §6).
@@ -297,7 +309,8 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 			assertThat(Instant.parse(path("asOf").asString())).describedAs("평가 기록이 있으면 마지막 평가 시각").isEqualTo(kst("2026-09-14T01:00:00"))
 		}
 		with(evaluation()) {
-			assertThat(path("availability").asString() to path("reason").asString()).isEqualTo("unavailable" to "evaluation_pending")
+			assertThat(path("status").asString()).isEqualTo("partial")
+			assertThat(path("reasons").toList().map { it.asString() }).containsExactly("evaluation_pending")
 			assertThat(Instant.parse(path("asOf").asString())).describedAs("앞선 평가의 시각은 남긴다").isEqualTo(kst("2026-09-14T01:00:00"))
 		}
 
@@ -310,7 +323,7 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		// 규칙을 다시 켜 판이 바뀌었다 — 그 판이 평가될 때까지 앞 판의 기록으로 0건을 말하지 않는다.
 		enable(org, "spend_spike", kst("2026-09-14T01:40:00"), version = 3)
 		assertThat(overview().path("reason").asString()).isEqualTo("evaluation_pending")
-		assertThat(evaluation().path("rules").toList().single { it.path("ruleId").asString() == "spend_spike" }.path("evaluatedAt").isNull).isTrue()
+		assertThat(evaluation().path("reasons").toList().map { it.asString() }).containsExactly("evaluation_pending")
 		clock.advance(Duration.ofMinutes(15))
 		evaluator(clock).evaluate(org.tenant)
 		assertThat(overview().path("availability").asString()).isEqualTo("available")
@@ -320,6 +333,29 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		with(overview()) {
 			assertThat(listOf(path("availability").asString(), path("unacknowledgedTotal").asLong())).containsExactly("available", 1L)
 		}
+	}
+
+	@Test
+	@DisplayName("목록의 평가 상태는 선택한 범주만 반영하며 미평가·실패 사유를 남긴다")
+	fun evaluationProjectionIsCategoryScoped() {
+		val org = organization()
+		register(org, "openai_biz")
+		assertThat(ok(org.tenant, "/alerts?category=security").at("/evaluation/reasons").toList().map { it.asString() })
+			.containsExactly("evaluation_not_configured")
+		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
+		enable(org, "spend_spike", kst("2026-09-10T00:00:00"))
+		val at = kst("2026-09-14T01:00:00")
+		store.record(org.tenant, Evaluation("product_not_registered", 1, null, null, at, "evaluated", null, null, null))
+		store.record(org.tenant, Evaluation("spend_spike", 1, null, null, at, "not_evaluated", "period_incomplete", null, null))
+		assertThat(ok(org.tenant, "/alerts?category=security").at("/evaluation/status").asString()).isEqualTo("complete")
+		with(ok(org.tenant, "/alerts?category=cost")) {
+			assertThat(at("/evaluation/status").asString()).isEqualTo("unavailable")
+			assertThat(at("/evaluation/reasons").toList().map { it.asString() }).containsExactly("period_incomplete")
+		}
+		assertThat(ok(org.tenant, "/alerts").at("/evaluation/status").asString()).isEqualTo("partial")
+		store.record(org.tenant, Evaluation("product_not_registered", 1, null, null, at, "failed", "evaluation_error", null, null))
+		assertThat(ok(org.tenant, "/alerts?category=security").at("/evaluation/reasons").toList().map { it.asString() })
+			.containsExactly("evaluation_error")
 	}
 
 	@Test

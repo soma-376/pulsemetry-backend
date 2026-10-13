@@ -11,73 +11,171 @@ internal data class SeedModel(val name: String, val input: String, val output: S
             cacheRead.toBigDecimal() * read.toBigDecimal() + cacheCreate.toBigDecimal() * created.toBigDecimal()).movePointLeft(6)
 }
 
+// 2026-10-11 공식 모델 목록 기준. 과거 출시 이력을 재현하지 않는 화면 검증용 모델 구성이다.
+// 순서는 일반·고성능·경량이며, 요율은 공급자 공시 가격과 별개인 합성 값으로 유지한다.
 internal val seedModels = mapOf(
     "claude_code" to listOf(
-        SeedModel("claude-sonnet-4", "3", "15", "0.3", "3.75"),
-        SeedModel("claude-opus-4", "12", "60", "1.2", "15"),
-        SeedModel("claude-haiku-4", "0.6", "3", "0.06", "0.75")),
+        SeedModel("claude-sonnet-5-5", "3", "15", "0.3", "3.75"),
+        SeedModel("claude-fable-5-1", "12", "60", "1.2", "15"),
+        SeedModel("claude-haiku-5-5", "0.6", "3", "0.06", "0.75")),
     "codex" to listOf(
-        SeedModel("gpt-5", "2", "8", "0.2", "0"),
-        SeedModel("o3", "6", "24", "0.6", "0"),
-        SeedModel("gpt-5-mini", "0.4", "1.6", "0.04", "0")),
+        SeedModel("gpt-6.1-sol", "2", "8", "0.2", "0"),
+        SeedModel("gpt-6-astra", "6", "24", "0.6", "0"),
+        SeedModel("gpt-6-luna", "0.4", "1.6", "0.04", "0")),
 )
 
 internal data class SeedUsage(val events: List<Row>, val ledger: List<Row>)
 
-/** A의 56일 사용 기록. 실수 난수·현재 시각 없이 기준일과 의미 있는 키로 재현한다. */
-internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>): SeedUsage {
+internal const val A_USAGE_DAYS = 180
+
+private fun noise(key: String, bound: Int) = (hash(key).take(8).toLong(16) % bound).toInt()
+
+internal data class SeedSessionPlan(
+    val date: LocalDate, val memberIndex: Int, val slot: Int, val calls: Int,
+    val marker: String = "daily", val start: Instant? = null,
+) {
+    val key = "A/usage-v5/$date/$memberIndex/$slot/$marker"
+}
+
+/** 행을 직렬화하기 전에 사용 일정을 정한다. 기준일을 바꿔도 같은 실제 날짜의 슬롯·요청 신원은 유지한다. */
+internal fun usageSessionPlan(asOf: LocalDate): List<SeedSessionPlan> = buildList {
+    // 30일마다 도입 확대·휴지기·재확대가 보인다. 최근 28일과 이전 28일은 별도로 비교한다.
+    val volumePercent = listOf(75, 100, 85, 115, 95, 135)
+    for (day in -(A_USAGE_DAYS - 1)..0) {
+        val date = asOf.plusDays(day.toLong())
+        val weekday = date.dayOfWeek.value
+        for (index in A_USAGE_MEMBER_INDICES) {
+            val teamIndex = if (index >= 14) aTeamIndex(index) else null
+            var sessions = when (index) {
+                2 -> 4
+                3, 7 -> 3
+                4 -> if (weekday == 2 || weekday == 4) 5 else 1
+                5 -> if (weekday == 1 || weekday == 3 || weekday == 5) 1 else 0
+                6 -> 6
+                8 -> if (weekday == 4) 4 else 2
+                9 -> if (Math.floorMod(date.toEpochDay(), 3L) == 0L) 1 else 0
+                // 인원이 많은 조직에서도 5만~8만 요청 규모를 유지하도록 새 구성원은 하루 한 세션을 쓴다.
+                else -> 1
+            }
+            if (weekday >= 6) sessions = when {
+                weekday == 6 && index in setOf(2, 6, 21, 22) -> 1
+                weekday == 7 && index == 6 -> 1
+                else -> 0
+            }
+            repeat(sessions) { slot ->
+                val key = "A/usage-v5/$date/$index/$slot/daily"
+                val baselineCalls = when {
+                    index == 6 -> 8 + noise("$key/calls", 12)
+                    index in setOf(5, 9) -> 2 + noise("$key/calls", 4)
+                    teamIndex in setOf(3, 9) -> 2 + noise("$key/calls", 3)
+                    teamIndex == 7 -> 4 + noise("$key/calls", 4)
+                    teamIndex in setOf(0, 5, 8) -> 3 + noise("$key/calls", 4)
+                    index >= 14 -> 2 + noise("$key/calls", 4)
+                    else -> 4 + noise("$key/calls", 10)
+                }
+                // 인원은 모든 기간에 유지하고 요청 수를 바꿔 도입 확대·휴지기를 나타낸다.
+                val calls = maxOf(2, baselineCalls * volumePercent[(day + A_USAGE_DAYS - 1) / 30] / 100)
+                add(SeedSessionPlan(date, index, slot, calls))
+            }
+        }
+    }
+    // 기준일이 주말이어도 열 팀을 오늘 화면에서 확인할 수 있는 소량의 합성 점검 세션이다.
+    // 실제 시각에 기대지 않고 고정 슬롯을 사용하며 모두 18시 수집 스냅샷 전에 끝난다.
+    A_TEAM_NAMES.indices.forEach { team -> add(SeedSessionPlan(asOf, 14 + team, 7, 2, "latest_day")) }
+    // 최근 28일에는 사용하지 않은 구성원, 그리고 팀 이동 경계 직전/정각을 명시한다.
+    add(SeedSessionPlan(asOf.minusDays(50), 11, 0, 3, "previous_only"))
+    add(SeedSessionPlan(asOf.minusDays(40), 11, 0, 3, "previous_only"))
+    val moved = asOf.minusDays(14).atStartOfDay(seoul).toInstant()
+    add(SeedSessionPlan(asOf.minusDays(15), 2, 0, 1, "before_team_move", moved.minusSeconds(1)))
+    add(SeedSessionPlan(asOf.minusDays(14), 2, 0, 1, "at_team_move", moved))
+}
+
+private data class SeedMembership(val team: String, val joined: Instant, val left: Instant?)
+
+/** A의 180일·약 7만 건 사용 기록. 실수 난수·현재 시각 없이 기준일과 의미 있는 키로 재현한다. */
+internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>, sessions: List<SeedSessionPlan> = usageSessionPlan(asOf)): SeedUsage {
     val events = mutableListOf<Row>()
     val ledger = mutableListOf<Row>()
-    val memberships = rows.getValue("enrollment.team_memberships")
+    val memberships = rows.getValue("enrollment.team_memberships").groupBy { it["member_id"] }.mapValues { (_, entries) ->
+        entries.map { SeedMembership(it["team_id"].toString(), Instant.parse(it["joined_at"].toString()),
+            it["left_at"]?.toString()?.let(Instant::parse)) }
+    }
     val base = asOf.atStartOfDay(seoul)
-    fun noise(key: String, bound: Int) = (hash(key).take(8).toLong(16) % bound).toInt()
-    fun session(index: Int, day: Int, slot: Int, calls: Int, start: Instant? = null, marker: String = "daily") {
-        val date = asOf.plusDays(day.toLong())
-        val key = "A/usage-v2/$date/$index/$slot/$marker"
-        val product = when (index) {
-            2, 6 -> if (slot % 2 == 0) "claude_code" else "codex"
+    val tenant = id("A")
+    val members = A_ACTIVE_MEMBER_INDICES.filter { it >= 2 }.associateWith { id("A/member/$it") }
+    val installations = A_ACTIVE_MEMBER_INDICES.filter { it >= 2 }.associateWith { id("A/installation/$it") }
+    val teamIndices = A_TEAM_NAMES.indices.associateBy { id("A/team/$it") }
+    fun session(plan: SeedSessionPlan) {
+        val (date, index, slot, calls, marker, start) = plan
+        val key = plan.key
+        val product = when {
+            index == 2 || index == 6 -> if (slot % 2 == 0) "claude_code" else "codex"
+            index >= 54 -> if (requireNotNull(aTeamIndex(index)) % 2 == 0) "claude_code" else "codex"
             else -> if (index % 2 == 0) "claude_code" else "codex"
         }
-        val member = id("A/member/$index")
-        val installation = id("A/installation/$index")
-        val startAt = start ?: base.plusDays(day.toLong()).plusHours(9).plusMinutes((slot * 32 + noise(key, 12)).toLong()).toInstant()
-        val times = (0 until calls).map { startAt.plusSeconds(it * 75L) }
+        val member = members.getValue(index)
+        val installation = installations.getValue(index)
+        // 오전·오후 슬롯을 번갈아 둔다. 18시 스냅샷 이후의 미래 관측은 만들지 않는다.
+        val minuteOfDay = (if ((slot + index) % 2 == 0) 9 else 14) * 60 + (slot / 2) * 25
+        val startAt = start ?: date.atStartOfDay(seoul).plusMinutes((minuteOfDay + noise("$key/start", 10)).toLong()).toInstant()
+        val cadence = 45L + noise("$key/cadence", 90)
+        val times = (0 until calls).map { startAt.plusSeconds(it * cadence) }
         // 한 세션의 여러 관측을 한 push로 묶는다. 수신 건수와 사용자·세션 수는 서로 다르다.
-        val received = times.last().plusSeconds(30)
-        val modelIndex = noise("$key/model", 10).let { if (it < 6) 0 else if (it < 8) 1 else 2 }
+        // 같은 설치의 겹치는 세션도 수신 시각으로 모을 때 서로 섞이지 않도록 슬롯을 나노초에 넣는다.
+        val received = times.last().plusSeconds(30).plusNanos(slot.toLong())
+        val activeTeams = memberships[member].orEmpty().filter { it.joined <= startAt && (it.left == null || startAt < it.left) }
+            .map { it.team }.sorted()
+        val teamIndex = activeTeams.singleOrNull()?.let(teamIndices::get)
+        val premiumPercent = teamIndex?.let { listOf(40, 20, 10, 5, 20, 30, 15, 55, 25, 5)[it] } ?: 15
+        val economicalPercent = teamIndex?.let { listOf(5, 15, 40, 60, 30, 10, 25, 5, 20, 65)[it] } ?: 30
+        // 비용 급증은 정책 변경·최근 수집 상태와 분리된 과거 한 주에만 둔다.
+        val costSpike = date >= asOf.minusDays(49) && date <= asOf.minusDays(43) &&
+            (index in setOf(4, 6, 8) || index >= 14 && teamIndex in setOf(0, 2, 5, 7, 8))
+        val modelIndex = if (costSpike) 1 else noise("$key/model", 100).let {
+            if (it < premiumPercent) 1 else if (it < premiumPercent + economicalPercent) 2 else 0
+        }
         val model = seedModels.getValue(product)[modelIndex]
+        val sessionId = id(key)
+        val cachePercent = when {
+            index in setOf(2, 6) -> 80
+            index in setOf(3, 7) -> 55
+            index in setOf(4, 8) -> 30
+            index >= 14 && teamIndex != null -> listOf(75, 45, 60, 20, 55, 70, 35, 80, 65, 30)[teamIndex] + noise("member/$index/cache", 11) - 5
+            else -> 10
+        }
+        val enrichment = encode(linkedMapOf("ai_analysis" to emptyMap<String, Any>(), "github" to emptyMap<String, Any>(),
+            "jira" to emptyMap<String, Any>(), "org" to mapOf("team_ids" to activeTeams)))
+        val metadata = encode(mapOf("synthetic" to true, "seedScenario" to "A", "seedRevision" to 5,
+            "case" to if (costSpike) "cost_spike" else marker))
         for ((turn, time) in times.withIndex()) {
             val observationKey = "$key/turn/$turn"
-            val activeTeams = memberships.filter {
-                it["member_id"] == member && Instant.parse(it["joined_at"].toString()) <= time &&
-                    (it["left_at"] == null || time < Instant.parse(it["left_at"].toString()))
-            }.map { it["team_id"].toString() }.sorted()
-            val uncached = 1800L + noise("$observationKey/input", 14000) + turn * 1300L
-            val output = 200L + noise("$observationKey/output", 2200)
-            val read = if (turn == 0) 0L else (2500 + turn * 2100 + noise("$observationKey/cache", 6000)).toLong()
+            val scale = if (costSpike) 3 else 1
+            val context = (5000L + noise("$observationKey/input", 16000) + turn * 1400L) * scale
+            val read = if (turn == 0) 0L else context * cachePercent / 100
+            val uncached = context - read
+            val output = (200L + noise("$observationKey/output", 2200)) * scale
             val created = if (product == "claude_code") (700 + noise("$observationKey/create", 2500)).toLong() else 0L
             val exclusive = product == "claude_code"
             val duration = (2L + noise("$observationKey/duration", 18)) * 1_000_000_000
             val service = if (exclusive) "claude-code" else "codex_cli_rs"
             val row = linkedMapOf<String, Any?>(
-                "tenant_id" to id("A"), "installation_id" to installation,
-                "observation_id" to hash(encode(listOf("seed-v2", id("A"), installation, "log", service, time.toString(), observationKey))),
-                "row_version" to ((1L shl 32) or 1L), "normalizer_rev" to 1, "schema_version" to 1, "identity_version" to "seed-v2",
+                "tenant_id" to tenant, "installation_id" to installation,
+                "observation_id" to hash(encode(listOf("seed-v5", tenant, installation, "log", service, time.toString(), observationKey))),
+                "row_version" to ((1L shl 32) or 1L), "normalizer_rev" to 1, "schema_version" to 1, "identity_version" to "seed-v5",
                 "source_identity_kind" to "native_id", "source_identity_namespace" to "pulsemetry.dev-seed",
                 "native_observation_id" to observationKey, "record_status" to "active", "exclusion_reason" to null,
                 "mapping_status" to "mapped", "quality_flags" to emptyList<String>(),
                 "source_time" to time.toString(), "source_time_origin" to "otlp_event", "event_time" to time.toString(),
                 "observed_time" to null, "received_time" to received.toString(), "signal" to "log", "product" to product,
-                "surface" to if (exclusive) "unknown" else "cli", "product_version" to "seed-v2", "service_name" to service,
-                "mapping_version" to "seed-v2", "enrichment_version" to "seed-v2", "usage_role" to "primary",
-                "usage_scope" to "response", "workload_kind" to "main", "session_id" to id(key),
+                "surface" to if (exclusive) "unknown" else "cli", "product_version" to "seed-v5", "service_name" to service,
+                "mapping_version" to "seed-v5", "enrichment_version" to "seed-v5", "usage_role" to "primary",
+                "usage_scope" to "response", "workload_kind" to "main", "session_id" to sessionId,
                 "session_id_namespace" to if (exclusive) "claude_code.session" else "codex.conversation",
                 "model" to model.name, "member_id" to member, "team_id_as_of" to activeTeams.singleOrNull(), "team_ids_as_of" to activeTeams,
-                "archive_ref" to null, "archive_selector" to null, "masking_version" to "seed-v2",
-                "metadata_json" to encode(mapOf("synthetic" to true, "seedScenario" to "A", "seedRevision" to 2, "case" to marker)),
+                "archive_ref" to null, "archive_selector" to null, "masking_version" to "seed-v5",
+                "metadata_json" to metadata,
                 "attrs" to emptyMap<String, String>(),
-                "enrichment_json" to encode(linkedMapOf("ai_analysis" to emptyMap<String, Any>(), "github" to emptyMap<String, Any>(),
-                    "jira" to emptyMap<String, Any>(), "org" to mapOf("team_ids" to activeTeams))),
+                "enrichment_json" to enrichment,
                 "event_type" to "model.response.usage", "operation" to "responses", "end_time" to time.plusNanos(duration).toString(),
                 "duration_ns" to duration, "ttft_ns" to 200_000_000L + noise("$observationKey/ttft", 1800) * 1_000_000L,
                 "ttft_scope" to "request", "turn_id" to id("$key/turn/$turn"),
@@ -90,9 +188,9 @@ internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>): SeedU
                 "tokens_total_derived" to uncached + read + created + output,
                 "input_semantics" to if (exclusive) "exclusive_cache" else "inclusive_cache",
                 "output_semantics" to "inclusive_reasoning_tool",
-                "semantics_profile" to if (exclusive) "seed-claude-exclusive-v2" else "seed-codex-inclusive-v2",
+                "semantics_profile" to if (exclusive) "seed-claude-exclusive-v5" else "seed-codex-inclusive-v5",
                 "cost_reported_usd" to null, "cost_estimated_usd" to model.cost(uncached, output, read, created),
-                "reported_cost_basis" to "unknown", "pricing_version" to "seed-synthetic-v2", "success" to true, "http_status" to 200,
+                "reported_cost_basis" to "unknown", "pricing_version" to "seed-synthetic-v5", "success" to true, "http_status" to 200,
                 "error_type" to "none", "attempt" to 1,
             )
             // 선택값도 명시해 ClickHouse 기본값을 실제 관측으로 오인하지 않게 한다.
@@ -108,40 +206,16 @@ internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>): SeedU
             row["analysis_hash"] = hash(encode(row))
             events.add(row)
         }
-        ledger.add(linkedMapOf("tenant_id" to id("A"), "installation_id" to installation, "received_time" to received.toString(),
+        ledger.add(linkedMapOf("tenant_id" to tenant, "installation_id" to installation, "received_time" to received.toString(),
             "receipt_id" to id("$key/receipt"), "signal" to "logs", "product" to product,
             "source_time_min" to times.first().toString(), "source_time_max" to times.last().toString(),
-            "record_count" to calls, "rejected_count" to 0, "archive_ref" to null, "masking_version" to "seed-v2"))
+            "record_count" to calls, "rejected_count" to 0, "archive_ref" to null, "masking_version" to "seed-v5"))
     }
-    for (day in -56..-1) {
-        val weekday = asOf.plusDays(day.toLong()).dayOfWeek.value
-        for (index in 2..9) {
-            var sessions = when (index) {
-                2 -> 5
-                3, 7 -> 3
-                4 -> if (weekday in listOf(2, 4)) 7 else 1
-                5 -> if (weekday in listOf(1, 3, 5)) 1 else 0
-                6 -> 10
-                8 -> if (weekday == 4) 5 else 2
-                else -> if (Math.floorMod(day, 3) == 0) 1 else 0
-            }
-            if (weekday >= 6) sessions = if (weekday == 6 && index in listOf(2, 6)) 1 else 0
-            if (day >= -28 && sessions > 1) sessions += if (index == 6) 3 else 1
-            if (day == -9 && index in listOf(4, 8)) sessions += 7
-            if (day == -21 && index == 6) sessions += 5
-            repeat(sessions) { slot -> session(index, day, slot, 3 + noise("${asOf.plusDays(day.toLong())}/$index/$slot/calls", 6)) }
-        }
-    }
-    // 최근 28일에는 사용하지 않은 구성원, 그리고 팀 이동 경계 직전/정각을 명시한다.
-    session(11, -50, 0, 3, marker = "previous_only")
-    session(11, -40, 0, 3, marker = "previous_only")
-    val moved = base.minusDays(14).toInstant()
-    session(2, -15, 0, 1, moved.minusSeconds(1), "before_team_move")
-    session(2, -14, 0, 1, moved, "at_team_move")
+    sessions.forEach(::session)
     ledger.add(linkedMapOf("tenant_id" to id("A"), "installation_id" to id("A/installation/10"),
-        "received_time" to base.minusDays(1).plusHours(23).toInstant().toString(), "receipt_id" to id("A/usage-v2/$asOf/empty-receipt"),
+        "received_time" to base.plusHours(17).plusMinutes(30).toInstant().toString(), "receipt_id" to id("A/usage-v5/$asOf/empty-receipt"),
         "signal" to "logs", "product" to "claude_code", "source_time_min" to null, "source_time_max" to null,
-        "record_count" to 0, "rejected_count" to 0, "archive_ref" to null, "masking_version" to "seed-v2"))
+        "record_count" to 0, "rejected_count" to 0, "archive_ref" to null, "masking_version" to "seed-v5"))
     return SeedUsage(events.sortedWith(compareBy({ it["source_time"].toString() }, { it["observation_id"].toString() })),
         ledger.sortedWith(compareBy({ it["received_time"].toString() }, { it["receipt_id"].toString() })))
 }

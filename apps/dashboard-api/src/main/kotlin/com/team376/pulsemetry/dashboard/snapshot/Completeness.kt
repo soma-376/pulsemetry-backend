@@ -43,25 +43,25 @@ object Completeness {
 	data class Policy(val activatedAt: Instant, val collectsUsage: Boolean)
 
 	fun completeDates(dates: Collection<LocalDate>, zone: ZoneId, evidence: Evidence, asOf: Instant, settle: Duration): Set<LocalDate> =
-		dates.filterTo(sortedSetOf()) { complete(it, zone, evidence, asOf, settle) }
+		assess(dates, zone, evidence, asOf, settle).filterValues { it.isEmpty() }.keys
 
-	private fun complete(date: LocalDate, zone: ZoneId, evidence: Evidence, asOf: Instant, settle: Duration): Boolean {
-		val start = date.atStartOfDay(zone).toInstant()
-		val end = date.plusDays(1).atStartOfDay(zone).toInstant()
-		val settled = end.plus(settle)
-		if (settled.isAfter(asOf)) return false
-		if (evidence.deletedBefore != null && start.isBefore(evidence.deletedBefore)) return false
-		if (!policiesCollectUsage(evidence.policies, start, end)) return false
-
-		// 그날 수집해야 했던 설치 — 끝나기 전에 등록했고, 시작 전에 폐기되지 않았다.
-		val required = evidence.installations.filter { it.createdAt.isBefore(end) && (it.revokedAt == null || it.revokedAt.isAfter(start)) }
-		if (required.isEmpty()) return false
-		return required.all { installation ->
-			// 확정 시각까지 사이에 폐기됐으면 마지막 데이터를 확인할 수 없다.
-			if (installation.revokedAt != null && !installation.revokedAt.isAfter(settled)) return@all false
-			covered(installation.lossless, maxOf(start, installation.createdAt), settled)
+	/** 기존 여섯 완전성 조건의 탈락 사유. 열린 날짜의 보고 구간을 미래까지 요구하지 않는다. */
+	fun assess(dates: Collection<LocalDate>, zone: ZoneId, evidence: Evidence, asOf: Instant, settle: Duration): Map<LocalDate, List<String>> =
+		dates.sorted().associateWith { date ->
+			val start = date.atStartOfDay(zone).toInstant()
+			val end = date.plusDays(1).atStartOfDay(zone).toInstant()
+			val settled = end.plus(settle)
+			if (settled.isAfter(asOf)) listOf("period_pending") else buildList {
+				if (evidence.deletedBefore != null && start.isBefore(evidence.deletedBefore)) add("retention_deleted")
+				if (!policiesCollectUsage(evidence.policies, start, end)) add("usage_collection_disabled")
+				val required = evidence.installations.filter {
+					it.createdAt.isBefore(end) && (it.revokedAt == null || it.revokedAt.isAfter(start))
+				}
+				if (required.isEmpty()) add("no_eligible_installations")
+				if (required.any { it.revokedAt != null && !it.revokedAt.isAfter(settled) }) add("installation_revoked")
+				if (required.any { !covered(it.lossless, maxOf(start, it.createdAt), settled) }) add("collection_gap")
+			}
 		}
-	}
 
 	/** [from, until] 이 구간들의 합집합으로 빈틈없이 덮이는가. 맞닿은 구간(앞의 끝 = 뒤의 시작)은 이어진 것이다. */
 	private fun covered(spans: List<Span>, from: Instant, until: Instant): Boolean {
