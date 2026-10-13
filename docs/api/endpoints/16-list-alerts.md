@@ -43,11 +43,8 @@ Authorization: Bearer <Pulsemetry access_token>
 ```ts
 // AlertsResponse
 {
-  meta: CurrentMeta;
-  evaluation: { availability: "available" | "unavailable"; reason: string | null;
-    asOf: string | null;
-    rules: { ruleId: string; enabled: boolean; evaluatedAt: string | null; status: "evaluated" | "not_evaluated" | "failed" | null;
-      reason: string | null; windowStart: string | null; windowEnd: string | null }[] };
+  meta: { organizationId: string; asOf: string; snapshotId: string };
+  evaluation: { status: "complete" | "partial" | "unavailable"; reasons: string[]; asOf: string | null };
   alerts: Page<Alert>;
 }
 ```

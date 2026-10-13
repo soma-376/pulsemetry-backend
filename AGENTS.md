@@ -106,7 +106,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 ./gradlew :apps:dashboard-api:bootRun             # 분석 조회 API (8081) — PULSEMETRY_DASHBOARD_RETRY_AFTER 필수
 ./gradlew :apps:retention-worker:bootRun --args='--tenant=<uuid> --retention-months=<N> --as-of=<ISO-8601>'  # 보존 삭제 한 번 — 설정 전부 필수, 종료 코드 0·1·2·3
 ./gradlew :apps:retention-worker:bootRun --args='--requests'  # 요청 모드 — 저장된 보존 정리 요청을 차례로 실행(ADR 0047). requests.lease·max-runs 필수
-docker compose up -d --build                      # 로컬 DB·마이그레이션·A/B/C 시드·개발 인증 키 준비
+docker compose up -d --build                      # 로컬 DB·마이그레이션·A/B 기본 시드·개발 인증 키 준비(C는 명시 선택)
 docker compose ps -a dev-seed                     # 일회성 준비 작업의 Exited (0) 확인
 ```
 

@@ -45,8 +45,9 @@ pulsemetry:
       build-timeout: 30s
       purge-grace: 1m
       max-concurrent-builds: 4
-      max-copy-rows: 100000
-      max-copy-bytes: 67108864
+      # A의 180일·최대 8만 요청을 현재/이전 기간으로 복사할 때 구체화 뷰의 읽기도 상한에 포함된다.
+      max-copy-rows: 300000
+      max-copy-bytes: 134217728
       cleanup-interval: 1m
     members:
       idle-days: 14

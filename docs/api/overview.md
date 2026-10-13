@@ -1,3 +1,5 @@
+> **개요 계약 변경:** 개요 GET 응답과 상태·CSV 규칙은 [현재 개요 계약](reference/overview.md)을 따른다. 아래의 개요 필드 목록과 예시는 이전 계약이다.
+
 # 개요
 
 [전체 API](README.md) · [공통 HTTP 규칙](common.md) · [공통 스키마](common-schemas.md)

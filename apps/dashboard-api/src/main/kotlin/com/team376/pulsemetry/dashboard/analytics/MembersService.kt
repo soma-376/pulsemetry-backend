@@ -50,26 +50,28 @@ class MembersService(
 	fun dashboard(organization: Organization, requestedBy: UUID, period: ComparedPeriod): MembersResponse {
 		val frame = frames.frame(organization, requestedBy, period, usesComparison = false, snapshotId = null)
 		val token = tokens.at(RECLAIM_KIND, organization.id, frame.snapshot.asOf)
-		val view = view(frame, seats.assess(organization.id, token.asOf, references.roster(frame.snapshot).filter { it.status in ROSTER_STATUSES }.map { it.id }.toSet()))
+		val view = view(frame, seats.assess(organization.id, token.asOf, references.roster(frame.snapshot).filter { it.status in ROSTER_STATUSES }.map { it.id }.toSet()), withSummary = true)
 		val first = PageRequest(DASHBOARD_LIMIT, null)
+		val candidates = candidatePage(view.seats!!, view.roster.associate { it.id to (it.account to view.currentTeam(it)) }, first, token)
+		val organizationValues = view.values(view.organization)
+		val unassignedValues = view.values(view.unassignedUsage)
 		return MembersResponse(
-			meta = frames.analyticsMeta(frame),
-			asOf = frame.snapshot.asOf.toString(),
-			ingest = frames.ingest(frame),
+			meta = meta(frame),
 			summary = MemberSummary(
 				rosterMembers = view.roster.size.toLong(),
-				activeUsers = if (frame.empty) null else view.organization.activeUsers(),
+				activeUsers = if (frame.empty) OverviewValues.value(null) else organizationValues.users,
 				unassignedMembers = view.roster.count { it.currentTeamIds.isEmpty() }.toLong(),
-				periodUnassignedEquivalentCostUsd = if (frame.empty) null else view.unassignedUsage.equivalentCost(frame.pricingMixed)?.let(Money::format),
-				periodTotalEquivalentCostUsd = if (frame.empty) null else view.organization.equivalentCost(frame.pricingMixed)?.let(Money::format),
-				seats = seatSummary(view),
+				periodUnassignedEquivalentCostUsd = if (frame.empty) OverviewValues.value(null) else unassignedValues.cost,
+				periodUnassignedCostShare = if (frame.empty) OverviewValues.value(null) else OverviewValues.ratio(
+					unassignedValues.cost, organizationValues.cost, String::toBigDecimal, String::toBigDecimal, BigDecimal::toDouble),
+				reclaimCandidates = OverviewValues.value(candidates.data?.totalCount?.toLong(), listOfNotNull(candidates.reason)),
 			),
 			policy = policy(organization),
 			// 회수·복원은 관리 기능이 있으면 된다 — 벤더 제어가 없는 좌석은 관리자 조치 확인으로 끝난다(ADR 0049). 좌석마다의 가능 여부는 따로 낸다.
 			capabilities = MemberCapabilities(invite = managementEnabled, assignTeam = managementEnabled, reclaimSeats = managementEnabled, restoreSeats = managementEnabled),
 			members = page(view, view.roster, first, scope(null)),
 			unassigned = page(view, view.roster.filter { it.currentTeamIds.isEmpty() }, first, UNASSIGNED_SCOPE),
-			reclaimCandidates = candidatePage(view.seats!!, view.roster.associate { it.id to (it.account to view.currentTeam(it)) }, first, token),
+			reclaimCandidates = candidates,
 		)
 	}
 
@@ -82,14 +84,14 @@ class MembersService(
 		val matched = if (needle == null) view.roster else view.roster.filter {
 			it.account.lowercase(Locale.ROOT).contains(needle) || it.displayName?.lowercase(Locale.ROOT)?.contains(needle) == true
 		}
-		return MemberListResponse(frames.analyticsMeta(frame), page(view, matched, page, scope))
+		return MemberListResponse(meta(frame), page(view, matched, page, scope))
 	}
 
 	fun unassigned(organization: Organization, requestedBy: UUID, period: ComparedPeriod, page: PageRequest, snapshotId: String?): MemberListResponse {
 		val frame = frames.frame(organization, requestedBy, period, usesComparison = false, snapshotId ?: page.cursor?.snapshotId)
 		page.cursor?.let { snapshots.requireCursor(it, frame.snapshot.snapshotId, UNASSIGNED_SCOPE) }
 		val view = view(frame, null)
-		return MemberListResponse(frames.analyticsMeta(frame), page(view, view.roster.filter { it.currentTeamIds.isEmpty() }, page, UNASSIGNED_SCOPE))
+		return MemberListResponse(meta(frame), page(view, view.roster.filter { it.currentTeamIds.isEmpty() }, page, UNASSIGNED_SCOPE))
 	}
 
 	/**
@@ -198,40 +200,6 @@ class MembersService(
 		}, all.size, next))
 	}
 
-	/**
-	 * 구성원 화면의 좌석 요약 — 쓸 수 있는 원장(가용성이 unavailable 이 아닌 제품)만 센다. 계약 좌석·미배정은 유효한 계약이 있는 제품 범위에서만 셈한다
-	 * (계약 좌석에서 사람 수를 빼지 않는다). 기간 중 사용·비활성은 모든 보유 좌석이 구성원에 이어지고 관측 가능한 제품일 때만 낸다(아니면 null).
-	 * 비활성은 기간 전체가 완전하고 그 좌석의 구성원이 기간 내내 설치를 갖고 있을 때만 센다. 절감액은 계약의 해지·감액 조건 원천이 없어 null 이다.
-	 */
-	private fun seatSummary(view: RosterView): Section<SeatSummary> {
-		val assessment = view.seats!!
-		val (availability, reason) = assessment.section()
-		if (availability == Availability.UNAVAILABLE) return Section(availability, reason, null)
-		val usable = assessment.products.filter { it.availability != Availability.UNAVAILABLE }.map { it.product }
-		val contracted = usable.filter { it.contractStatus == com.team376.pulsemetry.persistence.enrollment.management.ContractStatus.active && it.contract != null }
-		val heldBy = assessment.held.groupingBy { it.vendorId }.eachCount()
-		val frame = view.frame
-		val kindOf = { vendorId: String -> assessment.ledger.product(vendorId)?.kind }
-		val decidable = !frame.empty && assessment.held.all { it.memberId != null && kindOf(it.vendorId) in assessment.ledger.observableKinds }
-		val usage = if (decidable) aggregator.totals(frame.snapshot, Side.CURRENT, Axis.MEMBER_PRODUCT, products = references.products(frame.snapshot)) else emptyMap()
-		val used = { seat: SeatLedgerReader.SeatAt -> usage[listOf(seat.memberId.toString(), kindOf(seat.vendorId))]?.hasUsage == true }
-		val dates = frame.period.current.dates()
-		val from = dates.min().atStartOfDay(QueryReader.SEOUL).toInstant()
-		val until = dates.max().plusDays(1).atStartOfDay(QueryReader.SEOUL).toInstant()
-		val idle = assessment.held.filterNot(used)
-		val inactive = if (decidable && frame.currentComplete && idle.all { assessment.observedBetween(it.memberId!!, from, until) }) idle.size.toLong() else null
-		val (candidateAvailability, _) = assessment.candidateSection()
-		return Section(availability, reason, SeatSummary(
-			contracted = contracted.sumOf { p -> p.contract!!.tiers.sumOf { it.seats } },
-			assigned = assessment.held.size.toLong(),
-			unallocated = contracted.sumOf { p -> maxOf(p.contract!!.tiers.sumOf { it.seats } - (heldBy[p.vendorId] ?: 0), 0L) },
-			activeInPeriod = if (decidable) assessment.held.count(used).toLong() else null,
-			inactiveAssigned = inactive,
-			reclaimCandidates = if (candidateAvailability == Availability.UNAVAILABLE) null else assessment.candidates.size.toLong(),
-			estimatedMonthlySavingsUsd = null,
-		))
-	}
-
 	private fun teamRef(teamIds: List<UUID>, names: Map<UUID, String>): TeamRef = when (teamIds.size) {
 		0 -> TeamRef(null, TeamsService.UNASSIGNED_NAME)
 		1 -> teamIds.single().let { TeamRef(it.toString(), names[it] ?: it.toString()) }
@@ -273,12 +241,15 @@ class MembersService(
 		/** 좌석 판정(ADR 0048). 좌석 상태만 쓰는 목록은 회수 검토 없이 만든다. */
 		val seats: SeatAssessment?,
 	) {
+		fun values(totals: UsageTotals) = OverviewValues.Values(totals, frame.currentComplete, frame.pricingMixed, detailReasons = frame.periodReasons())
+
 		fun totals(id: UUID): UsageTotals = usage[listOf(id.toString())] ?: UsageTotals.EMPTY
 
 		fun cost(id: UUID): BigDecimal? = if (frame.empty) null else totals(id).equivalentCost(frame.pricingMixed)
 
 		fun member(roster: SnapshotReferences.RosterMember): Member {
 			val totals = totals(roster.id)
+			val values = values(totals)
 			return Member(
 				memberId = roster.id.toString(),
 				account = roster.account,
@@ -287,10 +258,9 @@ class MembersService(
 				role = Roles.of(roster.role).wire,
 				status = roster.status,
 				version = roster.updatedAt.toEpochMilli(),
-			plannedVendorIds = roster.plannedVendorIds,
-				periodUsage = if (frame.empty || !totals.hasUsage) null else Usage.of(totals, frame.pricingMixed),
+				plannedVendorIds = roster.plannedVendorIds,
+				periodUsage = if (frame.empty || !totals.hasUsage) null else MemberUsage(values.cost, values.sessions),
 				lastUsedAt = lastUsed[roster.id.toString()]?.toString(),
-				observation = if (frame.currentCoverage.observedDays > 0) PARTIAL else UNOBSERVED,
 				seatState = seats?.seatState(roster.id) ?: SEAT_UNKNOWN,
 			)
 		}
@@ -305,9 +275,9 @@ class MembersService(
 		}
 	}
 
-	private fun view(frame: AnalyticsFrames.Frame, assessment: SeatAssessment?): RosterView {
+	private fun view(frame: AnalyticsFrames.Frame, assessment: SeatAssessment?, withSummary: Boolean = false): RosterView {
 		val snapshot = frame.snapshot
-		val teamTotals = if (frame.empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.TEAM)
+		val teamTotals = if (frame.empty || !withSummary) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.TEAM)
 		val roster = references.roster(snapshot).filter { it.status in ROSTER_STATUSES }
 		return RosterView(
 			frame = frame,
@@ -315,11 +285,16 @@ class MembersService(
 			usage = if (frame.empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.MEMBER),
 			lastUsed = references.lastUsed(snapshot),
 			teams = references.teams(snapshot).associateBy { it.id },
-			organization = aggregator.totals(snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()),
+			organization = if (withSummary && !frame.empty) aggregator.totals(snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()) else UsageTotals.EMPTY,
 			unassignedUsage = teamTotals[listOf(null)] ?: UsageTotals.EMPTY,
 			seats = assessment ?: seats.assess(frame.organization.id, frame.snapshot.asOf, roster.map { it.id }.toSet(), withReviews = false),
 		)
 	}
+
+	private fun meta(frame: AnalyticsFrames.Frame) = MembersMeta(
+		frame.organization.id.toString(), frame.snapshot.asOf.toString(), frame.period.current.startDate.toString(),
+		frame.period.current.endDate.toString(), frame.snapshot.snapshotId,
+	)
 
 	companion object {
 		const val DASHBOARD_LIMIT = 20
@@ -329,8 +304,6 @@ class MembersService(
 		private const val RECLAIM_SCOPE = "seat-reclaim-candidates"
 		private const val UNASSIGNED_SCOPE = "members-unassigned"
 		private const val CURSOR = "cursor"
-		private const val PARTIAL = "partial"
-		private const val UNOBSERVED = "unobserved"
 		private const val SEAT_UNKNOWN = "unknown"
 		private val ROSTER_STATUSES = setOf("active", "suspended")
 

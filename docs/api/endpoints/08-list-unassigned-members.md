@@ -44,7 +44,7 @@ Authorization: Bearer <Pulsemetry access_token>
 ```ts
 // MemberListResponse
 {
-  meta: AnalyticsMeta;
+  meta: MembersMeta;
   members: Page<Member>;
 }
 ```

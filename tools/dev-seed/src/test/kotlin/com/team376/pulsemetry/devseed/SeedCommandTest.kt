@@ -19,11 +19,21 @@ class SeedCommandTest {
         assertEquals(SeedCommand("reset", null, listOf("C")), SeedCommand.parse(arrayOf("reset", "C"), environment))
     }
 
-    @Test fun `빈 조직 D·E 는 명시할 때만 고르고 기본 초기화 목록은 A,B,C 그대로다`() {
+    @Test fun `기본 시드는 A·B이고 C·D·E는 명시할 때만 고른다`() {
         assertEquals(listOf("D", "E"), SeedCommand.parse(arrayOf("verify", "2026-09-27", "D,E"), environment).scenarios)
         assertEquals(listOf("A", "B", "C", "D", "E"), SeedCommand.parse(emptyArray(), environment + ("PULSEMETRY_LOCAL_SEED_SCENARIOS" to "A,B,C,D,E")).scenarios)
-        assertEquals(listOf("A", "B", "C"), SeedCommand.parse(emptyArray(), environment).scenarios)
-        assertEquals(listOf("A", "B", "C"), SeedCommand.parse(arrayOf("reset"), environment).scenarios)
+        assertEquals(listOf("A", "B"), SeedCommand.parse(emptyArray(), environment).scenarios)
+        assertEquals(listOf("A", "B"), SeedCommand.parse(arrayOf("reset"), environment).scenarios)
+        for (command in listOf("plan", "apply", "verify")) {
+            assertEquals(listOf("A", "B"), SeedCommand.parse(arrayOf(command, "2026-10-11"), environment).scenarios)
+            assertEquals(listOf("C"), SeedCommand.parse(arrayOf(command, "2026-10-11", "C"), environment).scenarios)
+        }
+    }
+
+    @Test fun `Compose 시나리오 환경변수가 비어 있어도 A·B를 준비한다`() {
+        for (selection in listOf("", "  ")) {
+            assertEquals(listOf("A", "B"), SeedCommand.parse(emptyArray(), environment + ("PULSEMETRY_LOCAL_SEED_SCENARIOS" to selection)).scenarios)
+        }
     }
 
     @Test fun `시드 manifest 의 수신 주소는 환경에서 읽고 비어 있으면 4316 이며 http(s) 와 호스트가 아니면 거부한다`() {

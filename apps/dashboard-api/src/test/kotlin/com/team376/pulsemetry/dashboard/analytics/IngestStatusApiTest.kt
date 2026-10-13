@@ -94,19 +94,12 @@ class IngestStatusApiTest : AbstractDashboardApiTest() {
         assertThat(Instant.parse(body.path("lastReceivedAt").asString())).isEqualTo(Instant.parse("2026-09-20T00:00:00Z"))
         assertThat(body.path("asOf").asString()).isNotBlank()
 
-        // 분석 응답과 설정 응답의 ingest 조각이 같은 계산을 쓴다.
-        for (ingest in listOf(
-            analytics(tenant, "/analytics/overview?startDate=2026-09-07&endDate=2026-09-13").path("ingest"),
-            analytics(tenant, "/settings").path("ingest"),
-        )) {
-            assertThat(ingest.path("status").asString()).isEqualTo("healthy")
-            assertThat(ingest.path("reason").isNull).isTrue()
-            assertThat(ingest.path("activeInstallations").asLong()).isEqualTo(1)
-            assertThat(ingest.path("coverageRatio").asDouble()).isEqualTo(1.0)
-            assertThat(ingest.path("windowMinutes").asInt()).isEqualTo(15)
-            // 조각의 모양은 화면 요청서 그대로다. 분자·분모는 공통 헤더 응답에만 있다.
-            assertThat(ingest.has("coverageTargetMembers")).isFalse()
-        }
+        // 수집 판정은 공통 헤더 API에서만 반환하고 페이지 응답에 중복하지 않는다.
+        for (response in listOf(
+            analytics(tenant, "/analytics/teams?startDate=2026-09-07&endDate=2026-09-13"),
+            analytics(tenant, "/settings"),
+        )) assertThat(response.has("ingest")).isFalse()
+
     }
 
     @Test fun `설치 보고는 있지만 회사로 가지 못하고 있으면 기간에 따라 지연과 중단을 가른다`() {

@@ -79,18 +79,8 @@ class ProductUsageApiTest : AbstractDashboardApiTest() {
 	fun overviewProducts() {
 		val org = seed()
 		val body = ok(org.tenant, "/analytics/overview?$week")
-		val section = body.path("productUsage")
-
-		// Claude Code: a1·b1 두 명·세션 둘·같은 의미 프로파일이라 토큰 합 220·금액 4. Codex: 세션 없는 행이 있어 세션 수 없음·금액 6.
-		assertThat(section.path("products").list().map(::product)).containsExactly(
-			listOf("claude_team", "Claude (Anthropic)", "2", "2", "220", "4"),
-			listOf("openai_biz", "ChatGPT / Codex (OpenAI)", "2", null, "220", "6"),
-			listOf(null, null, "1", "1", null, "5"),
-		)
-		// 매핑 없는 관측은 의미 프로파일이 없어 토큰을 더하지 않는다 — 값 일부가 없으면 partial.
-		assertThat(section.path("availability").asString()).isEqualTo("partial")
-		val productCost = section.path("products").list().sumOf { BigDecimal(it.path("equivalentCostUsd").asString()) }
-		assertThat(productCost).isEqualByComparingTo(BigDecimal(body.at("/usage/current/equivalentCostUsd").asString()))
+        assertThat(body.has("productUsage")).isFalse()
+        assertThat(body.at("/summary/equivalentCostUsd/value").asString().toBigDecimal()).isEqualByComparingTo("15")
 
 		// 상위 팀별·미배정의 관측 제품.
 		val teams = body.at("/teamUsage/topTeams").list().associate { it.path("teamId").asString() to it.path("products").list().map { p -> p.path("kind").text() } }
@@ -113,10 +103,10 @@ class ProductUsageApiTest : AbstractDashboardApiTest() {
 			listOf("openai_biz", "ChatGPT / Codex (OpenAI)", "1", "1", "110", "2"),
 		)
 		// 팀 합계의 토큰은 의미 프로파일이 섞여 없지만 제품별 토큰은 있다(같은 프로파일 안에서만 더한다).
-		assertThat(teamA.at("/current/tokens/total").isNull).isTrue()
+		assertThat(teamA.at("/metrics/totalTokens/value").isNull).isTrue()
 		for (team in teams.values) {
 			val sum = team.path("products").list().sumOf { BigDecimal(it.path("equivalentCostUsd").asString()) }
-			assertThat(sum).isEqualByComparingTo(BigDecimal(team.at("/current/equivalentCostUsd").asString()))
+			assertThat(sum).isEqualByComparingTo(BigDecimal(team.at("/metrics/equivalentCostUsd/value").asString()))
 		}
 		// 세션 없는 행이 있는 제품은 세션 수가 없다.
 		assertThat(teams.getValue(org.b.toString()).path("products").list().map { it.path("sessionCount").text() }).containsExactly("1", null)
@@ -135,7 +125,8 @@ class ProductUsageApiTest : AbstractDashboardApiTest() {
 		val tenant = DashboardTestStores.insertTenant()
 		SourceFixtures.setSummary(tenant, firstReceivedAt = kst("2026-09-01T00:00:00"))
 		val body = ok(tenant, "/analytics/overview?$week")
-		assertThat(listOf(body.at("/productUsage/availability").asString(), body.at("/productUsage/products").size())).containsExactly("unavailable", 0)
+		assertThat(body.has("productUsage")).isFalse()
+        assertThat(body.path("teamUsage").isNull).isTrue()
 	}
 }
 

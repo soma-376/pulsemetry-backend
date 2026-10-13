@@ -14,10 +14,10 @@ docker compose logs dev-seed
 docker compose ps -a dev-seed
 ```
 
-`dev-seed`가 종료 코드 0이면 DB 스키마·A/B/C 기본 시드·A/B Cognito 회사 설정·로컬 인증 키 준비가 끝난 상태다.
+`dev-seed`가 종료 코드 0이면 DB 스키마·A/B 기본 시드·A/B Cognito 회사 설정·로컬 인증 키 준비가 끝난 상태다.
 시드 JSON은 `tools/dev-seed/config/cognito/company-a/cognito-seed.json`과 `company-b/cognito-seed.json`이다.
 Compose가 읽기 전용으로 마운트하므로 시딩에는 AWS 자격 증명·인터넷·Client Secret이 필요 없다.
-C 회사의 Cognito 설정은 주입하지 않는다.
+C는 예외 회귀 검증에서 명시적으로 생성하는 시나리오다(ADR 0059). C 회사의 Cognito 설정은 주입하지 않는다.
 구 버전 시드 이미지에서 전환할 때도 `--build`로 이미지를 갱신한다. 버전 2 JSON 적용을 위해 기존 회원 sub나 DB 볼륨을 삭제하지 않는다.
 
 Enrollment를 실행하는 **호스트 셸 또는 IDE 실행 설정**에 아래 두 환경변수를 넣는다.
@@ -66,7 +66,7 @@ Cognito 설정 파일은 필수가 아니다. Compose가 만드는 `local-auth.p
 공개 JSON을 갱신할 때는 별도 파일로 준비하고 diff를 검토해 교체한다. 삭제된 infra 내보내기 명령을 사용하지 않는다.
 이미 시딩한 DB의 다른 연결은 자동 교체하지 않는다. 변경한 회사의 기존 세션과 미사용 단회 코드도 폐기해야 한다.
 
-기존 `switch-oidc`·`configure-oidc` 명령은 구 공유 풀 A/B/C 자료용이다. 회사별 공개 JSON에 사용하지 않는다. 특히 `configure-oidc`의 `config:cognito` 참조는 local의 `cognito-a`·`cognito-b` 비밀 맵과 맞지 않는다. A/B 풀 교체와 복구 절차는 별도 구현·검증이 필요하다.
+기존 `switch-oidc`·`snapshot-oidc`·`restore-oidc`·`configure-oidc` 명령은 구 공유 풀 A/B/C 자료용이다. A/B/C가 모두 적재된 격리 환경과 해당 구 인증 자료가 필요하며, 기본 A/B 환경에서는 사용하지 않는다. `switch-oidc`·`restore-oidc` 적용은 해당 회원의 기존 세션을 폐기한다. 회사별 공개 JSON에 사용하지 않는다. 특히 `configure-oidc`의 `config:cognito` 참조는 local의 `cognito-a`·`cognito-b` 비밀 맵과 맞지 않는다. A/B 풀 교체와 복구 절차는 별도 구현·검증이 필요하다.
 
 ## 검증 범위
 

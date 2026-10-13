@@ -41,7 +41,13 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		return DashboardHttp.json(response)
 	}
 
-	private fun JsonNode.list(): List<JsonNode> = (0 until size()).map { get(it) }
+	private fun ingest(tenant: UUID): JsonNode {
+        val response = http.send("/api/v1/organizations/$tenant/ingest-status", headers = mapOf("Authorization" to TestDashboardAuthenticator.header(DashboardPrincipal(tenant, UUID.randomUUID(), Role.ADMIN))))
+        assertThat(response.statusCode()).isEqualTo(200)
+        return DashboardHttp.json(response)
+    }
+
+    private fun JsonNode.list(): List<JsonNode> = (0 until size()).map { get(it) }
 
 	private fun JsonNode.text(): String? = if (isNull) null else asString()
 
@@ -58,14 +64,10 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/meta/dataState").asString()).isEqualTo("never_observed")
 		assertThat(body.at("/meta/currentCoverage/status").asString()).isEqualTo("none")
 		assertThat(body.at("/meta/currentCoverage/observedDays").asInt()).isZero()
-		assertThat(body.at("/usage/current").isNull).isTrue()
-		assertThat(body.at("/modelMix/models").size()).isZero()
-		assertThat(body.at("/teamUsage/topTeams").size()).isZero()
-		assertThat(body.at("/teamUsage/totalTeamCount").asInt()).isEqualTo(2)
-		assertThat(body.at("/teamUsage/unassigned/current/equivalentCostUsd").isNull).isTrue()
-		assertThat(body.at("/ingest/status").asString()).isEqualTo("empty")
-		assertThat(body.at("/trend/points").list().map { it.path("observation").asString() }).containsOnly("unobserved").hasSize(7)
-		assertThat(body.at("/trend/points").list().map { it.path("equivalentCostUsd").isNull }).containsOnly(true)
+		assertThat(body.at("/summary").isNull).isTrue()
+        for (section in listOf("summary", "trend", "modelMix", "teamUsage")) assertThat(body.path(section).isNull).isTrue()
+        assertThat(body.path("errors").size()).isZero()
+        assertThat(ingest(tenant).path("status").asString()).isEqualTo("empty")
 	}
 
 	@Test
@@ -77,9 +79,9 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		val body = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
 
 		assertThat(body.at("/meta/dataState").asString()).isEqualTo("no_data")
-		assertThat(body.at("/usage/current").isNull).isTrue()
-		assertThat(body.at("/ingest/status").asString()).isEqualTo("unknown")
-		assertThat(Instant.parse(body.at("/ingest/lastReceivedAt").asString())).isEqualTo(kst("2026-08-02T10:00:00"))
+		assertThat(body.at("/summary").isNull).isTrue()
+		assertThat(ingest(tenant).at("/status").asString()).isEqualTo("unknown")
+		assertThat(Instant.parse(ingest(tenant).at("/lastReceivedAt").asString())).isEqualTo(kst("2026-08-02T10:00:00"))
 	}
 
 	@Test
@@ -91,8 +93,8 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		val body = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
 
 		assertThat(body.at("/meta/dataState").asString()).isEqualTo("no_data")
-		assertThat(body.at("/ingest/firstObservedAt").isNull).isTrue()
-		assertThat(body.at("/ingest/lastReceivedAt").isNull).isFalse()
+		assertThat(ingest(tenant).has("firstObservedAt")).isFalse()
+		assertThat(ingest(tenant).at("/lastReceivedAt").isNull).isFalse()
 	}
 
 	@Test
@@ -110,8 +112,8 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		val body = overview(tenant, "startDate=2026-02-10&endDate=2026-02-10")
 
 		assertThat(body.at("/meta/dataState").asString()).isEqualTo("partial")
-		assertThat(Instant.parse(body.at("/ingest/firstObservedAt").asString())).isEqualTo(kst("2026-01-01T08:00:00"))
-		assertThat(body.at("/ingest/observedMembers").asLong()).isZero()
+		assertThat(Instant.parse(ingest(tenant).at("/lastReceivedAt").asString())).isEqualTo(kst("2026-03-01T09:00:00"))
+		assertThat(ingest(tenant).at("/observedMembers").asLong()).isZero()
 		assertThat(body.at("/trend/points/0/observation").asString()).isEqualTo("partial")
 	}
 
@@ -129,7 +131,7 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 
 		val body = overview(tenant, "startDate=2026-09-24&endDate=2026-09-28")
 
-		val points = body.at("/trend/points").list().map { listOf(it.path("date").asString(), it.path("observation").asString(), it.path("equivalentCostUsd").text(), it.path("totalTokens").text()) }
+		val points = body.at("/trend/points").list().map { listOf(it.path("date").asString(), it.path("observation").asString(), it.at("/equivalentCostUsd/value").text(), it.at("/totalTokens/value").text()) }
 		assertThat(points).containsExactly(
 			listOf("2026-09-24", "partial", "2.000000", "110"),
 			listOf("2026-09-25", "unobserved", null, null),
@@ -141,7 +143,7 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/meta/currentCoverage/status").asString()).isEqualTo("partial")
 		assertThat(body.at("/meta/currentCoverage/observedDays").asInt()).isEqualTo(3)
 		assertThat(body.at("/meta/dataThrough").isNull).isTrue()
-		assertThat(body.at("/trend/points").list().map { it.path("allocatedSeatCostUsd").isNull }).containsOnly(true)
+		assertThat(body.at("/trend/points").list().map { !it.has("allocatedSeatCostUsd") }).containsOnly(true)
 	}
 
 	@Test
@@ -152,20 +154,20 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		SourceFixtures.insertEvents(tenant, Event("now", kst("2026-09-08T10:00:00")), Event("before", kst("2026-09-01T10:00:00")))
 
 		val none = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13&compare=none")
-		assertThat(none.at("/comparison/status").asString()).isEqualTo("disabled")
+		assertThat(none.at("/summary/equivalentCostUsd/comparison/status").asString()).isEqualTo("disabled")
 		assertThat(none.at("/comparison/mode").asString()).isEqualTo("none")
-		assertThat(listOf("/comparison/startDate", "/comparison/endDate", "/comparison/coverage", "/comparison/reason", "/usage/previous").map { none.at(it).isNull })
+		assertThat(listOf("/comparison/startDate", "/comparison/endDate", "/comparison/coverage", "/summary/equivalentCostUsd/comparison/previousValue", "/summary/equivalentCostUsd/comparison/previousValue").map { none.at(it).isNull })
 			.containsOnly(true)
 
 		val week = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
 		assertThat(week.at("/comparison/mode").asString()).isEqualTo("prev_week")
-		assertThat(week.at("/comparison/status").asString()).isEqualTo("unavailable")
-		assertThat(week.at("/comparison/reason").asString()).isEqualTo("source_not_available")
+		assertThat(week.at("/summary/equivalentCostUsd/comparison/status").asString()).isEqualTo("unavailable")
+		assertThat(week.at("/summary/equivalentCostUsd/comparison/reasons").list().map { it.asString() }).contains("current_period_incomplete", "previous_period_incomplete")
 		assertThat(week.at("/comparison/startDate").asString()).isEqualTo("2026-08-31")
 		assertThat(week.at("/comparison/coverage/status").asString()).isEqualTo("partial")
-		assertThat(week.at("/usage/previous").isNull).isTrue()
-		assertThat(week.at("/teamUsage/unassigned/previous").isNull).isTrue()
-		assertThat(week.at("/teamUsage/otherTeams/previousEquivalentCostUsd").isNull).isTrue()
+		assertThat(week.at("/summary/equivalentCostUsd/comparison/previousValue").isNull).isTrue()
+		assertThat(week.at("/teamUsage/unassigned/equivalentCostUsd/comparison/previousValue").isNull).isTrue()
+		assertThat(week.path("teamUsage").has("otherTeams")).isFalse()
 	}
 
 	@Test
@@ -189,34 +191,31 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		val body = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
 
 		fun money(node: JsonNode) = BigDecimal(node.asString())
-		val organization = money(body.at("/usage/current/equivalentCostUsd"))
-		val byDay = body.at("/trend/points").list().mapNotNull { it.path("equivalentCostUsd").text() }.map(::BigDecimal).fold(BigDecimal.ZERO, BigDecimal::add)
-		val byModel = body.at("/modelMix/models").list().map { money(it.path("equivalentCostUsd")) }.fold(BigDecimal.ZERO, BigDecimal::add)
+		val organization = money(body.at("/summary/equivalentCostUsd/value"))
+		val byDay = body.at("/trend/points").list().mapNotNull { it.at("/equivalentCostUsd/value").text() }.map(::BigDecimal).fold(BigDecimal.ZERO, BigDecimal::add)
+		val byModel = body.at("/modelMix/models").list().map { money(it.at("/equivalentCostUsd/value")) }.fold(BigDecimal.ZERO, BigDecimal::add)
 		val top = body.at("/teamUsage/topTeams").list()
-		val byTeam = top.map { money(it.at("/current/equivalentCostUsd")) }.fold(BigDecimal.ZERO, BigDecimal::add) +
-			money(body.at("/teamUsage/otherTeams/currentEquivalentCostUsd")) + money(body.at("/teamUsage/unassigned/current/equivalentCostUsd"))
+        val topSum = top.sumOf { money(it.at("/equivalentCostUsd/value")) }
 
 		// 팀마다 두 행: 10 + 80 + 25 + 14 + 2.5, 미배분 0.5.
 		assertThat(organization).isEqualByComparingTo("132")
 		assertThat(byDay).isEqualByComparingTo(organization)
 		assertThat(byModel).isEqualByComparingTo(organization)
-		assertThat(byTeam).isEqualByComparingTo(organization)
+		assertThat(topSum).isEqualByComparingTo("119")
+        assertThat(money(body.at("/teamUsage/unassigned/equivalentCostUsd/value"))).isEqualByComparingTo("0.5")
 		assertThat(top.map { it.path("teamName").asString() }).containsExactly("팀 B", "팀 C", "팀 D")
 		assertThat(body.at("/teamUsage/totalTeamCount").asInt()).isEqualTo(5)
-		assertThat(body.at("/teamUsage/otherTeams/count").asInt()).isEqualTo(2)
-		assertThat(body.at("/teamUsage/availability").asString()).isEqualTo("available")
+		assertThat(body.path("teamUsage").has("otherTeams")).isFalse()
+		assertThat(body.at("/teamUsage/topTeams/0/equivalentCostUsd/status").asString()).isEqualTo("partial")
 		assertThat(body.at("/teamUsage/attributionBasis").asString()).isEqualTo("event_time")
-		assertThat(body.at("/meta/pricingVersion").asString()).isEqualTo("rate-v1")
-		assertThat(body.at("/usage/current/activeUsers").asInt()).isEqualTo(10)
-		assertThat(body.at("/usage/current/tokens/total").asLong()).isEqualTo(11 * 110)
-		// 팀 B 의 두 모델은 같은 금액 — 동률은 모델 ID 오름차순, 비율은 절반.
-		assertThat(top[0].at("/topModel/modelId").asString()).isEqualTo("unknown/claude_code/claude-a")
-		assertThat(top[0].at("/topModel/displayName").asString()).isEqualTo("claude-a")
-		assertThat(top[0].at("/topModel/share").asDouble()).isEqualTo(0.5)
+		assertThat(body.path("meta").has("pricingVersion")).isFalse()
+		assertThat(body.at("/summary/activeUsers/value").asInt()).isEqualTo(10)
+		assertThat(body.at("/summary/totalTokens/value").asLong()).isEqualTo(11 * 110)
+        assertThat(top[0].has("topModel")).isFalse()
 		val model = body.at("/modelMix/models/0")
-		assertThat(model.path("effectiveCostPerMillionTokensUsd").asString())
-			.isEqualTo(Money.format(Money.perMillion(money(model.path("equivalentCostUsd")), model.path("totalTokens").asLong())!!))
-		assertThat(body.at("/modelMix/availability").asString()).isEqualTo("available")
+		assertThat(model.at("/effectiveCostPerMillionTokensUsd/value").asString())
+			.isEqualTo(Money.format(Money.perMillion(money(model.at("/equivalentCostUsd/value")), model.at("/totalTokens/value").asLong())!!))
+		assertThat(body.at("/modelMix/models/0/costShare/status").asString()).isEqualTo("partial")
 	}
 
 	@Test
@@ -234,15 +233,15 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 
 		val body = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
 
-		assertThat(body.at("/usage/current/equivalentCostUsd").isNull).isTrue()
-		assertThat(body.at("/usage/current/tokens/output").asLong()).isEqualTo(20)
-		assertThat(body.at("/usage/current/activeUsers").asInt()).isEqualTo(1)
-		assertThat(body.at("/modelMix/models/0/equivalentCostUsd").isNull).isTrue()
-		assertThat(body.at("/modelMix/availability").asString()).isEqualTo("partial")
-		assertThat(body.at("/teamUsage/topTeams/0/current/equivalentCostUsd").isNull).isTrue()
-		assertThat(body.at("/teamUsage/topTeams/0/topModel").isNull).isTrue()
-		assertThat(body.at("/trend/points/1/equivalentCostUsd").isNull).isTrue()
-		assertThat(body.at("/trend/points/1/totalTokens").asLong()).isEqualTo(220)
+		assertThat(body.at("/summary/equivalentCostUsd/value").isNull).isTrue()
+		assertThat(body.at("/summary/totalTokens/value").asLong()).isEqualTo(220)
+		assertThat(body.at("/summary/activeUsers/value").asInt()).isEqualTo(1)
+		assertThat(body.at("/modelMix/models/0/equivalentCostUsd/value").isNull).isTrue()
+		assertThat(body.at("/modelMix/models/0/equivalentCostUsd/status").asString()).isEqualTo("unavailable")
+		assertThat(body.at("/teamUsage/topTeams/0/equivalentCostUsd/value").isNull).isTrue()
+		assertThat(body.at("/teamUsage/topTeams/0").has("topModel")).isFalse()
+		assertThat(body.at("/trend/points/1/equivalentCostUsd/value").isNull).isTrue()
+		assertThat(body.at("/trend/points/1/totalTokens/value").asLong()).isEqualTo(220)
 	}
 
 	@Test
@@ -258,10 +257,10 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 
 		val body = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
 
-		assertThat(body.at("/meta/pricingVersion").isNull).isTrue()
-		assertThat(body.at("/usage/current/equivalentCostUsd").isNull).isTrue()
-		assertThat(body.at("/teamUsage/unassigned/current/equivalentCostUsd").isNull).isTrue()
-		assertThat(body.at("/usage/current/tokens/total").asLong()).isEqualTo(220)
+		assertThat(body.at("/summary/equivalentCostUsd/reasons").list().map { it.asString() }).contains("pricing_version_mixed")
+		assertThat(body.at("/summary/equivalentCostUsd/value").isNull).isTrue()
+		assertThat(body.at("/teamUsage/unassigned/equivalentCostUsd/value").isNull).isTrue()
+		assertThat(body.at("/summary/totalTokens/value").asLong()).isEqualTo(220)
 	}
 
 	@Test
@@ -281,10 +280,10 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 
 		val body = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
 
-		assertThat(body.at("/ingest/observedMembers").asLong()).isEqualTo(1)
-		assertThat(body.at("/ingest/eligibleMembers").asLong()).isEqualTo(2)
-		assertThat(body.at("/ingest/windowMinutes").asInt()).isEqualTo(15)
-		assertThat(listOf("/ingest/activeInstallations", "/ingest/coverageRatio").map { body.at(it).isNull }).containsOnly(true)
+		assertThat(ingest(tenant).at("/observedMembers").asLong()).isEqualTo(1)
+		assertThat(ingest(tenant).at("/eligibleMembers").asLong()).isEqualTo(2)
+		assertThat(ingest(tenant).at("/windowMinutes").asInt()).isEqualTo(15)
+		assertThat(listOf("/activeInstallations", "/coverageRatio").map { ingest(tenant).at(it).isNull }).containsOnly(true)
 	}
 
 	@Test
@@ -295,11 +294,11 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 			val tenant = DashboardTestStores.insertTenant()
 			val body = overview(tenant, "startDate=2026-09-23&endDate=2026-09-29&compare=prev_week&timeZone=Asia%2FSeoul")
 			assertThat(body.at("/meta/dataState").asString()).isEqualTo("never_observed")
-			assertThat(body.at("/ingest/status").asString()).isEqualTo("empty")
-			assertThat(body.at("/ingest/lastReceivedAt").isNull).isTrue()
-			assertThat(body.at("/usage/current").isNull).isTrue()
-			assertThat(body.at("/modelMix/models").size()).isZero()
-			assertThat(body.at("/teamUsage/totalTeamCount").asInt()).isZero()
+			assertThat(ingest(tenant).at("/status").asString()).isEqualTo("empty")
+			assertThat(ingest(tenant).at("/lastReceivedAt").isNull).isTrue()
+			assertThat(body.at("/summary").isNull).isTrue()
+			assertThat(body.path("modelMix").isNull).isTrue()
+			assertThat(body.path("teamUsage").isNull).isTrue()
 		} finally {
 			SourceFixtures.completeBackfill()
 		}
@@ -330,17 +329,8 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		val tenant = DashboardTestStores.insertTenant()
 		val body = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
 
-		assertThat(body.at("/seats/availability").asString()).isEqualTo("unavailable")
-		assertThat(body.at("/seats/reason").asString()).isEqualTo("not_applicable")
-		assertThat(listOf("/seats/current", "/seats/previous", "/seats/reclaimEstimate", "/seats/allocationMethod").map { body.at(it).isNull }).containsOnly(true)
-		assertThat(body.at("/alerts/reason").asString()).isEqualTo("evaluation_not_configured")
-		assertThat(listOf("/alerts/unacknowledgedTotal", "/alerts/security", "/alerts/cost").map { body.at(it).isNull }).containsOnly(true)
-		assertThat(body.at("/waste/items").list().map { it.path("kind").asString() to it.path("reason").asString() }).containsExactly(
-			"cache_miss" to "methodology_not_available",
-			"retry_or_abort" to "methodology_not_available",
-			"excessive_context" to "methodology_not_available",
-		)
-		assertThat(body.at("/waste/totalMonthlyEquivalentCostUsd").isNull).isTrue()
+        assertThat(body.propertyNames()).containsExactlyInAnyOrder("meta", "comparison", "summary", "trend", "modelMix", "teamUsage", "errors")
+        for (key in listOf("ingest", "seats", "alerts", "waste", "productUsage", "usage")) assertThat(body.has(key)).isFalse()
 	}
 
 	@Test

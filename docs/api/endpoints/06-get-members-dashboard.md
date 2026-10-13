@@ -41,9 +41,7 @@ Authorization: Bearer <Pulsemetry access_token>
 ```ts
 // MembersResponse
 {
-  meta: AnalyticsMeta;
-  asOf: string;
-  ingest: Ingest;
+  meta: MembersMeta;
   summary: MemberSummary;
   policy: IdlePolicy;
   capabilities: MemberCapabilities;

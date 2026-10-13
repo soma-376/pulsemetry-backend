@@ -58,13 +58,6 @@ class OverviewComparisonTest {
 				IngestThresholds(Duration.ofMinutes(15), Duration.ofMinutes(5), Duration.ofHours(3)), Clock.systemUTC()),
 			aggregator = UsageAggregator(assembly.clickHouse),
 			references = references,
-			seats = SeatService(
-				SeatLedgerReader(DashboardTestStores.writer, ledger, mapper, com.team376.pulsemetry.dashboard.snapshot.RetentionBoundaryReader(DashboardTestStores.writer),
-					com.team376.pulsemetry.dashboard.snapshot.SnapshotCompleteness(DashboardTestStores.writer, DashboardTestStores.writer, Duration.ofHours(1))),
-				OrganizationPolicies(DashboardTestStores.writer, 14), Duration.ofHours(26)),
-			alerts = com.team376.pulsemetry.dashboard.alert.AlertService(DashboardTestStores.writer,
-				com.team376.pulsemetry.dashboard.alert.AlertStore(DashboardTestStores.writer, mapper), CurrentStateTokens(mapper),
-				com.team376.pulsemetry.dashboard.request.PageCursorCodec(mapper), Clock.systemUTC()),
 		)
 	}
 
@@ -88,19 +81,13 @@ class OverviewComparisonTest {
 
 		val response = service { _, _ -> true }.overview(Organization(tenant, "조직", "Asia/Seoul"), UUID.randomUUID(), period)
 
-		assertThat(response.comparison.status).isEqualTo("available")
-		assertThat(response.usage.previous!!.equivalentCostUsd).isEqualTo("57.000000")
-		val top = response.teamUsage.topTeams
-		assertThat(top.map { it.teamName }).containsExactly("A", "B", "C")
-		assertThat(top.map { it.previous!!.equivalentCostUsd }).containsExactly("7.000000", null, null)
-		assertThat(response.teamUsage.otherTeams.previousEquivalentCostUsd).isEqualTo("50.000000")
-		assertThat(response.teamUsage.otherTeams.currentEquivalentCostUsd).isEqualTo("5.000000")
-
-		// v1 의 정책으로는 같은 입력에서도 비교를 공개하지 않는다 — previous 전부 null.
-		val v1 = service(ComparisonPolicy.COMPLETE_ONLY).overview(Organization(tenant, "조직", "Asia/Seoul"), UUID.randomUUID(), period)
-		assertThat(v1.comparison.status).isEqualTo("unavailable")
-		assertThat(v1.usage.previous).isNull()
-		assertThat(v1.teamUsage.topTeams.map { it.previous }).containsOnlyNulls()
-		assertThat(v1.teamUsage.otherTeams.previousEquivalentCostUsd).isNull()
-	}
+        // 비교 정책을 강제로 열어도 개별 값의 불완전한 근거는 비교로 노출하지 않는다.
+        assertThat(response.summary!!.equivalentCostUsd.value).isEqualTo("65.000000")
+        assertThat(response.summary.equivalentCostUsd.comparison.status).isEqualTo("unavailable")
+        assertThat(response.teamUsage!!.topTeams.map { it.teamName }).containsExactly("A", "B", "C")
+        assertThat(response.teamUsage.topTeams.map { it.equivalentCostUsd.comparison.previousValue }).containsOnlyNulls()
+        val v1 = service(ComparisonPolicy.COMPLETE_ONLY).overview(Organization(tenant, "조직", "Asia/Seoul"), UUID.randomUUID(), period)
+        assertThat(v1.summary!!.equivalentCostUsd.comparison.reasons).contains("current_period_incomplete", "previous_period_incomplete")
+        assertThat(v1.teamUsage!!.topTeams.map { it.equivalentCostUsd.comparison.previousValue }).containsOnlyNulls()
+    }
 }

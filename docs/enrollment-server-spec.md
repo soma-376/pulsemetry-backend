@@ -211,7 +211,7 @@ VALUES (
 설정을 바꿀 때는 기존 행을 고치지 말고 **기존 행을 비활성화한 뒤 새 `version` 행을 활성으로** 넣는다.
 
 Flyway 마이그레이션에는 시드 데이터를 넣지 않는다.
-A/B/C 시드는 개발 Compose의 일회성 `dev-seed`가 준비한다(ADR 0031).
+A/B 기본 시드는 개발 Compose의 일회성 `dev-seed`가 준비한다(ADR 0031·0059). C는 예외 회귀 검증에서 명시할 때만 생성한다.
 서버는 local 프로필에서도 시드를 실행하지 않는다. 기존 enrollment·telemetry_ops Flyway와
 ClickHouse 마이그레이터를 재사용하며 스키마 소유권은 바꾸지 않는다.
 `docker compose up -d --build` 후 `docker compose logs -f dev-seed`와 종료 코드 0을 확인한다.
@@ -293,13 +293,13 @@ export PULSEMETRY_TOKEN_HASH_SECRET=local-development-token-hash-secret
 ./gradlew :apps:enrollment-api:bootRun --args='--spring.profiles.active=local'
 ```
 
-시드 컨테이너가 A/C의 시나리오 데이터와 B의 조직·오너 한 명을 준비한다. B에는 manifest와 수집 이력도 없다.
-A는 정책 확인과 벤더 선택을 갖춘 온보딩 완료 상태이고 B/C는 미완료다.
+시드 컨테이너는 기본으로 A의 시나리오 데이터와 B의 조직·오너 한 명을 준비한다. B에는 manifest와 수집 이력도 없다.
+A는 정책 확인과 벤더 선택을 갖춘 온보딩 완료 상태이고 B는 미완료다. 예외 회귀용 C도 미완료이며 명시적으로 선택해야 생성한다.
 별도의 기본 로컬 개발 조직·계정·고정 초대는 생성하지 않는다(ADR 0032).
 신규 조직 INSERT에는 빈 `telemetry_ops.tenant_ingest_summary` 생성이 같은 트랜잭션으로 포함된다(ADR 0034).
 시드·JPA·직접 SQL 모두 적용하며 수신·관측 시각은 NULL이다. `enrollment` 마이그레이션 이후
 `telemetry_ops` V3가 트리거를 설치한다. 기존 조직의 누락된 요약은 자동 백필하지 않는다.
-A/B/C 완료 기록이 있으면 기존 변경을 유지하고 건너뛰며 미완료 기록은 자동 삭제 없이 실패로 알린다.
+선택한 시드에 완료 기록이 있으면 기존 변경을 유지하고 건너뛰며 미완료 기록은 자동 삭제 없이 실패로 알린다.
 서버에는 자동 시드와 `PULSEMETRY_LOCAL_SEED_ENABLED` 설정이 없다.
 시나리오·기준일 선택과 Docker 초기화/검증은 [개발 시드 가이드](../tools/dev-seed/README.md)를 따른다.
 local 프로필의 서버는 메일을 Compose의 수신 컨테이너로 보낸다. 받은 메일은 `http://localhost:8025`에서 본다 — 밖으로 나가는 메일은 없다.
@@ -364,7 +364,7 @@ telemetryctl 에는 이 단계를 대신 운전하는 통합 테스트가 없다
 
 - 세 서버를 local 프로필로 띄운다. ingest 는 `PULSEMETRY_TELEMETRY_OPS_ENABLED=true`. 프론트는 서버의 허용 origin 주소로 띄운다.
 - **fresh 조직 E** 를 쓴다(개발 시드 시나리오 E — 정책 1판, 설치·수신 없음. `tools/dev-seed/README.md`). 시드 A·B·C 는 바꾸지 않는다.
-  E 는 기본 시나리오 목록에 없으니 시드를 `A,B,C,D,E`처럼 명시해 적재한다. 정책은 새로 저장하지 않는다 — 시드의 1판 manifest 를 받는다.
+  E 는 기본 시나리오 목록에 없으니 `E` 또는 `A,B,E`처럼 명시해 적재한다. 정책은 새로 저장하지 않는다 — 시드의 1판 manifest 를 받는다.
   그 전달 주소는 시드 수신 주소(`PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT`, 기본 `http://localhost:4316`)다 — 띄운 ingest 주소로 맞춘다.
   telemetryctl 은 `http` 주소를 호스트가 `localhost`일 때만 받는다(`internal/contract/manifest.go`).
   화면이 설치 수를 정확히 보므로 E 에 다른 설치가 없을 때 돈다 — 실서버 E2E(`tests/e2e`)는 E 에 설치를 등록하지 않는다.

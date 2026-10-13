@@ -89,17 +89,24 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/teams/nextCursor").isNull).isTrue()
 		assertThat(body.at("/unassigned/teamId").isNull).isTrue()
 		assertThat(body.at("/unassigned/teamName").asString()).isEqualTo("미배정")
-		val teamSum = items.map { money(it.at("/current/equivalentCostUsd")) }.fold(BigDecimal.ZERO, BigDecimal::add) + money(body.at("/unassigned/current/equivalentCostUsd"))
-		assertThat(teamSum).isEqualByComparingTo(money(body.at("/totals/current/equivalentCostUsd"))).isEqualByComparingTo("105")
+		val teamSum = items.map { money(it.at("/metrics/equivalentCostUsd/value")) }.fold(BigDecimal.ZERO, BigDecimal::add) + money(body.at("/unassigned/metrics/equivalentCostUsd/value"))
+		assertThat(teamSum).isEqualByComparingTo(money(body.at("/totals/equivalentCostUsd/value"))).isEqualByComparingTo("105")
 		assertThat(body.at("/meta/snapshotId").asString()).hasSize(22)
 		assertThat(body.at("/sort").asString()).isEqualTo("cost")
 		assertThat(body.at("/attributionBasis").asString()).isEqualTo("event_time")
 		assertThat(items[0].at("/trend").list().map { it.path("cumulativeSessionCount").isNull }).containsOnly(true).hasSize(7)
+		assertThat(items[0].at("/metrics/equivalentCostUsd/status").asString()).isEqualTo("partial")
+		assertThat(items[0].at("/metrics/equivalentCostUsd/comparison/status").asString()).isEqualTo("unavailable")
+		assertThat(items[0].at("/modelMix/availability").asString()).isEqualTo("partial")
+		assertThat(items[0].at("/modelMix/data/models").list().map { it.path("status").asString() }).containsOnly("partial")
+		assertThat(body.at("/modelScatter/availability").asString()).isEqualTo("partial")
+		assertThat(body.path("meta").has("pricingVersion")).isFalse()
+		assertThat(body.has("ingest")).isFalse()
 		assertThat(items[0].at("/modelMix/data/sessionMixAvailable").asBoolean()).isFalse()
 		assertThat(items[0].at("/modelMix/data/sessionMixReason").asString()).isEqualTo("multi_model_sessions")
 		// 조직 합계는 개요와 같은 계산기에서 나온다.
 		val overview = ok(org.tenant, "/analytics/overview?$week")
-		assertThat(money(overview.at("/usage/current/equivalentCostUsd"))).isEqualByComparingTo(money(body.at("/totals/current/equivalentCostUsd")))
+		assertThat(money(overview.at("/summary/equivalentCostUsd/value"))).isEqualByComparingTo(money(body.at("/totals/equivalentCostUsd/value")))
 	}
 
 	@Test
@@ -156,14 +163,14 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 		assertThat(users.at("/users/items").list().map { it.path("memberId").asString() })
 			.containsExactlyInAnyOrder(org.members.getValue("A-1").toString(), org.members.getValue("A-2").toString())
 		assertThat(users.at("/users/totalCount").asInt()).isEqualTo(2)
-		assertThat(money(users.at("/summary/usage/equivalentCostUsd"))).isEqualByComparingTo("40")
-		assertThat(users.at("/summary/usage/activeUsers").asInt()).isEqualTo(2)
+		assertThat(money(users.at("/summary/usage/equivalentCostUsd/value"))).isEqualByComparingTo("40")
+		assertThat(users.at("/summary/usage/activeUsers/value").asInt()).isEqualTo(2)
 
 		val detail = ok(org.tenant, "/analytics/teams/$teamA?$week&snapshotId=$snapshotId")
-		assertThat(money(detail.at("/team/current/equivalentCostUsd"))).isEqualByComparingTo(money(list.at("/teams/items/0/current/equivalentCostUsd")))
+		assertThat(money(detail.at("/team/metrics/equivalentCostUsd/value"))).isEqualByComparingTo(money(list.at("/teams/items/0/metrics/equivalentCostUsd/value")))
 
 		// snapshot ID 없이 새로 부르면 새 원본을 본다.
-		assertThat(money(ok(org.tenant, "/analytics/teams/$teamA/users?$week").at("/summary/usage/equivalentCostUsd"))).isEqualByComparingTo("1020")
+		assertThat(money(ok(org.tenant, "/analytics/teams/$teamA/users?$week").at("/summary/usage/equivalentCostUsd/value"))).isEqualByComparingTo("1020")
 	}
 
 	@Test
@@ -191,15 +198,15 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 		val users = body.at("/users/items").list()
 		assertThat(users.map { it.path("account").asString() }).containsExactly("alice@example.test", "bob@example.test")
 		assertThat(users[0].at("/mainModel/modelId").asString()).isEqualTo("unknown/claude_code/model-x")
-		assertThat(users[0].at("/usage/equivalentCostUsd").asString()).isEqualTo("4.000000")
+		assertThat(users[0].at("/usage/equivalentCostUsd/value").asString()).isEqualTo("4.000000")
 		assertThat(Instant.parse(users[0].path("lastUsedAt").asString())).isEqualTo(kst("2026-09-09T11:00:00"))
 		// alice: read 30+0, eligible (60+30+10)+(100+0+0) = 200.
-		assertThat(users[0].at("/cache/readTokens").asLong()).isEqualTo(30)
-		assertThat(users[0].at("/cache/eligibleInputTokens").asLong()).isEqualTo(200)
-		assertThat(users[0].at("/cache/hitRatio").asDouble()).isEqualTo(0.15)
+		assertThat(users[0].has("cache")).isFalse()
+		assertThat(users[0].at("/cacheHitRatio/status").asString()).isEqualTo("partial")
+		assertThat(users[0].at("/cacheHitRatio/value").asDouble()).isEqualTo(0.15)
 		assertThat(body.at("/summary/averageEquivalentCostUsd").asString()).isEqualTo("3.000000")
 		assertThat(body.at("/summary/unidentifiedEquivalentCostUsd").asString()).isEqualTo("0.500000")
-		assertThat(money(body.at("/summary/usage/equivalentCostUsd"))).isEqualByComparingTo("6.5")
+		assertThat(money(body.at("/summary/usage/equivalentCostUsd/value"))).isEqualByComparingTo("6.5")
 		assertThat(body.at("/team/teamName").asString()).isEqualTo("플랫폼")
 
 		val paged = ok(tenant, "/analytics/teams/$team/users?$week&limit=1")
@@ -243,10 +250,10 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 
 		val unassigned = ok(org.tenant, "/analytics/teams/unassigned?$week")
 		assertThat(unassigned.at("/team/teamId").isNull).isTrue()
-		assertThat(money(unassigned.at("/team/current/equivalentCostUsd"))).isEqualByComparingTo("5")
+		assertThat(money(unassigned.at("/team/metrics/equivalentCostUsd/value"))).isEqualByComparingTo("5")
 
 		val idle = ok(org.tenant, "/analytics/teams/${org.teams.getValue("E")}?$week")
-		assertThat(idle.at("/team/current").isNull).isTrue()
+		assertThat(idle.at("/team/metrics/equivalentCostUsd/value").isNull).isTrue()
 		assertThat(idle.at("/team/modelMix/availability").asString()).isEqualTo("unavailable")
 
 		for (path in listOf(UUID.randomUUID().toString(), foreignTeam.toString(), "not-a-team")) {

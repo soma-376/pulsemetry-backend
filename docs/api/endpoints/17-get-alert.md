@@ -31,7 +31,7 @@ Authorization: Bearer <Pulsemetry access_token>
 
 ```ts
 // AlertResponse
-{ meta: CurrentMeta; alert: Alert }
+{ meta: AlertsMeta; alert: Alert }
 ```
 
 [AlertResponse 전체 스키마·중첩 타입](../reference/alerts.md#schema-AlertResponse)

@@ -43,6 +43,7 @@ class AnalyticsFrames(
 		val dataState: String,
 		val comparable: Boolean,
 		val now: Instant,
+		val incompleteReasons: Map<LocalDate, List<String>> = emptyMap(),
 	) {
 		/** no_data·never_observed — 사용량 값을 내지 않는다(상태 우선). */
 		val empty: Boolean get() = dataState != PARTIAL && dataState != READY
@@ -54,6 +55,17 @@ class AnalyticsFrames(
 
 		/** 비교 기간 전체가 완전 관측이다. */
 		val previousComplete: Boolean get() = previousCoverage?.status == Coverage.COMPLETE
+
+		fun periodReasons(previous: Boolean = false): List<String> {
+			val dates = (if (previous) period.previous else period.current)?.dates() ?: return emptyList()
+			if (dates.all { it in completeDates }) return emptyList()
+			val prefix = if (previous) "previous_" else ""
+			return (listOf(if (previous) "previous_period_incomplete" else "current_period_incomplete") +
+				dates.filter { it !in completeDates }.flatMap { incompleteReasons[it].orEmpty().map { reason -> prefix + reason } }).distinct()
+		}
+
+		fun dateReasons(date: LocalDate): List<String> = if (date in completeDates) emptyList()
+			else incompleteReasons[date] ?: listOf("current_period_incomplete")
 
 		/** 그날의 관측 상태 — `complete`(완전, 사용이 없으면 0) · `partial`(관측은 있으나 완전하다는 근거가 없다) · `unobserved`. */
 		fun observation(date: LocalDate): String = when (date) {
@@ -98,10 +110,11 @@ class AnalyticsFrames(
 			dataState = dataState,
 			comparable = previousCoverage != null && comparison.comparable(currentCoverage, previousCoverage),
 			now = clock.instant(),
+			incompleteReasons = references.incompleteReasons(snapshot),
 		)
 	}
 
-	fun meta(frame: Frame): OverviewResponse.Meta = OverviewResponse.Meta(
+	fun meta(frame: Frame): AnalyticsPeriodMeta = AnalyticsPeriodMeta(
 		organizationId = frame.organization.id.toString(),
 		generatedAt = frame.now.toString(),
 		dataThrough = Completeness.dataThrough(frame.period.current, frame.completeDates)?.toString(),
@@ -118,12 +131,12 @@ class AnalyticsFrames(
 	/** 요청서의 `AnalyticsMeta` — 개요 meta + snapshot ID. 목록 화면만 싣는다(개요는 싣지 않는다). */
 	fun analyticsMeta(frame: Frame): AnalyticsMeta = AnalyticsMeta.of(meta(frame), frame.snapshot.snapshotId)
 
-	fun comparison(frame: Frame): OverviewResponse.Comparison {
+	fun comparison(frame: Frame): AnalyticsComparison {
 		val previous = frame.period.previous
 		if (frame.period.mode == CompareMode.NONE || previous == null) {
-			return OverviewResponse.Comparison(CompareMode.NONE.wire, null, null, DISABLED, null, null)
+			return AnalyticsComparison(CompareMode.NONE.wire, null, null, DISABLED, null, null)
 		}
-		return OverviewResponse.Comparison(
+		return AnalyticsComparison(
 			mode = frame.period.mode.wire,
 			startDate = previous.startDate.toString(),
 			endDate = previous.endDate.toString(),
@@ -134,16 +147,16 @@ class AnalyticsFrames(
 	}
 
 	/** 수집 운영 현황 — snapshot 밖의 현재 상태. */
-	fun ingest(frame: Frame): OverviewResponse.Ingest = status(frame.organization, frame.history, frame.now).ingest
+	fun ingest(frame: Frame): AnalyticsIngest = status(frame.organization, frame.history, frame.now).ingest
 
 	/** 선택 기간이 없는 화면(설정)도 같은 규칙으로 수집 현황을 낸다. */
-	fun ingest(organization: Organization, now: Instant): OverviewResponse.Ingest = status(organization, now).ingest
+	fun ingest(organization: Organization, now: Instant): AnalyticsIngest = status(organization, now).ingest
 
 	/** 공통 헤더의 수집 현황 — 분석 응답의 `ingest` 조각과 같은 계산이다. 커버리지의 분자·분모를 함께 준다. */
 	fun status(organization: Organization, now: Instant): IngestStatus = status(organization, ingest.history(organization.id), now)
 
 	/** `ingest` 조각과 그 커버리지의 분자·분모. 조각은 화면 요청서의 모양 그대로라 분자·분모를 싣지 못한다. */
-	data class IngestStatus(val ingest: OverviewResponse.Ingest, val coverageTargetMembers: Long?, val coverageObservedMembers: Long?)
+	data class IngestStatus(val ingest: AnalyticsIngest, val coverageTargetMembers: Long?, val coverageObservedMembers: Long?)
 
 	/**
 	 * 판정은 [IngestJudgement] 가 한다(ADR 0041). 여기서는 근거를 읽어 넘기고 응답 모양으로 옮긴다.
@@ -154,7 +167,7 @@ class AnalyticsFrames(
 		val observed = ingest.observedInstallations(organization.id, since)
 		val judgement = IngestJudgement.judge(history.hasReceipts, ingest.installations(organization.id, since), observed, now, thresholds)
 		return IngestStatus(
-			OverviewResponse.Ingest(
+			AnalyticsIngest(
 				status = judgement.status,
 				reason = judgement.reason,
 				asOf = now.toString(),
@@ -184,7 +197,7 @@ class AnalyticsFrames(
 	}
 }
 
-/** 요청서의 `AnalyticsMeta = OverviewResponse["meta"] & { snapshotId }`. */
+/** 목록 화면의 기간 메타. 개요와 달리 재사용할 snapshot ID와 가격 판을 포함한다. */
 data class AnalyticsMeta(
 	val organizationId: String,
 	val generatedAt: String,
@@ -200,7 +213,7 @@ data class AnalyticsMeta(
 	val snapshotId: String,
 ) {
 	companion object {
-		fun of(meta: OverviewResponse.Meta, snapshotId: String) = AnalyticsMeta(
+		fun of(meta: AnalyticsPeriodMeta, snapshotId: String) = AnalyticsMeta(
 			meta.organizationId, meta.generatedAt, meta.dataThrough, meta.currency, meta.startDate, meta.endDate,
 			meta.timeZone, meta.dayCount, meta.dataState, meta.currentCoverage, meta.pricingVersion, snapshotId,
 		)

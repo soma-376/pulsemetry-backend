@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.devseed
 
 import tools.jackson.databind.JsonNode
+import org.junit.jupiter.api.TestInstance
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
@@ -12,6 +13,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class SeedScenarioTest {
     @Test fun `SSO 시드에는 비밀번호와 사전 연결한 subject가 없다`() {
         for (name in SCENARIOS) {
@@ -26,9 +28,25 @@ class SeedScenarioTest {
     private val b = scenario("B", date)
     private val c = scenario("C", date)
 
+    @Test fun `A는 열 팀과 활성 101명 및 초대 6명을 기존 신원과 함께 제공한다`() {
+        val teams = a.rows.getValue("enrollment.teams")
+        assertEquals(listOf("플랫폼팀", "제품팀", "데이터팀", "디자인팀", "프론트엔드팀", "백엔드팀", "보안팀", "AI팀", "SRE팀", "QA팀"), teams.map { it["name"] })
+        val members = a.rows.getValue("enrollment.members")
+        assertEquals(107, members.size)
+        assertEquals(101, members.count { it["status"] == "active" })
+        assertEquals(setOf(12, 13, 50, 51, 52, 53).map { id("A/member/$it") }.toSet(), members.filter { it["status"] == "invited" }.map { it["id"] }.toSet())
+        val currentMemberships = a.rows.getValue("enrollment.team_memberships").filter { it["left_at"] == null }
+        assertEquals(teams.map { it["id"] }.toSet(), currentMemberships.map { it["team_id"] }.toSet())
+        assertEquals(listOf(12, 12, 10, 8, 10, 12, 8, 10, 10, 8), teams.map { team -> currentMemberships.count { it["team_id"] == team["id"] } })
+        assertTrue(currentMemberships.groupingBy { it["member_id"] }.eachCount().values.all { it == 1 })
+        assertEquals(53, members.count { it["id"] in (54..106).map { index -> id("A/member/$index") } })
+        assertTrue((14..49).all { index -> currentMemberships.single { it["member_id"] == id("A/member/$index") }["team_id"] == id("A/team/${(index - 14) % 10}") })
+        assertTrue((0..13).all { index -> members.single { it["id"] == id("A/member/$index") }["email"] == "${when (index) { 0 -> "owner"; 1 -> "admin"; else -> "member$index" }}@seed-a.example.test" })
+    }
+
     @Test fun `A만 정책과 벤더 선택을 갖춘 온보딩 완료 조직이다`() {
         val completedAt = a.rows.getValue("enrollment.tenants").single()["onboarding_completed_at"]
-        assertEquals("2026-07-29T15:00:00Z", completedAt)
+        assertEquals(date.minusDays(184).atStartOfDay(seoul).toInstant().toString(), completedAt)
         val onboarding = a.rows.getValue("enrollment.organization_onboarding").single()
         assertEquals(completedAt, onboarding["policy_confirmed_at"])
         assertEquals(id("A/member/0"), onboarding["completed_by"])
@@ -67,25 +85,38 @@ class SeedScenarioTest {
         for (observed in listOf(claude, openai)) {
             assertEquals("partial", observed.path("observation").asString())
             assertTrue(observed.path("firstSeenAt").asString() < observed.path("lastSeenAt").asString())
-            assertTrue(observed.path("lastSeenAt").asString() < "2026-09-27T15:00:00Z")
-            assertTrue(observed.path("activeUsers7d").asInt() in 1..8 && observed.path("activeUsers30d").asInt() in observed.path("activeUsers7d").asInt()..8)
+            assertTrue(Instant.parse(observed.path("lastSeenAt").asString()) < aSnapshotTime(date))
+            assertTrue(observed.path("activeUsers7d").asInt() in 1..97 && observed.path("activeUsers30d").asInt() in observed.path("activeUsers7d").asInt()..97)
+            // 벤더 고정 창은 선택 기간 사용량과 달리 전날까지다. 당일 데이터가 생겨도 API 계약을 유지한다.
+            for (days in listOf(7L, 30L)) {
+                val end = date.atStartOfDay(seoul).toInstant()
+                val start = date.minusDays(days).atStartOfDay(seoul).toInstant()
+                val expected = a.events.filter {
+                    OBSERVED_PRODUCTS[it["product"]] == observed.path("kind").asString() &&
+                        Instant.parse(it["source_time"].toString()).let { time -> time >= start && time < end }
+                }.map { it["member_id"] }.distinct().size
+                assertEquals(expected, observed.path("activeUsers${days}d").asInt())
+            }
         }
         for (unmapped in listOf(cursor, copilot)) {
             assertEquals("unobserved", unmapped.path("observation").asString())
             assertTrue(listOf("activeUsers7d", "activeUsers30d", "firstSeenAt", "lastSeenAt").all { unmapped.path(it).isNull })
         }
-        assertEquals(8, fixture.path("usage").path("activeUsers").asInt())
-        // 판 2를 주 설치 2~8이 적용했고 9~11은 판 1에 머물며 두 번째 설치는 확인된 판이 없다.
+        assertEquals(97, fixture.path("usage").path("activeUsers").asInt())
+        assertEquals(date.minusDays(27).toString(), fixture.path("usage").path("startDate").asString())
+        assertEquals(date.toString(), fixture.path("usage").path("endDate").asString())
+        assertEquals(a.summary()["period_events"], fixture.path("usage").path("eventCount").asInt())
+        // 신규 설치도 적용/미적용 상태를 섞고 두 번째 설치는 확인된 판이 없다.
         assertEquals(2, fixture.path("policyRollout").path("desiredVersion").asInt())
-        assertEquals(7, fixture.path("policyRollout").path("applied").asInt())
-        assertEquals(11, fixture.path("policyRollout").path("eligible").asInt())
+        assertEquals(78, fixture.path("policyRollout").path("applied").asInt())
+        assertEquals(100, fixture.path("policyRollout").path("eligible").asInt())
         assertEquals(1, fixture.path("policyRollout").path("unknown").asInt())
-        assertEquals(3, fixture.path("policyRollout").path("outdated").asInt())
+        assertEquals(21, fixture.path("policyRollout").path("outdated").asInt())
         assertEquals(2, fixture.path("onboarding").path("policy").path("version").asInt())
         val notifiable = fixture.path("installations").toList().filter { it.path("canNotify").asBoolean() }.map { it.path("installationId").asString() }
-        assertEquals((9..11).map { id("A/installation/$it") } + id("A/installation/2/secondary"), notifiable)
+        assertEquals(((9..11).toList() + ((14..49).toList() + (54..106)).filter { it % 5 == 0 }).map { id("A/installation/$it") } + id("A/installation/2/secondary"), notifiable)
         val reported = fixture.path("installations").toList().associate { it.path("installationId").asString() to it.path("lastHeartbeatAt") }
-        assertTrue((2..11).all { reported.getValue(id("A/installation/$it")).asString() == "2026-09-27T15:00:00Z" })
+        assertTrue(A_ACTIVE_MEMBER_INDICES.filter { it >= 2 }.all { reported.getValue(id("A/installation/$it")).asString() == "2026-09-28T09:00:00Z" })
         assertTrue(reported.getValue(id("A/installation/2/secondary")).isNull)
         val serialized = encode(fixture)
         for (secret in listOf("password_hash", "development_password", "code_hash", "invitation_codes", "client_secret")) {
@@ -139,10 +170,32 @@ class SeedScenarioTest {
 
     @Test fun `양 도구를 쓰는 구성원은 조직에서 한 명이다`() {
         assertTrue((a.summary()["period_events"] as Int) > 1000)
-        assertEquals(8, a.summary()["period_active_users"])
+        assertEquals(97, a.summary()["period_active_users"])
         val both = a.events.filter { it["member_id"] == id("A/member/2") }
         assertEquals(setOf("claude_code", "codex"), both.map { it["product"] }.toSet())
         assertEquals(2, a.events.map { it["semantics_profile"] }.distinct().size)
+    }
+
+    @Test fun `180일 이력에서도 현재와 이전 요약은 각각 28일이다`() {
+        val previousStart = date.minusDays(55).atStartOfDay(seoul).toInstant()
+        val currentStart = date.minusDays(27).atStartOfDay(seoul).toInstant()
+        val previous = a.events.filter { Instant.parse(it["source_time"].toString()) in previousStart..<currentStart }
+        assertTrue(a.events.any { Instant.parse(it["source_time"].toString()) < previousStart })
+        assertEquals(previous.size, a.summary()["previous_period_events"])
+        assertEquals(98, a.summary()["previous_period_active_users"])
+        assertEquals(97, a.summary()["period_active_users"])
+        assertTrue((a.summary()["period_events"] as Int) + previous.size < a.events.size)
+    }
+
+    @Test fun `스트리밍 지문은 기존 JSON 해시와 같고 A 이외의 데이터 판을 바꾸지 않는다`() {
+        assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", hash("abc"))
+        for (data in listOf(b, c, scenario("D", date), scenario("E", date))) {
+            val legacy = listOf(2, data.scenario, data.asOf.toString(), data.rows, data.events, data.ledger)
+            assertEquals(hash(encode(legacy)), data.fingerprint)
+        }
+        assertEquals(hash(encode(listOf("한글", null, BigDecimal("1.200")))), fingerprintOf(listOf("한글", null, BigDecimal("1.200"))))
+        assertEquals(date.minusDays(60).atStartOfDay(seoul).toInstant().toString(), c.rows.getValue("enrollment.tenants").single()["created_at"])
+        assertEquals(date.minusDays(45).atStartOfDay(seoul).toInstant().toString(), c.rows.getValue("enrollment.installations").first()["created_at"])
     }
 
     @Test fun `팩트의 팀은 이벤트 시점의 소속과 일치한다`() {
@@ -175,7 +228,9 @@ class SeedScenarioTest {
     @Test fun `수신 주소만 바꾸면 지문은 동일하다 — 업무 데이터 변경은 다른 지문이다`() {
         for (day in listOf("2026-09-28", "2026-10-01")) for (name in SCENARIOS) {
             val original = scenario(name, LocalDate.parse(day))
-            assertEquals(original.fingerprint, scenario(name, LocalDate.parse(day), "http://localhost:24316").fingerprint, "$day $name")
+            val relocated = scenario(name, LocalDate.parse(day), "http://localhost:24316")
+            assertEquals(original.fingerprint, relocated.fingerprint, "$day $name")
+            assertEquals("http://localhost:24316", relocated.summary()["otlp_endpoint"], "$day $name")
             val rows = LinkedHashMap(original.rows)
             rows["enrollment.members"] = original.rows.getValue("enrollment.members").map { row ->
                 LinkedHashMap(row).apply { put("display_name", "변경한 이름") }
@@ -254,9 +309,9 @@ class SeedScenarioTest {
 
     @Test fun `초대는 대기 만료 사용됨 상태가 있다`() {
         val invitations = a.rows.getValue("enrollment.invitations")
-        assertEquals(11, invitations.count { it["used_at"] != null })
-        assertEquals(2, invitations.count { it["used_at"] == null })
-        assertEquals(setOf("pending", "expired"), a.invitationCodes.keys)
+        assertEquals(100, invitations.count { it["used_at"] != null })
+        assertEquals(6, invitations.count { it["used_at"] == null })
+        assertEquals(setOf("pending", "expired", "pending50", "expired51", "pending52", "expired53"), a.invitationCodes.keys)
         assertTrue(a.invitationCodes.values.all { Regex("^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$").matches(it) })
     }
 
@@ -294,15 +349,15 @@ class SeedScenarioTest {
             assertTrue(data.ledger.all { it["installation_id"] in installations })
         }
         val activeMembers = a.rows.getValue("enrollment.members").filter { it["status"] == "active" }
-        assertEquals(12, activeMembers.size)
+        assertEquals(101, activeMembers.size)
         val assignedMembers = a.rows.getValue("enrollment.team_memberships").filter { it["left_at"] == null }.map { it["member_id"] }.toSet()
         assertEquals(listOf(id("A/member/9")), activeMembers.filter { it["id"] !in assignedMembers }.map { it["id"] })
     }
 
     @Test fun `A의 두 번째 설치는 동일 구성원이며 수신과 적용 이력을 꾸미지 않는다`() {
         val installations = a.rows.getValue("enrollment.installations")
-        assertEquals(11, installations.size)
-        assertEquals(10, installations.map { it["member_id"] }.distinct().size)
+        assertEquals(100, installations.size)
+        assertEquals(99, installations.map { it["member_id"] }.distinct().size)
         assertEquals(setOf("windows", "macos", "linux"), installations.map { it["platform"] }.toSet())
         val secondary = installations.single { it["id"] == id("A/installation/2/secondary") }
         assertEquals(id("A/member/2"), secondary["member_id"])
@@ -317,11 +372,11 @@ class SeedScenarioTest {
         val installations = a.rows.getValue("enrollment.installations").associateBy { it["id"] }
         val heartbeats = a.rows.getValue("enrollment.installation_heartbeats")
         val segments = a.rows.getValue("enrollment.installation_collection_segments")
-        val primaries = (2 until 12).map { id("A/installation/$it") }
+        val primaries = A_ACTIVE_MEMBER_INDICES.filter { it >= 2 }.map { id("A/installation/$it") }
         assertEquals(primaries, heartbeats.map { it["installation_id"] })
         assertEquals(primaries, segments.map { it["installation_id"] })
-        // 기준 시각은 기준일의 서울 자정이다.
-        val reportedAt = "2026-09-27T15:00:00Z"
+        // 기준 시각은 기준일의 서울 18시다. 당일 수신도 보고보다 앞선다.
+        val reportedAt = "2026-09-28T09:00:00Z"
         for (report in heartbeats) {
             val installation = installations.getValue(report["installation_id"])
             assertEquals(reportedAt, report["received_at"])
@@ -334,8 +389,8 @@ class SeedScenarioTest {
             assertEquals(receipts.size, report["delivered"])
             assertEquals(receipts.max(), report["last_delivered_at"])
             assertTrue(Instant.parse(report["last_delivered_at"].toString()) <= Instant.parse(reportedAt))
-            // 적용한 판은 그 설치가 적용을 확인받은 가장 높은 판이다 — 2~8은 판 2, 9~11은 판 1.
-            val adopted = report["installation_id"] in (2..8).map { id("A/installation/$it") }
+            // 적용한 판은 그 설치가 적용을 확인받은 가장 높은 판이다.
+            val adopted = report["installation_id"] in ((2..8).toList() + ((14..49).toList() + (54..106)).filter { it % 5 != 0 }).map { id("A/installation/$it") }
             assertEquals(if (adopted) 2 else 1, report["applied_config_revision"])
             assertEquals(id(if (adopted) "A/manifest/2" else "A/manifest"), report["applied_manifest_id"])
             assertEquals(installation["architecture"], report["architecture"])
@@ -345,7 +400,7 @@ class SeedScenarioTest {
             val segment = segments.single { it["installation_id"] == report["installation_id"] }
             assertEquals(listOf(report["run_id"], installation["created_at"], reportedAt, 0), listOf(segment["run_id"], segment["from_at"], segment["to_at"], segment["lost"]))
         }
-        assertEquals(10, heartbeats.map { it["run_id"] }.distinct().size)
+        assertEquals(99, heartbeats.map { it["run_id"] }.distinct().size)
         assertTrue(heartbeats.all { Regex("[0-9a-f]{32}").matches(it["run_id"].toString()) })
         // 두 번째 설치는 보고한 적이 없다. C는 설치 보고라는 근거가 없는 조직으로 남긴다(수집 상태 확인 불가).
         assertNull(installations.getValue(id("A/installation/2/secondary"))["last_seen_at"])
@@ -358,7 +413,7 @@ class SeedScenarioTest {
     @Test fun `A는 일주일 전 정책을 바꿨고 설치 일부만 새 판 적용을 보고했다`() {
         val manifests = a.rows.getValue("enrollment.manifests").sortedBy { it["version"] as Int }
         assertEquals(listOf(1 to false, 2 to true), manifests.map { it["version"] to it["is_active"] })
-        assertEquals(listOf("2026-07-29T15:00:00Z", "2026-09-20T15:00:00Z"), manifests.map { it["activated_at"] })
+        assertEquals(listOf(date.minusDays(184).atStartOfDay(seoul).toInstant().toString(), "2026-09-20T15:00:00Z"), manifests.map { it["activated_at"] })
         val (v1, v2) = manifests.map { json.readTree(it["manifest"].toString()) }
         // 바뀐 것은 판 번호와 도구 세부 수집뿐이다. 사용량 시그널과 원문(프롬프트·응답) 선택은 그대로다.
         assertEquals(listOf(1, 2), listOf(v1, v2).map { it.path("config_revision").asInt() })
@@ -369,7 +424,7 @@ class SeedScenarioTest {
         assertEquals(listOf(false, false), listOf(v2.at("/privacy/collect_user_prompts"), v2.at("/privacy/collect_assistant_responses")).map { it.asBoolean() })
         // 새 판의 적용 확인은 적용한 설치에만 있다. 두 번째 설치는 새 판으로 등록했으나 적용을 보고하지 않았다.
         val onV2 = a.rows.getValue("enrollment.installation_manifest_assignments").filter { it["manifest_id"] == id("A/manifest/2") }
-        assertEquals((2..8).map { id("A/installation/$it") }, onV2.filter { it["applied_at"] != null }.map { it["installation_id"] })
+        assertEquals(((2..8).toList() + ((14..49).toList() + (54..106)).filter { it % 5 != 0 }).map { id("A/installation/$it") }, onV2.filter { it["applied_at"] != null }.map { it["installation_id"] })
         assertEquals(listOf(id("A/installation/2/secondary")), onV2.filter { it["applied_at"] == null }.map { it["installation_id"] })
         assertTrue(onV2.filter { it["applied_at"] != null }.all { it["applied_at"].toString() >= "2026-09-20T15:00:00Z" })
         // C는 판 하나만 있다.
@@ -420,7 +475,7 @@ class SeedScenarioTest {
 
     @Test fun `A는 제품이 섞인 팀과 한 제품만 쓰는 팀을 모두 갖는다`() {
         // 팀별 제품 집계(대시보드 ADR 0045)가 섞인 팀·단일 제품 팀을 모두 보여 줄 수 있어야 한다. 최근 28일 기준.
-        val start = date.minusDays(28).atStartOfDay(seoul).toInstant().toString()
+        val start = date.minusDays(27).atStartOfDay(seoul).toInstant().toString()
         val byTeam = a.events.filter { it["source_time"].toString() >= start && it["team_id_as_of"] != null }
             .groupBy { it["team_id_as_of"] }.mapValues { (_, rows) -> rows.map { it["product"] }.toSet() }
         assertTrue(byTeam.values.any { it == setOf("claude_code", "codex") })

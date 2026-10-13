@@ -41,6 +41,19 @@ class CompletenessTest {
 	): Boolean = day in Completeness.completeDates(listOf(day), seoul, Completeness.Evidence(installations.toList(), policies, deletedBefore), at, settle)
 
 	@Test
+	fun detailedReasonsPreserveTheCompletenessBoundary() {
+		fun reasons(evidence: Completeness.Evidence, at: Instant = asOf) = Completeness.assess(listOf(day), seoul, evidence, at, settle).getValue(day)
+		val valid = Completeness.Evidence(listOf(installation()), alwaysLogs, null)
+		assertThat(reasons(valid)).isEmpty()
+		assertThat(reasons(valid, settled.minusNanos(1))).containsExactly("period_pending")
+		assertThat(reasons(valid, settled)).isEmpty()
+		assertThat(reasons(valid.copy(installations = listOf(installation(lossless = arrayOf()))))).containsExactly("collection_gap")
+		assertThat(reasons(valid.copy(installations = emptyList()))).containsExactly("no_eligible_installations")
+		assertThat(reasons(valid.copy(policies = emptyList(), deletedBefore = end))).containsExactly("retention_deleted", "usage_collection_disabled")
+		assertThat(reasons(valid.copy(installations = listOf(installation(revokedAt = end))))).contains("installation_revoked")
+	}
+
+	@Test
 	@DisplayName("모든 설치가 등록부터 확정 시각까지 손실 없이 덮였으면 완전하다")
 	fun covered() {
 		assertThat(complete(installation(), installation())).isTrue()

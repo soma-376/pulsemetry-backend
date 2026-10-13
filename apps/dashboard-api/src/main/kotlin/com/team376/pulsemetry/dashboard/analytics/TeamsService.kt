@@ -82,14 +82,10 @@ class TeamsService(
 		} else null
 
 		return TeamsResponse(
-			meta = frames.analyticsMeta(frame),
+			meta = TeamMeta.of(frames.analyticsMeta(frame)),
 			comparison = frames.comparison(frame),
-			ingest = frames.ingest(frame),
 			attributionBasis = ATTRIBUTION_BASIS,
-			totals = OverviewResponse.UsagePair(
-				current = if (frame.empty) null else Usage.of(data.organization, frame.pricingMixed, frame.currentComplete),
-				previous = data.previousOrganization?.let { Usage.of(it, frame.pricingMixed, frame.previousComplete) },
-			),
+			totals = TeamScreenValues.metrics(frame, data.organization, data.previousOrganization),
 			sort = sort.wire,
 			teams = Page(items.map { data.analytics(TeamKey.Team(UUID.fromString(it))) }, ranked.size, next),
 			unassigned = data.analytics(TeamKey.Unassigned),
@@ -101,7 +97,7 @@ class TeamsService(
 		val frame = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId)
 		val data = TeamData.load(frame, aggregator, references)
 		data.requireKnown(key)
-		return TeamDetailResponse(frames.analyticsMeta(frame), frames.comparison(frame), data.analytics(key))
+		return TeamDetailResponse(TeamMeta.of(frames.analyticsMeta(frame)), frames.comparison(frame), data.analytics(key))
 	}
 
 	fun users(
@@ -142,23 +138,21 @@ class TeamsService(
 			TeamUser(
 				memberId = memberId,
 				account = accounts[UUID.fromString(memberId)] ?: memberId,
-				usage = Usage.of(totals, pricingMixed),
+				usage = TeamScreenValues.user(frame, totals),
 				mainModel = mainModel(memberModels, memberId, pricingMixed),
-				cache = CacheUsage(totals.tokens(totals.cacheRead), totals.cacheEligibleInput(), totals.cacheHitRatio()),
+				cacheHitRatio = TeamScreenValues.cache(frame, totals),
 				lastUsedAt = totals.lastSourceTime?.toString(),
 			)
 		}
 		val unidentified = members[listOf(null)]
 		return TeamUsersResponse(
-			meta = frames.analyticsMeta(frame),
+			meta = TeamMeta.of(frames.analyticsMeta(frame)),
 			team = teamRef(key, directory),
 			summary = TeamUsersSummary(
 				// 완전한 기간이면 사용이 없는 팀도 0 이다 — 팀 상세와 같은 기준이다.
-				usage = if (frame.empty || (!team.hasUsage && !frame.currentComplete)) null else Usage.of(team, pricingMixed, frame.currentComplete),
+				usage = TeamScreenValues.summary(frame, team),
 				averageEquivalentCostUsd = average(identified.map { it.second }, pricingMixed)?.let(Money::format),
-				cacheReadTokens = team.tokens(team.cacheRead),
-				cacheEligibleInputTokens = team.cacheEligibleInput(),
-				cacheHitRatio = team.cacheHitRatio(),
+				cacheHitRatio = TeamScreenValues.cache(frame, team),
 				unidentifiedEquivalentCostUsd = unidentified?.equivalentCost(pricingMixed)?.let(Money::format),
 			),
 			users = Page(users, ranked.size, next),
@@ -226,33 +220,26 @@ class TeamsService(
 			val totals = current[listOf(id)] ?: UsageTotals.EMPTY
 			val ref = teamRef(key, directory)
 			val models = teamModels.filterKeys { it[0] == id }
-				.map { (k, v) -> modelUsage(k[1]!!, v, pricingMixed) }
+				.map { (k, v) -> TeamScreenValues.model(frame, k[1]!!, v) }
 				.sortedWith(COST_THEN_ID)
 			// 누적 세션(대시보드 명세 "팀 누적 세션"): 시작일부터 그날까지 모든 날이 완전하고 세션 없는 행이 없을 때만 값이다 — 한 번 끊기면 그 뒤로는 없다.
 			var sessions = 0L
-			var cumulative = true
+			val cumulativeReasons = linkedSetOf<String>()
 			return TeamAnalytics(
 				teamId = ref.teamId,
 				teamName = ref.teamName,
-				current = if (frame.empty || (!totals.hasUsage && !frame.currentComplete)) null else Usage.of(totals, pricingMixed, frame.currentComplete),
-				previous = if (!frame.comparable) null else (previous[listOf(id)] ?: UsageTotals.EMPTY).let { prior ->
-					if (!prior.hasUsage && !frame.previousComplete) null else Usage.of(prior, pricingMixed, frame.previousComplete)
-				},
+				metrics = TeamScreenValues.metrics(frame, totals, if (frame.comparable) previous[listOf(id)] ?: UsageTotals.EMPTY else null),
 				modelMix = section(models) { TeamModelMix.of(models) },
 				trend = frame.period.current.dates().map { date ->
 					val day = teamDays[listOf(id, date.toString())] ?: UsageTotals.EMPTY
 					val observation = frame.observation(date)
-					// 완전한 날에 사용이 없으면 0, 미관측이면 값이 없다.
-					val usage = if (observation == AnalyticsFrames.UNOBSERVED) null else Usage.of(day, pricingMixed, observation == Coverage.COMPLETE)
-					cumulative = cumulative && observation == Coverage.COMPLETE && day.sessionlessRows == 0L
+					if (observation != Coverage.COMPLETE) {
+						cumulativeReasons.add("cumulative_period_incomplete")
+						cumulativeReasons.addAll(frame.dateReasons(date))
+					}
+					if (day.sessionlessRows > 0) cumulativeReasons.add("session_identity_missing")
 					sessions += firstSessions[id to date.toString()] ?: 0
-					TeamTrendPoint(
-						date = date.toString(),
-						observation = observation,
-						equivalentCostUsd = usage?.equivalentCostUsd,
-						totalTokens = usage?.tokens?.total,
-						cumulativeSessionCount = if (cumulative) sessions else null,
-					)
+					TeamScreenValues.point(frame, date, day, if (cumulativeReasons.isEmpty()) sessions else null, cumulativeReasons.toList())
 				},
 				products = Products.usages(teamProducts.filterKeys { it[0] == id }.mapKeys { it.key[1] ?: UsageAggregator.UNMAPPED_PRODUCT }, products, pricingMixed),
 			)
@@ -265,14 +252,14 @@ class TeamsService(
 		fun modelScatter(): Section<ModelScatter> {
 			val scatter = models.map { (key, totals) ->
 				val modelId = key.single()!!
-				val usage = modelUsage(modelId, totals, pricingMixed)
-				ScatterModel(usage.modelId, usage.displayName, usage.equivalentCostUsd, usage.totalTokens, usingTeamCount(modelId))
+				val usage = TeamScreenValues.model(frame, modelId, totals)
+				TeamScreenValues.scatter(usage, usingTeamCount(modelId))
 			}.sortedWith(compareBy<ScatterModel, BigDecimal?>(nullsLast(reverseOrder())) { it.equivalentCostUsd?.let(::BigDecimal) }.thenBy { it.modelId })
 			if (scatter.isEmpty()) return Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null)
-			val complete = scatter.all { it.equivalentCostUsd != null && it.totalTokens != null && it.usingTeamCount != null }
+			val complete = scatter.all { it.status == "complete" }
 			return Section(
 				if (complete) Availability.AVAILABLE else Availability.PARTIAL,
-				if (complete) null else Availability.SOURCE_NOT_AVAILABLE,
+				if (complete) null else scatter.flatMap { it.reasons }.firstOrNull() ?: Availability.SOURCE_NOT_AVAILABLE,
 				ModelScatter(COST_SHARE_THRESHOLD, scatter),
 			)
 		}
@@ -296,7 +283,7 @@ class TeamsService(
 				fun totals(axis: Axis, side: Side = Side.CURRENT) = if (empty) emptyMap() else aggregator.totals(snapshot, side, axis, products = products)
 				return TeamData(
 					frame = frame,
-					organization = aggregator.totals(snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()),
+					organization = if (empty) UsageTotals.EMPTY else aggregator.totals(snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()),
 					previousOrganization = if (frame.comparable) aggregator.totals(snapshot, Side.PREVIOUS, Axis.ORGANIZATION).getValue(emptyList()) else null,
 					current = totals(Axis.TEAM),
 					previous = if (frame.comparable) totals(Axis.TEAM, Side.PREVIOUS) else emptyMap(),
@@ -329,18 +316,11 @@ class TeamsService(
 			is TeamKey.Team -> TeamRef(key.id.toString(), directory[key.id.toString()]?.name ?: key.id.toString())
 		}
 
-		fun modelUsage(modelId: String, totals: UsageTotals, pricingMixed: Boolean) = TeamModelUsage(
-			modelId = modelId,
-			displayName = ModelNames.displayName(modelId),
-			equivalentCostUsd = totals.equivalentCost(pricingMixed)?.let(Money::format),
-			totalTokens = totals.apiTotal(),
-		)
-
 		/** 모델이 없으면 unavailable(data 없음), 값 일부가 없으면 partial, 전부 있으면 available. */
 		fun <T> section(models: List<TeamModelUsage>, data: () -> T): Section<T> = when {
 			models.isEmpty() -> Section(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, null)
-			models.all { it.equivalentCostUsd != null && it.totalTokens != null } -> Section(Availability.AVAILABLE, null, data())
-			else -> Section(Availability.PARTIAL, Availability.SOURCE_NOT_AVAILABLE, data())
+			models.all { it.status == "complete" } -> Section(Availability.AVAILABLE, null, data())
+			else -> Section(Availability.PARTIAL, models.flatMap { it.reasons }.firstOrNull() ?: Availability.SOURCE_NOT_AVAILABLE, data())
 		}
 	}
 }

@@ -30,9 +30,10 @@ internal fun frontendFixture(data: SeedData): Row {
         "id" to plan.id, "displayName" to plan.displayName, "billing" to plan.billing,
         "separateUsageBilling" to plan.separateUsageBilling,
     ) } }
-    // 벤더 관측 지표는 API 와 같은 규칙이다(ADR 0044): 명시 매핑으로 잇는 관측만, 기준 시각(기준일 0시) 전, 최근 7·30일은 기준일 전날까지.
+    // 벤더 최초/최근 관측은 기준일 18시 합성 스냅샷까지다. 7·30일 사용자는 API 계약대로 전날까지의 완결 날짜 창이다(ADR 0044).
     // 이 fixture 는 수집 구간 근거로 완전성을 판정하지 않는다 — 관측이 있으면 partial 이고 창에서 센 0 은 null 이다.
-    val asOf = data.asOf.atStartOfDay(seoul).toInstant()
+    val asOf = aSnapshotTime(data.asOf)
+    val todayStart = data.asOf.atStartOfDay(seoul).toInstant()
     val observedRows = data.events.filter { it["record_status"] == "active" && it["signal"] == "log" && Instant.parse(it.getValue("source_time").toString()) < asOf }
         .groupBy { OBSERVED_PRODUCTS[it["product"]] }
     fun observation(kind: Any?): Map<String, Any?> {
@@ -43,7 +44,7 @@ internal fun frontendFixture(data: SeedData): Row {
         val times = observed.map { Instant.parse(it.getValue("source_time").toString()) }
         fun users(days: Long) = observed.filter {
             val time = Instant.parse(it.getValue("source_time").toString())
-            time >= data.asOf.minusDays(days).atStartOfDay(seoul).toInstant() && time < asOf
+            time >= data.asOf.minusDays(days).atStartOfDay(seoul).toInstant() && time < todayStart
         }.mapNotNull { it["member_id"] }.distinct().size.takeIf { it > 0 }
         return mapOf("activeUsers7d" to users(7), "activeUsers30d" to users(30), "firstSeenAt" to times.min().toString(),
             "lastSeenAt" to times.max().toString(), "observation" to "partial")
@@ -83,8 +84,8 @@ internal fun frontendFixture(data: SeedData): Row {
     }
     val applied = installations.count { (it["appliedPolicyVersion"] as? Long)?.let { version -> version >= desiredVersion } == true }
     val unknown = installations.count { it["appliedPolicyVersion"] == null }
-    val start = data.asOf.minusDays(28).atStartOfDay(seoul).toInstant().toString()
-    val recent = data.events.filter { it.getValue("source_time").toString() >= start }
+    val start = data.asOf.minusDays(27).atStartOfDay(seoul).toInstant()
+    val recent = data.events.filter { Instant.parse(it.getValue("source_time").toString()).let { time -> time >= start && time < asOf } }
     return linkedMapOf(
         "fixtureVersion" to 1, "asOf" to data.asOf.toString(), "synthetic" to true,
         "organization" to mapOf("organizationId" to data.tenantId, "name" to tenant["name"], "timezone" to "Asia/Seoul"),
@@ -100,8 +101,9 @@ internal fun frontendFixture(data: SeedData): Row {
             "selectedVendorCount" to vendors.size, "canComplete" to true, "nextStep" to "complete"),
         "policyRollout" to mapOf("desiredVersion" to desiredVersion, "eligible" to installations.size, "applied" to applied,
             "outdated" to installations.size - applied - unknown, "unknown" to unknown),
-        "usage" to mapOf("startDate" to data.asOf.minusDays(28).toString(), "endDate" to data.asOf.minusDays(1).toString(),
+        "usage" to mapOf("startDate" to data.asOf.minusDays(27).toString(), "endDate" to data.asOf.toString(),
             "activeUsers" to recent.map { it["member_id"] }.distinct().size, "eventCount" to recent.size,
+            "models" to recent.mapNotNull { it["model"] as? String }.distinct().sorted(),
             "byProduct" to recent.groupBy { it["product"] }.mapValues { (_, events) -> mapOf("activeUsers" to events.map { it["member_id"] }.distinct().size) }),
         // 현재 규칙의 저장값만 제공한다. 미저장 제품 규칙은 꺼짐·판 0이다(허브 ADR 0008).
         "alertRules" to (rows("organization_alert_rules").map { mapOf("ruleId" to it["rule_id"], "enabled" to it["enabled"], "version" to it["version"]) } +

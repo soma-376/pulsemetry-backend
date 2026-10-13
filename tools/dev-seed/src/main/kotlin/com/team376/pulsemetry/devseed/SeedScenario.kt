@@ -1,12 +1,16 @@
 package com.team376.pulsemetry.devseed
 
 import tools.jackson.databind.json.JsonMapper
+import tools.jackson.databind.node.ObjectNode
+import java.io.OutputStream
 import java.math.BigDecimal
 import java.net.URI
+import java.security.DigestOutputStream
 import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.UUID
+import java.util.HexFormat
 
 typealias Row = Map<String, Any?>
 
@@ -14,7 +18,13 @@ internal val json = JsonMapper.builder().build()
 internal val seoul: ZoneId = ZoneId.of("Asia/Seoul")
 internal fun encode(value: Any?): String = json.writeValueAsString(value)
 internal fun id(name: String): String = UUID.nameUUIDFromBytes("pulsemetry/dev-seed/v1/$name".toByteArray()).toString()
-internal fun hash(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+internal fun hash(value: String): String = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.toByteArray()))
+/** 전체 시드의 JSON 문자열을 메모리에 복제하지 않고 기존 UTF-8 직렬화와 같은 지문을 만든다. */
+internal fun fingerprintOf(value: Any?): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    DigestOutputStream(OutputStream.nullOutputStream(), digest).use { json.writeValue(it, value) }
+    return HexFormat.of().formatHex(digest.digest())
+}
 internal fun sql(value: Any?): String = when (value) {
     null -> "NULL"
     is Boolean -> if (value) "TRUE" else "FALSE"
@@ -22,9 +32,36 @@ internal fun sql(value: Any?): String = when (value) {
     else -> "'" + value.toString().replace("'", "''") + "'"
 }
 
-/** 시드 조직. A·B·C 가 기본 초기화 대상이고 D·E 는 파괴적 E2E 용 빈 조직이다(명시해야 만든다). */
+/** 기본 시드는 A·B다. 예외 데이터 C와 파괴적 E2E용 D·E는 명시해야 만든다. */
 internal val SCENARIOS = listOf("A", "B", "C", "D", "E")
 internal const val SCENARIO_CHOICES = "A,B,C,D,E"
+internal const val DEFAULT_SCENARIOS = "A,B"
+
+// 기존 사람·팀 UUID와 초대 상태는 보존하고 신규 활성 인원은 54번부터 더한다.
+internal val A_TEAM_NAMES = listOf("플랫폼팀", "제품팀", "데이터팀", "디자인팀", "프론트엔드팀", "백엔드팀", "보안팀", "AI팀", "SRE팀", "QA팀")
+internal val A_TEAM_TARGET_MEMBERS = listOf(12, 12, 10, 8, 10, 12, 8, 10, 10, 8)
+internal val A_INVITED_MEMBER_INDICES = listOf(12, 13, 50, 51, 52, 53)
+private val aExistingActiveMembers = (0..11).toList() + (14..49).toList()
+private fun aExistingTeamIndex(index: Int): Int? = when (index) {
+    0, 1 -> 0
+    2 -> 1
+    9 -> null
+    in 3..11 -> (index - 2) % 4
+    in 14..49 -> (index - 14) % A_TEAM_NAMES.size
+    else -> null
+}
+private val aAddedMemberTeams = buildMap {
+    var index = 54
+    A_TEAM_TARGET_MEMBERS.forEachIndexed { team, target ->
+        repeat(target - aExistingActiveMembers.count { aExistingTeamIndex(it) == team }) { put(index++, team) }
+    }
+}
+internal val A_ACTIVE_MEMBER_INDICES = aExistingActiveMembers + aAddedMemberTeams.keys
+internal val A_USAGE_MEMBER_INDICES = A_ACTIVE_MEMBER_INDICES.filter { it !in setOf(0, 1, 10, 11) }
+/** 현재 소속이다. member2의 과거 소속은 별도 membership의 유효 기간으로 판정한다. */
+internal fun aTeamIndex(index: Int): Int? = aAddedMemberTeams[index] ?: aExistingTeamIndex(index)
+/** 기준일 당일 업무 시간까지 담은 재현 가능한 합성 스냅샷 시각이다. */
+internal fun aSnapshotTime(asOf: LocalDate) = asOf.atTime(18, 0).atZone(seoul).toInstant()
 
 /** 시드 manifest 의 OTLP 수신 주소 기본값 — 개발 Compose 의 ingest(4316). */
 const val DEFAULT_OTLP_ENDPOINT = "http://localhost:4316"
@@ -57,12 +94,15 @@ data class SeedData(
 ) {
     val tenantId = id(scenario)
     /** 업무 시드와 SSO 컬럼을 합친 판 2. 과거 판의 지문을 같다고 간주하거나 자동 초기화하지 않는다. */
-    val fingerprint: String get() = defaultEndpointFingerprint ?: hash(encode(listOf(2, scenario, asOf.toString(), rows, events, ledger)))
+    val fingerprint: String get() = defaultEndpointFingerprint ?: fingerprintOf(listOf(2, scenario, asOf.toString(), rows, events, ledger))
 
     fun summary(): Row {
-        val start = asOf.minusDays(28).atStartOfDay(seoul).toInstant().toString()
-        val current = events.filter { it.getValue("source_time").toString() >= start }
-        val previous = events.filter { it.getValue("source_time").toString() < start }
+        val exclusiveEnd = if (scenario == "A") asOf.plusDays(1) else asOf
+        val start = exclusiveEnd.minusDays(28).atStartOfDay(seoul).toInstant().toString()
+        val end = exclusiveEnd.atStartOfDay(seoul).toInstant().toString()
+        val previousStart = exclusiveEnd.minusDays(56).atStartOfDay(seoul).toInstant().toString()
+        val current = events.filter { it.getValue("source_time").toString().let { time -> time >= start && time < end } }
+        val previous = events.filter { it.getValue("source_time").toString().let { time -> time >= previousStart && time < start } }
         return linkedMapOf("scenario" to scenario, "tenant_id" to tenantId, "as_of" to asOf.toString(),
             "members" to rows.getValue("enrollment.members").size, "events" to events.size,
             "receipts" to ledger.size, "sessions" to events.mapNotNull { it["session_id"] }.distinct().size,
@@ -83,8 +123,17 @@ data class SeedData(
 fun scenario(name: String, asOf: LocalDate, otlpEndpoint: String = DEFAULT_OTLP_ENDPOINT): SeedData {
     require(name in SCENARIOS) { "시나리오는 $SCENARIO_CHOICES 중 선택하세요." }
     val data = generate(name, asOf, otlpEndpoint)
-    return if (otlpEndpoint == DEFAULT_OTLP_ENDPOINT) data
-    else data.copy(otlpEndpoint = otlpEndpoint, defaultEndpointFingerprint = generate(name, asOf, DEFAULT_OTLP_ENDPOINT).fingerprint)
+    if (otlpEndpoint == DEFAULT_OTLP_ENDPOINT) return data
+    // 주소만 제외하려고 180일 관측을 한 벌 더 생성하지 않는다. manifest의 주소만 원래 표기로 돌려 지문을 낸다.
+    val canonicalRows = LinkedHashMap(data.rows)
+    data.rows["enrollment.manifests"]?.let { manifests ->
+        canonicalRows["enrollment.manifests"] = manifests.map { row ->
+            val manifest = json.readTree(row.getValue("manifest").toString())
+            (manifest.path("otlp") as ObjectNode).put("endpoint", DEFAULT_OTLP_ENDPOINT)
+            row + ("manifest" to encode(manifest))
+        }.toMutableList()
+    }
+    return data.copy(otlpEndpoint = otlpEndpoint, defaultEndpointFingerprint = data.copy(rows = canonicalRows).fingerprint)
 }
 
 private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedData {
@@ -93,9 +142,9 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
     if (name == "E") return enrollmentOrganization(asOf, otlpEndpoint)
     val base = asOf.atStartOfDay(seoul)
     fun at(days: Long, hours: Long = 0) = base.plusDays(days).plusHours(hours).toInstant().toString()
-    val origin = at(-60)
-    // A의 56일 사용 기록은 설치 이후에만 생성한다. C의 기존 시나리오는 유지한다.
-    val installedAt = at(if (name == "A") -58 else -45)
+    val origin = at(if (name == "A") -A_USAGE_DAYS.toLong() - 4 else -60)
+    // 조직·소속·정책과 설치를 A의 180일 사용 기록보다 먼저 만든다. C의 기존 시점은 유지한다.
+    val installedAt = at(if (name == "A") -A_USAGE_DAYS.toLong() - 2 else -45)
     val tenant = id(name)
     val rows = linkedMapOf<String, MutableList<Row>>()
     val events = mutableListOf<Row>()
@@ -111,24 +160,27 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
     add("enrollment.tenants", "id" to tenant, "name" to "시드 $name · ${mapOf("A" to "정상 사용", "C" to "예외 데이터").getValue(name)}",
         "slug" to "pulsemetry-seed-${name.lowercase()}", "timezone" to "Asia/Seoul", "status" to "active", "created_at" to origin, "updated_at" to origin)
     if (name == "A") rows.getValue("enrollment.tenants").replaceAll { it + ("onboarding_completed_at" to origin) }
-    val count = mapOf("A" to 12, "C" to 8).getValue(name)
-    repeat(count + if (name == "A") 2 else 0) { index ->
+    val activeIndices = if (name == "A") A_ACTIVE_MEMBER_INDICES else (0..7).toList()
+    val invitedIndices = if (name == "A") A_INVITED_MEMBER_INDICES else emptyList()
+    val installedIndices = activeIndices.filter { it >= 2 }
+    (activeIndices + invitedIndices).sorted().forEach { index ->
         val local = when (index) { 0 -> "owner"; 1 -> "admin"; else -> "member$index" }
         add("enrollment.members", "id" to member(index), "tenant_id" to tenant, "email" to "$local@seed-${name.lowercase()}.example.test",
             "display_name" to "$name 구성원 %02d".format(index), "role" to when(index) { 0 -> "owner"; 1 -> "admin"; else -> "member" },
-            "status" to if (index >= count) "invited" else "active",
+            "status" to if (index in invitedIndices) "invited" else "active",
             "oidc_subject" to null,
             "created_at" to origin, "updated_at" to origin)
     }
-    repeat(if (name == "A") 4 else 1) { index ->
-        add("enrollment.teams", "id" to team(index), "tenant_id" to tenant, "name" to listOf("플랫폼", "제품", "데이터", "디자인")[index],
+    (if (name == "A") A_TEAM_NAMES else listOf("플랫폼")).forEachIndexed { index, teamName ->
+        add("enrollment.teams", "id" to team(index), "tenant_id" to tenant, "name" to teamName,
             "status" to "active", "created_at" to origin, "updated_at" to origin)
     }
     membership(0, 0); membership(1, 0)
     if (name == "A") {
         membership(2, 0, left = at(-14)); membership(2, 1, joined = at(-14))
         (3..11).filter { it != 9 }.forEach { membership(it, (it - 2) % 4) }
-    } else if (name == "C") (2 until count).forEach { membership(it, 0) }
+        activeIndices.filter { it >= 14 }.forEach { membership(it, requireNotNull(aTeamIndex(it))) }
+    } else if (name == "C") installedIndices.forEach { membership(it, 0) }
     val manifestId = id("$name/manifest")
     val privacy = listOf("user_prompts", "assistant_responses", "tool_details", "tool_content", "user_email", "raw_api_bodies").associate { "collect_$it" to false }
     fun manifest(revision: Int, privacy: Map<String, Boolean>) = linkedMapOf("schema_version" to 1, "config_revision" to revision,
@@ -140,7 +192,7 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
     // 보고해 적용·미적용·미확인이 모두 있다(ADR 0043). 적용 확인 행은 설치 보고가 만든 것처럼 적용한 판에만 있다.
     val policyChangedAt = at(-7)
     val activeManifestId = if (name == "A") id("$name/manifest/2") else manifestId
-    val adopters = 2..8
+    val adopters = installedIndices.filter { it in 2..8 || it >= 14 && it % 5 != 0 }
     if (name == "A") {
         add("enrollment.manifests", "id" to activeManifestId, "tenant_id" to tenant, "version" to 2,
             "manifest" to encode(manifest(2, privacy + ("collect_tool_details" to true))),
@@ -207,8 +259,11 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
         return invitationId to code
     }
     val codes = linkedMapOf<String, String>()
-    if (name == "A") listOf(12 to "pending", 13 to "expired").forEach { (index, state) -> codes[state] = invitation(index, state).second }
-    (2 until count).forEach { index ->
+    invitedIndices.forEach { index ->
+        val state = if (index % 2 == 0) "pending" else "expired"
+        codes[if (index < 14) state else "$state$index"] = invitation(index, state).second
+    }
+    installedIndices.forEach { index ->
         val platform = if (name == "A") listOf("windows", "macos", "linux")[index % 3] else "windows"
         add("enrollment.installations", "id" to installation(index), "tenant_id" to tenant, "member_id" to member(index),
             "invitation_id" to invitation(index, "used").first, "hostname" to "seed-${name.lowercase()}-$index",
@@ -218,7 +273,7 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
             "assigned_at" to installedAt, "applied_at" to installedAt)
         if (activeManifestId != manifestId && index in adopters) {
             add("enrollment.installation_manifest_assignments", "installation_id" to installation(index), "manifest_id" to activeManifestId,
-                "assigned_at" to at(-7, index.toLong()), "applied_at" to at(-7, index.toLong()))
+                "assigned_at" to at(-7, (index % 12 + 1).toLong()), "applied_at" to at(-7, (index % 12 + 1).toLong()))
         }
     }
     if (name == "A") {
@@ -246,7 +301,7 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
         val whenAt = at(day.toLong(), (10 + index % 5).toLong())
         val teamIndex = when { name == "C" -> 0; index == 9 -> null; index == 2 -> if (day < -14) 0 else 1; else -> (index - 2) % 4 }
         val claude = product == "claude_code"
-        val models = if (claude) listOf("claude-sonnet-4", "claude-opus-4", "claude-haiku-4") else listOf("gpt-5", "gpt-5-mini", "o3")
+        val models = seedModels.getValue(if (claude) "claude_code" else "codex").map { it.name }
         val input = 1000 + index * 50 + (day + 60) * 10
         val output = 100 + index * 5
         val cacheRead = 200
@@ -321,8 +376,8 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
         // 설치 보고(ADR 0040·0041). A의 주 설치는 등록한 뒤로 끊김·손실 없이 수집하다가 기준 시각에 마지막으로 보고했다.
         // 시드에는 살아 있는 데몬이 없으므로 조회 시점의 상태는 "보고가 끊긴 지 얼마나 됐는가"로 정해진다 — 정상이라고 꾸미지 않는다.
         // 두 번째 설치와 C에는 보고를 넣지 않는다(보고한 적 없는 설치 · 근거가 없는 조직).
-        val reportedAt = at(0)
-        (2 until count).forEach { index ->
+        val reportedAt = aSnapshotTime(asOf).toString()
+        installedIndices.forEach { index ->
             val receipts = ledger.filter { it["installation_id"] == installation(index) }.map { it["received_time"].toString() }
             val run = hash("$name/daemon-run/$index").take(32)
             add("enrollment.installation_heartbeats", "installation_id" to installation(index), "received_at" to reportedAt, "run_id" to run,
@@ -341,7 +396,7 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
     }
     add("telemetry_ops.tenant_ingest_summary", "tenant_id" to tenant, "first_received_at" to ledger.minOfOrNull { it["received_time"].toString() },
         "first_observed_at" to events.minOfOrNull { it["source_time"].toString() }, "last_received_at" to ledger.maxOfOrNull { it["received_time"].toString() },
-        "has_pre_ledger_history" to false, "updated_at" to at(0))
+        "has_pre_ledger_history" to false, "updated_at" to if (name == "A") aSnapshotTime(asOf).toString() else at(0))
     return SeedData(name, asOf, rows, events, ledger, codes, otlpEndpoint)
 }
 
@@ -351,7 +406,7 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
  *
  * - member4·member8 은 Claude 를 쓰는 사람, member10 은 설치는 있지만 Claude 사용이 없는 사람(수집 근거가 이어지면 유휴 후보),
  *   admin(member1)은 설치가 없는 사람(관측 부족이라 후보가 아니다), 외부 계정 하나는 구성원이 없다.
- * - 시드의 설치 보고는 기준일 0시에 끝난다 — 그 뒤의 날은 완전하지 않으므로 기준일이 지나면 후보는 모두 관측 부족으로 빠진다(정상이라고 꾸미지 않는다).
+ * - 시드의 설치 보고는 기준일 18시에 끝난다 — 당일과 그 뒤의 날은 완전하지 않으므로 후보의 관측 부족을 정상으로 꾸미지 않는다.
  */
 private fun seats(name: String, tenant: String, origin: String, add: (String, Array<out Pair<String, Any?>>) -> Unit, member: (Int) -> String) {
     fun row(table: String, vararg fields: Pair<String, Any?>) = add(table, fields)

@@ -199,24 +199,6 @@ type ReclaimPreview = {
 
 타입 표기는 HTTP JSON의 필드·null 여부를 나타낸다. 아래에 정의되지 않은 공통·연관 타입은 이 문서 끝의 링크로 연결한다.
 
-### SeatSummary
-
-[DTO 근거](../../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/analytics/MembersResponses.kt)
-
-<a id="schema-SeatSummary"></a>
-
-```ts
-type SeatSummary = {
-  contracted: number;
-  assigned: number;
-  unallocated: number;
-  activeInPeriod: number | null;
-  inactiveAssigned: number | null;
-  reclaimCandidates: number | null;
-  estimatedMonthlySavingsUsd: string | null;
-};
-```
-
 ### ReclaimCandidate
 
 [DTO 근거](../../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/analytics/MembersResponses.kt)

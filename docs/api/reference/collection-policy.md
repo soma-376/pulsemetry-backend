@@ -87,9 +87,9 @@ installation_manifest_assignments를 적용 완료로 변경하지 않는다(`ap
 | 설정의 판 | 값이 바뀔 때마다 1 오르는 판. 저장한 적 없으면 0. manifest 판(`collectionPolicy.version`)과 별개다 |
 
 
-- 설정의 `collectionPolicy.reclaimIdleDays`·`aggregateRetentionMonths`는 유효값이다. `version`·`effectiveAt`·`updatedBy`는 여전히 원문 선택이 실린 manifest의 것이다.
+- 설정의 `collectionPolicy.reclaimIdleDays`·`aggregateRetentionMonths`는 유효값이다. `version`은 원문 선택이 실린 manifest 판이고 `settingsVersion`과 별개다.
 - 구성원 화면의 `policy`(`idleDays`·`version`)와 회수 후보의 `idleDays`·`policy`는 유효 회수 기준과 **설정의 판**이다(고정 0이 아니다).
-- `rawContentRetentionDays`는 null이다. 원문 보존 기간의 원천(원본 아카이브의 수명)이 이 저장소에 없다.
+- 설정 조회에는 화면에 쓰지 않는 원문 보존 기간·저장자·저장 시각을 싣지 않는다. 정책 저장 응답은 기존 계약을 유지한다.
 - 집계 보존을 줄인 저장은 보존 정리 작업을 만든다(enrollment 명세 §13.2, ADR 0047). 진행은 아래 "작업 상태 조회"로 본다.
 
 
@@ -109,12 +109,7 @@ type CollectionPolicy = {
   collectRawContent: boolean;
   reclaimIdleDays: number;
   aggregateRetentionMonths: number | null;
-  rawContentRetentionDays: number | null;
-  effectiveAt: string;
-  updatedBy: string;
   settingsVersion: number;
-  settingsUpdatedAt: string | null;
-  settingsUpdatedBy: string | null;
   reclaimIdleDaysSource: string;
   options: PolicyOptions;
   cleanupOperationId: string | null;

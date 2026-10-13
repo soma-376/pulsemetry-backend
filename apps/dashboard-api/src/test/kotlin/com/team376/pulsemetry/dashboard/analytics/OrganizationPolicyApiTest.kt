@@ -82,7 +82,8 @@ class OrganizationPolicyApiTest : AbstractDashboardApiTest() {
 		val policy = ok(org.tenant, "/settings").path("collectionPolicy")
 		assertThat(policy.path("version").asLong()).isEqualTo(2)
 		assertThat(policy.path("reclaimIdleDaysSource").asString()).isEqualTo("default")
-		assertThat(listOf("aggregateRetentionMonths", "rawContentRetentionDays", "settingsUpdatedAt", "settingsUpdatedBy").map { policy.path(it).isNull }).containsOnly(true)
+		assertThat(policy.path("aggregateRetentionMonths").isNull).isTrue()
+		assertThat(listOf("rawContentRetentionDays", "settingsUpdatedAt", "settingsUpdatedBy").any(policy::has)).isFalse()
 		assertThat(policy.at("/options/reclaimIdleDays").toList().map { it.asInt() }).containsExactly(7, 14, 30, 60)
 		assertThat(policy.at("/options/aggregateRetentionMonths").toList().map { if (it.isNull) null else it.asInt() }).containsExactly(12, 24, 36, null)
 		assertThat(reclaimPolicies(org)).containsOnly(14 to 0L)
@@ -99,8 +100,8 @@ class OrganizationPolicyApiTest : AbstractDashboardApiTest() {
 		assertThat(policy.path("version").asLong()).isEqualTo(2)
 		assertThat(listOf(policy.path("reclaimIdleDays").asInt(), policy.path("aggregateRetentionMonths").asInt())).containsExactly(30, 24)
 		assertThat(policy.path("reclaimIdleDaysSource").asString()).isEqualTo("organization")
-		assertThat(Instant.parse(policy.path("settingsUpdatedAt").asString())).isEqualTo(at)
-		assertThat(policy.path("settingsUpdatedBy").asString()).isEqualTo(org.admin.toString())
+		// 저장자·시각은 설정 카드에서 쓰지 않아 응답에서 제외한다. 저장 판과 값은 그대로 제공한다.
+		assertThat(policy.has("settingsUpdatedAt") || policy.has("settingsUpdatedBy")).isFalse()
 		assertThat(reclaimPolicies(org)).containsOnly(30 to 5L)
 	}
 

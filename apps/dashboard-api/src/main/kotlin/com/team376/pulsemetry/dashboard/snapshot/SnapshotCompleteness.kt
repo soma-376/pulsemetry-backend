@@ -26,11 +26,17 @@ class SnapshotCompleteness(
 
 	/** [dates] 중 완전한 날짜를 계산해 [snapshotId] 에 고정하고 그 수를 돌려준다. */
 	fun fix(snapshotId: String, tenantId: UUID, dates: Collection<LocalDate>, zone: ZoneId, asOf: Instant, deletedBefore: Instant?): Int {
-		val complete = completeDates(tenantId, dates, zone, asOf, deletedBefore)
+		val assessment = assess(tenantId, dates, zone, asOf, deletedBefore)
+		val complete = assessment.filterValues { it.isEmpty() }.keys
 		for (date in complete) {
 			cache.sql("INSERT INTO dashboard_cache.snapshot_complete_days (snapshot_id, complete_date) VALUES (:snapshot, :date)")
 				.param("snapshot", snapshotId)
 				.param("date", date)
+				.update()
+		}
+		for ((date, reasons) in assessment.filterValues { it.isNotEmpty() }) {
+			cache.sql("INSERT INTO dashboard_cache.snapshot_incomplete_days (snapshot_id, observed_date, reasons) VALUES (:snapshot, :date, :reasons)")
+				.param("snapshot", snapshotId).param("date", date).param("reasons", reasons.joinToString(","))
 				.update()
 		}
 		return complete.size
@@ -38,11 +44,15 @@ class SnapshotCompleteness(
 
 	/** [dates] 중 완전한 날짜. 고정하지 않는다 — 설정의 벤더 관측(ADR 0044)처럼 결과를 따로 고정하는 호출자가 쓴다. */
 	fun completeDates(tenantId: UUID, dates: Collection<LocalDate>, zone: ZoneId, asOf: Instant, deletedBefore: Instant?): Set<LocalDate> {
-		if (dates.isEmpty()) return emptySet()
+		return assess(tenantId, dates, zone, asOf, deletedBefore).filterValues { it.isEmpty() }.keys
+	}
+
+	private fun assess(tenantId: UUID, dates: Collection<LocalDate>, zone: ZoneId, asOf: Instant, deletedBefore: Instant?): Map<LocalDate, List<String>> {
+		if (dates.isEmpty()) return emptyMap()
 		val from = dates.min().atStartOfDay(zone).toInstant()
 		val until = dates.max().plusDays(1).atStartOfDay(zone).toInstant().plus(settle)
 		val evidence = Completeness.Evidence(installations(tenantId, from, until), policies(tenantId), deletedBefore)
-		return Completeness.completeDates(dates, zone, evidence, asOf, settle)
+		return Completeness.assess(dates, zone, evidence, asOf, settle)
 	}
 
 	/** tenant 의 모든 설치(폐기된 것 포함)와 [from, until] 과 겹치는 손실 없는 구간. */

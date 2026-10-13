@@ -24,14 +24,8 @@ object JsonStructure {
 		"members-response.example.json" to mapOf(
 			"/reclaimCandidates/data/items/0" to setOf("vendorAccount", "reclaimMethod"),
 		),
-		// 관측됐지만 등록하지 않은 제품·매핑 없는 관측 — ADR 0044.
-		"settings-response.example.json" to mapOf(
-			"/summary" to setOf("detectedProducts", "unmappedObservations", "assignedSeats"),
-			// 등록 제품의 좌석 원천(권위·커넥터 설명·활성 연결) — ADR 0048.
-			"/vendors/items/0" to setOf("seatSource", "seats"),
-			// 정책 적용 판정의 근거별 수 — 대시보드 명세 "정책 적용 현황과 업데이트 안내".
-			"/policyRollout" to setOf("evidence"),
-		),
+		// 화면 전용 설정 계약은 예시에 현재 키를 전부 명시한다(허브 ADR 0019).
+		"settings-response.example.json" to emptyMap(),
 	)
 
 	fun example(name: String): JsonNode = JsonMapper.builder().build().readTree(Files.readString(Path.of("src/test/resources/frontend-api/$name")))

@@ -113,7 +113,7 @@ class TeamCumulativeSessionsApiTest : AbstractDashboardApiTest() {
 
 		// 마지막 날의 누적 = 그 기간의 팀 세션 수.
 		for (team in byTeam.values) {
-			assertThat(team.at("/trend").toList().last().path("cumulativeSessionCount").asLong()).isEqualTo(team.at("/current/sessionCount").asLong())
+			assertThat(team.at("/trend").toList().last().path("cumulativeSessionCount").asLong()).isEqualTo(team.at("/metrics/sessionCount/value").asLong())
 		}
 		JsonStructure.assertMatches("teams-response.example.json", list)
 	}
@@ -163,7 +163,7 @@ class TeamCumulativeSessionsApiTest : AbstractDashboardApiTest() {
 			"2026-09-11" to null, "2026-09-12" to null, "2026-09-13" to null,
 		))
 		// 기간 세션 수도 같은 이유로 없다.
-		assertThat(teamB.at("/current/sessionCount").isNull).isTrue()
+		assertThat(teamB.at("/metrics/sessionCount/value").isNull).isTrue()
 		assertThat(cumulative(byTeam.getValue(org.a.toString()))["2026-09-13"]).isEqualTo(5L)
 	}
 
@@ -178,7 +178,7 @@ class TeamCumulativeSessionsApiTest : AbstractDashboardApiTest() {
 			costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"))
 
 		val item = ok(tenant, "/analytics/teams?$week").at("/teams/items").single()
-		assertThat(item.at("/current/sessionCount").asLong()).isEqualTo(1)
+		assertThat(item.at("/metrics/sessionCount/value").asLong()).isEqualTo(1)
 		assertThat(cumulative(item).values.toSet()).containsExactly(null)
 	}
 }

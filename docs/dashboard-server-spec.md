@@ -39,8 +39,8 @@ HTTP 명세는 [페이지·기능별 API 문서](api/README.md)로 이전했다.
 
 ## 5. 운영과 로컬 실행
 
-개발 Compose의 `dev-seed`는 Spring 서버 없이 기존 원천 마이그레이션·A/B/C 시드와
-조회용/캐시용 DB 계정을 준비한다. `docker compose up -d --build` 후 시드 종료 코드 0을 확인한다.
+개발 Compose의 `dev-seed`는 Spring 서버 없이 기존 원천 마이그레이션·A/B 기본 시드와
+조회용/캐시용 DB 계정을 준비한다. C는 예외 회귀 검증에서 명시할 때만 생성한다(ADR 0059). `docker compose up -d --build` 후 시드 종료 코드 0을 확인한다.
 Compose가 인증 키를 `build/dev-auth`에 준비하며 서버 설정은 앱의 local 프로필이 제공한다.
 
 ```powershell

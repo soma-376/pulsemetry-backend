@@ -1,52 +1,39 @@
 {
   "meta": {
     "organizationId": "org_example",
-    "generatedAt": "2026-09-20T00:00:00Z",
-    "dataThrough": "2026-09-13T23:57:00Z",
-    "currency": "USD",
     "startDate": "2026-09-07",
     "endDate": "2026-09-13",
-    "timeZone": "Asia/Seoul",
-    "dayCount": 7,
-    "dataState": "ready",
-    "currentCoverage": {
-      "status": "complete",
-      "observedDays": 7
-    },
-    "pricingVersion": "example-rate-v1",
-    "snapshotId": "snapshot-members-example"
-  },
-  "asOf": "2026-09-20T00:00:00Z",
-  "ingest": {
-    "status": "healthy",
-    "reason": null,
-    "asOf": "2026-09-20T00:00:00Z",
-    "firstObservedAt": "2026-07-12T15:00:00Z",
-    "lastReceivedAt": "2026-09-19T23:57:00Z",
-    "windowMinutes": 15,
-    "activeInstallations": 3,
-    "observedMembers": 3,
-    "eligibleMembers": 3,
-    "coverageRatio": 1
+    "snapshotId": "snapshot-members-example",
+    "asOf": "2026-09-20T00:00:00Z"
   },
   "summary": {
     "rosterMembers": 3,
-    "activeUsers": 2,
+    "activeUsers": {
+      "value": 2,
+      "status": "partial",
+      "reasons": [
+        "current_period_incomplete"
+      ]
+    },
     "unassignedMembers": 1,
-    "periodUnassignedEquivalentCostUsd": "50.000000",
-    "periodTotalEquivalentCostUsd": "150.000000",
-    "seats": {
-      "availability": "available",
-      "reason": null,
-      "data": {
-        "contracted": 20,
-        "assigned": 3,
-        "unallocated": 17,
-        "activeInPeriod": 2,
-        "inactiveAssigned": 1,
-        "reclaimCandidates": 1,
-        "estimatedMonthlySavingsUsd": null
-      }
+    "periodUnassignedEquivalentCostUsd": {
+      "value": "50.000000",
+      "status": "partial",
+      "reasons": [
+        "current_period_incomplete"
+      ]
+    },
+    "periodUnassignedCostShare": {
+      "value": 0.3333333333333333,
+      "status": "partial",
+      "reasons": [
+        "current_period_incomplete"
+      ]
+    },
+    "reclaimCandidates": {
+      "value": 1,
+      "status": "complete",
+      "reasons": []
     }
   },
   "policy": {
@@ -73,19 +60,22 @@
         "status": "active",
         "version": 2,
         "periodUsage": {
-          "activeUsers": 1,
-          "sessionCount": 20,
-          "tokens": {
-            "inputUncached": 1000000,
-            "output": 400000,
-            "cacheRead": 500000,
-            "cacheWrite": 100000,
-            "total": 2000000
+          "equivalentCostUsd": {
+            "value": "100.000000",
+            "status": "partial",
+            "reasons": [
+              "current_period_incomplete"
+            ]
           },
-          "equivalentCostUsd": "100.000000"
+          "sessionCount": {
+            "value": 20,
+            "status": "partial",
+            "reasons": [
+              "current_period_incomplete"
+            ]
+          }
         },
         "lastUsedAt": "2026-09-13T05:00:00Z",
-        "observation": "complete",
         "seatState": "assigned",
         "plannedVendorIds": []
       },
@@ -101,19 +91,22 @@
         "status": "active",
         "version": 2,
         "periodUsage": {
-          "activeUsers": 0,
-          "sessionCount": 0,
-          "tokens": {
-            "inputUncached": 0,
-            "output": 0,
-            "cacheRead": 0,
-            "cacheWrite": 0,
-            "total": 0
+          "equivalentCostUsd": {
+            "value": "0.000000",
+            "status": "partial",
+            "reasons": [
+              "current_period_incomplete"
+            ]
           },
-          "equivalentCostUsd": "0.000000"
+          "sessionCount": {
+            "value": 0,
+            "status": "partial",
+            "reasons": [
+              "current_period_incomplete"
+            ]
+          }
         },
         "lastUsedAt": "2026-09-01T00:00:00Z",
-        "observation": "complete",
         "seatState": "assigned",
         "plannedVendorIds": []
       },
@@ -129,19 +122,22 @@
         "status": "active",
         "version": 2,
         "periodUsage": {
-          "activeUsers": 1,
-          "sessionCount": 10,
-          "tokens": {
-            "inputUncached": 500000,
-            "output": 200000,
-            "cacheRead": 250000,
-            "cacheWrite": 50000,
-            "total": 1000000
+          "equivalentCostUsd": {
+            "value": "50.000000",
+            "status": "partial",
+            "reasons": [
+              "current_period_incomplete"
+            ]
           },
-          "equivalentCostUsd": "50.000000"
+          "sessionCount": {
+            "value": 10,
+            "status": "partial",
+            "reasons": [
+              "current_period_incomplete"
+            ]
+          }
         },
         "lastUsedAt": "2026-09-13T05:00:00Z",
-        "observation": "complete",
         "seatState": "assigned",
         "plannedVendorIds": []
       }
@@ -163,19 +159,22 @@
         "status": "active",
         "version": 2,
         "periodUsage": {
-          "activeUsers": 1,
-          "sessionCount": 10,
-          "tokens": {
-            "inputUncached": 500000,
-            "output": 200000,
-            "cacheRead": 250000,
-            "cacheWrite": 50000,
-            "total": 1000000
+          "equivalentCostUsd": {
+            "value": "50.000000",
+            "status": "partial",
+            "reasons": [
+              "current_period_incomplete"
+            ]
           },
-          "equivalentCostUsd": "50.000000"
+          "sessionCount": {
+            "value": 10,
+            "status": "partial",
+            "reasons": [
+              "current_period_incomplete"
+            ]
+          }
         },
         "lastUsedAt": "2026-09-13T05:00:00Z",
-        "observation": "complete",
         "seatState": "assigned",
         "plannedVendorIds": []
       }

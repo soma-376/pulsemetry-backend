@@ -12,9 +12,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDateTime
 import java.time.LocalDate
-import java.time.ZoneOffset
 
 /** 로컬 compose DB 전용. 연결 문자열을 운영 주소로 바꾸는 옵션은 제공하지 않는다. */
 class SeedStore private constructor(private val pg: Connection, private val clickHouseUrl: String) : AutoCloseable {
@@ -101,7 +99,9 @@ class SeedStore private constructor(private val pg: Connection, private val clic
             }
         }
         for ((table, rows) in listOf("telemetry_events" to data.events, "telemetry_ingest_ledger" to data.ledger)) {
-            if (rows.isNotEmpty()) clickHouse("INSERT INTO default.$table FORMAT JSONEachRow\n" + rows.joinToString("\n", transform = ::encode))
+            for (body in jsonEachRowBatches(rows.asSequence())) {
+                clickHouse("INSERT INTO default.$table FORMAT JSONEachRow\n$body")
+            }
         }
         verify(data)
         execute("UPDATE dev_seed.dashboard_datasets SET state='ready' WHERE tenant_id=$tenant")
@@ -135,22 +135,14 @@ class SeedStore private constructor(private val pg: Connection, private val clic
             check(scalar("SELECT count(*) FROM $table WHERE $predicate") == "1") { "${data.scenario}: $table 시드 행이 기대값과 다릅니다." }
         }
         for ((table, expected, identity) in listOf(Triple("telemetry_events", data.events, "observation_id"), Triple("telemetry_ingest_ledger", data.ledger, "receipt_id"))) {
-            val actual = chRows("SELECT * FROM default.$table FINAL WHERE tenant_id=$tenant").associateBy { it.path(identity).asString() }
-            check(actual.keys == expected.map { it.getValue(identity).toString() }.toSet()) { "$table 행 식별자가 다릅니다." }
-            for (row in expected) for ((key, value) in row) {
-                val observed = actual.getValue(row.getValue(identity).toString()).path(key)
-                val equal = when {
-                    value == null -> observed.isNull
-                    key in listOf("source_time", "received_time", "event_time", "observed_time", "end_time", "source_time_min", "source_time_max") -> {
-                        val actualTime = LocalDateTime.parse(observed.asString().replace(' ', 'T')).toInstant(ZoneOffset.UTC)
-                        actualTime == Instant.parse(value.toString())
-                    }
-                    value is Number -> observed.asString().toBigDecimal().compareTo(value.toString().toBigDecimal()) == 0
-                    else -> observed == json.valueToTree<JsonNode>(value)
-                }
-                check(equal) { "${data.scenario}: $table.$key 값이 다릅니다: $observed / $value" }
+            verifySeedAnalysisRows(data.scenario, table, expected, identity) { batch ->
+                val ids = batch.joinToString { sql(it.getValue(identity)) }
+                // 잘못된 같은 ID가 여러 정렬 키에 있어도 응답은 한 배치로 제한하고 건수 비교에서 거부한다.
+                chRows("SELECT * FROM default.$table FINAL WHERE tenant_id=$tenant AND $identity IN ($ids) LIMIT ${batch.size + 1}")
             }
-            check(clickHouse("SELECT count() FROM default.$table WHERE tenant_id=$tenant").toInt() == expected.size) { "${table}에 물리적 중복 적재가 있습니다." }
+            check(clickHouse("SELECT count() FROM default.$table WHERE tenant_id=$tenant").toLong() == expected.size.toLong()) {
+                "$table 행 수가 다르거나 물리적 중복 적재가 있습니다."
+            }
         }
         verifyTotals(data)
     }
@@ -185,17 +177,22 @@ class SeedStore private constructor(private val pg: Connection, private val clic
         if (scalar("SELECT tenant_id FROM dev_seed.dashboard_datasets WHERE tenant_id=$tenant") == null) return "실행 기록 없음 (삭제 없음)"
         val slug = scalar("SELECT slug FROM enrollment.tenants WHERE id=$tenant")
         check(slug == null || slug == "pulsemetry-seed-${scenario.lowercase()}") { "시드 조직 slug가 변경되어 중단합니다." }
-        execute("UPDATE dev_seed.dashboard_datasets SET state='resetting' WHERE tenant_id=$tenant")
-        for (row in chRows("SELECT database,table FROM system.columns WHERE name='tenant_id' AND database IN ('default','dashboard_cache')")) {
-            val database = identifier(row.path("database").asString())
-            val table = identifier(row.path("table").asString())
-            clickHouse("ALTER TABLE $database.$table DELETE WHERE tenant_id=$tenant SETTINGS mutations_sync=2")
-        }
+        // 저장하지 않는 intake·뷰도 tenant_id를 가진다. 모든 대상의 엔진·식별자를 먼저 검사하고 실제 저장 테이블만 지운다.
+        val clickHouseDeletes = clickHouseResetStatements(scenario, chRows("""
+            SELECT t.database, t.name AS table, t.engine
+            FROM system.tables AS t
+            INNER JOIN system.columns AS c ON t.database=c.database AND t.name=c.table
+            WHERE c.name='tenant_id' AND t.database IN ('default','dashboard_cache')
+            ORDER BY t.database,t.name
+        """.trimIndent()).map { SeedResetTable(it.path("database").asString(), it.path("table").asString(), it.path("engine").asString()) })
         val present = query("SELECT tablename FROM pg_tables WHERE schemaname='enrollment'").map { it[0]!! }.toSet()
         val scoped = query("SELECT table_schema,table_name FROM information_schema.columns WHERE column_name='tenant_id' AND table_schema IN ('telemetry_ops','dashboard_cache') ORDER BY table_name")
+        val postgresDeletes = scoped.map { (schema, table) -> "DELETE FROM ${identifier(schema!!)}.${identifier(table!!)} WHERE tenant_id=$tenant" } +
+            resetStatements(scenario, present)
+        execute("UPDATE dev_seed.dashboard_datasets SET state='resetting' WHERE tenant_id=$tenant")
+        clickHouseDeletes.forEach(::clickHouse)
         transaction {
-            for ((schema, table) in scoped) execute("DELETE FROM ${identifier(schema!!)}.${identifier(table!!)} WHERE tenant_id=$tenant")
-            resetStatements(scenario, present).forEach(::execute)
+            postgresDeletes.forEach(::execute)
             execute("DELETE FROM dev_seed.dashboard_datasets WHERE tenant_id=$tenant")
         }
         return "해당 시드 조직 초기화 완료"
@@ -205,6 +202,35 @@ class SeedStore private constructor(private val pg: Connection, private val clic
 }
 
 private fun identifier(value: String): String { require(Regex("[a-z_][a-z0-9_]*").matches(value)); return value }
+
+internal data class SeedResetTable(val database: String, val table: String, val engine: String)
+
+/** 현재 소유 DDL의 저장 엔진과 비저장 입구만 지원한다. 알 수 없는 구조는 일부 삭제를 시작하기 전에 거부한다. */
+internal fun clickHouseResetStatements(scenario: String, tables: List<SeedResetTable>): List<String> {
+    require(scenario in SCENARIOS)
+    require(tables.map { it.database to it.table }.distinct().size == tables.size) { "ClickHouse 초기화 대상이 중복되었습니다." }
+    // dashboard-cache V1의 두 뷰는 TO로 아래 MergeTree 테이블에 쓴다. 자체 저장소를 가진 임의의 뷰는 건너뛰지 않는다.
+    val nonStoring = mapOf(
+        "dashboard_cache.snapshot_intake" to "Null",
+        "dashboard_cache.snapshot_intake_usage" to "MaterializedView",
+        "dashboard_cache.snapshot_intake_days" to "MaterializedView",
+    )
+    val tenant = sql(id(scenario))
+    return tables.mapNotNull { metadata ->
+        require(metadata.database in setOf("default", "dashboard_cache")) { "ClickHouse 초기화 범위 밖 데이터베이스입니다." }
+        val qualified = "${identifier(metadata.database)}.${identifier(metadata.table)}"
+        val expectedNonStoring = nonStoring[qualified]
+        if (expectedNonStoring != null) {
+            require(metadata.engine == expectedNonStoring) { "$qualified 엔진이 시드가 지원하는 비저장 구조와 다릅니다." }
+            null
+        } else {
+            require(metadata.engine in setOf("MergeTree", "ReplacingMergeTree")) {
+                "$qualified 엔진(${metadata.engine})은 시드 초기화가 지원하지 않습니다. 삭제 전에 구조를 확인하세요."
+            }
+            "ALTER TABLE $qualified DELETE WHERE tenant_id=$tenant SETTINGS mutations_sync=2"
+        }
+    }
+}
 
 internal fun resetStatements(scenario: String, present: Set<String>): List<String> {
     require(scenario in SCENARIOS)

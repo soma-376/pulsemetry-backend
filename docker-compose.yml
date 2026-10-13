@@ -1,5 +1,5 @@
 # 로컬 개발용 DB·메일 수신 컨테이너와 일회성 Kotlin 시드. Spring 서버는 호스트에서 Gradle로 실행한다.
-# dev-seed가 기존 마이그레이션과 A/B/C 시드를 준비한다(ADR 0032).
+# dev-seed가 기존 마이그레이션과 A/B 시드를 준비한다(ADR 0059). C는 명시할 때만 만든다.
 # 테스트는 이 컨테이너들을 쓰지 않는다 — Testcontainers 가 매번 격리된 인스턴스를 띄운다.
 services:
   postgres:
@@ -83,7 +83,7 @@ services:
       PULSEMETRY_DEV_SEED_MODE: compose
       # 빈 날짜는 서울 기준 오늘. 완료된 시드는 날짜가 달라져도 보존한다.
       PULSEMETRY_LOCAL_SEED_DATE: ${PULSEMETRY_LOCAL_SEED_DATE:-}
-      PULSEMETRY_LOCAL_SEED_SCENARIOS: ${PULSEMETRY_LOCAL_SEED_SCENARIOS:-A,B,C}
+      PULSEMETRY_LOCAL_SEED_SCENARIOS: ${PULSEMETRY_LOCAL_SEED_SCENARIOS:-A,B}
       # 시드 manifest 의 수신 주소. 비우면 http://localhost:4316. 지문에 들지 않는다(tools/dev-seed/README.md).
       PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT: ${PULSEMETRY_LOCAL_SEED_OTLP_ENDPOINT:-}
 

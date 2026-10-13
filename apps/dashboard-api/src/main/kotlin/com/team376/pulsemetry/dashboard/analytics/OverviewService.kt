@@ -1,312 +1,93 @@
 package com.team376.pulsemetry.dashboard.analytics
 
-import com.team376.pulsemetry.dashboard.alert.AlertService
+import com.team376.pulsemetry.dashboard.analytics.OverviewResponse.*
+import com.team376.pulsemetry.dashboard.analytics.OverviewValues.Values
+import com.team376.pulsemetry.dashboard.analytics.OverviewValues.value
+import com.team376.pulsemetry.dashboard.analytics.OverviewValues.metric
+import com.team376.pulsemetry.dashboard.analytics.OverviewValues.ratio
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.Axis
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.Side
 import com.team376.pulsemetry.dashboard.organization.Organization
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
-import com.team376.pulsemetry.dashboard.request.QueryReader
-import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
-import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
+import com.team376.pulsemetry.dashboard.store.StoreUnavailableException
+import com.team376.pulsemetry.dashboard.store.StoreQueryRejectedException
 import org.slf4j.LoggerFactory
+import org.springframework.dao.DataAccessException
+import org.springframework.dao.DataAccessResourceFailureException
+import org.springframework.dao.TransientDataAccessException
+import org.springframework.dao.RecoverableDataAccessException
 import java.math.BigDecimal
-import java.math.MathContext
-import java.math.RoundingMode
-import java.time.LocalDate
 import java.util.UUID
 
-/**
- * 개요 응답을 만든다 (개요 명세). **요청마다 snapshot 을 새로 만들고**(ADR 0023 §4 — 요청 안에서 동기 build) 그 snapshot 하나에서 모든
- * section 을 계산한다. 개요는 snapshot ID 를 응답에 싣지 않는다.
- *
- * ## 상태 우선
- *
- * `dataState` 를 집계보다 먼저 정한다. 수신 이력도 요청 기간의 관측도 없으면 `never_observed`, 이력은 있으나 관측이 없으면 `no_data`,
- * 관측이 있으면 `partial`, 기간의 모든 날짜가 완전 관측이면 `ready` 다(ADR 0042). 앞의 둘이면 `usage.current = null`, 모델·상위 팀은
- * 빈 배열이고 팀 금액·사용자 수는 null 이다. 관측은 snapshot 에 고정한 source_time 일자다(ledger 의 수신 날짜가 아니다).
- * 완전한 기간·날짜에 사용이 없으면 null 이 아니라 0 이다 — 수집이 정상이고 사용만 없었다.
- *
- * ## 합계의 일관성
- *
- * 조직·일자·모델·팀 합계가 모두 같은 snapshot payload 의 [UsageAggregator] 에서 나온다. 금액이 모두 있으면 조직 금액 = 일자 합 = 모델 합
- * = 상위 3팀 + 나머지 팀 + 미배분이다. 어느 그룹의 금액이 없으면 그 그룹을 담는 합도 없다 — 부분합을 총액으로 올리지 않는다.
- *
- * `dataThrough` 는 현재 기간의 첫날부터 끊김 없이 이어진 완전한 날짜의 끝이다. ledger 의 최대 수신 시각은 그 값이 아니다.
- */
-class OverviewService(
-	private val frames: AnalyticsFrames,
-	private val aggregator: UsageAggregator,
-	private val references: SnapshotReferences,
-	private val seats: SeatService,
-	/** 알림 — 평가 기록의 미확인 수(ADR 0051). 조회 기간과 무관하다. */
-	private val alerts: AlertService,
-) {
-
-	private val log = LoggerFactory.getLogger(OverviewService::class.java)
-
-	fun overview(organization: Organization, requestedBy: UUID, period: ComparedPeriod): OverviewResponse {
-		// 개요는 snapshot ID 를 받지도 내지도 않는다 — 요청마다 새로 만든다.
-		val frame = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId = null)
-		val snapshot = frame.snapshot
-		val pricingMixed = frame.pricingMixed
-		val products = references.products(snapshot)
-
-		val organizationTotals = aggregator.totals(snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList())
-		val previousTotals = if (frame.comparable) aggregator.totals(snapshot, Side.PREVIOUS, Axis.ORGANIZATION).getValue(emptyList()) else null
-		logCounters(snapshot, organizationTotals)
-
-		return OverviewResponse(
-			meta = frames.meta(frame),
-			comparison = frames.comparison(frame),
-			ingest = frames.ingest(frame),
-			usage = OverviewResponse.UsagePair(
-				current = if (frame.empty) null else Usage.of(organizationTotals, pricingMixed, frame.currentComplete),
-				previous = previousTotals?.let { Usage.of(it, pricingMixed, frame.previousComplete) },
-			),
-			seats = seatsOf(frame, products),
-			alerts = alerts.overview(organization.id, frame.now),
-			trend = trendOf(frame),
-			modelMix = modelMixOf(snapshot, pricingMixed, frame.empty),
-			waste = WASTE,
-			teamUsage = teamUsageOf(snapshot, pricingMixed, frame, products),
-			productUsage = productUsageOf(snapshot, pricingMixed, frame, products),
-		)
-	}
-
-	/**
-	 * 좌석과 효율 (개요 요청서 "좌석과 효율", ADR 0048). 범위(`scopeVendorIds`)는 유효한 계약이 있고, 좌석 원장을 쓸 수 있고, 사용량을 그 제품에 잇는
-	 * 관측 제품 매핑이 있는 등록 제품이다 — 같은 벤더 범위의 환산가치와 좌석료를 비교하려면 셋 다 있어야 한다. 빠진 제품이 있으면 partial(첫 사유).
-	 * 좌석료 배분은 월 요금 × 기간 일수 / 30 인 추정(`estimated_30_day`)이다. 기간마다 그 기간 끝(기준 시각 이전)의 계약·원장으로 따로 계산한다.
-	 * 회수 추정(`reclaimEstimate`)은 회수 가능 조건(회수 실행)이 없어 null 이고, 회수 검토 수는 가산 필드 `reclaimCandidates` 다.
-	 */
-	private fun seatsOf(frame: AnalyticsFrames.Frame, mapping: List<SnapshotReferences.Product>): OverviewResponse.Seats {
-		val snapshot = frame.snapshot
-		val roster = references.roster(snapshot).filter { it.status in setOf("active", "suspended") }.map { it.id }.toSet()
-		val latest = seats.assess(frame.organization.id, snapshot.asOf, roster)
-		val contracted = latest.products.filter { it.product.contractStatus == ContractStatus.active && it.product.contract != null }
-		if (contracted.isEmpty()) return OverviewResponse.Seats(Availability.UNAVAILABLE, Availability.NOT_APPLICABLE, emptyList(), null, null, null, null, null)
-		val observable = latest.ledger.observableKinds
-		val scope = contracted.filter { it.availability != Availability.UNAVAILABLE && it.product.kind in observable }
-		val excluded = contracted - scope.toSet()
-		val reason = excluded.firstOrNull()?.let { it.reason ?: "product_unobservable" }
-		if (scope.isEmpty()) return OverviewResponse.Seats(Availability.UNAVAILABLE, reason, emptyList(), null, null, null, null, null)
-		val scopeIds = scope.map { it.product.vendorId }.sorted()
-		val current = seatPeriod(frame, Side.CURRENT, frame.period.current.dates(), roster, scopeIds, mapping, frame.currentComplete)
-		val previous = if (frame.comparable) frame.period.previous?.let { seatPeriod(frame, Side.PREVIOUS, it.dates(), roster, scopeIds, mapping, frame.previousComplete) } else null
-		if (current == null) return OverviewResponse.Seats(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, scopeIds, null, null, null, null, null)
-		val candidates = latest.candidates.count { it.seat.vendorId in scopeIds }.toLong().takeIf { latest.candidateSection().first != Availability.UNAVAILABLE }
-		return OverviewResponse.Seats(if (excluded.isEmpty()) Availability.AVAILABLE else Availability.PARTIAL, reason, scopeIds, ESTIMATED_30_DAY, current, previous, null, candidates)
-	}
-
-	/** 한 기간의 좌석 값. 계약 좌석·월 요금은 그 기간 끝의 계약, 활성 좌석은 그 기간에 그 제품을 쓴 보유 좌석이다. 금액을 모르면 null. */
-	private fun seatPeriod(frame: AnalyticsFrames.Frame, side: Side, dates: List<LocalDate>, roster: Set<UUID>, scopeIds: List<String>,
-		mapping: List<SnapshotReferences.Product>, complete: Boolean): OverviewResponse.SeatPeriod? {
-		val end = minOf(dates.max().plusDays(1).atStartOfDay(QueryReader.SEOUL).toInstant(), frame.snapshot.asOf)
-		val assessment = seats.assess(frame.organization.id, end, roster, withReviews = false)
-		val products = assessment.products.map { it.product }.filter { it.vendorId in scopeIds && it.contract != null &&
-			it.contractStatus == ContractStatus.active }
-		if (products.isEmpty()) return null
-		val held = assessment.held.filter { seat -> products.any { it.vendorId == seat.vendorId } }
-		val kindOf = products.associate { it.vendorId to it.kind }
-		val memberUsage = if (frame.empty || held.any { it.memberId == null }) null
-			else aggregator.totals(frame.snapshot, side, Axis.MEMBER_PRODUCT, products = mapping)
-		val productUsage = if (frame.empty) emptyMap() else aggregator.totals(frame.snapshot, side, Axis.PRODUCT, products = mapping)
-		val monthlyFee = products.map { it.contract!!.monthlySeatFeeUsd?.toBigDecimal() }.takeIf { fees -> fees.all { it != null } }?.sumOf { it!! } ?: return null
-		val equivalent = products.map { product ->
-			val totals = productUsage[listOf(product.kind)]
-			if (totals == null || !totals.hasUsage) BigDecimal.ZERO.takeIf { complete } else totals.equivalentCost(frame.pricingMixed)
-		}.takeIf { costs -> costs.all { it != null } }?.sumOf { it!! } ?: return null
-		val allocated = monthlyFee * BigDecimal(dates.size) / BigDecimal(30)
-		return OverviewResponse.SeatPeriod(
-			contractedSeats = products.sumOf { p -> p.contract!!.tiers.sumOf { it.seats } },
-			activeSeats = memberUsage?.let { usage -> held.count { usage[listOf(it.memberId.toString(), kindOf[it.vendorId])]?.hasUsage == true }.toLong() },
-			monthlyFeeUsd = Money.format(monthlyFee),
-			allocatedFeeUsd = Money.format(allocated.setScale(12, RoundingMode.HALF_UP)),
-			equivalentCostUsd = Money.format(equivalent),
-			efficiency = if (allocated.signum() == 0) null else equivalent.divide(allocated, MathContext.DECIMAL64).toDouble(),
-		)
-	}
-
-	private fun trendOf(frame: AnalyticsFrames.Frame): OverviewResponse.Trend {
-		val byDay = if (frame.empty) emptyMap() else aggregator.totals(frame.snapshot, Side.CURRENT, Axis.DAY)
-		val points = frame.period.current.dates().map { date ->
-			val totals = byDay[listOf(date.toString())] ?: UsageTotals.EMPTY
-			val observation = frame.observation(date)
-			// 완전한 날에 사용이 없으면 0, 미관측이면 값이 없다.
-			val day = if (observation == AnalyticsFrames.UNOBSERVED) null else Usage.of(totals, frame.pricingMixed, observation == Coverage.COMPLETE)
-			OverviewResponse.TrendPoint(
-				date = date.toString(),
-				observation = observation,
-				equivalentCostUsd = day?.equivalentCostUsd,
-				allocatedSeatCostUsd = null,
-				totalTokens = day?.tokens?.total,
-			)
-		}
-		return OverviewResponse.Trend(DAY_BUCKET, points)
-	}
-
-	private fun modelMixOf(snapshot: SnapshotManifestStore.Manifest, pricingMixed: Boolean, empty: Boolean): OverviewResponse.ModelMix {
-		if (empty) return OverviewResponse.ModelMix(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, emptyList())
-		val models = aggregator.totals(snapshot, Side.CURRENT, Axis.MODEL)
-			.map { (key, totals) ->
-				val modelId = key.single() ?: error("model_id 는 비어 있을 수 없다")
-				val cost = totals.equivalentCost(pricingMixed)
-				val tokens = totals.apiTotal()
-				OverviewResponse.ModelShare(
-					modelId = modelId,
-					displayName = ModelNames.displayName(modelId),
-					equivalentCostUsd = cost?.let(Money::format),
-					totalTokens = tokens,
-					effectiveCostPerMillionTokensUsd = Money.perMillion(cost, tokens)?.let(Money::format),
-				) to cost
-			}
-			.sortedWith(compareBy<Pair<OverviewResponse.ModelShare, BigDecimal?>, BigDecimal?>(nullsLast(reverseOrder())) { it.second }.thenBy { it.first.modelId })
-			.map { it.first }
-		val complete = models.all { it.equivalentCostUsd != null && it.totalTokens != null }
-		return when {
-			models.isEmpty() -> OverviewResponse.ModelMix(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, emptyList())
-			complete -> OverviewResponse.ModelMix(Availability.AVAILABLE, null, models)
-			else -> OverviewResponse.ModelMix(Availability.PARTIAL, Availability.SOURCE_NOT_AVAILABLE, models)
-		}
-	}
-
-	/** 카탈로그 제품별 사용(ADR 0045). 제품이 없으면 unavailable, 금액·토큰이 모두 있으면 available, 아니면 partial. */
-	private fun productUsageOf(
-		snapshot: SnapshotManifestStore.Manifest,
-		pricingMixed: Boolean,
-		frame: AnalyticsFrames.Frame,
-		mapping: List<SnapshotReferences.Product>,
-	): OverviewResponse.ProductUsageSection {
-		val totals = if (frame.empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.PRODUCT, products = mapping).mapKeys { it.key.single() ?: UsageAggregator.UNMAPPED_PRODUCT }
-		val products = Products.usages(totals, mapping, pricingMixed)
-		return when {
-			products.isEmpty() -> OverviewResponse.ProductUsageSection(Availability.UNAVAILABLE, Availability.SOURCE_NOT_AVAILABLE, emptyList())
-			products.all { it.equivalentCostUsd != null && it.totalTokens != null } -> OverviewResponse.ProductUsageSection(Availability.AVAILABLE, null, products)
-			else -> OverviewResponse.ProductUsageSection(Availability.PARTIAL, Availability.SOURCE_NOT_AVAILABLE, products)
-		}
-	}
-
-	private fun teamUsageOf(
-		snapshot: SnapshotManifestStore.Manifest,
-		pricingMixed: Boolean,
-		frame: AnalyticsFrames.Frame,
-		mapping: List<SnapshotReferences.Product>,
-	): OverviewResponse.TeamUsage {
-		val empty = frame.empty
-		val comparable = frame.comparable
-		val directory = references.teams(snapshot).associateBy { it.id.toString() }
-		val current = if (empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.TEAM)
-		val previous = if (comparable && !empty) aggregator.totals(snapshot, Side.PREVIOUS, Axis.TEAM) else emptyMap()
-		val teamModels = if (empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.TEAM_MODEL)
-		val teamProducts = if (empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.TEAM_PRODUCT, products = mapping)
-		fun productsOf(teamId: String?) = Products.refs(teamProducts.filter { it.key[0] == teamId && it.value.hasUsage }.map { it.key[1] ?: UsageAggregator.UNMAPPED_PRODUCT }, mapping)
-
-		val teams = current.filterKeys { it.single() != null }.map { (key, totals) -> key.single()!! to totals }
-		val ranked = teams.sortedWith(
-			compareBy<Pair<String, UsageTotals>, BigDecimal?>(nullsLast(reverseOrder())) { it.second.equivalentCost(pricingMixed) }.thenBy { it.first },
-		)
-		val top = ranked.take(TOP_TEAMS)
-		val topIds = top.map { it.first }.toSet()
-		val teamCount = (directory.values.filter { !it.archived }.map { it.id.toString() } + teams.map { it.first }).toSet().size
-
-		val topTeams = top.map { (teamId, totals) ->
-			OverviewResponse.TopTeam(
-				teamId = teamId,
-				teamName = directory[teamId]?.name ?: teamId,
-				current = TeamPeriod.of(totals, pricingMixed),
-				previous = if (comparable) TeamPeriod.of(previous[listOf(teamId)] ?: UsageTotals.EMPTY, pricingMixed, frame.previousComplete) else null,
-				topModel = topModelOf(teamId, totals, teamModels, pricingMixed),
-				products = productsOf(teamId),
-			)
-		}
-		val others = ranked.drop(TOP_TEAMS).map { it.second }
-		val previousOthers = previous.filterKeys { key -> key.single().let { it != null && it !in topIds } }.values
-		val unassigned = current[listOf(null)] ?: UsageTotals.EMPTY
-
-		val otherCount = teamCount - topTeams.size
-		val unassignedCurrent = TeamPeriod.of(unassigned, pricingMixed, frame.currentComplete)
-		val complete = !empty && topTeams.all { it.current.equivalentCostUsd != null } && unassignedCurrent.equivalentCostUsd != null &&
-			others.all { it.equivalentCost(pricingMixed) != null }
-		val (availability, reason) = when {
-			// 완전한 기간에 팀 사용이 없는 것은 "없음"이 아니라 0 이다.
-			empty || (teams.isEmpty() && !unassigned.hasUsage && !frame.currentComplete) -> Availability.UNAVAILABLE to Availability.SOURCE_NOT_AVAILABLE
-			complete -> Availability.AVAILABLE to null
-			else -> Availability.PARTIAL to Availability.SOURCE_NOT_AVAILABLE
-		}
-		return OverviewResponse.TeamUsage(
-			availability = availability,
-			reason = reason,
-			ranking = RANKING,
-			attributionBasis = ATTRIBUTION_BASIS,
-			totalTeamCount = teamCount,
-			topTeams = topTeams,
-			otherTeams = OverviewResponse.OtherTeams(
-				count = otherCount,
-				currentEquivalentCostUsd = sumOrNull(others, pricingMixed, frame.currentComplete && otherCount > 0)?.let(Money::format),
-				previousEquivalentCostUsd = if (comparable) sumOrNull(previousOthers, pricingMixed, frame.previousComplete && otherCount > 0)?.let(Money::format) else null,
-			),
-			unassigned = OverviewResponse.Unassigned(
-				current = unassignedCurrent,
-				previous = if (comparable) TeamPeriod.of(previous[listOf(null)] ?: UsageTotals.EMPTY, pricingMixed, frame.previousComplete) else null,
-				products = productsOf(null),
-			),
-		)
-	}
-
-	/** 팀 안에서 금액이 가장 큰 모델(동률은 모델 ID 오름차순). 팀 금액이 없거나 0 이면 비율을 낼 수 없어 없다. */
-	private fun topModelOf(
-		teamId: String,
-		team: UsageTotals,
-		teamModels: Map<List<String?>, UsageTotals>,
-		pricingMixed: Boolean,
-	): TopModel? {
-		val teamCost = team.equivalentCost(pricingMixed) ?: return null
-		val (modelId, cost) = teamModels.entries
-			.filter { it.key[0] == teamId }
-			.mapNotNull { entry -> entry.value.equivalentCost(pricingMixed)?.let { entry.key[1]!! to it } }
-			.sortedWith(compareByDescending<Pair<String, BigDecimal>> { it.second }.thenBy { it.first })
-			.firstOrNull() ?: return null
-		val share = Money.share(cost, teamCost) ?: return null
-		return TopModel(modelId, ModelNames.displayName(modelId), share)
-	}
-
-	/**
-	 * 그룹이 하나도 없거나 어느 그룹의 금액이 없으면 합도 없다 — 0 을 확정하지 않고 부분합을 올리지 않는다.
-	 * 단 [completeZero] 면(완전한 기간이고 대상 팀이 있다) 사용이 있는 그룹이 없다는 것은 실제 0 이다.
-	 */
-	private fun sumOrNull(groups: Collection<UsageTotals>, pricingMixed: Boolean, completeZero: Boolean = false): BigDecimal? {
-		if (groups.isEmpty()) return if (completeZero) BigDecimal.ZERO else null
-		val costs = groups.map { it.equivalentCost(pricingMixed) ?: return null }
-		return costs.fold(BigDecimal.ZERO, BigDecimal::add)
-	}
-
-	/** DTO 에 자리가 없는 진단값은 로그로만 남긴다 — 응답을 넓히지 않는다. */
-	private fun logCounters(snapshot: SnapshotManifestStore.Manifest, totals: UsageTotals) {
-		log.info(
-			"overview tenant={} snapshot={} usage_rows={} unidentified={} sessionless={} unverified={} unpriced={} multi_team={} pricing_versions={}",
-			snapshot.tenantId, snapshot.snapshotId, totals.usageRows, totals.unidentifiedRows, totals.sessionlessRows,
-			totals.unverifiedRows, totals.unpricedRows, totals.multiTeamRows, snapshot.pricingVersions,
-		)
-	}
-
-	companion object {
-		private const val DAY_BUCKET = "day"
-		private const val RANKING = "equivalentCostUsd_desc"
-		/** 사용 행의 source_time 당시 대표 팀(`team_id_as_of`)에 귀속한다 — 현재 팀 매핑이 아니다. */
-		private const val ATTRIBUTION_BASIS = "event_time"
-		private const val TOP_TEAMS = 3
-
-		/** 기존 화면의 월 요금 × 일수 / 30 — 배분 **추정액**이다(요청서). */
-		private const val ESTIMATED_30_DAY = "estimated_30_day"
-
-		private val WASTE = OverviewResponse.Waste(
-			availability = Availability.UNAVAILABLE,
-			reason = Availability.METHODOLOGY_NOT_AVAILABLE,
-			methodologyVersion = null,
-			totalMonthlyEquivalentCostUsd = null,
-			items = listOf("cache_miss", "retry_or_abort", "excessive_context").map {
-				OverviewResponse.WasteItem(it, Availability.UNAVAILABLE, Availability.METHODOLOGY_NOT_AVAILABLE, null, null, null, null, null, null)
-			},
-		)
-	}
+/** 한 snapshot에서 독립 집계를 읽는다. 공통 frame 실패는 HTTP 오류로 전파한다. */
+class OverviewService(private val frames: AnalyticsFrames, private val aggregator: UsageAggregator, private val references: SnapshotReferences) {
+ private val log = LoggerFactory.getLogger(OverviewService::class.java)
+ fun overview(organization: Organization, requestedBy: UUID, period: ComparedPeriod): OverviewResponse {
+  val f = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId = null)
+  val meta = frames.meta(f).let { Meta(it.organizationId, it.generatedAt, it.dataThrough, it.currency, it.startDate, it.endDate, it.timeZone, it.dayCount, it.dataState, it.currentCoverage) }
+  val comparison = Comparison(period.mode.wire, period.previous?.startDate?.toString(), period.previous?.endDate?.toString(), f.previousCoverage)
+  val errors = mutableListOf<SectionError>()
+  fun <T> section(name: String, read: () -> T): T? {
+   if (f.empty) return null
+   return try { read() } catch (e: StoreUnavailableException) {
+    log.warn("overview section={} snapshot={} unavailable", name, f.snapshot.snapshotId, e)
+    errors.add(SectionError(name, "source_unavailable", true)); null
+   } catch (e: StoreQueryRejectedException) {
+    log.error("overview section={} snapshot={} query rejected", name, f.snapshot.snapshotId, e)
+    errors.add(SectionError(name, "query_failed", false)); null
+   } catch (e: DataAccessException) {
+    // 팀 이름·제품 매핑은 같은 snapshot의 RDS 참조다. 일시 연결 장애만 해당 영역으로 제한한다.
+    if (e !is TransientDataAccessException && e !is RecoverableDataAccessException && e !is DataAccessResourceFailureException) throw e
+    log.warn("overview section={} snapshot={} reference unavailable", name, f.snapshot.snapshotId, e)
+    errors.add(SectionError(name, "source_unavailable", true)); null
+   }
+  }
+  val summary = section("summary") { summary(f) }
+  val trend = section("trend") { trend(f) }
+  val mix = section("modelMix") { modelMix(f) }
+  val teams = section("teamUsage") { teamUsage(f) }
+  return OverviewResponse(meta, comparison, summary, trend, mix, teams, errors)
+ }
+ private fun periodReasons(f: AnalyticsFrames.Frame) = f.periodReasons() + f.periodReasons(previous = true)
+ private fun count(f: AnalyticsFrames.Frame, now: Value<Long>, before: Value<Long>?) = metric(now, before, f.period.mode.wire, periodReasons(f), Long::toBigDecimal, BigDecimal::toLong)
+ private fun money(f: AnalyticsFrames.Frame, now: Value<String>, before: Value<String>?) = metric(now, before, f.period.mode.wire, periodReasons(f), String::toBigDecimal, Money::format)
+ private fun values(f: AnalyticsFrames.Frame, t: UsageTotals, previous: Boolean = false) = Values(t, if (previous) f.previousComplete else f.currentComplete, f.pricingMixed, if (previous) "previous_period_incomplete" else "current_period_incomplete", f.periodReasons(previous))
+ private fun summary(f: AnalyticsFrames.Frame): Summary {
+  val now = values(f, aggregator.totals(f.snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()))
+  val before = if (f.comparable) values(f, aggregator.totals(f.snapshot, Side.PREVIOUS, Axis.ORGANIZATION).getValue(emptyList()), true) else null
+  return Summary(count(f, now.users, before?.users), money(f, now.cost, before?.cost), count(f, now.sessions, before?.sessions),
+   money(f, now.perUser, before?.perUser), count(f, now.tokens, before?.tokens), now.sessionsPerUser, now.perSession)
+ }
+ private fun trend(f: AnalyticsFrames.Frame): Trend {
+  val days = aggregator.totals(f.snapshot, Side.CURRENT, Axis.DAY)
+  return Trend("day", f.period.current.dates().map { date ->
+   val observation = f.observation(date)
+   val v = Values(days[listOf(date.toString())] ?: UsageTotals.EMPTY, observation == "complete", f.pricingMixed, detailReasons = f.dateReasons(date))
+   TrendPoint(date.toString(), observation, if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.cost,
+    if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.tokens)
+  })
+ }
+ private fun modelMix(f: AnalyticsFrames.Frame): ModelMix {
+  val models = aggregator.totals(f.snapshot, Side.CURRENT, Axis.MODEL).map { (key,t) -> key.single()!! to values(f,t) }
+   .sortedWith(compareBy<Pair<String, Values>, BigDecimal?>(nullsLast(reverseOrder())) { it.second.cost.value?.toBigDecimal() }.thenBy { it.first })
+  val costs = models.map { it.second.cost }
+  val total = value(if (costs.any { it.value == null }) null else Money.format(costs.sumOf { it.value!!.toBigDecimal() }), costs.flatMap { it.reasons })
+  return ModelMix(models.map { (id,v) -> ModelShare(id, ModelNames.displayName(id), v.cost, v.tokens,
+   value(Money.perMillion(v.cost.value?.toBigDecimal(), v.tokens.value)?.let(Money::format), v.cost.reasons + v.tokens.reasons + if (v.tokens.value == 0L) listOf("zero_denominator") else emptyList()),
+   ratio(v.cost, total, String::toBigDecimal, String::toBigDecimal, BigDecimal::toDouble)) })
+ }
+ private fun teamUsage(f: AnalyticsFrames.Frame): TeamUsage {
+  val mapping = references.products(f.snapshot)
+  val directory = references.teams(f.snapshot).associateBy { it.id.toString() }
+  val current = aggregator.totals(f.snapshot, Side.CURRENT, Axis.TEAM)
+  val previous = if (f.comparable) aggregator.totals(f.snapshot, Side.PREVIOUS, Axis.TEAM) else emptyMap()
+  val products = aggregator.totals(f.snapshot, Side.CURRENT, Axis.TEAM_PRODUCT, products = mapping)
+  fun productsOf(id: String?) = Products.refs(products.filter { it.key[0] == id && it.value.hasUsage }.map { it.key[1] ?: UsageAggregator.UNMAPPED_PRODUCT }, mapping)
+  fun before(id: String?) = if (f.comparable) values(f, previous[listOf(id)] ?: UsageTotals.EMPTY, true).cost else null
+  val ranked = current.filterKeys { it.single() != null }.entries.sortedWith(compareBy<Map.Entry<List<String?>,UsageTotals>,BigDecimal?>(nullsLast(reverseOrder())) { it.value.equivalentCost(f.pricingMixed) }.thenBy { it.key.single() })
+  val teams = ranked.take(3).map { (key,t) -> val id = key.single()!!; val v = values(f,t)
+   TopTeam(id, directory[id]?.name ?: id, productsOf(id), v.users, money(f,v.cost,before(id))) }
+  val unassigned = current[listOf(null)]?.takeIf { it.hasUsage }?.let { val v = values(f,it); Unassigned(productsOf(null),v.users,money(f,v.cost,before(null))) }
+  return TeamUsage("event_time", (directory.values.filter { !it.archived }.map { it.id.toString() } + ranked.map { it.key.single()!! }).toSet().size, teams, unassigned)
+ }
 }

@@ -46,11 +46,10 @@ Authorization: Bearer <Pulsemetry access_token>
 ```ts
 // TeamsResponse
 {
-  meta: AnalyticsMeta;
+  meta: TeamMeta;
   comparison: Comparison;
-  ingest: Ingest;
   attributionBasis: string;
-  totals: UsagePair;
+  totals: TeamMetrics;
   sort: string;
   teams: Page<TeamAnalytics>;
   unassigned: TeamAnalytics;

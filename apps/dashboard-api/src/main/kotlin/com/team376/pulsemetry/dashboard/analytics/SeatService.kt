@@ -34,14 +34,23 @@ class SeatService(private val reader: SeatLedgerReader, private val policies: Or
 	 * 지난 [days] 일(기준 시각의 전날까지) 동안 그 제품을 쓴 보유 좌석 수 — 모든 보유 좌석이 구성원에 이어지고 관측 가능한 제품일 때만.
 	 * 창이 모두 완전하면 0 포함 정확한 수, 아니면 센 수가 있을 때만 그 수다(설정의 관측 인원과 같은 규칙, ADR 0044). 판정할 수 없으면 null.
 	 */
-	fun activeSeats(tenant: UUID, assessment: SeatAssessment, days: Int): Long? {
+	fun activeSeats(tenant: UUID, assessment: SeatAssessment, days: Int): Long? = activeSeatsValue(tenant, assessment, days).value
+
+	/** 같은 산출값에 원장 가용성과 관측 완전성의 사유를 붙여 설정 카드에 보낸다. */
+	fun activeSeatsValue(tenant: UUID, assessment: SeatAssessment, days: Int): OverviewResponse.Value<Long> {
 		val ledger = assessment.ledger
 		val kindOf = ledger.products.associate { it.vendorId to it.kind }
-		if (assessment.products.all { it.availability == Availability.UNAVAILABLE }) return null
-		if (assessment.held.any { it.memberId == null || kindOf[it.vendorId] !in ledger.observableKinds }) return null
+		val reasons = assessment.products.filter { it.availability != Availability.AVAILABLE }
+			.map { it.reason ?: "seat_source_unavailable" }.toMutableList()
+		if (assessment.products.all { it.availability == Availability.UNAVAILABLE })
+			return SettingsValues.value(null, reasons.ifEmpty { listOf("not_applicable") })
+		if (assessment.held.any { it.memberId == null }) reasons += "seat_unlinked"
+		if (assessment.held.any { kindOf[it.vendorId] !in ledger.observableKinds }) reasons += "product_unobservable"
+		if ("seat_unlinked" in reasons || "product_unobservable" in reasons) return SettingsValues.value(null, reasons)
 		val (used, complete) = reader.activity(tenant, ledger.asOf, days, ledger.mapping)
 		val count = assessment.held.count { (it.memberId!! to kindOf.getValue(it.vendorId)) in used }.toLong()
-		return if (complete || count > 0) count else null
+		if (!complete) reasons += "observation_incomplete"
+		return SettingsValues.value(count.takeIf { complete || it > 0 }, reasons)
 	}
 
 	fun roster(tenant: UUID, asOf: Instant) = reader.roster(tenant, asOf)
