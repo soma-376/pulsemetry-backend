@@ -1,8 +1,10 @@
-"""AWS 호출과 실제 대기 없이 워크플로의 이미지 승격·배포 함수를 검증한다."""
+"""AWS 호출과 실제 대기 없이 이미지 게시 설정·승격·배포 순서를 검증한다."""
 
 import json
 import os
 from pathlib import Path
+import shlex
+from itertools import combinations
 import subprocess
 import tempfile
 import textwrap
@@ -354,6 +356,227 @@ sleep() {
                 for value in [MISSING, *values]:
                     with self.subTest(rollout_state=rollout_state, path=path, value=value):
                         self.assert_rejected(changed_response(path, value, rollout_state))
+
+
+def workflow_step(name):
+    workflow = WORKFLOW.read_text()
+    start = workflow.index(f"      - name: {name}\n")
+    end = workflow.find("      - name: ", start + 1)
+    return workflow[start:end if end != -1 else len(workflow)]
+
+
+def step_script(name):
+    return textwrap.dedent(workflow_step(name).split("        run: |\n", 1)[1])
+
+
+class DeploymentWorkflowTest(unittest.TestCase):
+    CONFIG = "Verify required GitHub Secrets"
+    PREFLIGHT = "Verify all ECS services are active"
+    DEPLOY = "Deploy enrollment-api, then telemetry-ingest, then dashboard-api"
+    APPS = (("ENROLLMENT_API", "enrollment"), ("TELEMETRY_INGEST", "ingest"),
+            ("DASHBOARD_API", "dashboard"))
+    ENV = {
+        "AWS_REGION": "fixture-region", "IMAGE_TAG": "dev",
+        "AWS_DEPLOY_ROLE_ARN": "fixture-role", "ECS_CLUSTER": "fixture-cluster",
+        "ECR_REPO_ENROLLMENT_API": "fixture/enrollment",
+        "ECR_REPO_TELEMETRY_INGEST": "fixture/ingest",
+        "ECR_REPO_DASHBOARD_API": "fixture/dashboard",
+        "ECS_SERVICE_ENROLLMENT_API": "fixture-enrollment",
+        "ECS_SERVICE_TELEMETRY_INGEST": "fixture-ingest",
+        "ECS_SERVICE_DASHBOARD_API": "fixture-dashboard",
+        "ENROLLMENT_IMAGE_DIGEST": DIGEST, "INGEST_IMAGE_DIGEST": DIGEST,
+        "DASHBOARD_IMAGE_DIGEST": DIGEST,
+    }
+    # 실제 AWS 실행 파일 대신 셸 함수가 모든 호출을 처리한다. 오류·대기도 모의한다.
+    AWS_STUB = r'''
+aws() {
+  printf 'aws %s\n' "$*" >> "$CALL_LOG"
+  local service='' arg collecting=false
+  local -a requested=()
+  for arg in "$@"; do
+    if [[ "$arg" == --service || "$arg" == --services ]]; then
+      collecting=true
+      continue
+    fi
+    [[ "$arg" != --* ]] || collecting=false
+    if [[ "$collecting" == true ]]; then requested+=("$arg"); service="$arg"; fi
+  done
+  case "$1 $2" in
+    'ecr batch-get-image')
+      if [[ "$*" == *'imageTag='* ]]; then printf '%s\n' different-digest
+      else printf '%s\n' "$SOURCE_RESPONSE"; fi ;;
+    'ecr put-image') printf '%s\n' "$DIGEST" ;;
+    'ecs update-service') printf '%s\n' "$DEPLOYMENT_ID" ;;
+    'ecs wait')
+      [[ "$service" != "$FAIL_SERVICE" ]] || return 42 ;;
+    'ecs describe-services')
+      if (( ${#requested[@]} > 1 )); then
+        [[ "$DESCRIBE_EXIT" == 0 ]] || return "$DESCRIBE_EXIT"
+        printf '%s\n' "$PREFLIGHT_RESPONSE"
+      else
+        jq --arg service "$service" --arg failed "$FAILED_DEPLOYMENT_SERVICE" '
+          .services[0].serviceName = $service |
+          if $service == $failed then .services[0].deployments[0].rolloutState = "FAILED"
+          else . end' <<< "$SERVICE_RESPONSE"
+      fi ;;
+    *) echo '예상하지 않은 모의 AWS 호출' >&2; return 99 ;;
+  esac
+}
+sleep() { printf 'sleep %s\n' "$*" >> "$CALL_LOG"; }
+'''
+
+    def ready_services(self):
+        services = []
+        for setting, _ in self.APPS:
+            service = service_response()["services"][0]
+            service["serviceName"] = self.ENV[f"ECS_SERVICE_{setting}"]
+            services.append(service)
+        return {"services": services, "failures": []}
+
+    def run_steps(self, names=None, **overrides):
+        names = names or (self.CONFIG, self.PREFLIGHT, self.DEPLOY)
+        with tempfile.TemporaryDirectory() as directory:
+            calls = Path(directory) / "calls"
+            result = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c",
+                 self.AWS_STUB + "\n".join(step_script(name) for name in names)],
+                env={
+                    **os.environ, **self.ENV, "CALL_LOG": str(calls),
+                    "DIGEST": DIGEST,
+                    "DEPLOYMENT_ID": DEPLOYMENT_ID, "FAIL_SERVICE": "",
+                    "DESCRIBE_EXIT": "0", "FAILED_DEPLOYMENT_SERVICE": "",
+                    "SOURCE_RESPONSE": json.dumps({"images": [image("sha-fixture")], "failures": []}),
+                    "SERVICE_RESPONSE": json.dumps(service_response()),
+                    "PREFLIGHT_RESPONSE": json.dumps(self.ready_services()), **overrides,
+                }, capture_output=True, text=True, timeout=10,
+            )
+            return result, calls.read_text().splitlines() if calls.exists() else []
+
+    def lifecycle(self, calls):
+        lifecycle = []
+        for call in calls:
+            args = shlex.split(call)
+            if args[:3] == ["aws", "ecr", "put-image"]:
+                lifecycle.append("promote:" + args[args.index("--repository-name") + 1])
+            elif args[:3] == ["aws", "ecs", "update-service"]:
+                lifecycle.append("update:" + args[args.index("--service") + 1])
+            elif args[:3] == ["aws", "ecs", "wait"]:
+                lifecycle.append("wait:" + args[args.index("--services") + 1])
+        return lifecycle
+
+    def expected_lifecycle(self, apps=("enrollment", "ingest", "dashboard")):
+        return [call for app in apps for call in
+                (f"promote:fixture/{app}", f"update:fixture-{app}", f"wait:fixture-{app}")]
+
+    def test_all_images_use_common_build_and_secret_wiring(self):
+        workflow = WORKFLOW.read_text()
+        for setting, app in self.APPS:
+            for prefix in ("ECR_REPO", "ECS_SERVICE"):
+                key = f"{prefix}_{setting}"
+                self.assertIn(key + ": ${{ secrets." + key + "_DEV }}", workflow)
+            target = setting.lower().replace("_", "-")
+            build_name = f"Build and push {target}"
+            build = workflow_step(build_name)
+            for line in (
+                f"id: build-{app}", "context: .", "file: Dockerfile", f"target: {target}",
+                "platforms: linux/arm64", "provenance: false", "push: true",
+                "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_" + setting + " }}:sha-${{ github.sha }}",
+                f"cache-from: type=gha,scope={target}", f"cache-to: type=gha,mode=max,scope={target}",
+            ):
+                self.assertIn(line, build)
+            if app != "enrollment":
+                self.assertNotIn("build-contexts:", build)
+            self.assertIn(app.upper() + "_IMAGE_DIGEST: ${{ steps.build-" + app + ".outputs.digest }}",
+                          workflow_step(self.DEPLOY))
+            self.assertLess(workflow.index(f"- name: {self.PREFLIGHT}"),
+                            workflow.index(f"- name: {build_name}"))
+
+    def test_missing_repository_or_service_stops_before_aws_without_values(self):
+        for prefix in ("ECR_REPO", "ECS_SERVICE"):
+            for setting, _ in self.APPS:
+                key = f"{prefix}_{setting}"
+                with self.subTest(key=key):
+                    result, calls = self.run_steps(**{key: ""})
+                    self.assertNotEqual(result.returncode, 0)
+                    output = result.stdout + result.stderr
+                    self.assertIn(key + "_DEV", output)
+                    self.assertTrue(all(value not in output for value in self.ENV.values()))
+                    self.assertEqual(calls, [])
+
+    def test_any_duplicate_repository_or_service_stops_before_aws(self):
+        for prefix in ("ECR_REPO", "ECS_SERVICE"):
+            for (first, _), (second, _) in combinations(self.APPS, 2):
+                with self.subTest(prefix=prefix, first=first, second=second):
+                    value = self.ENV[f"{prefix}_{first}"]
+                    result, calls = self.run_steps(**{f"{prefix}_{second}": value})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn(value, result.stdout + result.stderr)
+                    self.assertEqual(calls, [])
+
+    def test_three_services_promote_update_and_wait_in_order(self):
+        ready = self.ready_services()
+        ready["services"].reverse()
+        result, calls = self.run_steps(PREFLIGHT_RESPONSE=json.dumps(ready))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lifecycle(calls), self.expected_lifecycle())
+        self.assertEqual(calls[0],
+                         "aws ecs describe-services --cluster fixture-cluster --services "
+                         "fixture-enrollment fixture-ingest fixture-dashboard --no-cli-pager --output json")
+        for _, app in self.APPS:
+            describes = [call for call in calls[1:] if call.startswith("aws ecs describe-services ")
+                         and f"--services fixture-{app} " in call]
+            self.assertEqual(len(describes), 1)
+
+    def test_any_wait_failure_stops_later_services(self):
+        for index, (_, app) in enumerate(self.APPS):
+            with self.subTest(app=app):
+                result, calls = self.run_steps(FAIL_SERVICE=f"fixture-{app}")
+                self.assertEqual(result.returncode, 42)
+                apps = tuple(name for _, name in self.APPS[:index + 1])
+                self.assertEqual(self.lifecycle(calls), self.expected_lifecycle(apps))
+                self.assertNotIn(f"배포 완료: fixture-{app}", result.stdout)
+
+    def assert_preflight_rejected(self, **overrides):
+        result, calls = self.run_steps(**overrides)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.lifecycle(calls), [])
+        self.assertEqual(len(calls), 1)
+
+    def test_any_unready_or_mismatched_service_prevents_all_promotions(self):
+        for index, (_, app) in enumerate(self.APPS):
+            for field, value in (("serviceName", "another-service"), ("status", "DRAINING"),
+                                 ("desiredCount", 0), ("desiredCount", "2"), ("desiredCount", True),
+                                 ("desiredCount", -1), ("desiredCount", 1.5), ("desiredCount", MISSING)):
+                with self.subTest(app=app, field=field, value=value):
+                    response = self.ready_services()
+                    if value is MISSING:
+                        del response["services"][index][field]
+                    else:
+                        response["services"][index][field] = value
+                    self.assert_preflight_rejected(PREFLIGHT_RESPONSE=json.dumps(response))
+
+    def test_invalid_service_preflight_response_prevents_all_promotions(self):
+        ready = self.ready_services()
+        invalid = ["", "not json", "null", "[]", "{}", json.dumps(ready) + "\n" + json.dumps(ready)]
+        for services in ([], ready["services"][:2], ready["services"] + ready["services"][:1]):
+            invalid.append(json.dumps({**ready, "services": services}))
+        for failures in (None, {}, [{"reason": "MISSING"}]):
+            invalid.append(json.dumps({**ready, "failures": failures}))
+        for response in invalid:
+            with self.subTest(response=response):
+                self.assert_preflight_rejected(PREFLIGHT_RESPONSE=response)
+
+    def test_service_preflight_api_failure_prevents_all_promotions(self):
+        self.assert_preflight_rejected(DESCRIBE_EXIT="42")
+
+    def test_any_failed_deployment_completion_stops_later_services(self):
+        for index, (_, app) in enumerate(self.APPS):
+            with self.subTest(app=app):
+                result, calls = self.run_steps(FAILED_DEPLOYMENT_SERVICE=f"fixture-{app}")
+                self.assertNotEqual(result.returncode, 0)
+                apps = tuple(name for _, name in self.APPS[:index + 1])
+                self.assertEqual(self.lifecycle(calls), self.expected_lifecycle(apps))
+                self.assertNotIn(f"배포 완료: fixture-{app}", result.stdout)
 
 
 if __name__ == "__main__":

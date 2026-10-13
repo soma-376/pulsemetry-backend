@@ -24,11 +24,13 @@ env:
   IMAGE_TAG: ${{ secrets.IMAGE_TAG_DEV }}
   ECR_REPO_ENROLLMENT_API: ${{ secrets.ECR_REPO_ENROLLMENT_API_DEV }}
   ECR_REPO_TELEMETRY_INGEST: ${{ secrets.ECR_REPO_TELEMETRY_INGEST_DEV }}
+  ECR_REPO_DASHBOARD_API: ${{ secrets.ECR_REPO_DASHBOARD_API_DEV }}
 
   AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN_DEV }}
   ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_DEV }}
   ECS_SERVICE_ENROLLMENT_API: ${{ secrets.ECS_SERVICE_ENROLLMENT_API_DEV }}
   ECS_SERVICE_TELEMETRY_INGEST: ${{ secrets.ECS_SERVICE_TELEMETRY_INGEST_DEV }}
+  ECS_SERVICE_DASHBOARD_API: ${{ secrets.ECS_SERVICE_DASHBOARD_API_DEV }}
 
 jobs:
   validate:
@@ -98,10 +100,12 @@ jobs:
             IMAGE_TAG:IMAGE_TAG_DEV \
             ECR_REPO_ENROLLMENT_API:ECR_REPO_ENROLLMENT_API_DEV \
             ECR_REPO_TELEMETRY_INGEST:ECR_REPO_TELEMETRY_INGEST_DEV \
+            ECR_REPO_DASHBOARD_API:ECR_REPO_DASHBOARD_API_DEV \
             AWS_DEPLOY_ROLE_ARN:AWS_DEPLOY_ROLE_ARN_DEV \
             ECS_CLUSTER:ECS_CLUSTER_DEV \
             ECS_SERVICE_ENROLLMENT_API:ECS_SERVICE_ENROLLMENT_API_DEV \
-            ECS_SERVICE_TELEMETRY_INGEST:ECS_SERVICE_TELEMETRY_INGEST_DEV; do
+            ECS_SERVICE_TELEMETRY_INGEST:ECS_SERVICE_TELEMETRY_INGEST_DEV \
+            ECS_SERVICE_DASHBOARD_API:ECS_SERVICE_DASHBOARD_API_DEV; do
             env_name="${mapping%%:*}"
             secret_name="${mapping#*:}"
             if [[ -z "${!env_name}" ]]; then
@@ -119,9 +123,17 @@ jobs:
             exit 1
           fi
 
+          if [[ "$ECR_REPO_ENROLLMENT_API" == "$ECR_REPO_TELEMETRY_INGEST" \
+             || "$ECR_REPO_ENROLLMENT_API" == "$ECR_REPO_DASHBOARD_API" \
+             || "$ECR_REPO_TELEMETRY_INGEST" == "$ECR_REPO_DASHBOARD_API" ]]; then
+            echo '::error::세 앱의 ECR 저장소는 각각 달라야 한다.'
+            exit 1
+          fi
+
           if [[ "$ECS_SERVICE_ENROLLMENT_API" == "$ECS_SERVICE_TELEMETRY_INGEST" \
-             || "$ECR_REPO_ENROLLMENT_API" == "$ECR_REPO_TELEMETRY_INGEST" ]]; then
-            echo '::error::두 앱의 ECR 저장소와 ECS 서비스는 각각 달라야 한다.'
+             || "$ECS_SERVICE_ENROLLMENT_API" == "$ECS_SERVICE_DASHBOARD_API" \
+             || "$ECS_SERVICE_TELEMETRY_INGEST" == "$ECS_SERVICE_DASHBOARD_API" ]]; then
+            echo '::error::세 ECS 서비스는 각각 달라야 한다.'
             exit 1
           fi
 
@@ -148,21 +160,27 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # 최초 ECR 이미지 공급과 ECS 서비스 생성은 운영 선행 작업이다(infra ADR-0026).
-      # 둘 다 준비되기 전에는 가변 이미지 태그를 덮어쓰거나 일부 서비스만 재배포하지 않는다.
-      - name: Verify both ECS services are active
+      # 세 서비스가 모두 준비되기 전에는 가변 이미지 태그를 덮어쓰거나 일부 서비스만 재배포하지 않는다.
+      - name: Verify all ECS services are active
         run: |
           services=$(aws ecs describe-services --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE_ENROLLMENT_API" "$ECS_SERVICE_TELEMETRY_INGEST" \
+            --services "$ECS_SERVICE_ENROLLMENT_API" "$ECS_SERVICE_TELEMETRY_INGEST" "$ECS_SERVICE_DASHBOARD_API" \
             --no-cli-pager --output json)
 
-          if ! jq -e \
+          if ! jq -es \
             --arg enrollment "$ECS_SERVICE_ENROLLMENT_API" \
-            --arg ingest "$ECS_SERVICE_TELEMETRY_INGEST" '
-              (.failures | length) == 0 and
-              ([.services[].serviceName] | sort) == ([$enrollment, $ingest] | sort) and
-              all(.services[]; .status == "ACTIVE" and .desiredCount > 0)
+            --arg ingest "$ECS_SERVICE_TELEMETRY_INGEST" \
+            --arg dashboard "$ECS_SERVICE_DASHBOARD_API" '
+              length == 1 and (.[0] |
+                type == "object" and
+                (.failures | type == "array" and length == 0) and
+                (.services | type == "array" and length == 3) and
+                ([.services[].serviceName] | sort) == ([$enrollment, $ingest, $dashboard] | sort) and
+                all(.services[];
+                  .status == "ACTIVE" and
+                  (.desiredCount | type == "number" and . > 0 and floor == .)))
             ' <<< "$services" > /dev/null; then
-            echo '::error::두 ECS 서비스가 모두 ACTIVE이고 desiredCount가 1 이상이어야 한다. infra 선행 배포를 확인한다.'
+            echo '::error::세 ECS 서비스가 모두 ACTIVE이고 desiredCount가 1 이상이어야 한다. infra 선행 배포를 확인한다.'
             exit 1
           fi
 
@@ -176,7 +194,7 @@ jobs:
 
       # Dockerfile과 빌드 컨텍스트는 레포 루트다. 배포 역할에 ECR pull 권한이 없으므로
       # registry cache 대신 GitHub Actions cache만 쓴다.
-      # 두 이미지가 모두 게시되기 전에는 배포용 dev 태그를 갱신하지 않는다.
+      # 세 이미지가 모두 게시되기 전에는 배포용 dev 태그를 갱신하지 않는다.
       - name: Build and push enrollment-api
         id: build-enrollment
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -209,13 +227,28 @@ jobs:
           cache-from: type=gha,scope=telemetry-ingest
           cache-to: type=gha,mode=max,scope=telemetry-ingest
 
+      - name: Build and push dashboard-api
+        id: build-dashboard
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile
+          target: dashboard-api
+          platforms: linux/arm64
+          provenance: false
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_DASHBOARD_API }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=dashboard-api
+          cache-to: type=gha,mode=max,scope=dashboard-api
+
       # 태스크 정의는 CDK가 소유한다. 기존 리비전을 그대로 쓰고 가변 태그를 다시 당긴다.
       # Flyway를 적용하는 enrollment-api가 먼저 안정화돼야 ingest의 JPA 검증이 성립한다.
-      # 두 서비스 모두 minHealthyPercent가 0이므로 교체 중 짧은 다운타임이 정상이다.
-      - name: Deploy enrollment-api, then telemetry-ingest
+      - name: Deploy enrollment-api, then telemetry-ingest, then dashboard-api
         env:
           ENROLLMENT_IMAGE_DIGEST: ${{ steps.build-enrollment.outputs.digest }}
           INGEST_IMAGE_DIGEST: ${{ steps.build-ingest.outputs.digest }}
+          DASHBOARD_IMAGE_DIGEST: ${{ steps.build-dashboard.outputs.digest }}
         run: |
           promote_image() {
             local repository="$1" digest="$2" image manifest media_type current_digest
@@ -339,6 +372,9 @@ jobs:
 
           promote_image "$ECR_REPO_ENROLLMENT_API" "$ENROLLMENT_IMAGE_DIGEST"
           deploy_service "$ECS_SERVICE_ENROLLMENT_API"
-          # enrollment 안정화에 실패하면 ingest의 dev 태그도 이전 이미지에 남긴다.
+          # 앞 서비스의 안정화에 실패하면 뒤 서비스의 dev 태그도 이전 이미지에 남긴다.
           promote_image "$ECR_REPO_TELEMETRY_INGEST" "$INGEST_IMAGE_DIGEST"
           deploy_service "$ECS_SERVICE_TELEMETRY_INGEST"
+
+          promote_image "$ECR_REPO_DASHBOARD_API" "$DASHBOARD_IMAGE_DIGEST"
+          deploy_service "$ECS_SERVICE_DASHBOARD_API"
