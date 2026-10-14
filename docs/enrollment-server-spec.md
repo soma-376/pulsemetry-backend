@@ -135,6 +135,21 @@ DB 장애 시에는 503과 함께 `status=degraded`, `checks.database=down`을 �
 | `pulsemetry.token-hash-secret` | 없음 | telemetry token 의 HMAC-SHA256 키. **비어 있으면 기동 실패.** auth-proxy(ai-telemetry-pipeline)와 같은 값을 써야 OTLP 인증이 성립한다. dev 인프라에서는 `DevEdgeStack` 의 `TokenHashSecretArn` 이 가리키는 Secrets Manager 값. 키 변경 = 발급된 전 토큰 무효 |
 | `pulsemetry.invitation.default-ttl-hours` | `72` | `expires_in_hours` 생략 시 만료 시간 |
 | `pulsemetry.binaries.dir` | `./binaries` | telemetryctl 릴리스 디렉터리(`v<SemVer>`, §6.3)나 공개 이름의 CLI 바이너리(§6.2)가 놓인 서버 로컬 디렉터리 |
+| `pulsemetry.user-auth.enabled` | `false` | 자체 사용자 AT·RT·세션 인증을 켠다. local 프로필은 true |
+| `pulsemetry.user-auth.issuer` · `.audience` | 빈 값 | 활성 시 비어 있으면 기동 실패. 외부 IdP issuer와 구별하고 dashboard 검증 설정과 정확히 일치시킨다 |
+| `pulsemetry.user-auth.active-kid` | 빈 값 | 활성 서명키의 JWT header kid. 활성 시 비어 있거나 공개키 맵에 없으면 기동 실패 |
+| `pulsemetry.user-auth.private-key-file` | 빈 경로 | 활성 시 읽을 수 있는 RSA 2048비트 이상 PKCS8 PEM 파일 필요. PEM 원문이나 Secret ARN을 넣지 않는다 |
+| `pulsemetry.user-auth.public-key-files.<kid>` | 빈 맵; YAML에 `local`의 빈 경로 | kid → RSA 2048비트 이상 X.509 PEM 파일 경로. 활성 시 유효 맵이 비거나 읽기/파싱에 실패하면 기동 실패. active-kid의 공개키와 개인키 modulus도 일치해야 한다 |
+| `pulsemetry.user-auth.allowed-origins` | 빈 목록 | 사용자 인증 CORS의 정확한 브라우저 origin 목록 |
+| `pulsemetry.user-auth.allowed-redirect-uris` | 빈 목록 | OIDC 후 단회 코드를 돌려줄 정확한 브라우저 복귀 주소 목록. CLI의 동적 HTTP loopback `/callback` 예외는 `UserAuthService.validateRedirect()`를 따른다 |
+| `pulsemetry.user-auth.rate-limit.entry.requests` · `.window` | `30` · `60s` | 토큰 없는 인증 진입의 IP별 한도. 요청 수 ≥ 1, 창 ≥ 1초가 아니면 기동 실패(ADR 0052) |
+| `pulsemetry.user-auth.rate-limit.session.requests` · `.window` | `30` · `60s` | 유효 자격 보유 요청의 세션별 한도. 같은 최소값 검사(ADR 0052) |
+| `pulsemetry.oidc.enabled` | `false` | OIDC 로그인 왕복을 켠다. 사용자 인증도 함께 준비한다 |
+| `pulsemetry.oidc.callback-base-url` | 빈 값 | 활성 시 고정 HTTPS callback 기반 주소. 요청 Host에서 유도하지 않으며 URL 검사 실패 시 기동 실패 |
+| `pulsemetry.oidc.failure-redirect-uri` | 빈 값 | 왕복 세션 유실 시 고정 복귀 주소. 지정했다면 URL 검사를 통과하고 allowed-redirect-uris에도 있어야 기동한다 |
+| `pulsemetry.oidc.allow-insecure-localhost` | `false` | 명시한 HTTP loopback 예외. local 프로필만 true |
+| `pulsemetry.oidc.callback-registration-id` | `oidc` | `[A-Za-z0-9_-]+` 형식. local 프로필은 `cognito` |
+| `pulsemetry.oidc.client-secrets.<참조 키>` | 빈 맵 | 회사의 `oidc_client_secret_ref=config:<참조 키>`에 대응하는 비밀 맵. 회사별 누락은 해당 로그인 요청에서 503이며 Secrets Manager를 앱이 직접 조회하지 않는다 |
 | `pulsemetry.mail.enabled` | `false` | 메일 발송(ADR 0037 · 0058)을 켠다. 켜면 아래 공통 값과 **고른 발송 구현의 값이 모두 필요하다 — 하나라도 비면 기동 실패**. 고르지 않은 구현의 값은 보지 않는다. 꺼져 있으면 outbox에 적재하지도 보내지도 않는다 |
 | `pulsemetry.mail.provider` | 없음 | 발송 구현. `smtp`(로컬·테스트) 또는 `ses`(배포). 다른 값이면 기동 실패. 한쪽이 실패해도 다른 쪽으로 넘어가지 않는다 |
 | `pulsemetry.mail.smtp.host` · `.port` | 없음 | SMTP 서버. `smtp`일 때만 필요 |
@@ -172,6 +187,8 @@ DB 장애 시에는 503과 함께 `status=degraded`, `checks.database=down`을 �
 | `pulsemetry.vendor-connections.base-urls.<커넥터 ID>` | 벤더 공식 주소 | 모의 서버·스테이징에서만 바꾼다. 로컬 모의 서버는 `tools/mock-vendor/README.md` |
 
 DB 접속은 `PULSEMETRY_DB_URL` · `PULSEMETRY_DB_USERNAME` · `PULSEMETRY_DB_PASSWORD` 로 덮어쓴다.
+사용자 인증의 명시적 환경변수는 `PULSEMETRY_USER_AUTH_ENABLED` · `_ISSUER` · `_AUDIENCE` · `_ACTIVE_KID` · `_PRIVATE_KEY_FILE` · `_PUBLIC_KEY_FILE` · `_ALLOWED_ORIGINS` · `_ALLOWED_REDIRECT_URIS`다. `PULSEMETRY_USER_AUTH_PUBLIC_KEY_FILE`은 **`public-key-files.local` 경로만** 매핑하므로 다른 kid와 교체 중 신·구 키는 YAML 또는 `SPRING_APPLICATION_JSON`의 `public-key-files` 맵으로 정확히 지정한다. 인증 요청 제한의 네 설정은 `AuthRateLimitProperties`가 바인딩하며 `application.yaml`의 별도 환경변수 placeholder는 없다.
+OIDC의 명시적 환경변수는 `PULSEMETRY_OIDC_ENABLED` · `_CALLBACK_BASE_URL` · `_FAILURE_REDIRECT_URI`다. `allow-insecure-localhost`·`callback-registration-id`·`client-secrets` 맵은 배포 설정으로 명시하며 local의 Cognito 변수나 모의 제공자 설정을 운영 기본값으로 쓰지 않는다. 설정명과 기본값의 권위는 `UserAuthProperties`·`AuthRateLimitProperties`·`OidcProperties`와 enrollment `application.yaml`이다.
 메일의 키는 `PULSEMETRY_MAIL_ENABLED` · `_PROVIDER` · `_FROM` · `_ENCRYPTION_KEY` · `_DISPATCH_INTERVAL` · `_RETRY_INTERVAL` · `_MAX_ATTEMPTS` · `_SEND_TIMEOUT` ·
 `_SMTP_HOST` · `_SMTP_PORT` · `_SMTP_USERNAME` · `_SMTP_PASSWORD` · `_SMTP_STARTTLS` · `_SES_REGION` · `_SES_CONFIGURATION_SET` 로 준다.
 local 프로필은 `smtp`로 Compose의 메일 수신 컨테이너(`localhost:1025`)에 보낸다. 배포 환경은 `ses`를 명시한다 — 인프라에 넘길 권한·identity·비밀 조건과 전환 절차는 [메일 발송 운영](mail-operations.md)이 담는다.
@@ -282,6 +299,16 @@ export PULSEMETRY_ADMIN_API_TOKEN=...
 
 ---
 
+### 9.5 사용자 JWT 키 공급과 교체
+
+배포 키의 공통 결정은 [허브 ADR 0022](../../docs/adr/0022-user-jwt-key-provisioning.md), 절차와 수락 조건은 [사용자 인증 운영](user-auth-operations.md#최초-공급과-배포-기록)을 따른다. 환경별 고정 ARN의 개인키 PKCS8 PEM과 공개키 키링 Secret을 infra가 고정 VersionId의 파일로 공급한다. 이 앱에는 개인키 파일 경로·active-kid·전체 공개키 파일 맵을 함께 전달하고, dashboard에는 같은 공개키만 전달한다. 두 Secret의 최초 등록·검증 전에는 배포 참조를 확정하지 않으며 부분 실패는 같은 키쌍으로 복구한다.
+
+`UserAuthConfig.userJwt()`와 `UserJwt` 생성자는 실제 파일의 읽기·파싱·RSA 크기와 활성 kid의 modulus 일치를 기동 시 검사한다. 공급자는 별도로 키쌍의 실제 서명/검증·VersionId 대응·앱 UID의 읽기 권한을 확인한다. 키 누락·빈 파일·읽기 불가·잘못된 PEM·키쌍/kid 불일치·등록 부분 실패는 배포 중단 조건이다. 빈 공개키 경로 항목은 앱이 제외하므로 다른 유효 키가 있어도 공급자의 기대 kid 누락 검사는 생략하지 않는다.
+
+모든 enrollment·dashboard 검증 인스턴스에 신·구 공개키를 먼저 적용·검증한 뒤 모든 signer의 개인키·kid를 전환한다. 마지막 구 키 발급 후 330초 이상 기다려 구 공개키를 제거한다. 롤백 버전과 배포 기록을 보존하고, 롤백 시에도 공개키를 먼저 복구하며 직전 새 키로 발급한 AT의 330초 검증 기간을 유지한다. 앱은 기동 때만 파일을 읽으며 자동 생성·회전·reload를 하지 않는다.
+
+Secrets Manager 초기화·ECS/EKS 파일 전달 코드는 후속 작업이다. 아래 local 프로필의 Compose 키는 개발 fixture이며 AWS 키 공급이나 배포 검증 완료를 증명하지 않는다.
+
 ## 10. 로컬 실행
 
 ```sh
@@ -304,6 +331,7 @@ A는 정책 확인과 벤더 선택을 갖춘 온보딩 완료 상태이고 B는
 시나리오·기준일 선택과 Docker 초기화/검증은 [개발 시드 가이드](../tools/dev-seed/README.md)를 따른다.
 local 프로필의 서버는 메일을 Compose의 수신 컨테이너로 보낸다. 받은 메일은 `http://localhost:8025`에서 본다 — 밖으로 나가는 메일은 없다.
 메일 본문 암호화 키는 시드 컨테이너가 `build/dev-auth`에 만든다. 이 키가 없던 기존 개발 환경은 `docker compose up -d --build`를 한 번 더 실행한다.
+사용자 JWT의 `private.pem`·`public.pem`도 Compose `prepareAuthKeys()`가 최초에만 준비한다. 기존 키는 보존하고 한 파일만 남아 있으면 자동 교체하지 않고 실패한다. local 프로필은 이 파일과 `kid=local`을 읽으며 배포 키·VersionId 대신 재사용하지 않는다.
 
 **팀이 배정되지 않은 초대 대상은 설치 후에도 소속이 없다.** 그러면 `telemetry_events.team_id_as_of` 가 null·`team_ids_as_of` 가 빈 배열이 된다(`member_id` 는
 채워진다) — 보강 배선이 틀린 것이 아니다.

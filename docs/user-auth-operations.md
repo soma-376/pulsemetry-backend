@@ -16,6 +16,8 @@ telemetryctl 로그인 배선은 별도 전환해야 한다.
 Cognito는 운영 회원 원장이 아니며 초대/회원 API에서 Cognito 계정을 만들지 않는다(허브 ADR 0010).
 운영은 고객사의 OIDC 제공자에 연결한다. 인증 서버 자체를 이 저장소에서 배포하지 않는다.
 
+JWT 키 원본·최초 생성·버전 고정과 파일 공급의 공통 결정은 [허브 ADR 0022](../../docs/adr/0022-user-jwt-key-provisioning.md), dev AWS 전달 방식은 [infra ADR 0030](../../infra/docs/adr/0030-dev-user-jwt-keys-from-secrets-manager.md)을 따른다. 이 문서는 기존 파일 소비 코드와 채택된 후속 공급 경로를 구분한다. Secrets Manager 초기화·ECS writer·EKS CSI 공급과 AWS 배포는 아직 구현·검증하지 않았다.
+
 `tenants.sso_enabled`는 기본 false이며 비활성 회사는 조직 조회·authorize에서 제외한다.
 회사별 `oidc_issuer`, `oidc_client_id`, `oidc_client_secret_ref`를 DB에서 읽는다.
 `oidc_require_verified_email`은 기본 false이고 개발 Cognito는 true다.
@@ -87,9 +89,55 @@ pulsemetry:
       company-a: ${PULSEMETRY_OIDC_CLIENT_SECRET}
 ```
 
-운영 비밀은 secret manager/읽기 전용 파일 등으로 주입하고 코드·이미지에 넣지 않는다.
+서비스 JWT 키는 환경별로 고정한 Secrets Manager ARN 두 개에 별도로 보관한다. 개인키 Secret은 RSA 2048비트 이상 **PKCS8 PEM**, 공개키 Secret은 **`kid → X.509 PEM` JSON 키링**이다. AWS 관리형 `aws/secretsmanager`로 암호화하며 dev ECS/EKS는 같은 원본을 소비한다. 공개키도 이미지에 포함하지 않고 런타임 파일로 공급한다.
+
+앱은 Secrets Manager를 조회하지 않는다. infra 공급자가 공개키 JSON을 kid별 PEM 파일로 풀고 앱의 `public-key-files`에는 **kid → 파일 경로**를 전달한다. enrollment에 개인키·공개키를, dashboard에 공개키만 공급하고 telemetry-ingest에는 JWT Secret 권한을 추가하지 않는다. PEM 원문을 일반 환경변수·Spring 설정·문서·로그·output에 넣지 않는다.
 OIDC client secret은 enrollment에만 주며 dashboard에는 자체 JWT 공개키·issuer·audience만 준다.
 두 종류의 issuer(외부 IdP / Pulsemetry 자체 JWT)를 혼동하지 않는다.
+
+### 최초 공급과 배포 기록
+
+1. 명시적인 초기화 작업에서 최초 RSA 키쌍과 `kid`를 만든다. 앱 시작이나 일반 재배포에서는 생성하지 않는다.
+2. 같은 키쌍의 개인키·공개키 Secret을 등록하고 형식·RSA 크기·실제 서명/검증·활성 kid 대응을 검증한다. 두 Secret 등록은 한 트랜잭션이 아니므로, 하나만 성공했으면 같은 키쌍으로 나머지를 복구한다. 부분 실패를 새 키 생성으로 덮지 않는다.
+3. 두 등록과 검증이 끝난 뒤 개인키·공개키의 정확한 `VersionId`, `active-kid`, 공개키 파일 맵을 하나의 배포 기록으로 확정한다. 앱 설정에는 경로·kid만 전달하며 `AWSCURRENT` 변경을 자동 반영하지 않는다.
+4. 선택한 두 버전을 공급하고 앱 실행 UID로 파일 읽기를 확인한 뒤 새 인스턴스를 시작한다. 기동 성공과 실제 발급·검증 성공을 각각 확인한다. 활성·롤백용 버전에는 staging label을 유지하고 Secret 보존·삭제 책임은 infra 런북을 따른다.
+
+이 순서는 공급자 구현의 수락 조건이다. 현재 backend의 파일 로더가 Secret 등록·버전 기록·파일 접근 권한 설정을 수행한다는 뜻은 아니다. 앱은 기동 때 파일을 한 번 읽으므로 파일만 바꾸거나 staging label만 이동해도 실행 중인 키가 바뀌지 않는다.
+
+### 로컬 Compose 키와 배포 키
+
+로컬 `dev-seed`의 `prepareAuthKeys()`는 `build/dev-auth/private.pem`·`public.pem`이 모두 없을 때만 RSA 키쌍을 만들고 기존 파일을 보존한다. 둘 중 하나만 있으면 자동 교체하지 않고 실패한다. 앱의 local 프로필은 이 경로와 `kid=local`을 사용한다. 로컬 준비 도구는 개발 fixture이며 Secrets Manager 등록·운영 키 생성·버전 공급·운영 파일 권한의 증거가 아니다. 배포 환경에는 local 프로필을 켜지 않는다.
+
+### Dashboard 검증 설정
+
+Dashboard의 활성화는 별도다. `PULSEMETRY_USER_AUTH_ENABLED=true`와 자체 JWT의 issuer·audience·공개키 파일 맵·허용 origin을 준비한다. 발급자가 쓴 issuer와 audience에 정확히 맞춘다. dashboard에는 private-key-file·active-kid·OIDC client secret을 주입하지 않는다.
+
+```yaml
+pulsemetry:
+  user-auth:
+    enabled: true
+    issuer: https://auth.example.com
+    audience: pulsemetry
+    public-key-files:
+      key-2026-09: /run/secrets/user-auth-public.pem
+    allowed-origins:
+      - https://dashboard.example.com
+```
+
+위 맵의 `key-2026-09`가 JWT header의 실제 `kid`다. dashboard `application.yaml`의 `PULSEMETRY_USER_AUTH_PUBLIC_KEY_FILE`은 `public-key-files.local` 경로로만 매핑된다. 파일 경로를 바꿔도 맵의 키는 `local`로 남으며 enrollment의 active-kid가 다른 경우 그 한 변수만으로 인증할 수 없다. 배포 설정 YAML 또는 아래처럼 `SPRING_APPLICATION_JSON`의 맵으로 실제 `kid`를 명시한다. 공개키는 런타임에 읽을 수 있는 X509 PEM 파일로 준비하고, 발급자의 개인키는 enrollment에만 둔다.
+
+```json
+{"pulsemetry":{"user-auth":{"public-key-files":{"key-2026-09":"/run/secrets/user-auth-public.pem"}}}}
+```
+
+이 JSON은 키 맵만 추가하므로 enabled·issuer·audience·allowed-origins는 위 YAML 또는 대응 환경변수로 함께 전달한다. `kid`는 대소문자까지 정확히 일치시킨다. 읽을 수 없는 파일·빈 파일·잘못된 PEM·빈 유효 키 맵·RSA 2048비트 미만은 활성 시 기동 실패 조건이다. 빈 경로 항목은 현재 코드가 먼저 제외하므로 다른 유효한 키가 남으면 그 항목만으로 기동이 실패하지 않는다. 공급자는 기대하는 kid의 경로 누락·빈 항목도 배포 전에 거부해야 한다. 원격 JWKS를 자동 조회하지 않으며 키 교체 후에는 모든 검증 인스턴스를 새 파일·맵으로 다시 기동한다.
+
+`SecurityConfig.dashboardAuthenticator()`는 서명을 확인한 뒤 `UserAccessVerifier.verify()`가 현재 세션·회원·조직을 확인한다. dashboard의 source RDS 계정에 `enrollment.user_sessions`, `enrollment.members`, `enrollment.tenants` SELECT와 schema USAGE가 필요하다. 세션 폐기·만료·회원 또는 조직 비활성·현재 역할 불일치는 다음 조회부터 거부한다. DB 장애는 401 자격 오류로 바꾸지 않고 dashboard 503 `unavailable`로 응답한다. dashboard는 세션·RT·인증 제한 행을 쓰지 않는다.
+
+`GET /api/v1/auth/me`는 `CurrentUserController.me()`가 있는 enrollment로 전달한다. dashboard는 업무 조회에서 AT를 검증할 뿐 로그인·갱신·로그아웃·현재 사용자 API를 옮겨 받지 않는다. 전체 경로·method와 OPTIONS 전달은 [허브 dashboard 계약](../../docs/contracts/dashboard-api.md)을 따른다. Dashboard CORS의 allowed-origins도 실제 브라우저 origin에 맞추며 issuer URL과 origin은 서로 다른 설정이다.
+
+### Enrollment OIDC 설정 검증
+
 회사당 인증 서버 하나를 tenants 컬럼으로 관리한다. `config:company-a`는 위 비밀 맵의 키이며 Secrets Manager ARN을 직접 조회하지 않는다. callback은 고정 설정값이며 요청 Host/forwarded에서 만들지 않는다.
 임시 세션 유실 시 고정 failure-redirect-uri로 login_expired만 반환한다. 이 주소도 allowed-redirect-uris의 정확한 항목이어야 한다.
 인증 성공·실패 핸들러는 저장된 안전한 흐름이 있으면 원래 프론트 주소로 복귀한다. 시작 요청 오류와 요청 가드의 제한·설정 변경 거부는 JSON 오류일 수 있다.
@@ -98,6 +146,22 @@ HTTPS가 기본이고 명시한 로컬 예외에서도 HTTP loopback만 허용�
 
 관리 API를 쓸 때는 별도로 `pulsemetry.management.enabled`와 응답 암호화 키도 준비한다.
 RSA 2048비트 이상, 개인키 PKCS8·공개키 X509 PEM을 사용한다. 운영 자동 키 생성은 없다.
+
+`UserAuthConfig.userJwt()`는 키 파일을 읽고 `UserJwt` 생성자는 issuer·audience·active-kid의 비어 있지 않음, 유효 공개키 맵, RSA 크기를 검사한다. enrollment에서는 `publicKeys[activeKid]`와 개인키의 RSA modulus 일치도 기동 시 검사한다. 이 검사는 Secret 버전의 대응이나 서명/검증 왕복을 대신하지 않는다. dashboard는 개인키가 없는 `UserJwt.verifier()`이므로 발급자의 키쌍과 비교할 수 없으며, 올바른 PEM을 엉뚱한 kid에 등록한 경우 실제 토큰 검증에서 드러날 수 있다.
+
+### JWT 키 공급의 수락 조건
+
+다음은 후속 공급 구현·배포의 검증 조건이며 이번 문서 변경의 통과 결과가 아니다. 성공한 health 응답만으로 충족했다고 판단하지 않는다.
+
+| 시나리오 | 기대 결과와 확인 지점 |
+| --- | --- |
+| 개인키/필수 공개키 누락·빈 파일·읽기 불가 | 공급자는 배포 기록의 모든 파일이 앱 UID로 읽히는지 확인하고 실패 시 앱 시작을 막는다. 활성 backend가 실제 읽는 파일의 누락·빈 내용·읽기 실패도 기동 실패다 |
+| 잘못된 PEM·RSA 2048비트 미만 | 공급 전 검증에서 거부한다. `UserJwt.privateKey()`·`publicKey()`의 파싱과 생성자의 크기 검사도 기동을 실패시킨다 |
+| 개인키/공개키 불일치·활성 kid 미등록 | 공급자는 선택 버전의 실제 서명/검증과 kid 대응을 확인하고 거부한다. enrollment 생성자는 활성 kid의 modulus 불일치·미등록을 거부하지만 dashboard는 발급자의 개인키와 비교하지 않는다 |
+| dashboard 맵의 잘못된 kid·다른 공개키 | 공급자는 기대하는 전체 kid와 파일·버전 대응을 검사한다. 실제 enrollment 발급 AT가 모든 enrollment·dashboard 검증 인스턴스에서 검증되고, 모르는 kid·다른 키의 서명은 거부되는지 확인한다 |
+| 두 Secret 중 하나만 등록 | 배포 참조를 확정하거나 앱을 시작하지 않는다. 같은 키쌍으로 누락 등록을 복구하고 두 VersionId를 검증한 뒤 진행한다 |
+| 공개키 전파·signer 전환의 일부 인스턴스 실패 | 해당 단계에서 멈춘다. 모든 검증 인스턴스의 신·구 키 준비 전 signer를 바꾸지 않고, 마지막 구 키 발급 시각을 전체 signer 기준으로 기록한다 |
+| 교체와 롤백 | 아래 순서로 신·구 토큰 검증·최소 330초 경계·구 키 제거·보존 버전 복구를 확인한다. ECS/EKS에서 동시에 실행 중인 모든 인스턴스를 포함한다 |
 
 ## 쿠키와 세션
 
@@ -124,10 +188,14 @@ OIDC callback의 정상적인 실패 안내는302로 신뢰된 UI에 복귀하�
 
 ## 키 교체와 보존
 
-1. 새 공개키를 모든 검증 인스턴스에 추가하고 구 키도 유지한다.
-2. 공개키 전파 후 enrollment의 active-kid와 개인키를 함께 교체한다.
-3. 마지막 구 키 발급으로부터 330초 이상 지난 뒤 구 공개키를 제거한다.
-4. 유출 시 해당 공개키 제거와 영향 세션 폐기를 함께 수행한다.
+1. 고정 ARN의 새 값 버전을 등록·검증하고 배포 기록을 준비한다. 새 공개키와 구 공개키를 함께 담은 공개키 VersionId를 모든 enrollment·dashboard 검증 인스턴스에 적용한다. 각 인스턴스의 신·구 키 검증 성공을 확인한다.
+2. 공개키 전파가 끝난 뒤 모든 enrollment signer의 개인키 VersionId와 active-kid를 함께 전환한다. 일부 전환이면 구 공개키를 유지하며 중단 지점을 복구한다.
+3. **모든 signer 중 마지막 구 키 발급 시각**으로부터 AT 300초+허용 시계 오차 30초인 330초 이상 기다린 뒤 구 공개키를 제거한 새 공개키 버전을 모든 검증 인스턴스에 적용한다. 시작 시각이나 첫 signer 전환 시각부터 세지 않는다.
+4. 활성 및 롤백에 필요한 개인키·공개키 버전은 staging label로 보존하고 배포 기록을 유지한다. 자동 회전·자동 reload는 도입하지 않는다.
+
+롤백은 보존한 VersionId의 개인키·active-kid·공개키 파일 맵을 한 묶음으로 복구한다. 구 공개키가 이미 제거됐으면 먼저 모든 검증 인스턴스에 신·구 공개키를 다시 적용·검증한 뒤 구 signer로 되돌린다. 롤백 직전 새 키로 발급한 AT도 있으므로 새 공개키는 마지막 새 키 발급 후 330초 이상 유지한다. 같은 ARN의 최신 버전이나 `AWSPREVIOUS`만으로 롤백 대상을 추측하지 않는다.
+
+유출 시 해당 공개키 제거와 영향 세션 폐기를 함께 수행한다. 유출된 개인키는 가용성 복구를 이유로 롤백에 쓰지 않는다.
 
 만료된 서비스 세션/code/제한 행은 운영 유지보수에서 삭제할 수 있다.
 RT 이력은 세션 만료 전 지우지 않는다.
