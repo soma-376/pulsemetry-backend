@@ -12,7 +12,6 @@ import com.team376.pulsemetry.dashboard.request.PageCursorCodec
 import com.team376.pulsemetry.dashboard.request.OffsetPageRequest
 import com.team376.pulsemetry.dashboard.request.PageRequest
 import com.team376.pulsemetry.dashboard.request.QueryReader
-import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
 import org.slf4j.LoggerFactory
 import java.math.BigDecimal
 import java.time.Clock
@@ -36,7 +35,6 @@ class MembersService(
 	private val frames: AnalyticsFrames,
 	private val aggregator: UsageAggregator,
 	private val references: SnapshotReferences,
-	private val snapshots: SnapshotService,
 	private val codec: PageCursorCodec,
 	private val tokens: CurrentStateTokens,
 	private val policies: OrganizationPolicies,
@@ -248,7 +246,6 @@ class MembersService(
 
 		fun totals(id: UUID): UsageTotals = usage[listOf(id.toString())] ?: UsageTotals.EMPTY
 
-		fun cost(id: UUID): BigDecimal? = if (frame.empty) null else totals(id).equivalentCost(frame.pricingMixed)
 
 		fun member(roster: SnapshotReferences.RosterMember): Member {
 			val totals = totals(roster.id)
@@ -311,7 +308,6 @@ class MembersService(
 		const val MEMBER_SEATS_KIND = "member-seats"
 		const val VENDOR_SEATS_KIND = "vendor-seats"
 		private const val RECLAIM_SCOPE = "seat-reclaim-candidates"
-		private const val UNASSIGNED_SCOPE = "members-unassigned"
 		private const val CURSOR = "cursor"
 		private const val SEAT_UNKNOWN = "unknown"
 		private val ROSTER_STATUSES = setOf("active", "suspended")

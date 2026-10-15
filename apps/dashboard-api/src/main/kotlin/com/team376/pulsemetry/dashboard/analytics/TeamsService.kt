@@ -5,13 +5,9 @@ import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.Side
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.TeamScope
 import com.team376.pulsemetry.dashboard.error.DashboardException
 import com.team376.pulsemetry.dashboard.error.ErrorCode
-import com.team376.pulsemetry.dashboard.error.FieldErrorCode
 import com.team376.pulsemetry.dashboard.organization.Organization
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
-import com.team376.pulsemetry.dashboard.request.PageCursor
-import com.team376.pulsemetry.dashboard.request.PageCursorCodec
 import com.team376.pulsemetry.dashboard.request.OffsetPageRequest
-import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.UUID
@@ -29,8 +25,6 @@ class TeamsService(
 	private val frames: AnalyticsFrames,
 	private val aggregator: UsageAggregator,
 	private val references: SnapshotReferences,
-	private val snapshots: SnapshotService,
-	private val codec: PageCursorCodec,
 ) {
 
 	enum class Sort(val wire: String) {
@@ -311,7 +305,6 @@ class TeamsService(
 		const val ATTRIBUTION_BASIS = "event_time"
 		const val COST_SHARE_THRESHOLD = 0.05
 		const val UNASSIGNED_NAME = "미배정"
-		private const val CURSOR = "cursor"
 
 		private val COST_THEN_ID = compareBy<TeamModelUsage, BigDecimal?>(nullsLast(reverseOrder())) { it.equivalentCostUsd?.let(::BigDecimal) }
 			.thenBy { it.modelId }
