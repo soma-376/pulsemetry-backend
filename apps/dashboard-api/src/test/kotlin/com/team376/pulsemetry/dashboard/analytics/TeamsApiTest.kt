@@ -86,7 +86,7 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 		val items = body.at("/teams/items").list()
 		assertThat(items.map { it.path("teamName").asString() }).containsExactly("팀 A", "팀 B", "팀 C", "팀 D")
 		assertThat(body.at("/teams/totalCount").asInt()).isEqualTo(4)
-		assertThat(body.at("/teams/nextCursor").isNull).isTrue()
+		assertThat(body.at("/teams/nextOffset").isNull).isTrue()
 		assertThat(body.at("/unassigned/teamId").isNull).isTrue()
 		assertThat(body.at("/unassigned/teamName").asString()).isEqualTo("미배정")
 		val teamSum = items.map { money(it.at("/metrics/equivalentCostUsd/value")) }.fold(BigDecimal.ZERO, BigDecimal::add) + money(body.at("/unassigned/metrics/equivalentCostUsd/value"))
@@ -110,23 +110,28 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
-	@DisplayName("페이지 — 같은 snapshot 의 페이지 사이에 중복·누락이 없고, 다른 정렬의 cursor 는 400")
+	@DisplayName("페이지 — 같은 snapshot 의 페이지 사이에 중복·누락이 없고, 잘못된 offset·구 cursor는 400")
 	fun paging() {
 		val org = seed()
 
 		val first = ok(org.tenant, "/analytics/teams?$week&limit=3")
 		val snapshotId = first.at("/meta/snapshotId").asString()
-		val cursor = first.at("/teams/nextCursor").asString()
-		val second = ok(org.tenant, "/analytics/teams?$week&limit=3&snapshotId=$snapshotId&cursor=$cursor")
+		val offset = first.at("/teams/nextOffset").asString()
+		val second = ok(org.tenant, "/analytics/teams?$week&limit=3&snapshotId=$snapshotId&offset=$offset")
 
 		val names = (first.at("/teams/items").list() + second.at("/teams/items").list()).map { it.path("teamName").asString() }
 		assertThat(names).containsExactly("팀 A", "팀 B", "팀 C", "팀 D")
 		assertThat(second.at("/meta/snapshotId").asString()).isEqualTo(snapshotId)
-		assertThat(second.at("/teams/nextCursor").isNull).isTrue()
+		assertThat(second.at("/teams/nextOffset").isNull).isTrue()
 
-		val wrongSort = get(org.tenant, "/analytics/teams?$week&limit=3&sort=token&snapshotId=$snapshotId&cursor=$cursor")
-		assertThat(wrongSort.statusCode()).isEqualTo(400)
-		assertThat(DashboardHttp.json(wrongSort).at("/error/fieldErrors/0/code").asString()).isEqualTo("invalid_cursor")
+		assertThat(get(org.tenant, "/analytics/teams?$week&offset=1").statusCode()).isEqualTo(400)
+		assertThat(get(org.tenant, "/analytics/teams?$week&snapshotId=$snapshotId&cursor=legacy").statusCode()).isEqualTo(400)
+		for (offset in listOf("-1", "1.5", "2147483648", "oops")) {
+			assertThat(get(org.tenant, "/analytics/teams?$week&snapshotId=$snapshotId&offset=$offset").statusCode()).isEqualTo(400)
+		}
+		val beyond = ok(org.tenant, "/analytics/teams?$week&snapshotId=$snapshotId&offset=2147483647")
+		assertThat(beyond.at("/teams/items").size()).isZero()
+		assertThat(beyond.at("/teams/nextOffset").isNull).isTrue()
 	}
 
 	@Test
@@ -210,9 +215,68 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/team/teamName").asString()).isEqualTo("플랫폼")
 
 		val paged = ok(tenant, "/analytics/teams/$team/users?$week&limit=1")
-		val next = ok(tenant, "/analytics/teams/$team/users?$week&limit=1&snapshotId=${paged.at("/meta/snapshotId").asString()}&cursor=${paged.at("/users/nextCursor").asString()}")
+		val next = ok(tenant, "/analytics/teams/$team/users?$week&limit=1&snapshotId=${paged.at("/meta/snapshotId").asString()}&offset=${paged.at("/users/nextOffset").asInt()}")
 		assertThat((paged.at("/users/items").list() + next.at("/users/items").list()).map { it.path("account").asString() })
 			.containsExactly("alice@example.test", "bob@example.test")
+	}
+
+	@Test
+	@DisplayName("평균 대비 정렬 — 팀 전체 평균으로 양방향 페이지를 잇고 offset으로 이어 읽고 구 cursor는 거절한다")
+	fun averageDeviationPaging() {
+		val tenant = DashboardTestStores.insertTenant()
+		SourceFixtures.setSummary(tenant, firstReceivedAt = kst("2026-09-01T00:00:00"))
+		val team = SourceFixtures.insertTeam(tenant, "평균 정렬")
+		val members = (1..4).map { SourceFixtures.insertMember(tenant, "user$it@example.test") }
+		val costs = listOf("2", "4", "4", "10")
+		SourceFixtures.insertEvents(tenant, *members.mapIndexed { i, member ->
+			Event("$tenant-$i", kst("2026-09-08T10:00:00"), teamId = team, memberId = member,
+				costEstimatedUsd = BigDecimal(costs[i]), pricingVersion = "v1")
+		}.toTypedArray())
+		val tied = listOf(members[1], members[2]).map(UUID::toString).sorted()
+		for (order in listOf("asc", "desc")) {
+			val path = "/analytics/teams/$team/users?$week&sort=averageDeviation&order=$order&limit=2"
+			val first = ok(tenant, path)
+			val snapshot = first.at("/meta/snapshotId").asString()
+			val offset = first.at("/users/nextOffset").asInt()
+			val second = ok(tenant, "$path&snapshotId=$snapshot&offset=$offset")
+			val ids = (first.at("/users/items").list() + second.at("/users/items").list()).map { it.path("memberId").asString() }
+			val expected = if (order == "asc") listOf(members[0].toString()) + tied + members[3].toString()
+				else listOf(members[3].toString()) + tied + members[0].toString()
+			assertThat(ids).containsExactlyElementsOf(expected)
+			assertThat(first.at("/summary/averageEquivalentCostUsd").asString()).isEqualTo("5.000000")
+			assertThat(second.at("/summary/averageEquivalentCostUsd").asString()).isEqualTo("5.000000")
+			assertThat(second.at("/users/nextOffset").isNull).isTrue()
+			for (other in listOf("sort=cost&order=$order", "sort=averageDeviation&order=${if (order == "asc") "desc" else "asc"}")) {
+				assertThat(get(tenant, "/analytics/teams/$team/users?$week&$other&snapshotId=$snapshot&cursor=legacy").statusCode()).isEqualTo(400)
+			}
+		}
+		for (invalid in listOf("sort=unknown", "order=unknown")) {
+			assertThat(get(tenant, "/analytics/teams/$team/users?$week&$invalid").statusCode()).isEqualTo(400)
+		}
+	}
+
+	@Test
+	@DisplayName("평균 대비 — 0·확인 불가는 ID 순이고 작은 양수 평균도 정렬한다")
+	fun unavailableAverageDeviation() {
+		for (costs in listOf(listOf("0", "0"), listOf(null, "9"), listOf("0.0000001", "0.0000002"))) {
+			val tenant = DashboardTestStores.insertTenant()
+			SourceFixtures.setSummary(tenant, firstReceivedAt = kst("2026-09-01T00:00:00"))
+			val team = SourceFixtures.insertTeam(tenant, "평균 없음")
+			val members = costs.indices.map { SourceFixtures.insertMember(tenant, "user$it@example.test") }
+			SourceFixtures.insertEvents(tenant, *members.mapIndexed { i, member ->
+				Event("$tenant-$i", kst("2026-09-08T10:00:00"), teamId = team, memberId = member,
+					costEstimatedUsd = costs[i]?.let(::BigDecimal), pricingVersion = "v1")
+			}.toTypedArray())
+			for (order in listOf("asc", "desc")) {
+				val body = ok(tenant, "/analytics/teams/$team/users?$week&sort=averageDeviation&order=$order")
+				val expected = if (costs.first() == "0.0000001") {
+					assertThat(body.at("/summary/averageEquivalentCostUsd").asString()).isEqualTo("0.00000015")
+					(if (order == "asc") members else members.reversed()).map(UUID::toString)
+				} else members.map(UUID::toString).sorted()
+				assertThat(body.at("/users/items").list().map { it.path("memberId").asString() })
+					.containsExactlyElementsOf(expected)
+			}
+		}
 	}
 
 	@Test

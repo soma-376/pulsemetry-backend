@@ -982,7 +982,7 @@
       }
     ],
     "totalCount": 4,
-    "nextCursor": null
+    "nextOffset": null
   },
   "unassigned": {
     "teamId": null,

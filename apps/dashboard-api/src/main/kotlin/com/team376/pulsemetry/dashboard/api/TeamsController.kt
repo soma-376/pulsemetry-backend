@@ -23,8 +23,8 @@ import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * 팀 분석 명세의 세 조회와 조직 팀 선택지. 받는 파라미터는 명세의 표 그대로다 — 목록은 기간·비교·`sort`·`limit`(기본 20, 최대 50)·`cursor`·`snapshotId`,
- * 상세는 기간·비교·`snapshotId`, 사용자는 기간·`snapshotId`·`limit`(기본 12, 최대 100)·`cursor`, 선택지는 `q`·`limit`(기본 50, 최대 100)·`cursor`·`snapshotId`.
+ * 팀 분석 명세의 세 조회와 조직 팀 선택지. 받는 파라미터는 명세의 표 그대로다 — 목록은 기간·비교·`sort`·`limit`(기본 20, 최대 50)·`offset`·`snapshotId`,
+ * 상세는 기간·비교·`snapshotId`, 사용자는 기간·`sort`·`order`·`snapshotId`·`limit`(기본 12, 최대 100)·`offset`, 선택지는 `q`·`limit`(기본 50, 최대 100)·`cursor`·`snapshotId`.
  */
 @RestController
 class TeamsController(
@@ -42,7 +42,7 @@ class TeamsController(
 	): TeamsResponse {
 		val organization = access.require(principal, organizationId, DashboardAction.TEAM_ANALYTICS)
 		val (period, sort, page) = QueryReader(request::getParameter).read {
-			Triple(comparedPeriod(), choice("sort", TeamsService.Sort.BY_WIRE, TeamsService.Sort.COST), page(default = 20, max = 50, codec = codec))
+			Triple(comparedPeriod(), choice("sort", TeamsService.Sort.BY_WIRE, TeamsService.Sort.COST), offsetPage(default = 20, max = 50))
 		}
 		return teams.teams(organization, principal.memberId, period, sort, page, request.getParameter(SNAPSHOT_ID))
 	}
@@ -72,8 +72,12 @@ class TeamsController(
 		// 개인 사용량이다 — 팀 집계와 다른 행위로 판정한다(개인 목록 권한이 없으면 403).
 		val organization = access.require(principal, organizationId, DashboardAction.INDIVIDUAL_USAGE, (parsed as? TeamKey.Team)?.id)
 		val key = parsed ?: throw DashboardException(ErrorCode.NOT_FOUND)
-		val (period, page) = QueryReader(request::getParameter).read { period() to page(default = 12, max = 100, codec = codec) }
-		return teams.users(organization, principal.memberId, key, ComparedPeriod(period, CompareMode.NONE), page, request.getParameter(SNAPSHOT_ID))
+		val (period, page, ordering) = QueryReader(request::getParameter).read {
+			Triple(period(), offsetPage(default = 12, max = 100),
+				choice("sort", TeamsService.UserSort.BY_WIRE, TeamsService.UserSort.COST) to
+					choice("order", TeamsService.UserOrder.BY_WIRE, TeamsService.UserOrder.DESC))
+		}
+		return teams.users(organization, principal.memberId, key, ComparedPeriod(period, CompareMode.NONE), page, request.getParameter(SNAPSHOT_ID), ordering.first, ordering.second)
 	}
 
 	@GetMapping("/api/v1/organizations/{organizationId}/teams")

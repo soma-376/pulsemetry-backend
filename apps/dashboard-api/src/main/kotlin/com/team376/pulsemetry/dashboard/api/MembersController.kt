@@ -49,8 +49,15 @@ class MembersController(
 		request: HttpServletRequest,
 	): MemberListResponse {
 		val organization = access.require(principal, organizationId, DashboardAction.MEMBER_DIRECTORY)
-		val (period, search, page) = QueryReader(request::getParameter).read { Triple(period(), search(), page(default = 20, max = 100, codec = codec)) }
-		return members.members(organization, principal.memberId, ComparedPeriod(period, CompareMode.NONE), search, page, request.getParameter(SNAPSHOT_ID))
+		val (period, search, page) = QueryReader(request::getParameter).read { Triple(period(), search(), offsetPage(default = 20, max = 100)) }
+		val (sort, order, activity) = QueryReader(request::getParameter).read {
+			Triple(choice("sort", MembersService.MemberSort.BY_WIRE, MembersService.MemberSort.ACCOUNT),
+				choice("order", com.team376.pulsemetry.dashboard.analytics.TeamsService.UserOrder.BY_WIRE, com.team376.pulsemetry.dashboard.analytics.TeamsService.UserOrder.ASC),
+				choice("status", MembersService.Activity.BY_WIRE, MembersService.Activity.ALL))
+		}
+		return members.members(organization, principal.memberId, ComparedPeriod(period, CompareMode.NONE), search, page, request.getParameter(SNAPSHOT_ID), sort, order, activity,
+			request.getParameter("memberId")?.let { raw -> runCatching { java.util.UUID.fromString(raw) }.getOrNull()?.takeIf { it.toString() == raw.lowercase() }
+				?: throw com.team376.pulsemetry.dashboard.error.DashboardException.invalid("memberId", com.team376.pulsemetry.dashboard.error.FieldErrorCode.INVALID_FORMAT) })
 	}
 
 	@GetMapping("/api/v1/organizations/{organizationId}/members/unassigned")
@@ -60,7 +67,7 @@ class MembersController(
 		request: HttpServletRequest,
 	): MemberListResponse {
 		val organization = access.require(principal, organizationId, DashboardAction.MEMBER_DIRECTORY)
-		val (period, page) = QueryReader(request::getParameter).read { period() to page(default = 20, max = 100, codec = codec) }
+		val (period, page) = QueryReader(request::getParameter).read { period() to offsetPage(default = 20, max = 100) }
 		return members.unassigned(organization, principal.memberId, ComparedPeriod(period, CompareMode.NONE), page, request.getParameter(SNAPSHOT_ID))
 	}
 

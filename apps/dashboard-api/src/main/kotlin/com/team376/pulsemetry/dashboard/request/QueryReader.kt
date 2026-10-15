@@ -60,6 +60,19 @@ class QueryReader(private val parameter: (String) -> String?) {
 		return PageRequest(limit, cursor)
 	}
 
+	/** offset > 0에서는 첫 페이지의 snapshot을 반드시 이어 쓴다. 구 cursor 요청은 무시하지 않는다. */
+	fun offsetPage(default: Int, max: Int): OffsetPageRequest {
+		val limit = parameter(LIMIT)?.let { raw -> raw.toIntOrNull()?.let {
+			if (it in 1..max) it else fail(LIMIT, FieldErrorCode.OUT_OF_RANGE, default)
+		} ?: fail(LIMIT, FieldErrorCode.INVALID_FORMAT, default) } ?: default
+		val offset = parameter("offset")?.let { raw -> raw.toIntOrNull()?.let {
+			if (it >= 0) it else fail("offset", FieldErrorCode.OUT_OF_RANGE, 0)
+		} ?: fail("offset", FieldErrorCode.INVALID_FORMAT, 0) } ?: 0
+		if (parameter(CURSOR) != null) fail(CURSOR, FieldErrorCode.UNSUPPORTED_VALUE, Unit)
+		if (offset > 0 && parameter("snapshotId").isNullOrBlank()) fail("snapshotId", FieldErrorCode.REQUIRED, Unit)
+		return OffsetPageRequest(limit, offset)
+	}
+
 	/** `q` — 최대 200자의 검색어. 비어 있으면 검색하지 않는다. */
 	fun search(): String? {
 		val raw = parameter(SEARCH)?.takeIf { it.isNotEmpty() } ?: return null

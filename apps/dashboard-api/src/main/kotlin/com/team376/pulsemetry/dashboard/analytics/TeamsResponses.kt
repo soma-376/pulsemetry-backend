@@ -70,7 +70,7 @@ data class TeamsResponse(
 	val attributionBasis: String,
 	val totals: TeamMetrics,
 	val sort: String,
-	val teams: Page<TeamAnalytics>,
+	val teams: OffsetPage<TeamAnalytics>,
 	val unassigned: TeamAnalytics,
 	val modelScatter: Section<ModelScatter>,
 )
@@ -107,7 +107,7 @@ data class TeamUsersResponse(
 	val meta: TeamMeta,
 	val team: TeamRef,
 	val summary: TeamUsersSummary,
-	val users: Page<TeamUser>,
+	val users: OffsetPage<TeamUser>,
 )
 
 /** 요청서의 `CurrentMeta` — 선택 기간과 무관한 현재 상태의 meta. */

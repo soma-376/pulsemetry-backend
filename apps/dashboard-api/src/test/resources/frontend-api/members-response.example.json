@@ -77,7 +77,8 @@
         },
         "lastUsedAt": "2026-09-13T05:00:00Z",
         "seatState": "assigned",
-        "plannedVendorIds": []
+        "plannedVendorIds": [],
+        "activity": "active"
       },
       {
         "memberId": "member-002",
@@ -108,7 +109,8 @@
         },
         "lastUsedAt": "2026-09-01T00:00:00Z",
         "seatState": "assigned",
-        "plannedVendorIds": []
+        "plannedVendorIds": [],
+        "activity": "active"
       },
       {
         "memberId": "member-003",
@@ -139,11 +141,12 @@
         },
         "lastUsedAt": "2026-09-13T05:00:00Z",
         "seatState": "assigned",
-        "plannedVendorIds": []
+        "plannedVendorIds": [],
+        "activity": "active"
       }
     ],
     "totalCount": 3,
-    "nextCursor": null
+    "nextOffset": null
   },
   "unassigned": {
     "items": [
@@ -176,11 +179,12 @@
         },
         "lastUsedAt": "2026-09-13T05:00:00Z",
         "seatState": "assigned",
-        "plannedVendorIds": []
+        "plannedVendorIds": [],
+        "activity": "active"
       }
     ],
     "totalCount": 1,
-    "nextCursor": null
+    "nextOffset": null
   },
   "reclaimCandidates": {
     "availability": "available",

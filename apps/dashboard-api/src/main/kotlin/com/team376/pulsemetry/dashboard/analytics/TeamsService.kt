@@ -10,7 +10,7 @@ import com.team376.pulsemetry.dashboard.organization.Organization
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
 import com.team376.pulsemetry.dashboard.request.PageCursor
 import com.team376.pulsemetry.dashboard.request.PageCursorCodec
-import com.team376.pulsemetry.dashboard.request.PageRequest
+import com.team376.pulsemetry.dashboard.request.OffsetPageRequest
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -21,8 +21,8 @@ import java.util.UUID
  * 409 를 내지 않는다 — snapshot 이 유효하면 어느 endpoint 든 그 payload 의 부분 집합을 계산한다.
  *
  * - 팀 합계는 이벤트 당시 대표 팀(`team_id_as_of`)으로 한 번만 귀속한다. 미배정은 목록에 섞지 않고 `unassigned` 로 따로 낸다.
- * - 목록 정렬은 선택 지표 내림차순(null 마지막) + 팀 ID 오름차순. cursor 는 snapshot ID 와 목록 범위(endpoint·정렬·팀)에 묶인다 —
- *   다른 정렬·다른 팀·다른 snapshot 의 cursor 는 400 이다.
+ * - 목록 정렬은 선택 지표 내림차순(null 마지막) + 팀 ID 오름차순. 같은 snapshot에서 offset으로 이어 읽는다.
+ *   사용자 목록도 전체 정렬 후 offset으로 나누고, 정렬 변경 시 첫 페이지부터 요청한다.
  * - 조직 합계와 모델 산점도는 페이지와 무관한 전체 권한 범위의 집계다.
  */
 class TeamsService(
@@ -35,6 +35,22 @@ class TeamsService(
 
 	enum class Sort(val wire: String) {
 		COST("cost"), TOKEN("token"), SESSION("session");
+
+		companion object {
+			val BY_WIRE = entries.associateBy { it.wire }
+		}
+	}
+
+	enum class UserSort(val wire: String) {
+		COST("cost"), AVERAGE_DEVIATION("averageDeviation"), ACCOUNT("account"), SESSION("session"), TOKEN("token"), CACHE("cache"), LAST_USED("lastUsed");
+
+		companion object {
+			val BY_WIRE = entries.associateBy { it.wire }
+		}
+	}
+
+	enum class UserOrder(val wire: String) {
+		ASC("asc"), DESC("desc");
 
 		companion object {
 			val BY_WIRE = entries.associateBy { it.wire }
@@ -62,24 +78,18 @@ class TeamsService(
 		requestedBy: UUID,
 		period: ComparedPeriod,
 		sort: Sort,
-		page: PageRequest,
+		page: OffsetPageRequest,
 		snapshotId: String?,
 	): TeamsResponse {
-		val frame = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId ?: page.cursor?.snapshotId)
-		val scope = "analytics-teams:sort=${sort.wire}"
-		page.cursor?.let { snapshots.requireCursor(it, frame.snapshot.snapshotId, scope) }
+		val frame = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId)
 		val data = TeamData.load(frame, aggregator, references)
 
 		val ranked = data.teamIds().sortedWith(
 			compareBy<String, BigDecimal?>(nullsLast(reverseOrder())) { metric(data.current.getValue(listOf(it)), sort, frame.pricingMixed) }
 				.thenBy { it },
 		)
-		val start = page.cursor?.let { cursor -> startAfter(ranked, cursor) } ?: 0
-		val items = ranked.drop(start).take(page.limit)
-		val next = if (start + items.size < ranked.size) {
-			val last = items.last()
-			codec.encode(PageCursor(frame.snapshot.snapshotId, scope, listOf(metric(data.current.getValue(listOf(last)), sort, frame.pricingMixed)?.toPlainString(), last)))
-		} else null
+		val result = OffsetPage.of(ranked, page.offset, page.limit)
+
 
 		return TeamsResponse(
 			meta = TeamMeta.of(frames.analyticsMeta(frame)),
@@ -87,7 +97,7 @@ class TeamsService(
 			attributionBasis = ATTRIBUTION_BASIS,
 			totals = TeamScreenValues.metrics(frame, data.organization, data.previousOrganization),
 			sort = sort.wire,
-			teams = Page(items.map { data.analytics(TeamKey.Team(UUID.fromString(it))) }, ranked.size, next),
+			teams = OffsetPage(result.items.map { data.analytics(TeamKey.Team(UUID.fromString(it))) }, result.totalCount, result.nextOffset),
 			unassigned = data.analytics(TeamKey.Unassigned),
 			modelScatter = data.modelScatter(),
 		)
@@ -105,13 +115,13 @@ class TeamsService(
 		requestedBy: UUID,
 		key: TeamKey,
 		period: ComparedPeriod,
-		page: PageRequest,
+		page: OffsetPageRequest,
 		snapshotId: String?,
+		sort: UserSort = UserSort.COST,
+		order: UserOrder = UserOrder.DESC,
 	): TeamUsersResponse {
-		val frame = frames.frame(organization, requestedBy, period, usesComparison = false, snapshotId ?: page.cursor?.snapshotId)
+		val frame = frames.frame(organization, requestedBy, period, usesComparison = false, snapshotId)
 		val teamScope = TeamScope((key as? TeamKey.Team)?.id?.toString())
-		val scope = "analytics-team-users:team=${teamScope.teamId ?: TeamKey.UNASSIGNED}"
-		page.cursor?.let { snapshots.requireCursor(it, frame.snapshot.snapshotId, scope) }
 		val directory = references.teams(frame.snapshot).associateBy { it.id.toString() }
 
 		val snapshot = frame.snapshot
@@ -122,28 +132,31 @@ class TeamsService(
 		val memberModels = if (frame.empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.MEMBER_MODEL, teamScope)
 
 		val identified = members.filterKeys { it.single() != null }.map { (k, v) -> k.single()!! to v }
-		val ranked = identified.sortedWith(
-			compareBy<Pair<String, UsageTotals>, BigDecimal?>(nullsLast(reverseOrder())) { it.second.equivalentCost(pricingMixed) }.thenBy { it.first },
-		).map { it.first }
-		val start = page.cursor?.let { startAfter(ranked, it) } ?: 0
-		val items = ranked.drop(start).take(page.limit)
-		val next = if (start + items.size < ranked.size) {
-			val last = items.last()
-			codec.encode(PageCursor(snapshot.snapshotId, scope, listOf(members.getValue(listOf(last)).equivalentCost(pricingMixed)?.toPlainString(), last)))
-		} else null
-		val accounts = references.accounts(snapshot, items.map(UUID::fromString))
-
-		val users = items.map { memberId ->
-			val totals = members.getValue(listOf(memberId))
-			TeamUser(
-				memberId = memberId,
-				account = accounts[UUID.fromString(memberId)] ?: memberId,
-				usage = TeamScreenValues.user(frame, totals),
-				mainModel = mainModel(memberModels, memberId, pricingMixed),
-				cacheHitRatio = TeamScreenValues.cache(frame, totals),
-				lastUsedAt = totals.lastSourceTime?.toString(),
-			)
+		val averageCost = average(identified.map { it.second }, pricingMixed)?.let(Money::format)
+		// 평균 대비 = 개인 비용 / 팀 전체 평균 - 1. 양수인 공통 분모이므로 비용 원본으로 비교하면
+		// 비율 반올림으로 동률을 만들지 않는다. 표시 평균이 0이거나 확인 불가이면 모두 비교 불가다.
+		val comparableAverage = averageCost?.toBigDecimal()?.signum() == 1
+		val accounts = references.accounts(snapshot, identified.map { UUID.fromString(it.first) })
+		val allUsers = identified.map { (memberId, totals) ->
+			TeamUser(memberId = memberId, account = accounts[UUID.fromString(memberId)] ?: memberId,
+				usage = TeamScreenValues.user(frame, totals), mainModel = mainModel(memberModels, memberId, pricingMixed),
+				cacheHitRatio = TeamScreenValues.cache(frame, totals), lastUsedAt = totals.lastSourceTime?.toString())
 		}
+		val decimals = if (order == UserOrder.ASC) naturalOrder<BigDecimal>() else reverseOrder<BigDecimal>()
+		val comparator = when (sort) {
+			UserSort.ACCOUNT -> compareBy<TeamUser, String>(if (order == UserOrder.ASC) naturalOrder() else reverseOrder()) { it.account.lowercase(java.util.Locale.ROOT) }
+			UserSort.LAST_USED -> compareBy<TeamUser, java.time.Instant?>(nullsLast(if (order == UserOrder.ASC) naturalOrder() else reverseOrder())) { it.lastUsedAt?.let(java.time.Instant::parse) }
+			else -> compareBy<TeamUser, BigDecimal?>(nullsLast(decimals)) { user -> when (sort) {
+				UserSort.AVERAGE_DEVIATION -> if (comparableAverage) members.getValue(listOf(user.memberId)).equivalentCost(pricingMixed) else null
+				UserSort.COST -> members.getValue(listOf(user.memberId)).equivalentCost(pricingMixed)
+				UserSort.SESSION -> user.usage.sessionCount.value?.toBigDecimal()
+				UserSort.TOKEN -> user.usage.totalTokens.value?.toBigDecimal()
+				UserSort.CACHE -> user.cacheHitRatio.value?.toBigDecimal()
+				else -> null
+			} }
+		}
+		val result = OffsetPage.of(allUsers.sortedWith(comparator.thenBy { it.memberId }), page.offset, page.limit)
+
 		val unidentified = members[listOf(null)]
 		return TeamUsersResponse(
 			meta = TeamMeta.of(frames.analyticsMeta(frame)),
@@ -151,11 +164,11 @@ class TeamsService(
 			summary = TeamUsersSummary(
 				// 완전한 기간이면 사용이 없는 팀도 0 이다 — 팀 상세와 같은 기준이다.
 				usage = TeamScreenValues.summary(frame, team),
-				averageEquivalentCostUsd = average(identified.map { it.second }, pricingMixed)?.let(Money::format),
+				averageEquivalentCostUsd = averageCost,
 				cacheHitRatio = TeamScreenValues.cache(frame, team),
 				unidentifiedEquivalentCostUsd = unidentified?.equivalentCost(pricingMixed)?.let(Money::format),
 			),
-			users = Page(users, ranked.size, next),
+			users = result,
 		)
 	}
 
@@ -172,14 +185,6 @@ class TeamsService(
 		if (users.isEmpty()) return null
 		val costs = users.map { it.equivalentCost(pricingMixed) ?: return null }
 		return costs.fold(BigDecimal.ZERO, BigDecimal::add).divide(BigDecimal(users.size), 12, RoundingMode.HALF_EVEN)
-	}
-
-	/** cursor 의 마지막 키(ID) 다음 위치. 같은 snapshot 의 같은 순서에서 찾지 못하면 이 요청의 cursor 가 아니다. */
-	private fun startAfter(ranked: List<String>, cursor: PageCursor): Int {
-		val last = cursor.after.lastOrNull()
-		val index = ranked.indexOf(last)
-		if (index < 0) throw DashboardException.invalid(CURSOR, FieldErrorCode.INVALID_CURSOR)
-		return index + 1
 	}
 
 	/** 정렬 지표. 비용·토큰·세션을 한 타입으로 비교한다. */

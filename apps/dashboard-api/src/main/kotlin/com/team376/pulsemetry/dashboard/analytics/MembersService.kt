@@ -9,12 +9,12 @@ import com.team376.pulsemetry.dashboard.organization.Organization
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
 import com.team376.pulsemetry.dashboard.request.PageCursor
 import com.team376.pulsemetry.dashboard.request.PageCursorCodec
+import com.team376.pulsemetry.dashboard.request.OffsetPageRequest
 import com.team376.pulsemetry.dashboard.request.PageRequest
 import com.team376.pulsemetry.dashboard.request.QueryReader
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
 import org.slf4j.LoggerFactory
 import java.math.BigDecimal
-import java.security.MessageDigest
 import java.time.Clock
 import java.util.Locale
 import java.util.UUID
@@ -30,7 +30,7 @@ import java.util.UUID
  * - 로스터는 `active`·`suspended` 구성원이다. 초대 중(`invited`)인 사람은 로스터가 아니다.
  * - 좌석(요약·`seatState`·회수 후보·구성원 좌석)은 좌석 원장(ADR 0048)을 기준 시각으로 다시 세운 값이다([SeatService]). 구성원 화면의 기준 시각은
  *   snapshot 의 asOf 이고, 회수 후보의 다음 페이지는 같은 시각의 현재 상태 토큰으로 잇는다. 회수 가능 여부는 좌석마다 낸다(ADR 0049).
- * - 목록은 선택 기간 비용 내림차순(수집되지 않은 사람은 null 로 마지막) + memberId 오름차순. 검색은 첫 페이지가 아니라 로스터 전체에 적용한다.
+ * - 목록은 계정 오름차순이 기본이다. 검색·상태·정렬을 로스터 전체에 적용한 뒤 offset으로 자른다. 동률은 memberId, null은 마지막이다.
  */
 class MembersService(
 	private val frames: AnalyticsFrames,
@@ -69,30 +69,41 @@ class MembersService(
 			policy = policy(organization),
 			// 회수·복원은 관리 기능이 있으면 된다 — 벤더 제어가 없는 좌석은 관리자 조치 확인으로 끝난다(ADR 0049). 좌석마다의 가능 여부는 따로 낸다.
 			capabilities = MemberCapabilities(invite = managementEnabled, assignTeam = managementEnabled, reclaimSeats = managementEnabled, restoreSeats = managementEnabled),
-			members = page(view, view.roster, first, scope(null)),
-			unassigned = page(view, view.roster.filter { it.currentTeamIds.isEmpty() }, first, UNASSIGNED_SCOPE),
+			members = memberPage(view.roster.map(view::member), OffsetPageRequest(DASHBOARD_LIMIT)),
+			unassigned = memberPage(view.roster.filter { it.currentTeamIds.isEmpty() }.map(view::member), OffsetPageRequest(DASHBOARD_LIMIT)),
 			reclaimCandidates = candidates,
 		)
 	}
 
-	fun members(organization: Organization, requestedBy: UUID, period: ComparedPeriod, search: String?, page: PageRequest, snapshotId: String?): MemberListResponse {
-		val frame = frames.frame(organization, requestedBy, period, usesComparison = false, snapshotId ?: page.cursor?.snapshotId)
-		val scope = scope(search)
-		page.cursor?.let { snapshots.requireCursor(it, frame.snapshot.snapshotId, scope) }
-		val view = view(frame, null)
-		val needle = search?.lowercase(Locale.ROOT)
-		val matched = if (needle == null) view.roster else view.roster.filter {
-			it.account.lowercase(Locale.ROOT).contains(needle) || it.displayName?.lowercase(Locale.ROOT)?.contains(needle) == true
-		}
-		return MemberListResponse(meta(frame), page(view, matched, page, scope))
+	enum class MemberSort(val wire: String) {
+		ACCOUNT("account"), TEAM("team"), COST("cost"), ACTIVITY("activity");
+		companion object { val BY_WIRE = entries.associateBy { it.wire } }
+	}
+	enum class Activity(val wire: String) {
+		ALL("all"), ACTIVE("active"), CANDIDATE("candidate"), IDLE("idle"), UNOBSERVED("unobserved");
+		companion object { val BY_WIRE = entries.associateBy { it.wire } }
 	}
 
-	fun unassigned(organization: Organization, requestedBy: UUID, period: ComparedPeriod, page: PageRequest, snapshotId: String?): MemberListResponse {
-		val frame = frames.frame(organization, requestedBy, period, usesComparison = false, snapshotId ?: page.cursor?.snapshotId)
-		page.cursor?.let { snapshots.requireCursor(it, frame.snapshot.snapshotId, UNASSIGNED_SCOPE) }
-		val view = view(frame, null)
-		return MemberListResponse(meta(frame), page(view, view.roster.filter { it.currentTeamIds.isEmpty() }, page, UNASSIGNED_SCOPE))
+	fun members(organization: Organization, requestedBy: UUID, period: ComparedPeriod, search: String?, page: OffsetPageRequest, snapshotId: String?,
+		sort: MemberSort = MemberSort.ACCOUNT, order: TeamsService.UserOrder = TeamsService.UserOrder.ASC, activity: Activity = Activity.ALL, memberId: UUID? = null): MemberListResponse {
+		val frame = frames.frame(organization, requestedBy, period, usesComparison = false, snapshotId)
+		val view = observedView(organization, frame)
+		val needle = search?.trim()?.lowercase(Locale.ROOT)
+		val matched = view.roster.filter { memberId == null || it.id == memberId }.map(view::member).filter {
+			(activity == Activity.ALL || it.activity == activity.wire) &&
+			(needle.isNullOrEmpty() || listOf(it.account, it.displayName, it.team.teamName).any { text -> text.lowercase(Locale.ROOT).contains(needle) })
+		}
+		return MemberListResponse(meta(frame), memberPage(matched, page, sort, order))
 	}
+
+	fun unassigned(organization: Organization, requestedBy: UUID, period: ComparedPeriod, page: OffsetPageRequest, snapshotId: String?): MemberListResponse {
+		val frame = frames.frame(organization, requestedBy, period, usesComparison = false, snapshotId)
+		val view = observedView(organization, frame)
+		return MemberListResponse(meta(frame), memberPage(view.roster.filter { it.currentTeamIds.isEmpty() }.map(view::member), page))
+	}
+
+	private fun observedView(organization: Organization, frame: AnalyticsFrames.Frame): RosterView =
+		view(frame, seats.assess(organization.id, frame.snapshot.asOf, references.roster(frame.snapshot).filter { it.status in ROSTER_STATUSES }.map { it.id }.toSet()))
 
 	/**
 	 * 회수 후보 (ADR 0048 §7, [SeatAssessment]) — 현재 상태 목록이라 snapshot ID 는 [CurrentStateTokens] 이고, 토큰의 기준 시각으로 원장을 다시 세운다.
@@ -209,27 +220,19 @@ class MembersService(
 	/** 조직의 회수 기준과 그 판(ADR 0046). 저장하지 않은 조직은 서버 기본 설정과 판 0 이다. */
 	private fun policy(organization: Organization): IdlePolicy = policies.of(organization.id).let { IdlePolicy(it.reclaimIdleDays, it.version) }
 
-	private fun page(view: RosterView, candidates: List<SnapshotReferences.RosterMember>, page: PageRequest, scope: String): Page<Member> {
-		val ranked = candidates.sortedWith(
-			compareBy<SnapshotReferences.RosterMember, BigDecimal?>(nullsLast(reverseOrder())) { view.cost(it.id) }.thenBy { it.id.toString() },
-		)
-		val start = page.cursor?.let { cursor ->
-			val index = ranked.indexOfFirst { it.id.toString() == cursor.after.lastOrNull() }
-			if (index < 0) throw DashboardException.invalid(CURSOR, FieldErrorCode.INVALID_CURSOR)
-			index + 1
-		} ?: 0
-		val items = ranked.drop(start).take(page.limit)
-		val next = if (start + items.size < ranked.size) {
-			val last = items.last()
-			codec.encode(PageCursor(view.frame.snapshot.snapshotId, scope, listOf(view.cost(last.id)?.toPlainString(), last.id.toString())))
-		} else null
-		return Page(items.map(view::member), ranked.size, next)
+	private fun memberPage(all: List<Member>, page: OffsetPageRequest, sort: MemberSort = MemberSort.ACCOUNT,
+		order: TeamsService.UserOrder = TeamsService.UserOrder.ASC): OffsetPage<Member> {
+		val strings = if (order == TeamsService.UserOrder.ASC) naturalOrder<String>() else reverseOrder<String>()
+		val decimals = if (order == TeamsService.UserOrder.ASC) naturalOrder<BigDecimal>() else reverseOrder<BigDecimal>()
+		val comparator = when (sort) {
+			MemberSort.ACCOUNT -> compareBy<Member, String>(strings) { it.account.lowercase(Locale.ROOT) }
+			MemberSort.TEAM -> compareBy<Member, String>(strings) { it.team.teamName.lowercase(Locale.ROOT) }
+			MemberSort.COST -> compareBy<Member, BigDecimal?>(nullsLast(decimals)) { it.periodUsage?.equivalentCostUsd?.value?.toBigDecimal() }
+			MemberSort.ACTIVITY -> compareBy<Member, java.time.Instant?>(nullsLast(if (order == TeamsService.UserOrder.ASC) naturalOrder() else reverseOrder())) { it.lastUsedAt?.let(java.time.Instant::parse) }
+		}
+		return OffsetPage.of(all.sortedWith(comparator.thenBy { it.memberId }), page.offset, page.limit)
 	}
 
-	private fun scope(search: String?) = "members:q=" + if (search == null) "-" else
-		MessageDigest.getInstance("SHA-256").digest(search.toByteArray()).joinToString("") { "%02x".format(it) }.take(16)
-
-	/** 한 frame 의 로스터와 사용량을 한 번씩 읽는다. */
 	private inner class RosterView(
 		val frame: AnalyticsFrames.Frame,
 		val roster: List<SnapshotReferences.RosterMember>,
@@ -262,6 +265,12 @@ class MembersService(
 				periodUsage = if (frame.empty || !totals.hasUsage) null else MemberUsage(values.cost, values.sessions),
 				lastUsedAt = lastUsed[roster.id.toString()]?.toString(),
 				seatState = seats?.seatState(roster.id) ?: SEAT_UNKNOWN,
+				activity = when {
+					seats?.candidates?.any { it.seat.memberId == roster.id } == true -> "candidate"
+					!frame.empty && totals.hasUsage -> "active"
+					lastUsed[roster.id.toString()] != null -> "idle"
+					else -> "unobserved"
+				},
 			)
 		}
 

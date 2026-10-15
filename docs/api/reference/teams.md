@@ -128,7 +128,7 @@ type TeamsResponse = {
   attributionBasis: string;
   totals: TeamMetrics;
   sort: string;
-  teams: Page<TeamAnalytics>;
+  teams: OffsetPage<TeamAnalytics>;
   unassigned: TeamAnalytics;
   modelScatter: Section<ModelScatter>;
 };
@@ -204,7 +204,7 @@ type TeamUsersResponse = {
   meta: TeamMeta;
   team: TeamRef;
   summary: TeamUsersSummary;
-  users: Page<TeamUser>;
+  users: OffsetPage<TeamUser>;
 };
 ```
 

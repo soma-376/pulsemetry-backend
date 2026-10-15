@@ -45,8 +45,8 @@ Authorization: Bearer <Pulsemetry access_token>
   summary: MemberSummary;
   policy: IdlePolicy;
   capabilities: MemberCapabilities;
-  members: Page<Member>;
-  unassigned: Page<Member>;
+  members: OffsetPage<Member>;
+  unassigned: OffsetPage<Member>;
   reclaimCandidates: Section<Page<ReclaimCandidate>>;
 };
 ```

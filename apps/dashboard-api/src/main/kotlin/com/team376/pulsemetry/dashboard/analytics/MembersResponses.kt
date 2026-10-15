@@ -13,6 +13,7 @@ data class Member(
 	val lastUsedAt: String?,
 	val seatState: String,
 	val plannedVendorIds: List<String> = emptyList(),
+	val activity: String = "unobserved",
 )
 
 /** 화면에서 표시하는 사용량만 제공한다. 미관측 구성원의 periodUsage는 null이다. */
@@ -138,12 +139,12 @@ data class MembersResponse(
 	val summary: MemberSummary,
 	val policy: IdlePolicy,
 	val capabilities: MemberCapabilities,
-	val members: Page<Member>,
-	val unassigned: Page<Member>,
+	val members: OffsetPage<Member>,
+	val unassigned: OffsetPage<Member>,
 	val reclaimCandidates: Section<Page<ReclaimCandidate>>,
 )
 
-data class MemberListResponse(val meta: MembersMeta, val members: Page<Member>)
+data class MemberListResponse(val meta: MembersMeta, val members: OffsetPage<Member>)
 
 data class ReclaimCandidatesResponse(
 	val meta: CurrentMeta,
