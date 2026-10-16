@@ -7,9 +7,13 @@ import com.team376.pulsemetry.persistence.telemetry.TelemetryMetricPointsSink
 import com.team376.pulsemetry.persistence.telemetryops.TenantRetentionBoundaryStore
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationNormalizer
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationPipeline
+import com.team376.pulsemetry.telemetry.adapter.observation.claudecode.ClaudeApiProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.claudecode.ClaudeCodeProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexProfile
+import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexCompletedProfile
+import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexDesktopCompletedProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProfileRegistry
+import com.team376.pulsemetry.telemetry.adapter.observation.pricing.CurrentPublicPrices
 import com.team376.pulsemetry.telemetry.collector.IdentitySource
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
 import com.team376.pulsemetry.telemetry.collector.SignalConsumer
@@ -38,12 +42,15 @@ import javax.sql.DataSource
 class PipelineConfig {
 
 	/**
-	 * 정규화 2판. 제품 프로파일은 근거 기록과 실캡처 fixture 로 확인한 둘이다(ADR 0020 부록 A·C). 가격 프로파일은
-	 * 주입하지 않는다 — 가격 데이터의 관리 주체가 정해지기 전에는 추정 비용이 null 이다(ADR 0020 Follow-up).
+	 * 제품 프로파일은 근거와 실캡처로 확인한 범위다. 가격은 고정된 현재 공시 표준 환산이다(ADR 0060).
+	 * 미검증 의미와 필요한 성분이 없는 행은 프로파일을 주입해도 null이다.
 	 */
 	@Bean
-	fun observationPipeline(): ObservationPipeline =
-		ObservationPipeline(ObservationNormalizer(ProfileRegistry(listOf(CodexProfile, ClaudeCodeProfile))))
+	fun observationPipeline(properties: TelemetryIngestProperties): ObservationPipeline =
+		ObservationPipeline(
+			ObservationNormalizer(ProfileRegistry(listOf(CodexProfile, CodexCompletedProfile, CodexDesktopCompletedProfile, ClaudeCodeProfile, ClaudeApiProfile))),
+			CurrentPublicPrices.select(properties.telemetry.ingest.pricingProfile),
+		)
 
 	/**
 	 * 보강 2판. **스텁 provider 셋을 등록한다** — 아무것도 하지 않지만 `enrichment_json` 에 빈 항목을 쓴다(ADR 0017

@@ -99,8 +99,8 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		assertThat(row[5]).matches("bytes=\\d+\\+\\d+;path=0/0/0")
 		assertThat(row[6]).matches("[0-9a-f]{64}")
 		// row_version = (normalizer_rev << 32) | receipt 수신 epoch 초.
-		assertThat(row[7].toULong() shr 32).isEqualTo(1uL)
-		assertThat(row[8]).isEqualTo("1")
+		assertThat(row[7].toULong() shr 32).isEqualTo(8uL)
+		assertThat(row[8]).isEqualTo("8")
 
 		val ledger = clickHouse(
 			"SELECT tenant_id, installation_id, signal, product, record_count, rejected_count, archive_ref FROM telemetry_ingest_ledger FINAL",
@@ -117,7 +117,7 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 	}
 
 	@Test
-	@DisplayName("실캡처 Claude Code·Codex push — 등록된 프로파일의 사용량 행과 generic 행이 검증된 신원으로 적재된다")
+	@DisplayName("실캡처 Claude Code·Desktop 완료 push — 등록된 사용량 행이 검증된 신원과 의미로 적재된다")
 	fun realCapturesAreLoaded() {
 		val seeded = data.seed()
 
@@ -130,14 +130,22 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		assertThat(
 			clickHouse(
 				"SELECT product, original_name, event_type, usage_role, toString(tokens_output), toString(cost_reported_usd) " +
-					"FROM telemetry_events FINAL WHERE usage_role = 'primary' FORMAT TSV",
+					"FROM telemetry_events FINAL WHERE product = 'claude_code' AND usage_role = 'primary' FORMAT TSV",
 			).trim(),
 		).isEqualTo("claude_code\tapi_request\tmodel.response.usage\tprimary\t863\t0.116755")
+		// ADR 0064: 두 Desktop 완료 캡처는 정확한 분기만 primary로 매핑한다. 토큰·금액 산식은 adapter에서 별도 대조한다.
+		assertThat(clickHouse(
+			"SELECT DISTINCT original_name, event_type, usage_role, mapping_version, semantics_profile, normalizer_rev " +
+				"FROM telemetry_events FINAL WHERE product = 'codex' FORMAT TSV",
+		).trim()).isEqualTo("codex.sse_event\tmodel.response.usage\tprimary\tcodex-desktop-completed-v1\tcodex-responses-inclusive-v1\t8")
 		assertThat(clickHouse("SELECT DISTINCT product FROM telemetry_events FINAL ORDER BY product").trim().lines())
 			.containsExactly("claude_code", "codex")
 		assertThat(clickHouse("SELECT DISTINCT tenant_id, member_id FROM telemetry_events FINAL FORMAT TSV").trim())
 			.isEqualTo("${seeded.tenantId}\t${seeded.memberId}")
 		assertThat(clickHouse("SELECT count() FROM telemetry_ingest_ledger FINAL").trim()).isEqualTo("2")
+		assertThat(clickHouse(
+			"SELECT DISTINCT pricing_version FROM telemetry_events FINAL WHERE cost_estimated_usd IS NOT NULL FORMAT TSV",
+		).trim()).isEqualTo("public-standard-global-reference-2026-10-16-v4")
 	}
 
 	@Test

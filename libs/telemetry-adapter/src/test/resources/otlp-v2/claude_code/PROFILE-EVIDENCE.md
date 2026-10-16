@@ -6,7 +6,7 @@ Claude Code producer 가 내보내는 값의 의미를 확인한 기록이다. �
   문서**(`code.claude.com/docs/en/monitoring-usage`). 문서는 웹 조회 도구가 요약·가공한 형태로만 읽을 수 있었고, 그렇게 얻은
   일부 절(compaction·hook·auth 이벤트 속성)은 실캡처와 어긋났다. 그래서 **실캡처와 일치하는 문서 진술만** 근거로 쓰고, 어긋나는
   곳은 실캡처를 따른다.
-- 적용 범위: 실캡처가 있는 버전 `2.1.269`·`2.1.270`·`2.1.272`·`2.1.273`·`2.1.278`·`2.1.280`·`2.1.281`·`2.1.282`. 그 밖은 generic.
+- 적용 범위: 전체 기존 프로파일은 실캡처가 있는 버전 `2.1.269`·`2.1.270`·`2.1.272`·`2.1.273`·`2.1.278`·`2.1.280`·`2.1.281`·`2.1.282`. `2.1.290`은 아래 10절의 `api_request` 전용 프로파일만 적용하며 그 밖은 generic.
 - 표면(`surface`): 서비스 이름 `claude-code` 하나뿐이고 CLI·IDE 등을 가르는 근거 속성이 없다 — `unknown`.
 
 ## 1. 의미 이름의 위치
@@ -150,7 +150,25 @@ generic 목록(`internal_error`·`plugin_installed`·`plugin_loaded`·`at_mentio
    - 같은 요청의 `claude_code.llm_request` 스팬 666 건의 네 성분이 로그와 전부 같다 — 두 신호가 같은 usage 블록을 옮긴다.
 5. cache write 는 `reported` — 모든 사용량 행이 `cache_creation_tokens` 를 싣고(0 포함), API 도 이 필드를 늘 돌려준다(1).
 
-적용 범위는 `api_request` 실캡처가 있는 일곱 버전이다. `2.1.280` 은 로그 매핑은 되지만(다른 이벤트의 실캡처가 있다) 사용량
+최초 적용 범위는 `api_request` 실캡처가 있는 일곱 버전이며, 10절의 추가 근거로 `2.1.290`의 해당 이벤트도 포함한다. `2.1.280` 은 로그 매핑은 되지만(다른 이벤트의 실캡처가 있다) 사용량
 실캡처가 없어 프로파일을 적용하지 않는다. 파생값: `tokens_input_uncached = input`, `tokens_total_derived = input + cache_read +
 cache_create + output`(ADR 0020 §4 표의 exclusive·write 보고 행). 공급자 근거는 이 프로파일과 별개다 — 사용량 행에 공급자 속성이
 없어 `provider_unresolved` 가 남는다.
+
+## 10. 2.1.290 api_request의 한정 지원 — 2026-10-16
+
+`api-2.1.290/README.md`에 실제 8건의 익명화·독립 계산과 새로 확인한 공식 문서 근거를 기록했다. 네 토큰 성분의 int wire와 API usage 포함관계가 일치하여 기존 exclusive 의미 프로파일을 이 버전의 `api_request`에만 추가한다. 별도 `ClaudeApiProfile`이 정확한 버전과 이벤트를 제한한다. 다른 이벤트·스팬·메트릭은 확인된 것으로 확대하지 않으며, 가격 프로파일도 추가하지 않는다. 실제 8건의 합계는 463,246 토큰, 보고 비용 0.621688 USD이며 대시보드의 estimated cost는 여전히 null이다. normalizer rev는 3이다.
+
+## 11. 2026년 9월 원천의 2.1.283·284·285 api_request 한정 지원
+
+2026-10-16 사용자 요청으로 실제 로컬 원천을 프로그램에서만 스트리밍 조사했다. 원문·세션·개인 식별자는 모델 입력, 이 문서, 저장소 fixture에 넣지 않았다. 구조 집계 증거는 작업 보고서 `reports/local-september-2026-20261016/evidence/new-producer-structure.json`이다. 필터 입력 SHA-256은 `71fa641b2d99a65adb8ce83399712d78658d7083029cbb6b164e281ab4cfc5f0`이다.
+
+| 정확 버전 | api_request 수 | 네 성분 모두 intValue | 본문 이름 충돌 | input < cache read |
+|---|---:|---:|---:|---:|
+| 2.1.283 | 149 | 149 | 0 | 144 |
+| 2.1.284 | 9 | 9 | 0 | 8 |
+| 2.1.285 | 665 | 665 | 0 | 629 |
+
+같은 날 [Claude Code monitoring 공식 문서](https://code.claude.com/docs/en/monitoring-usage)의 token accounting 절과 [API prompt caching 공식 문서](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)의 Tracking cache performance 절을 다시 열어 확인했다. `input_tokens`는 캐시 읽기·생성을 제외하며 전체 입력은 세 성분의 합이다. 구조 통계는 버전별 wire 일치와 inclusive 가정의 반례를 확인할 뿐, 수치 관계만으로 의미를 추정한 것이 아니다.
+
+`ClaudeApiProfile`에 이 세 **정확한 버전의 api_request만** 추가한다. 기존 `claude-code-exclusive-v1`의 정의와 `claude-code-api-v1` 매핑 규칙은 같다. 다른 로그·스팬·metrics는 generic 상태를 유지한다. `SeptemberProducerProfilesTest`는 원문 복사 없이 독립 정수 예제(uncached 100/read 400/create 10/output 20 → total 530)와 다른 이벤트·다른 버전의 거부를 검증한다. 새 정규화 판·가격표 선택은 ADR 0062를 따른다.

@@ -12,8 +12,8 @@ import java.time.Instant
  * - 그룹에 사용량 행이 없으면 모든 값이 없다(null) — 0 은 완전한 관측으로 입증된 빈 사용량에만 쓰는데 v1 에는 그 근거가 없다.
  * - `activeUsers` — 식별된 구성원의 고유 수. 미식별 행이 섞여도 식별된 수는 버리지 않는다. 식별된 사람이 없으면 없다.
  * - `sessionCount` — 세션 없는 행이 하나라도 있으면 없다.
- * - 토큰 범주 — 그 범주의 누락이 하나라도 있으면 없다. **그리고 그룹의 모든 행이 같은 non-null 의미 프로파일일 때만**이다 —
- *   서로 다른 프로파일의 성분이나 의미 미검증 성분을 한 숫자로 더하지 않는다(ADR 0020 §7).
+ * - 토큰 범주 — 그 범주의 누락이 하나라도 있으면 없다. 모든 행이 같은 non-null 의미 호환 그룹이어야 한다.
+ *   검증된 Claude/Codex canonical 성분만 한 그룹이며 나머지는 원래 프로파일별로 분리한다(ADR 0061).
  * - API `total` — 파생 total 과 네 범주 중 하나라도 누락이 있으면 없다(같은 프로파일 조건도 같다).
  * - 금액 — 단가 없는 행이 하나라도 있거나 snapshot 의 가격 판이 둘 이상이면 없다. 부분합을 총액으로 올리지 않는다.
  */
@@ -41,7 +41,7 @@ data class UsageTotals(
 
 	val hasUsage: Boolean get() = usageRows > 0
 
-	/** 그룹 전체가 한 의미 프로파일 안에 있다 — 토큰 성분을 더해도 되는 조건(ADR 0020 §7). */
+	/** 그룹 전체가 한 의미 호환 그룹 안에 있다(ADR 0061). 미검증 행은 여전히 합산하지 않는다. */
 	val semanticsUniform: Boolean get() = unverifiedRows == 0L && semanticsProfiles == 1L
 
 	fun activeUsers(): Long? = identifiedUsers.takeIf { hasUsage && it > 0 }

@@ -1,0 +1,1 @@
+{"spec":"ADR 0020 부록 A.3 + completed/README.md — synthetic tokens-and-error","events":[{"event_type":"model.response.usage","mapping_status":"ambiguous","usage_role":"diagnostic","tokens_input":200705,"quality_flags":{"$contains":["ambiguous_payload","usage_semantics_unverified"]}}],"stats":{"received":1,"rejected_count":0}}

@@ -109,7 +109,8 @@ internal object CodexLogs : LogProfile {
 			"codex.agent_communication" -> common(fields, base).copy(eventType = EventType.AGENT_COMMUNICATION)
 			else -> return null
 		}
-		return MappedEvent(mapped.withFlags(*fields.flags.toTypedArray()))
+		val observation = mapped.withFlags(*fields.flags.toTypedArray())
+		return MappedEvent(observation, CodexTokenSemantics.forCompleted(observation, view.eventName))
 	}
 
 	/** 모든 매핑 행의 공통 몫 — 의미 확인, 세션, 세션 모델. */

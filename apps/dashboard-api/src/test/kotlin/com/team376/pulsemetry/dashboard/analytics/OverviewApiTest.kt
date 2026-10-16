@@ -52,6 +52,32 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 	private fun JsonNode.text(): String? = if (isNull) null else asString()
 
 	@Test
+	@DisplayName("검증된 Claude와 Codex의 비중복 토큰은 함께 합산하고 미검증 프로파일 혼합은 차단한다")
+	fun canonicalTokenSemanticsAcrossProducts() {
+		val tenant = DashboardTestStores.insertTenant()
+		SourceFixtures.setSummary(tenant, firstReceivedAt = kst("2026-09-01T00:00:00"), lastReceivedAt = kst("2026-09-10T00:00:00"))
+		SourceFixtures.insertEvents(
+			tenant,
+			Event("claude", kst("2026-09-07T10:00:00"), tokensInputUncached = 100, tokensTotalDerived = 110,
+				semanticsProfile = "claude-code-exclusive-v1", costEstimatedUsd = BigDecimal("1"), pricingVersion = "v3"),
+			Event("codex", kst("2026-09-07T11:00:00"), product = "codex", tokensInput = 100, tokensOutput = 20,
+				tokensCacheRead = 40, tokensInputUncached = 60, tokensTotalDerived = 120,
+				semanticsProfile = "codex-responses-inclusive-v1", costEstimatedUsd = BigDecimal("2"), pricingVersion = "v3"),
+			Event("different", kst("2026-09-08T11:00:00"), semanticsProfile = "unverified-other-v1"),
+		)
+
+		val known = overview(tenant, "startDate=2026-09-07&endDate=2026-09-07&compare=none")
+		assertThat(known.at("/summary/totalTokens/value").asLong()).isEqualTo(230)
+		assertThat(known.at("/summary/totalTokens/reasons").list().map { it.asString() }).doesNotContain("token_semantics_incompatible")
+		assertThat(known.at("/summary/equivalentCostUsd/value").asString()).isEqualTo("3.000000")
+		assertThat(known.at("/trend/points/0/totalTokens/value").asLong()).isEqualTo(230)
+
+		val mixed = overview(tenant, "startDate=2026-09-07&endDate=2026-09-08&compare=none")
+		assertThat(mixed.at("/summary/totalTokens/value").isNull).isTrue()
+		assertThat(mixed.at("/summary/totalTokens/reasons").list().map { it.asString() }).contains("token_semantics_incompatible")
+	}
+
+	@Test
 	@DisplayName("사례 13 — 수신 이력도 관측도 없으면 never_observed, 사용량·모델·상위 팀은 비고 알려진 팀 수는 남는다")
 	fun neverObserved() {
 		val tenant = DashboardTestStores.insertTenant()
