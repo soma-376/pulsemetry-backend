@@ -99,8 +99,8 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		assertThat(row[5]).matches("bytes=\\d+\\+\\d+;path=0/0/0")
 		assertThat(row[6]).matches("[0-9a-f]{64}")
 		// row_version = (normalizer_rev << 32) | receipt 수신 epoch 초.
-		assertThat(row[7].toULong() shr 32).isEqualTo(8uL)
-		assertThat(row[8]).isEqualTo("8")
+		assertThat(row[7].toULong() shr 32).isEqualTo(9uL)
+		assertThat(row[8]).isEqualTo("9")
 
 		val ledger = clickHouse(
 			"SELECT tenant_id, installation_id, signal, product, record_count, rejected_count, archive_ref FROM telemetry_ingest_ledger FINAL",
@@ -137,7 +137,7 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		assertThat(clickHouse(
 			"SELECT DISTINCT original_name, event_type, usage_role, mapping_version, semantics_profile, normalizer_rev " +
 				"FROM telemetry_events FINAL WHERE product = 'codex' FORMAT TSV",
-		).trim()).isEqualTo("codex.sse_event\tmodel.response.usage\tprimary\tcodex-desktop-completed-v1\tcodex-responses-inclusive-v1\t8")
+		).trim()).isEqualTo("codex.sse_event\tmodel.response.usage\tprimary\tcodex-desktop-completed-v1\tcodex-responses-inclusive-v1\t9")
 		assertThat(clickHouse("SELECT DISTINCT product FROM telemetry_events FINAL ORDER BY product").trim().lines())
 			.containsExactly("claude_code", "codex")
 		assertThat(clickHouse("SELECT DISTINCT tenant_id, member_id FROM telemetry_events FINAL FORMAT TSV").trim())
@@ -145,7 +145,7 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		assertThat(clickHouse("SELECT count() FROM telemetry_ingest_ledger FINAL").trim()).isEqualTo("2")
 		assertThat(clickHouse(
 			"SELECT DISTINCT pricing_version FROM telemetry_events FINAL WHERE cost_estimated_usd IS NOT NULL FORMAT TSV",
-		).trim()).isEqualTo("public-standard-global-reference-2026-10-16-v4")
+		).trim()).isEqualTo("codeburn-0.9.24-reference-2026-10-16-v1")
 	}
 
 	@Test

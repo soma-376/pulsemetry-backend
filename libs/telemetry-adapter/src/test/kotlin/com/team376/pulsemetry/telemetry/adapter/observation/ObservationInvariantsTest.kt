@@ -108,8 +108,8 @@ class ObservationInvariantsTest {
 	fun liveVersioning() {
 		val receivedAt = Instant.parse("2026-01-01T00:00:05.999Z")
 
-		assertThat(RowVersioning.NORMALIZER_REV).isEqualTo(8u)
-		assertThat(RowVersioning.live(receivedAt)).isEqualTo(RowVersioning.of(8u, 1_767_225_605u))
+		assertThat(RowVersioning.NORMALIZER_REV).isEqualTo(9u)
+		assertThat(RowVersioning.live(receivedAt)).isEqualTo(RowVersioning.of(9u, 1_767_225_605u))
 		assertThat(RowVersioning.live(Instant.ofEpochSecond(0xFFFF_FFFFL), normalizerRev = 2u).rowVersion)
 			.isEqualTo((2uL shl 32) or 0xFFFF_FFFFuL)
 		assertThatThrownBy { RowVersioning.live(Instant.ofEpochSecond(0x1_0000_0000L)) }.isInstanceOf(IllegalArgumentException::class.java)

@@ -102,6 +102,7 @@ public object CurrentPublicPrices {
 
 	/** 명시적 none 외 오타는 조용히 null 프로파일로 바꾸지 않는다. */
 	public fun select(name: String): PricingStage = when (name) {
+		CodeburnReferencePrices.VERSION -> PricingStage(CodeburnReferencePrices.PROFILE)
 		VERSION_V1 -> PricingStage(PROFILE_V1)
 		VERSION_V2 -> PricingStage(PROFILE_V2)
 		VERSION_V3 -> PricingStage(PROFILE_V3)
