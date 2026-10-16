@@ -268,6 +268,13 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		assertThat(body.at("/teamUsage/topTeams/0").has("topModel")).isFalse()
 		assertThat(body.at("/trend/points/1/equivalentCostUsd/value").isNull).isTrue()
 		assertThat(body.at("/trend/points/1/totalTokens/value").asLong()).isEqualTo(220)
+        assertThat(body.at("/summary/knownEquivalentCostUsd/value").asString()).isEqualTo("1.000000")
+        assertThat(body.at("/summary/knownEquivalentCostUsd/status").asString()).isEqualTo("partial")
+        assertThat(body.at("/summary/pricedUsageRows").asLong()).isEqualTo(1)
+        assertThat(body.at("/summary/unpricedUsageRows").asLong()).isEqualTo(1)
+        assertThat(body.at("/trend/points/1/knownEquivalentCostUsd/value").asString()).isEqualTo("1.000000")
+        assertThat(body.at("/trend/points/0/knownEquivalentCostUsd/value").isNull).isTrue()
+
 	}
 
 	@Test

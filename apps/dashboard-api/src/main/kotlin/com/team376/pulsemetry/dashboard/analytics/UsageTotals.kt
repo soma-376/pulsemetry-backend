@@ -54,6 +54,9 @@ data class UsageTotals(
 
 	fun equivalentCost(pricingMixed: Boolean): BigDecimal? = cost.takeIf { hasUsage && unpricedRows == 0L && !pricingMixed }
 
+	/** 전체 금액과 구분하는 계산 가능한 관측 부분합(ADR 0063). */
+	fun knownEquivalentCost(pricingMixed: Boolean): BigDecimal? = cost.takeIf { hasUsage && usageRows > unpricedRows && !pricingMixed }
+
 	/** 캐시 적중 분모 = inputUncached + cacheRead + cacheWrite. 셋 중 하나라도 없으면 없다. */
 	fun cacheEligibleInput(): Long? {
 		val parts = listOf(tokens(inputUncached), tokens(cacheRead), tokens(cacheWrite))

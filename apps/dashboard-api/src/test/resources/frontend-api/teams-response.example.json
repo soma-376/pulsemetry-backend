@@ -107,7 +107,14 @@
       "value": "50.000000",
       "status": "complete",
       "reasons": []
-    }
+    },
+    "knownEquivalentCostUsd": {
+      "value": "5000.000000",
+      "status": "complete",
+      "reasons": []
+    },
+    "pricedUsageRows": 35,
+    "unpricedUsageRows": 0
   },
   "sort": "cost",
   "teams": {
@@ -173,7 +180,10 @@
             "totalTokens": 5600000,
             "cumulativeSessionCount": 56,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "280.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-08",
@@ -182,7 +192,10 @@
             "totalTokens": 6400000,
             "cumulativeSessionCount": 120,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "320.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-09",
@@ -191,7 +204,10 @@
             "totalTokens": 7200000,
             "cumulativeSessionCount": 192,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "360.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-10",
@@ -200,7 +216,10 @@
             "totalTokens": 4800000,
             "cumulativeSessionCount": 240,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "240.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-11",
@@ -209,7 +228,10 @@
             "totalTokens": 8000000,
             "cumulativeSessionCount": 320,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "400.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-12",
@@ -218,7 +240,10 @@
             "totalTokens": 4000000,
             "cumulativeSessionCount": 360,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "200.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-13",
@@ -227,7 +252,10 @@
             "totalTokens": 4000000,
             "cumulativeSessionCount": 400,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "200.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           }
         ],
         "products": [
@@ -330,7 +358,14 @@
             "value": "50.000000",
             "status": "complete",
             "reasons": []
-          }
+          },
+          "knownEquivalentCostUsd": {
+            "value": "2000.000000",
+            "status": "complete",
+            "reasons": []
+          },
+          "pricedUsageRows": 7,
+          "unpricedUsageRows": 0
         }
       },
       {
@@ -394,7 +429,10 @@
             "totalTokens": 3920000,
             "cumulativeSessionCount": 39,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "196.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-08",
@@ -403,7 +441,10 @@
             "totalTokens": 4480000,
             "cumulativeSessionCount": 84,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "224.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-09",
@@ -412,7 +453,10 @@
             "totalTokens": 5040000,
             "cumulativeSessionCount": 134,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "252.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-10",
@@ -421,7 +465,10 @@
             "totalTokens": 3360000,
             "cumulativeSessionCount": 168,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "168.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-11",
@@ -430,7 +477,10 @@
             "totalTokens": 5600000,
             "cumulativeSessionCount": 224,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "280.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-12",
@@ -439,7 +489,10 @@
             "totalTokens": 2800000,
             "cumulativeSessionCount": 252,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "140.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-13",
@@ -448,7 +501,10 @@
             "totalTokens": 2800000,
             "cumulativeSessionCount": 280,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "140.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           }
         ],
         "products": [
@@ -543,7 +599,14 @@
             "value": "50.000000",
             "status": "complete",
             "reasons": []
-          }
+          },
+          "knownEquivalentCostUsd": {
+            "value": "1400.000000",
+            "status": "complete",
+            "reasons": []
+          },
+          "pricedUsageRows": 7,
+          "unpricedUsageRows": 0
         }
       },
       {
@@ -607,7 +670,10 @@
             "totalTokens": 2240000,
             "cumulativeSessionCount": 22,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "112.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-08",
@@ -616,7 +682,10 @@
             "totalTokens": 2560000,
             "cumulativeSessionCount": 48,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "128.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-09",
@@ -625,7 +694,10 @@
             "totalTokens": 2880000,
             "cumulativeSessionCount": 76,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "144.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-10",
@@ -634,7 +706,10 @@
             "totalTokens": 1920000,
             "cumulativeSessionCount": 96,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "96.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-11",
@@ -643,7 +718,10 @@
             "totalTokens": 3200000,
             "cumulativeSessionCount": 128,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "160.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-12",
@@ -652,7 +730,10 @@
             "totalTokens": 1600000,
             "cumulativeSessionCount": 144,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "80.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-13",
@@ -661,7 +742,10 @@
             "totalTokens": 1600000,
             "cumulativeSessionCount": 160,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "80.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           }
         ],
         "products": [
@@ -764,7 +848,14 @@
             "value": "50.000000",
             "status": "complete",
             "reasons": []
-          }
+          },
+          "knownEquivalentCostUsd": {
+            "value": "800.000000",
+            "status": "complete",
+            "reasons": []
+          },
+          "pricedUsageRows": 7,
+          "unpricedUsageRows": 0
         }
       },
       {
@@ -828,7 +919,10 @@
             "totalTokens": 1400000,
             "cumulativeSessionCount": 14,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "70.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-08",
@@ -837,7 +931,10 @@
             "totalTokens": 1600000,
             "cumulativeSessionCount": 30,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "80.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-09",
@@ -846,7 +943,10 @@
             "totalTokens": 1800000,
             "cumulativeSessionCount": 48,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "90.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-10",
@@ -855,7 +955,10 @@
             "totalTokens": 1200000,
             "cumulativeSessionCount": 60,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "60.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-11",
@@ -864,7 +967,10 @@
             "totalTokens": 2000000,
             "cumulativeSessionCount": 80,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "100.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-12",
@@ -873,7 +979,10 @@
             "totalTokens": 1000000,
             "cumulativeSessionCount": 90,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "50.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           },
           {
             "date": "2026-09-13",
@@ -882,7 +991,10 @@
             "totalTokens": 1000000,
             "cumulativeSessionCount": 100,
             "status": "complete",
-            "reasons": []
+            "reasons": [],
+            "knownEquivalentCostUsd": "50.000000",
+            "pricedUsageRows": 1,
+            "unpricedUsageRows": 0
           }
         ],
         "products": [
@@ -977,7 +1089,14 @@
             "value": "50.000000",
             "status": "complete",
             "reasons": []
-          }
+          },
+          "knownEquivalentCostUsd": {
+            "value": "500.000000",
+            "status": "complete",
+            "reasons": []
+          },
+          "pricedUsageRows": 7,
+          "unpricedUsageRows": 0
         }
       }
     ],
@@ -1045,7 +1164,10 @@
         "totalTokens": 840000,
         "cumulativeSessionCount": 8,
         "status": "complete",
-        "reasons": []
+        "reasons": [],
+        "knownEquivalentCostUsd": "42.000000",
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-08",
@@ -1054,7 +1176,10 @@
         "totalTokens": 960000,
         "cumulativeSessionCount": 18,
         "status": "complete",
-        "reasons": []
+        "reasons": [],
+        "knownEquivalentCostUsd": "48.000000",
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-09",
@@ -1063,7 +1188,10 @@
         "totalTokens": 1080000,
         "cumulativeSessionCount": 28,
         "status": "complete",
-        "reasons": []
+        "reasons": [],
+        "knownEquivalentCostUsd": "54.000000",
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-10",
@@ -1072,7 +1200,10 @@
         "totalTokens": 720000,
         "cumulativeSessionCount": 36,
         "status": "complete",
-        "reasons": []
+        "reasons": [],
+        "knownEquivalentCostUsd": "36.000000",
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-11",
@@ -1081,7 +1212,10 @@
         "totalTokens": 1200000,
         "cumulativeSessionCount": 48,
         "status": "complete",
-        "reasons": []
+        "reasons": [],
+        "knownEquivalentCostUsd": "60.000000",
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-12",
@@ -1090,7 +1224,10 @@
         "totalTokens": 600000,
         "cumulativeSessionCount": 54,
         "status": "complete",
-        "reasons": []
+        "reasons": [],
+        "knownEquivalentCostUsd": "30.000000",
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-13",
@@ -1099,7 +1236,10 @@
         "totalTokens": 600000,
         "cumulativeSessionCount": 60,
         "status": "complete",
-        "reasons": []
+        "reasons": [],
+        "knownEquivalentCostUsd": "30.000000",
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       }
     ],
     "products": [
@@ -1202,7 +1342,14 @@
         "value": "50.000000",
         "status": "complete",
         "reasons": []
-      }
+      },
+      "knownEquivalentCostUsd": {
+        "value": "300.000000",
+        "status": "complete",
+        "reasons": []
+      },
+      "pricedUsageRows": 7,
+      "unpricedUsageRows": 0
     }
   },
   "modelScatter": {
