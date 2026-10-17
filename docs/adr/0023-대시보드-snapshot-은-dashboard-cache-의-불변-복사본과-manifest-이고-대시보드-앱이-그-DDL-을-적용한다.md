@@ -2,12 +2,16 @@
 
 ## Status
 
-Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-telemetry-lifetime-summary.md)(분석 snapshot 과 수집 생애주기 요약의 저장소 분리) 채택 시 Accepted. [ADR 0022](0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) §4 의 ClickHouse 캐시 계정 권한을 이 ADR 이 넓힌다(§3).
+Accepted — [허브 ADR 0021](../../../docs/adr/0021-dashboard-runtime-and-deployment-contract.md)이 저장소 연결·캐시 소유와 DDL 적용 책임을 채택했다.
+
+~~Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-telemetry-lifetime-summary.md)(분석 snapshot 과 수집 생애주기 요약의 저장소 분리) 채택 시 Accepted.~~
+
+[ADR 0022](0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) §4 의 ClickHouse 캐시 계정 권한을 이 ADR 이 넓힌다(§3).
 
 ## Context
 
 [ADR 0022](0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md)는 대시보드 앱이 자기 캐시(`dashboard_cache`)에만 쓰고 분석 원본은 읽기만 한다고 정했다.
-조회가 무엇을 읽는지는 정하지 않았다. 이 저장소의 사실은 다음과 같다.
+조회가 무엇을 읽는지는 정하지 않았다. 다음은 최초 제안 당시의 배경이다. 현재 기동·계정 준비는 [Dashboard 운영 안내](../dashboard-server-spec.md)를 따른다.
 
 - **분석 원본은 읽을 때마다 최신 선택이 필요하다.** `telemetry_events`·`telemetry_metric_points` 는 `ReplacingMergeTree(row_version)` 이고
   최신 행은 `FINAL` 뒤에만 보인다([ADR 0020](0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md) §7). 재처리가 같은 관측을
@@ -26,7 +30,7 @@ Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-te
   ([ADR 0004](0004-Flyway-마이그레이션과-varchar-CHECK-스키마-관리.md)) — `enrollment` 는 그 쓰기 소유 앱인 `:apps:enrollment-api` 가 적용하고,
   `telemetry_ops` 는 쓰는 주체가 둘(ingest 의 요약, 보존 정리의 경계)이고 ingest 가 DDL 을 돌리지 않아야 해서 `:apps:enrollment-api` 가 대신 적용한다(ADR 0021 §3).
   RDS 스키마의 enum 은 native enum 이다([ADR 0009](0009-enrollment-스키마-native-enum-채택.md)).
-- **허브 ADR 0007(Proposed)의 틀.** ClickHouse 논리 DB `dashboard_cache` 의 일반 MergeTree `snapshot_usage`, RDS `dashboard_cache.snapshots` manifest,
+- **~~허브 ADR 0007(Proposed)의 틀.~~** 최초 제안의 참조를 보존한다. 현행 채택 근거는 허브 ADR 0021이다. ClickHouse 논리 DB `dashboard_cache` 의 일반 MergeTree `snapshot_usage`, RDS `dashboard_cache.snapshots` manifest,
   하나의 원본 결과 스트림에서 사용량과 관측 일자를 함께 만들기, `building → ready | failed` 와 공개 CAS(같은 build 가 building · 미무효화 · 시작 때의 삭제
   정책 epoch 와 같음), `expires_at = ready_at + 10분`, 물리 정리는 TTL. SQL·마이그레이션 세부는 구현 명세로 넘겼다.
 
@@ -106,10 +110,10 @@ Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-te
   - 그래서 `dashboard_cache` 의 쓰기 소유는 이 앱이다(모듈 지도 2절). 두 번째 쓰는 주체(예: 별도 배포 단위의 정리 worker)가 생기면 그때
     `:libs:dashboard-persistence` 로 내린다(ADR 0022 §1).
 - **ClickHouse 캐시 계정은 분석 테이블을 SELECT 한다.** build 가 서버 쪽 `INSERT … SELECT` 라 행이 앱을 지나지 않고, 그 문장을 실행하는 계정이 원본을 읽어야
-  한다. 이 계정의 권한은 `dashboard_cache` 의 테이블·뷰 생성과 읽기·쓰기, 두 분석 테이블의 SELECT 다. 분석 테이블에는 여전히 쓰지 못한다 — ADR 0022 §4 의
+  한다. 원천 DB와 캐시 DB는 같은 ClickHouse 서버에 두며, 이 계정의 권한은 `dashboard_cache` 의 테이블·뷰 생성과 읽기·쓰기, 두 분석 테이블의 SELECT 다. 분석 테이블에는 여전히 쓰지 못한다 — ADR 0022 §4 의
   표를 이만큼 넓힌다. 원천 읽기 계정(`clickhouse.source`)은 그대로다.
 - **RDS 캐시 계정은 `telemetry_ops.tenant_retention_boundary` 를 SELECT 한다.** 공개 CAS 가 현재 삭제 정책 epoch 를 같은 문장 안에서 비교해야 하기
-  때문이다. 권한은 `dashboard_cache` 스키마의 생성·읽기·쓰기와 그 한 테이블의 SELECT 다.
+  때문이다. 원천 `telemetry_ops`와 캐시 `dashboard_cache`는 같은 RDS 논리 DB의 스키마로 둔다. 권한은 `dashboard_cache` 스키마의 생성·읽기·쓰기와 그 한 테이블의 SELECT 다. 현재 캐시 `V1__dashboard_cache_schema.sql`의 `CREATE SCHEMA IF NOT EXISTS dashboard_cache` 때문에 최초 V1 적용 계정에는 DB `CREATE`도 필요하다. [PostgreSQL 16의 `CreateSchemaCommand()`](https://raw.githubusercontent.com/postgres/postgres/REL_16_STABLE/src/backend/commands/schemacmds.c)가 기존 스키마 확인보다 먼저 DB 권한을 검사한다. Flyway는 이력이 있는 V1을 다시 실행하지 않으므로 모든 재기동에 그 권한이 필수라는 뜻은 아니다. 로컬 `prepareDashboardStore()`는 이를 위해 DB CREATE를 부여한다. DB CREATE는 자기 스키마 밖 새 스키마 생성도 허용하는 준비 권한이므로 원천 데이터 쓰기 권한과 구별한다.
 
 ### 4. 읽기와 공개의 규칙
 
@@ -187,7 +191,7 @@ Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-te
 
 ## Follow-up
 
-- 허브 ADR 0007 이 채택되면 Accepted 로 올린다.
+- ~~허브 ADR 0007 이 채택되면 Accepted 로 올린다.~~ 허브 ADR 0021의 채택으로 완료했다. 실제 DB 계정·DDL·동작 검증은 별도 배포 절차다.
 - ClickHouse 에 replica 가 생기면 공개 전 검증을 조회할 replica 에서 하거나 검증한 replica 로 라우팅한다(지금은 단일 노드).
 - 계약·좌석 참조, 가격 프로파일·모델 별칭 표가 생기면 그 판을 manifest 에 고정한다(지금은 해석 규칙 판과 가격 판 집합만).
 - `dataThrough` 의 의미와 개요가 snapshot 을 고르는 방식은 프론트와 합의한다(지금 개요는 snapshot ID 를 노출하지 않는다).
