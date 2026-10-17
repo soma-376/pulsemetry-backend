@@ -48,7 +48,6 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 	@Autowired private lateinit var frames: AnalyticsFrames
 	@Autowired private lateinit var aggregator: UsageAggregator
 	@Autowired private lateinit var references: SnapshotReferences
-	@Autowired private lateinit var snapshots: com.team376.pulsemetry.dashboard.snapshot.SnapshotService
 	@Autowired private lateinit var codec: PageCursorCodec
 	@Autowired private lateinit var tokens: CurrentStateTokens
 	@Autowired private lateinit var source: JdbcClient
@@ -376,7 +375,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 	fun reclaimControl() {
 		val org = organization()
 		// 앱 조립과 같은 경로로 만든다 — 관리 기능이 켜진 배포.
-		val service = AnalyticsConfig().membersService(true, properties, frames, aggregator, references, snapshots, codec, tokens, java.time.Clock.systemUTC(), source, seatService)
+		val service = AnalyticsConfig().membersService(true, properties, frames, aggregator, references, codec, tokens, java.time.Clock.systemUTC(), source, seatService)
 		val organization = requireNotNull(organizations.find(org.tenant))
 		fun seat(name: String) = service.memberSeats(organization, org.members.getValue(name), null).seats.single()
 		assertThat(seat("dana").let { Triple(it.canReclaim, it.reclaimReason, it.reclaimMethod) }).describedAs("Team 플랜 수동 원장").isEqualTo(Triple(true, null, "admin_action"))

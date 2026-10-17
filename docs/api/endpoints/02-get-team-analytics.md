@@ -36,8 +36,8 @@ Authorization: Bearer <Pulsemetry access_token>
   compare?: "prev_week" | "prev_period" | "none"; // 기본 prev_week
   sort?: "cost" | "token" | "session"; // 기본 cost
   limit?: number; // 기본 20, 정수 1~50
-  cursor?: string; // 응답 nextCursor
-  snapshotId?: string; // 다음 페이지에 이전 응답 값 유지
+  offset?: number; // 기본 0, 0 이상 정수, 다음 응답 nextOffset으로 이어 읽기
+  snapshotId?: string; // offset > 0이면 필수, 이전 응답 값 유지
 }
 ```
 
@@ -51,7 +51,7 @@ Authorization: Bearer <Pulsemetry access_token>
   attributionBasis: string;
   totals: TeamMetrics;
   sort: string;
-  teams: Page<TeamAnalytics>;
+  teams: OffsetPage<TeamAnalytics>;
   unassigned: TeamAnalytics;
   modelScatter: Section<ModelScatter>;
 }

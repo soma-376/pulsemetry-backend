@@ -424,6 +424,6 @@
       }
     ],
     "totalCount": 40,
-    "nextCursor": "cursor-platform-users-page-2"
+    "nextOffset": "cursor-platform-users-page-2"
   }
 }

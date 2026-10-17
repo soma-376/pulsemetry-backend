@@ -299,3 +299,16 @@ type ContractStatus = "active" | "scheduled" | "expired" | "missing";
 `?`는 키 생략 가능, `| null`은 키를 유지하고 null을 반환함을 뜻한다. 응답 DTO의 Kotlin 기본값은 키 생략을 뜻하지 않는다.
 `version`은 JSON 정수이며 증가 방식은 기능별로 다르므로 임의로 1씩 계산하지 않는다. 시각은 별도 표시가 없으면 ISO-8601, 날짜는 YYYY-MM-DD다.
 금액 필드의 `string`은 USD decimal 문자열이며 `number`로 형 변환해 계약 정밀도를 바꾸지 않는다.
+
+## OffsetPage
+
+고정 snapshot의 팀 분석·팀 사용자·구성원 목록에 사용한다. 허브 ADR 0021 참조.
+
+```ts
+type OffsetPage<T> = { items: T[]; totalCount: number; nextOffset: number | null };
+```
+
+`offset` 기본값은 0, `limit`은 한 번에 읽을 최대 개수다. `offset > 0`이면 `snapshotId`가 필수다.
+전체 목록에 검색·필터·정렬을 먼저 적용하고 잘라 반환한다. 끝이면 `nextOffset: null`이다.
+범위를 넘는 offset은 빈 items와 totalCount를 반환한다. 정렬·검색·상태 변경 시 offset=0부터 읽는다.
+음수·비정수·Int 범위 밖 offset과 기존 cursor 파라미터는 400으로 거부한다.

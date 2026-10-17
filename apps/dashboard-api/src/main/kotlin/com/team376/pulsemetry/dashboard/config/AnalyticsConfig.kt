@@ -93,9 +93,7 @@ class AnalyticsConfig {
 		frames: AnalyticsFrames,
 		aggregator: UsageAggregator,
 		references: SnapshotReferences,
-		snapshots: SnapshotService,
-		codec: PageCursorCodec,
-	): TeamsService = TeamsService(frames, aggregator, references, snapshots, codec)
+	): TeamsService = TeamsService(frames, aggregator, references)
 
 	@Bean
 	fun currentStateTokens(mapper: ObjectMapper): CurrentStateTokens = CurrentStateTokens(mapper)
@@ -112,13 +110,12 @@ class AnalyticsConfig {
 		frames: AnalyticsFrames,
 		aggregator: UsageAggregator,
 		references: SnapshotReferences,
-		snapshots: SnapshotService,
 		codec: PageCursorCodec,
 		tokens: CurrentStateTokens,
 		clock: Clock,
 		source: JdbcClient,
 		seats: SeatService,
-	): MembersService = MembersService(frames, aggregator, references, snapshots, codec, tokens,
+	): MembersService = MembersService(frames, aggregator, references, codec, tokens,
 		OrganizationPolicies(source, properties.members.idleDays), clock, managementEnabled, seats)
 
 	/** 좌석 원장을 기준 시각으로 다시 세워 판정한다(ADR 0048 §7). 원천(원장·분석 행·설치·완전성 근거)은 읽기만 한다. */

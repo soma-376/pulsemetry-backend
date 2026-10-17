@@ -33,10 +33,14 @@ Authorization: Bearer <Pulsemetry access_token>
   startDate: string; // 필수 YYYY-MM-DD
   endDate: string; // 필수, 종료일 포함, 1~366일
   timeZone?: "Asia/Seoul"; // 기본 Asia/Seoul
-  q?: string; // 최대 200자
+  q?: string; // 최대 200자, 계정·이름·현재 팀 이름 포함 검색(대소문자 무시)
+  memberId?: string; // 선택 시 UUID 정확히 일치하는 구성원만
+  sort?: "account" | "team" | "cost" | "activity"; // 기본 account, activity는 lastUsedAt
+  order?: "asc" | "desc"; // 기본 asc
+  status?: "all" | "active" | "candidate" | "idle" | "unobserved"; // 기본 all, 계정 상태가 아닌 사용 관측 상태
   limit?: number; // 기본 20, 정수 1~100
-  cursor?: string; // 응답 nextCursor
-  snapshotId?: string; // 다음 페이지에 이전 응답 값 유지
+  offset?: number; // 기본 0, 0 이상 정수, 다음 응답 nextOffset으로 이어 읽기
+  snapshotId?: string; // offset > 0이면 필수, 이전 응답 값 유지
 }
 ```
 
@@ -46,7 +50,7 @@ Authorization: Bearer <Pulsemetry access_token>
 // MemberListResponse
 {
   meta: MembersMeta;
-  members: Page<Member>;
+  members: OffsetPage<Member>;
 }
 ```
 

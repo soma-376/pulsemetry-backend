@@ -34,8 +34,8 @@ Authorization: Bearer <Pulsemetry access_token>
   endDate: string; // 필수, 종료일 포함, 1~366일
   timeZone?: "Asia/Seoul"; // 기본 Asia/Seoul
   limit?: number; // 기본 20, 정수 1~100
-  cursor?: string; // 응답 nextCursor
-  snapshotId?: string; // 다음 페이지에 이전 응답 값 유지
+  offset?: number; // 기본 0, 0 이상 정수, 다음 응답 nextOffset으로 이어 읽기
+  snapshotId?: string; // offset > 0이면 필수, 이전 응답 값 유지
 }
 ```
 
@@ -45,7 +45,7 @@ Authorization: Bearer <Pulsemetry access_token>
 // MemberListResponse
 {
   meta: MembersMeta;
-  members: Page<Member>;
+  members: OffsetPage<Member>;
 }
 ```
 

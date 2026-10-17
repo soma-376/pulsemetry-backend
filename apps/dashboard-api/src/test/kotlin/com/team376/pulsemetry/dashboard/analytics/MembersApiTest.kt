@@ -102,16 +102,15 @@ class MembersApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
-	@DisplayName("dashboard — 로스터가 원천이다: 사용 없는 사람도 남고 초대 중인 사람은 로스터가 아니며, 비용 내림차순 + 사용 없는 사람은 마지막")
+	@DisplayName("dashboard — 사용 없는 구성원도 계정순으로 남고 초대 중인 사람은 로스터에서 제외한다")
 	fun dashboardRoster() {
 		val org = seed()
 
 		val body = ok(org.tenant, "/members/dashboard?$week")
 
 		val members = body.at("/members/items").list()
-		// 비용이 있는 alice(3)·bob(2) 다음에 사용 없는 carol·dave 가 memberId 오름차순으로 온다.
-		val unused = listOf(org.carol, org.dave).sortedBy { it.toString() }.map { it.toString() }
-		assertThat(members.map { it.path("memberId").asString() }).containsExactly(org.alice.toString(), org.bob.toString(), *unused.toTypedArray())
+		// 첫 화면 기본 정렬은 사용 유무와 관계없이 계정 오름차순이다.
+		assertThat(members.map { it.path("memberId").asString() }).containsExactly(org.alice.toString(), org.bob.toString(), org.carol.toString(), org.dave.toString())
 		assertThat(body.at("/summary/rosterMembers").asInt()).isEqualTo(4)
 		assertThat(body.at("/summary/unassignedMembers").asInt()).isEqualTo(1)
 		assertThat(body.at("/summary/activeUsers/value").asInt()).isEqualTo(2)
@@ -196,13 +195,45 @@ class MembersApiTest : AbstractDashboardApiTest() {
 
 		val first = ok(org.tenant, "/members?$week&limit=3")
 		val snapshotId = first.at("/meta/snapshotId").asString()
-		val second = ok(org.tenant, "/members?$week&limit=3&snapshotId=$snapshotId&cursor=${first.at("/members/nextCursor").asString()}")
+		val second = ok(org.tenant, "/members?$week&limit=3&snapshotId=$snapshotId&offset=${first.at("/members/nextOffset").asInt()}")
 		val ids = (first.at("/members/items").list() + second.at("/members/items").list()).map { it.path("memberId").asString() }
 		assertThat(ids).doesNotHaveDuplicates().containsExactlyInAnyOrder(org.alice.toString(), org.bob.toString(), org.carol.toString(), org.dave.toString())
-		assertThat(second.at("/members/nextCursor").isNull).isTrue()
+		assertThat(second.at("/members/nextOffset").isNull).isTrue()
 
-		// 다른 검색어의 cursor 는 이 목록의 것이 아니다.
-		assertThat(get(org.tenant, "/members?$week&limit=3&q=a&snapshotId=$snapshotId&cursor=${first.at("/members/nextCursor").asString()}").statusCode()).isEqualTo(400)
+		// 구 cursor 요청과 snapshot 없는 다음 페이지는 거부한다.
+		assertThat(get(org.tenant, "/members?$week&limit=3&q=a&snapshotId=$snapshotId&cursor=legacy").statusCode()).isEqualTo(400)
+	}
+
+	@Test
+	@DisplayName("서버 정렬·상태·팀 검색·정확한 구성원 조회를 같은 snapshot에서 offset 전에 적용한다")
+	fun serverFiltersAndSort() {
+		val org = seed()
+		val first = ok(org.tenant, "/members?$week&limit=1&sort=account&order=desc")
+		val snapshot = first.at("/meta/snapshotId").asString()
+		val base = "/members?$week&snapshotId=$snapshot"
+		assertThat(first.at("/members/items/0/memberId").asString()).isEqualTo(org.dave.toString())
+		assertThat(first.at("/members/nextOffset").asInt()).isEqualTo(1)
+		assertThat(ok(org.tenant, "$base&limit=1&offset=1&sort=account&order=desc").at("/members/items/0/memberId").asString()).isEqualTo(org.carol.toString())
+		for (order in listOf("asc", "desc")) {
+			val cost = ok(org.tenant, "$base&sort=cost&order=$order").at("/members/items").list()
+			val expected = if (order == "desc") listOf(org.alice, org.bob) else listOf(org.bob, org.alice)
+			assertThat(cost.take(2).map { it.path("memberId").asString() }).containsExactlyElementsOf(expected.map { it.toString() })
+			assertThat(cost.drop(2).map { it.path("memberId").asString() }).containsExactlyElementsOf(listOf(org.carol, org.dave).map { it.toString() }.sorted())
+		}
+		assertThat(ok(org.tenant, "$base&status=active").at("/members/totalCount").asInt()).isEqualTo(2)
+		assertThat(ok(org.tenant, "$base&status=unobserved").at("/members/totalCount").asInt()).isEqualTo(2)
+		assertThat(ok(org.tenant, "$base&status=candidate").at("/members/totalCount").asInt()).isZero()
+		assertThat(ok(org.tenant, "$base&q=${URLEncoder.encode("플랫폼", StandardCharsets.UTF_8)}&status=active").at("/members/items/0/memberId").asString()).isEqualTo(org.alice.toString())
+		assertThat(ok(org.tenant, "$base&memberId=${org.carol}").at("/members/items/0/memberId").asString()).isEqualTo(org.carol.toString())
+		assertThat(ok(org.tenant, "$base&memberId=${UUID.randomUUID()}").at("/members/totalCount").asInt()).isZero()
+		val last = ok(org.tenant, "$base&offset=2147483647")
+		assertThat(last.at("/members/items").size()).isZero()
+		assertThat(last.at("/members/totalCount").asInt()).isEqualTo(4)
+		assertThat(last.at("/members/nextOffset").isNull).isTrue()
+		for (query in listOf("offset=-1", "offset=1.5", "offset=2147483648", "sort=unknown", "status=unknown", "order=unknown", "memberId=invalid", "cursor=")) {
+			assertThat(get(org.tenant, "$base&$query").statusCode()).describedAs(query).isEqualTo(400)
+		}
+		assertThat(get(org.tenant, "/members?$week&offset=1").statusCode()).isEqualTo(400)
 	}
 
 	@Test

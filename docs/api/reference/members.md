@@ -43,6 +43,7 @@ type Member = {
   version: number;
   periodUsage: { equivalentCostUsd: Value<string>; sessionCount: Value<number> } | null;
   lastUsedAt: string | null;
+  activity: "active" | "candidate" | "idle" | "unobserved";
   seatState: string;
   plannedVendorIds: Array<string>;
 };
@@ -94,8 +95,8 @@ type MembersResponse = {
   summary: MemberSummary;
   policy: IdlePolicy;
   capabilities: MemberCapabilities;
-  members: Page<Member>;
-  unassigned: Page<Member>;
+  members: OffsetPage<Member>;
+  unassigned: OffsetPage<Member>;
   reclaimCandidates: Section<Page<ReclaimCandidate>>;
 };
 ```
@@ -109,7 +110,7 @@ type MembersResponse = {
 ```ts
 type MemberListResponse = {
   meta: MembersMeta;
-  members: Page<Member>;
+  members: OffsetPage<Member>;
 };
 ```
 
