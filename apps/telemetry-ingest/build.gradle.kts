@@ -38,6 +38,16 @@ tasks.jar {
 	enabled = false
 }
 
+// 서버를 띄우지 않는 내부 운영 명령. 기본 검산 후 명시 --apply에서만 재평가 결과를 적재한다.
+tasks.register<JavaExec>("repriceStoredUsage") {
+	classpath = sourceSets.main.get().runtimeClasspath
+	mainClass.set("com.team376.pulsemetry.telemetry.maintenance.RepriceStoredUsage")
+}
+
+springBoot {
+	mainClass.set("com.team376.pulsemetry.TelemetryIngestApplicationKt")
+}
+
 tasks.withType<Test>().configureEach {
 	// 비어 있으면 TelemetryTokenHasher 생성자가 막아 애플리케이션이 뜨지 않는다.
 	// 테스트 JVM 전체에 한 번만 주입해 모든 테스트가 같은 컨텍스트 캐시를 쓰게 한다
