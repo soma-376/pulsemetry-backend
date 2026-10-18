@@ -47,6 +47,10 @@ data class Evaluation(
  * 알림의 확인은 여기 없다(enrollment-api 의 명령이 enrollment 스키마에 쓴다).
  */
 class AlertStore(private val cache: JdbcClient, private val mapper: ObjectMapper) {
+	/** 마지막 규칙을 껐어도 열린 묶음을 닫아야 하므로 다음 주기 평가에 포함한다. */
+	fun tenantsWithOpenAlerts(): List<UUID> =
+		cache.sql("SELECT DISTINCT tenant_id FROM dashboard_cache.alerts WHERE status = 'open'")
+			.query { rs, _ -> rs.getObject("tenant_id", UUID::class.java) }.list()
 
 	/** 조직의 평가를 선점한다. 다른 인스턴스의 선점이 기한 안이면 false. */
 	fun claim(tenant: UUID, owner: String, now: Instant, until: Instant): Boolean =

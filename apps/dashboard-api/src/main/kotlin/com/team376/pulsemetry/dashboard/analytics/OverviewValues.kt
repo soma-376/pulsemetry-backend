@@ -18,6 +18,12 @@ object OverviewValues {
    if (t.unpricedRows > 0) add("pricing_missing")
    if (mixed && t.hasUsage) add("pricing_version_mixed")
   })
+  val knownCost = value((if (zero) BigDecimal.ZERO else t.knownEquivalentCost(mixed))?.let(Money::format), period + buildList {
+   if (t.unpricedRows > 0) add("pricing_missing")
+   if (mixed && t.hasUsage) add("pricing_version_mixed")
+  })
+  val pricedUsageRows = t.usageRows - t.unpricedRows
+  val unpricedUsageRows = t.unpricedRows
   val tokens = value(if (zero) 0L else t.apiTotal(), period + buildList {
    if (t.hasUsage && !t.semanticsUniform) add("token_semantics_incompatible")
    if (t.apiTotalMissingRows > 0) add("token_data_incomplete")

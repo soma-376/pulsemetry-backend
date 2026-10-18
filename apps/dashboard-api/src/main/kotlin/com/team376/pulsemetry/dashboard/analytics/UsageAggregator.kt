@@ -160,7 +160,10 @@ class UsageAggregator(
 			"countIf(isNull(tokens_total_derived) OR isNull(tokens_input_uncached) OR isNull(tokens_output) " +
 				"OR isNull(tokens_cache_read) OR isNull(tokens_cache_create)) AS api_total_missing_rows",
 			"countIf(isNull(semantics_profile)) AS unverified_rows",
-			"uniqExact(semantics_profile) AS semantics_profiles",
+			// ADR 0061: 두 검증된 producer는 비중복 canonical 성분으로 정규화된다.
+			// 그 밖의 프로파일은 서로 다른 그룹으로 남겨 임의 혼합 합산을 막는다.
+			"uniqExact(if(semantics_profile IN ('claude-code-exclusive-v1', 'codex-responses-inclusive-v1'), " +
+				"'canonical:nonoverlapping-v1', concat('profile:', semantics_profile))) AS semantics_profiles",
 			"sumOrNull(cost_estimated_usd) AS cost",
 			"countIf(isNull(cost_estimated_usd)) AS unpriced_rows",
 			"countIf(has(quality_flags, 'multi_team_membership')) AS multi_team_rows",

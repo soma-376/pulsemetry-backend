@@ -50,6 +50,8 @@ pulsemetry:
       database: ${PULSEMETRY_CLICKHOUSE_DATABASE:default}
 
     ingest:
+      # 고정 참조 단가로 환산한다. 실제 청구액이 아니다. none은 가격 계산을 명시적으로 끈다.
+      pricing-profile: ${PULSEMETRY_PRICING_PROFILE:codeburn-0.9.24-reference-2026-10-16-v1}
       # 503 에 실어 보낼 값. 데몬은 이것을 하한으로 쓰고 15초에서 자른다 (허브 ADR 0006).
       retry-after: 1s
 

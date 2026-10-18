@@ -22,7 +22,7 @@ object TeamScreenValues {
    money(now.perUser,before?.perUser),now.perSession,
    OverviewValues.ratio(now.tokens,users,Long::toBigDecimal,Long::toBigDecimal,BigDecimal::toDouble), now.sessionsPerUser,
    OverviewValues.ratio(now.tokens,now.sessions,Long::toBigDecimal,Long::toBigDecimal,BigDecimal::toDouble),
-   OverviewValues.ratio(now.cost,now.tokens,String::toBigDecimal,Long::toBigDecimal) { Money.format(it * BigDecimal(1_000_000)) })
+   OverviewValues.ratio(now.cost,now.tokens,String::toBigDecimal,Long::toBigDecimal) { Money.format(it * BigDecimal(1_000_000)) }, now.knownCost, now.pricedUsageRows, now.unpricedUsageRows)
  }
  fun user(frame: AnalyticsFrames.Frame, totals: UsageTotals): TeamUserUsage {
   val v = values(frame,totals)
@@ -57,7 +57,7 @@ object TeamScreenValues {
   val v = OverviewValues.Values(totals, date in frame.completeDates, frame.pricingMixed, detailReasons = frame.dateReasons(date))
   val reasons = (v.cost.reasons + v.tokens.reasons + cumulativeReasons).distinct()
   return TeamTrendPoint(date.toString(), frame.observation(date), v.cost.value, v.tokens.value, cumulativeSessions,
-   status(listOf(v.cost.value, v.tokens.value, cumulativeSessions), reasons), reasons)
+   status(listOf(v.cost.value, v.tokens.value, cumulativeSessions), reasons), reasons, v.knownCost.value, v.pricedUsageRows, v.unpricedUsageRows)
  }
  private fun status(values: List<Any?>, reasons: List<String>): String = when {
   values.all { it == null } -> "unavailable"

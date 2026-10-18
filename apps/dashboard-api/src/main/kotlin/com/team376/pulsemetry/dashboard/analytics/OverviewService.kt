@@ -56,7 +56,7 @@ class OverviewService(private val frames: AnalyticsFrames, private val aggregato
   val now = values(f, aggregator.totals(f.snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()))
   val before = if (f.comparable) values(f, aggregator.totals(f.snapshot, Side.PREVIOUS, Axis.ORGANIZATION).getValue(emptyList()), true) else null
   return Summary(count(f, now.users, before?.users), money(f, now.cost, before?.cost), count(f, now.sessions, before?.sessions),
-   money(f, now.perUser, before?.perUser), count(f, now.tokens, before?.tokens), now.sessionsPerUser, now.perSession)
+   money(f, now.perUser, before?.perUser), count(f, now.tokens, before?.tokens), now.sessionsPerUser, now.perSession, now.knownCost, now.pricedUsageRows, now.unpricedUsageRows)
  }
  private fun trend(f: AnalyticsFrames.Frame): Trend {
   val days = aggregator.totals(f.snapshot, Side.CURRENT, Axis.DAY)
@@ -64,7 +64,8 @@ class OverviewService(private val frames: AnalyticsFrames, private val aggregato
    val observation = f.observation(date)
    val v = Values(days[listOf(date.toString())] ?: UsageTotals.EMPTY, observation == "complete", f.pricingMixed, detailReasons = f.dateReasons(date))
    TrendPoint(date.toString(), observation, if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.cost,
-    if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.tokens)
+    if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.tokens,
+    if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.knownCost, v.pricedUsageRows, v.unpricedUsageRows)
   })
  }
  private fun modelMix(f: AnalyticsFrames.Frame): ModelMix {

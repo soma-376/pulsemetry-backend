@@ -98,7 +98,14 @@
       "value": "5.000000",
       "status": "complete",
       "reasons": []
-    }
+    },
+    "knownEquivalentCostUsd": {
+      "value": "5000.000000",
+      "status": "complete",
+      "reasons": []
+    },
+    "pricedUsageRows": 7,
+    "unpricedUsageRows": 0
   },
   "trend": {
     "bucket": "day",
@@ -115,7 +122,14 @@
           "value": 14000000,
           "status": "complete",
           "reasons": []
-        }
+        },
+        "knownEquivalentCostUsd": {
+          "value": "700.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-08",
@@ -129,7 +143,14 @@
           "value": 16000000,
           "status": "complete",
           "reasons": []
-        }
+        },
+        "knownEquivalentCostUsd": {
+          "value": "800.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-09",
@@ -143,7 +164,14 @@
           "value": 18000000,
           "status": "complete",
           "reasons": []
-        }
+        },
+        "knownEquivalentCostUsd": {
+          "value": "900.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-10",
@@ -157,7 +185,14 @@
           "value": 12000000,
           "status": "complete",
           "reasons": []
-        }
+        },
+        "knownEquivalentCostUsd": {
+          "value": "600.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-11",
@@ -171,7 +206,14 @@
           "value": 20000000,
           "status": "complete",
           "reasons": []
-        }
+        },
+        "knownEquivalentCostUsd": {
+          "value": "1000.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-12",
@@ -185,7 +227,14 @@
           "value": 10000000,
           "status": "complete",
           "reasons": []
-        }
+        },
+        "knownEquivalentCostUsd": {
+          "value": "500.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       },
       {
         "date": "2026-09-13",
@@ -199,7 +248,14 @@
           "value": 10000000,
           "status": "complete",
           "reasons": []
-        }
+        },
+        "knownEquivalentCostUsd": {
+          "value": "500.000000",
+          "status": "complete",
+          "reasons": []
+        },
+        "pricedUsageRows": 1,
+        "unpricedUsageRows": 0
       }
     ]
   },

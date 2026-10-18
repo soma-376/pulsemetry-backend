@@ -52,10 +52,11 @@ class AlertEvaluator(
 ) {
 	private val log = LoggerFactory.getLogger(AlertEvaluator::class.java)
 
-	/** 켜진 규칙이 있는 조직을 하나씩 선점해 평가한다. 평가한 조직 수. */
+	/** 켜진 규칙 또는 아직 열린 알림이 있는 조직을 하나씩 선점해 평가한다. 평가한 조직 수. */
 	fun runOnce(): Int {
-		val tenants = source.sql("SELECT DISTINCT r.tenant_id FROM enrollment.organization_alert_rules r JOIN enrollment.alert_rule_definitions d USING (rule_id) WHERE r.enabled AND d.active ORDER BY r.tenant_id")
+		val enabledTenants = source.sql("SELECT DISTINCT r.tenant_id FROM enrollment.organization_alert_rules r JOIN enrollment.alert_rule_definitions d USING (rule_id) WHERE r.enabled AND d.active ORDER BY r.tenant_id")
 			.query { rs, _ -> rs.getObject("tenant_id", UUID::class.java) }.list()
+		val tenants = (enabledTenants + store.tenantsWithOpenAlerts()).distinct().sortedBy(UUID::toString)
 		var evaluated = 0
 		for (tenant in tenants) {
 			val now = clock.instant()

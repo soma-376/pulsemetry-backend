@@ -1,0 +1,360 @@
+{
+  "package": "codeburn",
+  "version": "0.9.24",
+  "source": "installed bundled snapshot + bundled fallback + explicit built-in aliases",
+  "bundleSha256": "e828874abae2c18083b60cc673dc01470310b6d12f1225451f18a1592c961091",
+  "sourceMapSha256": "ccae6d1922cd66062fc399e5029278293c5828569786f620664b3c87b5ec72b9",
+  "snapshotSha256": "7144fbc7e1e40f4fb1bf5cbe8115cfc9bb4a140f699e9b5aa85daf753c9e19ef",
+  "fallbackSha256": "978ce474a1bb1cb81b01f8cd3dd009b0405e89f0e14854f0e34b10e5e25e8b74",
+  "catalogSha256": "c6a8f42f05d275cc6653306f6f9cb2a73c36b867e8b4ac99775b1071452a6c35",
+  "candidateCount": 400,
+  "importedCount": 315,
+  "excludedCount": 85,
+  "importedByFamily": {
+    "claude": 138,
+    "codex": 177
+  },
+  "explicitAliasCount": 56,
+  "excluded": [
+    {
+      "model": "claude-fable-5.1:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "claude-fable-5:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "claude-haiku-4.5:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "claude-opus-4.1:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "claude-opus-4.5:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "claude-opus-4.6:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "claude-opus-4.7:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "claude-opus-4.8:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "claude-opus-5:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "claude-sonnet-4.5:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "claude-sonnet-4.6:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "claude-sonnet-5:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-3.5-turbo:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-4-turbo:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-4.1-mini:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-4.1-nano:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-4.1:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-4o-audio-preview",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-audio-preview-2024-12-17",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-audio-preview-2025-06-03",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-mini-audio-preview",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-mini-audio-preview-2024-12-17",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-mini-realtime-preview",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-mini-realtime-preview-2024-12-17",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-mini-transcribe",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-mini-transcribe-2025-03-20",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-mini-transcribe-2025-12-15",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-mini-tts",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-mini-tts-2025-03-20",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-mini-tts-2025-12-15",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-mini:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-4o-realtime-preview",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-realtime-preview-2024-10-01",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-realtime-preview-2024-12-17",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-realtime-preview-2025-06-03",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-transcribe",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o-transcribe-diarize",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-4o:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5-image",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-5-image-mini",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-5-mini:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5-nano:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5-pro:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.1:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.2-pro:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.2:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.4-image-2",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-5.4-mini:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.4-nano:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.4-pro:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.4:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.5-pro:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.5:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.6-luna-pro:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.6-luna:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.6-sol-pro:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.6-sol:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.6-terra-pro:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5.6-terra:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-5:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-audio",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-audio-1.5",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-audio-1.5-2026-02-23",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-audio-2025-08-28",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-audio-mini",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-audio-mini-2025-10-06",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-audio-mini-2025-12-15",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-image-1.5",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-image-1.5-2025-12-16",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-image-2",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-image-2-2026-04-21",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-oss-120b:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-oss-20b:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "gpt-realtime",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-realtime-1.5",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-realtime-1.5-2026-02-23",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-realtime-2",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-realtime-2.1",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-realtime-2.1-mini",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-realtime-2025-08-28",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-realtime-mini",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-realtime-mini-2025-10-06",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "gpt-realtime-mini-2025-12-15",
+      "reason": "non_text_modality"
+    },
+    {
+      "model": "o3-mini:batch",
+      "reason": "batch_only"
+    },
+    {
+      "model": "o4-mini:batch",
+      "reason": "batch_only"
+    }
+  ]
+}

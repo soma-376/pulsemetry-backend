@@ -232,6 +232,30 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
+	@DisplayName("주기 실행 — 마지막 규칙을 끈 조직도 열린 알림을 닫고 새 위반은 평가하지 않는다")
+	fun scheduledRunClosesLastDisabledRule() {
+		val org = organization()
+		register(org, "openai_biz")
+		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
+		SourceFixtures.insertEvents(org.tenant, model(org, "first", "2026-09-10T12:00:00", "claude-opus-4"))
+		val clock = MutableClock(kst("2026-09-10T14:00:00"))
+		val job = evaluator(clock)
+		job.runOnce()
+		val original = alerts(org).single()
+		assertThat(original.status).isEqualTo("open")
+
+		DashboardTestStores.writer.sql("UPDATE enrollment.organization_alert_rules SET enabled=false, version=version+1 WHERE tenant_id=:tenant")
+			.param("tenant", org.tenant).update()
+		SourceFixtures.insertEvents(org.tenant, model(org, "after-disabled", "2026-09-10T14:00:00", "claude-opus-4"))
+		clock.now = kst("2026-09-10T16:00:00")
+		job.runOnce()
+		job.runOnce()
+
+		assertThat(alerts(org)).containsExactly(original.copy(status = "closed"))
+		assertThat(store.evaluation(org.tenant, "product_not_registered")!!.evaluatedAt).isEqualTo(kst("2026-09-10T14:00:00"))
+	}
+
+	@Test
 	@DisplayName("개요·목록·단건 — 미확인은 확인 기록이 없는 알림이고, 확인하면 줄어든다. 다른 조직의 알림은 없다")
 	fun overviewListAndAcknowledgement() {
 		val org = organization()

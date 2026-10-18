@@ -2,6 +2,7 @@ package com.team376.pulsemetry.telemetry.config
 
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
+import com.team376.pulsemetry.telemetry.adapter.observation.pricing.CodeburnReferencePrices
 import org.springframework.boot.context.properties.ConfigurationProperties
 import java.time.Duration
 
@@ -76,6 +77,8 @@ data class TelemetryIngestProperties(
 	}
 
 	data class Ingest(
+		/** 불변 참조 환산 프로파일 ID. 명시적으로 none을 선택하면 가격을 계산하지 않는다. */
+		val pricingProfile: String = CodeburnReferencePrices.VERSION,
 		/** 압축을 푼 뒤의 상한. 넘으면 수집 모듈이 400 을 낸다. */
 		val maxDecompressedBytes: Long = OtlpIngestHandler.DEFAULT_MAX_DECOMPRESSED_BYTES,
 		/**

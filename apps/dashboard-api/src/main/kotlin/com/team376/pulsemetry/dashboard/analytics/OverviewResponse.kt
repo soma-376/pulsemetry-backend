@@ -14,9 +14,11 @@ data class OverviewResponse(
  data class Change<T>(val status: String, val reasons: List<String>, val previousValue: T?, val absoluteChange: T?,
   val percentChange: Double?, val change: String?)
  data class Summary(val activeUsers: Metric<Long>, val equivalentCostUsd: Metric<String>, val sessionCount: Metric<Long>,
-  val equivalentCostPerUserUsd: Metric<String>, val totalTokens: Metric<Long>, val sessionsPerUser: Value<Double>, val equivalentCostPerSessionUsd: Value<String>)
+  val equivalentCostPerUserUsd: Metric<String>, val totalTokens: Metric<Long>, val sessionsPerUser: Value<Double>, val equivalentCostPerSessionUsd: Value<String>,
+  val knownEquivalentCostUsd: Value<String>, val pricedUsageRows: Long, val unpricedUsageRows: Long)
  data class Trend(val bucket: String, val points: List<TrendPoint>)
- data class TrendPoint(val date: String, val observation: String, val equivalentCostUsd: Value<String>, val totalTokens: Value<Long>)
+ data class TrendPoint(val date: String, val observation: String, val equivalentCostUsd: Value<String>, val totalTokens: Value<Long>,
+  val knownEquivalentCostUsd: Value<String>, val pricedUsageRows: Long, val unpricedUsageRows: Long)
  data class ModelMix(val models: List<ModelShare>)
  data class ModelShare(val modelId: String, val displayName: String, val equivalentCostUsd: Value<String>, val totalTokens: Value<Long>,
   val effectiveCostPerMillionTokensUsd: Value<String>, val costShare: Value<Double>)

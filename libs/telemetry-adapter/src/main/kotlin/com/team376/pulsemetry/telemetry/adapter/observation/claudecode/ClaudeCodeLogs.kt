@@ -302,15 +302,17 @@ internal object ClaudeCodeLogs : LogProfile {
 		cacheWrite = CacheWriteStatus.REPORTED,
 		scope = SemanticsScope(
 			product = Product.CLAUDE_CODE,
-			producerVersions = "claude-code 2.1.269·2.1.270·2.1.272·2.1.273·2.1.278·2.1.281·2.1.282",
+			producerVersions = "claude-code 2.1.269·2.1.270·2.1.272·2.1.273·2.1.278·2.1.281·2.1.282·2.1.283·2.1.284·2.1.285·2.1.290",
 			provider = "Anthropic Messages API 의 usage 블록(행의 공급자 근거와는 별개)",
 			configuration = "기본 설정",
 		),
 		evidencePath = "libs/telemetry-adapter/src/test/resources/otlp-v2/claude_code/PROFILE-EVIDENCE.md",
 	)
 
-	/** [SEMANTICS] 가 적용되는 producer 버전 — `api_request` 실캡처 fixture 가 있는 버전. */
-	val SEMANTICS_VERSIONS: Set<String> = setOf("2.1.269", "2.1.270", "2.1.272", "2.1.273", "2.1.278", "2.1.281", "2.1.282")
+	/** [SEMANTICS] 가 적용되는 producer 버전 — 사용량 실캡처 또는 원천 구조 감사의 근거가 있는 버전. */
+	val SEMANTICS_VERSIONS: Set<String> = setOf(
+		"2.1.269", "2.1.270", "2.1.272", "2.1.273", "2.1.278", "2.1.281", "2.1.282", "2.1.283", "2.1.284", "2.1.285", "2.1.290",
+	)
 
 	const val SESSION_NAMESPACE: String = "claude_code.session"
 

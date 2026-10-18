@@ -1,0 +1,1 @@
+{"spec":"ADR 0020 부록 A.3 + completed/README.md — synthetic conflicting-alias","events":[{"event_type":"transport.stream.event","usage_role":"none","tokens_input":null,"quality_flags":{"$contains":["ambiguous_attribute"]}}],"stats":{"received":1,"rejected_count":0}}
