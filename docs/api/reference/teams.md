@@ -219,8 +219,14 @@ type DirectoryTeam = {
   teamId: string;
   teamName: string;
   version: number;
+  memberCount: number; // 현재 소속된 활성·정지 구성원의 고유 인원 수(0 이상 정수)
 };
 ```
+
+`memberCount`는 조회 시점에 해당 팀에 소속된 현재 로스터(`active`, `suspended`)를 전체 명단에서 센다.
+사용량 조회 기간·구성원 목록 페이지 크기와 무관하며, 초대 대기자·과거 소속·미래 소속은 포함하지 않는다.
+팀 이름과 같이 현재 값이므로 페이지 기준 `snapshotId`가 같아도 소속 변경 뒤 재조회하면 달라질 수 있다.
+프론트엔드는 배포 순서상 이 가산 필드가 없는 응답을 받을 때 인원 확인 불가로 표시하며 `0`으로 대신하지 않는다.
 
 ### TeamDirectoryResponse
 

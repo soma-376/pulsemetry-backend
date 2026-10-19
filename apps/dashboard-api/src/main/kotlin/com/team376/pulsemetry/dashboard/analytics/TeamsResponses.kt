@@ -123,7 +123,7 @@ data class CurrentMeta(
 	val timeZone: String,
 )
 
-data class DirectoryTeam(val teamId: String, val teamName: String, val version: Long)
+data class DirectoryTeam(val teamId: String, val teamName: String, val version: Long, val memberCount: Long)
 
 data class TeamDirectoryResponse(val meta: CurrentMeta, val teams: Page<DirectoryTeam>)
 

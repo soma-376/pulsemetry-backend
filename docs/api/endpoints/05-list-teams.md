@@ -49,4 +49,6 @@ Authorization: Bearer <Pulsemetry access_token>
 
 [TeamDirectoryResponse 전체 스키마·중첩 타입](../reference/teams.md#schema-TeamDirectoryResponse)
 
+각 팀의 `memberCount`는 현재 활성·정지 구성원의 전체 인원 수다. 기간 사용자가 아닌 현재 소속을 기준으로 팀 관리와 삭제 영향 안내에 사용한다.
+
 오류·검증·부수 효과: [공통 규칙](../common.md)과 [기능 규칙·스키마](../reference/teams.md)를 함께 적용한다.

@@ -346,6 +346,44 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
+	@DisplayName("팀 선택지의 인원은 전체 현재 로스터이며 사용량·명단 페이지·초대·과거와 미래 소속에 영향받지 않는다")
+	fun directoryCountsCurrentMembers() {
+		val tenant = DashboardTestStores.insertTenant()
+		val team = SourceFixtures.insertTeam(tenant, "전체 인원")
+		val empty = SourceFixtures.insertTeam(tenant, "빈 팀")
+		val now = Instant.now()
+		val before = now.minusSeconds(3600)
+		repeat(52) { index ->
+			val member = SourceFixtures.insertMember(tenant, "active-$index@example.test")
+			SourceFixtures.insertMembership(team, member, before)
+		}
+		val suspended = SourceFixtures.insertMember(tenant, "suspended@example.test", status = "suspended")
+		SourceFixtures.insertMembership(team, suspended, before)
+		val invited = SourceFixtures.insertMember(tenant, "invited@example.test", status = "invited")
+		SourceFixtures.insertMembership(team, invited, before)
+		val former = SourceFixtures.insertMember(tenant, "former@example.test")
+		SourceFixtures.insertMembership(team, former, before.minusSeconds(3600), before)
+		val future = SourceFixtures.insertMember(tenant, "future@example.test")
+		SourceFixtures.insertMembership(team, future, now.plusSeconds(3600))
+		val otherTenant = DashboardTestStores.insertTenant()
+		val otherTeam = SourceFixtures.insertTeam(otherTenant, "다른 조직")
+		SourceFixtures.insertMembership(otherTeam, SourceFixtures.insertMember(otherTenant, "other@example.test"), before)
+
+		val first = ok(tenant, "/teams?limit=1")
+		val snapshotId = first.at("/meta/snapshotId").asString()
+		val second = ok(tenant, "/teams?limit=1&snapshotId=$snapshotId&cursor=${first.at("/teams/nextCursor").asString()}")
+		val items = (first.at("/teams/items").list() + second.at("/teams/items").list()).associateBy { it.path("teamId").asString() }
+		assertThat(items.getValue(team.toString()).path("memberCount").asLong()).isEqualTo(53)
+		assertThat(items.getValue(empty.toString()).path("memberCount").asLong()).isZero()
+
+		// 현재 디렉터리의 인원은 페이지 기준 시각이 아니라 조회 시점의 소속이다.
+		DashboardTestStores.writer.sql("UPDATE enrollment.team_memberships SET left_at=:left WHERE team_id=:team AND member_id=:member")
+			.param("left", java.sql.Timestamp.from(now)).param("team", team).param("member", suspended).update()
+		val updated = ok(tenant, "/teams?snapshotId=$snapshotId").at("/teams/items").list().first { it.path("teamId").asString() == team.toString() }
+		assertThat(updated.path("memberCount").asLong()).isEqualTo(52)
+	}
+
+	@Test
 	@DisplayName("팀 선택지 — 활성 실제 팀만, q 검색, 같은 snapshot ID 의 페이지는 기준 시각까지의 팀, 남의·만료 ID 는 409")
 	fun directory() {
 		val tenant = DashboardTestStores.insertTenant()
