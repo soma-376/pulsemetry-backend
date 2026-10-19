@@ -219,8 +219,14 @@ type DirectoryTeam = {
   teamId: string;
   teamName: string;
   version: number;
+  memberCount: number; // 현재 소속된 활성·정지 구성원의 고유 인원 수(0 이상 정수)
 };
 ```
+
+`memberCount`는 조회 시점에 해당 팀에 소속된 현재 로스터(`active`, `suspended`)를 전체 명단에서 센다.
+사용량 조회 기간·구성원 목록 페이지 크기와 무관하며, 초대 대기자·과거 소속·미래 소속은 포함하지 않는다.
+팀 이름과 같이 현재 값이므로 페이지 기준 `snapshotId`가 같아도 소속 변경 뒤 재조회하면 달라질 수 있다.
+프론트엔드는 배포 순서상 이 가산 필드가 없는 응답을 받을 때 인원 확인 불가로 표시하며 `0`으로 대신하지 않는다.
 
 ### TeamDirectoryResponse
 
@@ -288,3 +294,7 @@ type TeamSummaryUsage = TeamUserUsage & { activeUsers:Value<number> };
 ```
 
 값과 증감은 개요와 같은 판정기를 사용한다. 분모가 0이면 값을 비우고 `zero_denominator`를 반환한다. 미식별 사용량을 식별 인원으로 나누지 않는다. 기간·수집·단가·세션·토큰 결손은 상세 사유를 유지한다. 모델의 상태는 좌표와 팀 수의 근거, 추이 상태는 날짜별 값과 누적 세션 근거를 표현한다. 저장소 요청 실패는 HTTP 오류이며 지표 상태로 숨기지 않는다.
+
+## 계산 가능한 관측 부분합 (허브 ADR 0011)
+
+기존 전체 금액·평균·비중·비교의 null 규칙은 유지한다. 별도 `knownEquivalentCostUsd`, `pricedUsageRows`, `unpricedUsageRows`를 반환한다. 개요 summary/trend point와 팀 metrics에서는 부분합이 `Value<string>`, 팀 trend point에서는 nullable USD 문자열이다. 행 수는 해당 범위의 primary 사용 관측 수다. 미가격 행이 있으면 부분합 사유에 `pricing_missing`을 포함한다. 가격 있는 행이 없거나 가격판 혼재면 부분합도 null이며, 완전 관측한 빈 범위만 0이다. 미관측일을 0으로 대체하지 않는다. 부분합은 전체 사용량·실제 청구액이 아니며 평균·비교·알림에 대신 쓰지 않는다.

@@ -70,7 +70,7 @@ class TelemetryAnalysisSinksTest {
 		assertThat(query("SELECT count() FROM ${TelemetryEventsSink.TABLE} FINAL")).isEqualTo("2")
 		assertThat(query("SELECT count() FROM ${TelemetryMetricPointsSink.TABLE} FINAL")).isEqualTo("1")
 		assertThat(query("SELECT DISTINCT toString(row_version) FROM ${TelemetryEventsSink.TABLE}"))
-			.isEqualTo(((1uL shl 32) or 1_767_225_605uL).toString())
+			.isEqualTo(first.rowVersion.toString())
 	}
 
 	@Test

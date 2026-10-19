@@ -20,7 +20,7 @@ import java.util.UUID
  * 요청서가 목록 순서를 고정하는 `snapshotId` 를 받으므로 디렉터리에도 기준 시각 하나를 고정한다. snapshot ID 는 [CurrentStateTokens] 이고
  * 같은 ID 의 페이지는 기준 시각까지 만들어진 팀만 불변 팀 ID 오름차순으로 나눈다 —
  * 페이지 사이에 새 팀이 생겨도 중복·누락이 없다. 유효기간은 사용량 snapshot 과 같은 10분이고 지나면 409 다.
- * 팀 이름·상태는 현재 값이다(디렉터리는 과거 상태를 보관하지 않는다).
+ * 팀 이름·상태·구성원 수는 현재 값이다(디렉터리는 과거 상태를 보관하지 않는다).
  *
  * `version` 은 팀 행의 마지막 갱신 시각(epoch 밀리초)이다 — 낙관적 잠금에 쓰는 단조 증가 값.
  */
@@ -41,21 +41,28 @@ class TeamDirectoryService(
 		}
 		val after = page.cursor?.after?.lastOrNull()?.let { runCatching { UUID.fromString(it) }.getOrNull() ?: throw DashboardException.invalid(CURSOR, FieldErrorCode.INVALID_CURSOR) }
 
-		val filter = "tenant_id = :tenant AND status = 'active' AND created_at <= :as_of" + (if (search != null) " AND name ILIKE :pattern ESCAPE '\\'" else "")
+		val filter = "t.tenant_id = :tenant AND t.status = 'active' AND t.created_at <= :as_of" + (if (search != null) " AND t.name ILIKE :pattern ESCAPE '\\'" else "")
 		fun JdbcClient.StatementSpec.bind() = param("tenant", organization.id).param("as_of", Timestamp.from(asOf))
 			.let { if (search != null) it.param("pattern", "%" + escapeLike(search) + "%") else it }
 
-		val total = source.sql("SELECT count(*) FROM enrollment.teams WHERE $filter").bind().query(Long::class.java).single()
+		val total = source.sql("SELECT count(*) FROM enrollment.teams t WHERE $filter").bind().query(Long::class.java).single()
 		val rows = source.sql(
-			"SELECT id, name, updated_at FROM enrollment.teams WHERE $filter" + (if (after != null) " AND id > :after" else "") + " ORDER BY id LIMIT :limit",
+			"""SELECT t.id, t.name, t.updated_at,
+			       (SELECT count(DISTINCT m.id)
+			        FROM enrollment.team_memberships tm JOIN enrollment.members m ON m.id = tm.member_id
+			        WHERE tm.team_id = t.id AND m.tenant_id = :tenant AND m.status IN ('active', 'suspended')
+			          AND tm.joined_at <= :members_at AND (tm.left_at IS NULL OR tm.left_at > :members_at)) AS member_count
+			   FROM enrollment.teams t WHERE $filter""" + (if (after != null) " AND t.id > :after" else "") + " ORDER BY t.id LIMIT :limit",
 		).bind()
 			.let { if (after != null) it.param("after", after) else it }
+			.param("members_at", Timestamp.from(now))
 			.param("limit", page.limit + 1)
 			.query { rs, _ ->
 				DirectoryTeam(
 					teamId = rs.getObject("id", UUID::class.java).toString(),
 					teamName = rs.getString("name"),
 					version = rs.getObject("updated_at", OffsetDateTime::class.java).toInstant().toEpochMilli(),
+					memberCount = rs.getLong("member_count"),
 				)
 			}
 			.list()

@@ -36,6 +36,9 @@ data class TeamTrendPoint(
 	val cumulativeSessionCount: Long?,
 	val status: String,
 	val reasons: List<String>,
+	val knownEquivalentCostUsd: String?,
+	val pricedUsageRows: Long,
+	val unpricedUsageRows: Long,
 )
 
 /** 팀 식별자와 화면 지표·모델·추이. 미배정은 [teamId] 가 null 이다. */
@@ -120,7 +123,7 @@ data class CurrentMeta(
 	val timeZone: String,
 )
 
-data class DirectoryTeam(val teamId: String, val teamName: String, val version: Long)
+data class DirectoryTeam(val teamId: String, val teamName: String, val version: Long, val memberCount: Long)
 
 data class TeamDirectoryResponse(val meta: CurrentMeta, val teams: Page<DirectoryTeam>)
 
@@ -130,6 +133,7 @@ data class TeamMetrics(
  val equivalentCostPerUserUsd: Metric<String>, val equivalentCostPerSessionUsd: Value<String>,
  val tokensPerUser: Value<Double>, val sessionsPerUser: Value<Double>, val tokensPerSession: Value<Double>,
  val effectiveCostPerMillionTokensUsd: Value<String>,
+ val knownEquivalentCostUsd: Value<String>, val pricedUsageRows: Long, val unpricedUsageRows: Long,
 )
 data class TeamSummaryUsage(val activeUsers: Value<Long>, val sessionCount: Value<Long>, val totalTokens: Value<Long>, val equivalentCostUsd: Value<String>)
 data class TeamMeta(

@@ -1,5 +1,10 @@
 # Codex 프로파일 근거 — 토큰 성분·provider·operation
 
+> **현재 판정(2026-10-16):** 아래 1–9절의 `unknown` 판정은 당시 확인 범위의 기록이다. ADR 0061과
+> [10절](#10-2026-10-16-responses-토큰-의미-검증)이 정확한 완료 emitter에 한해 이를 대체한다.
+> `codex-responses-inclusive-v1`은 입력의 cache read/write 포함, 출력의 reasoning 포함을 확인했다.
+> 실제 provider 식별과 그 밖의 버전·표면·이벤트의 unknown 상태는 유지한다.
+
 Codex producer 가 내보내는 값의 **의미**를 producer 소스로 확인한 기록이다. ADR 0020 부록 C 의 Codex 행이 이
 문서를 근거 경로로 가리킨다. 외부 원천(producer 소스·공식 문서)의 인용은 이 문서에만 둔다.
 
@@ -182,9 +187,10 @@ Codex producer 가 내보내는 값의 **의미**를 producer 소스로 확인�
 ## Codex Desktop
 
 `Codex Desktop` 은 배포 빌드의 소스가 공개돼 있지 않다. 캡처의 `eventName` 이 공개 태그의 위치와 행까지 같아 같은
-`codex-rs` 를 포함한 것으로 보이지만, 그 빌드의 소스로 확인한 것이 아니므로 **unknown** 으로 둔다.
+`codex-rs` 를 포함한 것으로 보이지만, 그 빌드의 소스로 확인한 것은 아니다. 당시에는 **unknown** 으로 두었으며,
+12절과 ADR 0064가 정확한 두 버전의 완료 분기에 한해서만 이 결정을 대체한다. 배포 빌드 전체의 검증을 뜻하지 않는다.
 
-## 부록 C 반영 — 의미 프로파일을 등록하지 않는다
+## 당시 부록 C 반영 — 의미 프로파일 미등록(10절에서 제한적으로 대체)
 
 이 범위의 Codex 사용량에는 **토큰 의미 프로파일(`semantics_profile`)을 등록하지 않는다.** 모든 Codex 사용량 행의
 `input_semantics`·`output_semantics` 는 unknown, 파생 토큰(`tokens_input_uncached`·`tokens_total_derived`)은 null,
@@ -267,3 +273,133 @@ verified 가 되려면 필요한 것: (a) cache write 필드의 API 의미(`inpu
   `record_duration`(`core/src/turn_timing.rs`). 실캡처의 wire 타입: sum 은 delta·monotonic, histogram 은 delta, 시간 계열 단위 `ms`.
   guardian token usage 의 `token_type` 에는 `non_cached_input` 도 있다.
 - 프로파일은 이름과 **이 타입이 함께 맞을 때만** family 를 붙인다(`CodexMetrics`). 단위 registry 는 두지 않았다.
+
+## 2026-10-16 제한된 완료 로그 지원
+
+`0.162.0-alpha.17.2`의 APP_SERVER 완료 로그 1개와 대응 emitter를 추가 확인했다. 전체 CodexProfile 버전 목록을 늘리지 않고 `CodexCompletedProfile`로 그 분기만 제한한다. 원천·정확한 검증 범위·미확인 항목·실캡처와 synthetic fixture는 [completed/README.md](completed/README.md)에 기록한다. 이후 10절의 원천 대조와 ADR 0061에 따라 이 완료 분기에만 의미 프로파일을 연결했다.
+
+## 10. 2026-10-16 Responses 토큰 의미 검증
+
+### 새로 확인한 공식 정의
+
+2026-10-16 공식 [Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)의 비용 계산 예제는
+일반 입력을 `input_tokens - cached_tokens - cache_write_tokens`로 계산한다. cache read와 cache write는
+서로 다른 입력 비용 성분이며 둘 다 전체 input에 들어간다. cache-write 단가는 일반 입력 요금에 더하는 추가 요금이 아니다.
+[Reasoning models](https://developers.openai.com/api/docs/guides/reasoning)는 reasoning을 output 사용량의
+세부 성분으로 제시하며 output 요율로 평가한다. 따라서 reasoning을 output에 다시 더하지 않는다.
+
+이는 이전 조사에서 공식 문서를 읽지 못해 남겨 둔 포함관계 미확인을 해소한다. 모델 이름, 표본의 부등식,
+캐시 write가 전부 0이었다는 사실을 포함관계 근거로 사용하지 않는다.
+
+### producer 소스와 적용 범위
+
+아래 네 정확한 태그를 `git show <tag>:<path>`로 다시 읽었다. 표의 SHA는 annotated tag 객체가 아니라
+`<tag>^{commit}`의 불변 커밋이다. 경로는 `codex-rs/` 기준이다.
+
+| producer 버전 | 커밋 SHA | `otel/src/events/session_telemetry.rs` 완료 emitter |
+|---|---|---|
+| 0.153.4 | `3d2ee51ca2d5db578f328aa75e20aa22c0197c9a` | 1012 |
+| 0.154.0-alpha.6.2 | `b5bffd3ec4db487e7e3dec59663875b0ef7b72ca` | 1012 |
+| 0.155.0-alpha.2.6 | `bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6` | 1035 |
+| 0.155.0-alpha.9.2 | `4607249e430dac1c961df4dc615beae88e33cec8` | 1035 |
+
+- 네 태그의 `codex-api/src/sse/responses.rs:138` `From<ResponseCompletedUsage> for TokenUsage`는
+  `response.usage`의 input·output·cached·cache write·reasoning·total을 대응 필드로 옮긴다.
+- `core/src/client.rs`의 `ResponseEvent::Completed` 처리에서 해당 응답의 `token_usage`를
+  `sse_event_completed`에 직접 넘긴다. 이 로그는 세션 누적이나 턴 증분이 아니라 **응답 1회의 사용량**이다.
+- emitter는 `tool_token_count`에 `usage.total_tokens`를 기록한다. 이 값은 `tokens_total_reported`로만
+  저장하며 `tokens_tool`은 null이다. 별도 tool 성분을 만들거나 derived total에 가산하지 않는다.
+- 최신 제한 분기는 기존 `completed/` 근거인 공개 커밋 `cec8c6fb876e90b20250ec740e970e3f33b7396f`
+  (`rust-v0.162.0-alpha.18`)의 `codex-api/src/sse/responses.rs:129`,
+  `core/src/client.rs:2576–2586`, `otel/src/events/session_telemetry.rs:1131–1149`에서 같은 대응을 확인했다.
+  **0.162.0-alpha.17.2 배포 빌드 전체가 이 커밋이라는 뜻은 아니다.** 실제 캡처와 동일한
+  APP_SERVER·버전·`event otel/src/events/session_telemetry.rs:1132`·완료 분기에만 적용한다.
+
+### 프로파일과 가드
+
+`CodexTokenSemantics`의 `codex-responses-inclusive-v1`은 `input_semantics=inclusive_cache`,
+`output_semantics=inclusive_reasoning_tool`, cache-write 상태 `reported`다.
+
+- 제품 Codex, `mapping_status=mapped`, `usage_role=primary`, `event_type=model.response.usage`가 모두 맞아야 한다.
+- 기존 네 버전은 APP_SERVER/CLI, 최신 제한 버전은 APP_SERVER만 허용한다. 버전별 emitter까지 정확히 맞아야 한다.
+- 범위 밖 버전·위치·Desktop(12절의 제한된 완료 분기는 예외), 최신 CLI, 스팬·메트릭·진단·오류 충돌 행에는 의미를 주지 않는다.
+- 의미 프로파일은 producer가 따르는 Responses 사용량 계약이다. 실제 공급자·청구 주체를 추정하지 않으며
+  `provider_unresolved`를 그대로 남긴다. 현재 참조 가격은 별도 v3의 정확한 모델과 의미 ID가 일치할 때만 적용한다.
+
+### 미보고와 0의 한계
+
+producer는 API의 cache-write 필드 미보고를 0으로 기록할 수 있다. 저장된 0이 API의 명시 0인지
+producer default인지는 여전히 구별할 수 없다. 이 프로파일은 **producer가 보고한 성분의 현재 참조 평가**이며
+원래 API가 측정한 0이나 실제 청구액을 증명하지 않는다. 백엔드는 wire에서 빠진 cache-write를 0으로 채우지 않는다.
+
+`tokens_input_uncached = input - read - write`, `tokens_total_derived = input + output`이다.
+read/write가 빠지면 uncached와 환산액은 null이다. 총계는 input·output만 필요하므로 두 값이 있으면 계산된다.
+음수·잘못된 wire는 해당 원시 성분 null, overflow·음수 파생 결과는 해당 파생값 null과 기존 품질 플래그로 남는다.
+
+### fixture 대조
+
+- 기존 `real/` 완료 행 기대값을 원시 input/read/write/output과 위 산식에서 다시 썼다. provider는 unknown 그대로다.
+- `completed/logs-app-server-0.162.0-alpha.17.2-completed`는 input 200705, read 199936, write 0,
+  output 267이므로 uncached 769, derived total 200972다. reasoning 33은 다시 더하지 않는다.
+- 새 [semantics/](semantics/README.md)는 실제 캡처 형식을 복제한 **synthetic** 17개 사례다. nonzero write,
+  정확한 다섯 버전·기존 CLI, 미보고·명시 0·잘못된 wire·음수·캐시 초과·Long overflow·미확인 emitter를 검증한다.
+  기본 사례 input 100/read 40/write 10/output 20의 독립 기대값은 uncached 50, total 120이다.
+- 값이 달라지는 매핑 판은 `codex-v2`·`codex-completed-v2`다. 저장된 행의 재평가는 ADR 0062를 따른다.
+
+## 11. 2026년 9월 원천의 0.158.0-alpha.2.1·0.159.2 완료 로그 한정 지원
+
+2026-10-16 공식 `openai/codex` 저장소의 **정확한 태그**를 확인했다. 근처 버전에서 추정한 것이 아니다. `codex-rs/` 아래 파일이다.
+
+| 정확 버전 | commit | `otel/src/events/session_telemetry.rs` 완료 emitter | `codex-api/src/sse/responses.rs` 사용량 변환 |
+|---|---|---:|---:|
+| 0.158.0-alpha.2.1 | `0d9c7cbfa6cf1489f55a8a9542b75ddd2c061807` | 1035 | 138–152 |
+| 0.159.2 | `ff6aec96948b70d94983af2641a6b67c94faeff5` | 1103 | 128–142 |
+
+`ResponseCompletedUsage` 변환은 API input/output/total 및 input detail의 cached/cache-write를 그대로 `TokenUsage`에 옮긴다. output detail reasoning은 별도 보고되지만 output의 일부다. 두 emitter는 input/output/total을 문자열로, cached/cache-write/reasoning을 정수로 내며 `tool_token_count`는 usage total이다. 포함관계는 다시 열어 확인한 [공식 prompt caching 산식](https://developers.openai.com/api/docs/guides/prompt-caching)과 기존 10절의 Responses usage 정의에 근거한다.
+
+파일 SHA-256(위 버전 순서):
+
+- session_telemetry.rs: `d6c1d97544487304bf25e1dd2bb5d6c2016e4bc51af76c1c46981974a6aa0769`, `b162e7a25d56970743a960825ccc332bf87334f8a8acdc4b18773e5a9ff72c49`
+- responses.rs: `7b938fb5ce0046bf937ca2d955cd7200340fac304329faa7ca2477893aa9eae4`, `6c7b6e9d121c03658954b759d5febf71667f673a9647bcd41f674fa7ecd63f65`
+- shared.rs: 두 버전 모두 `a1faa6568bccf8ffe0db78518758744af54e7a94ea2b324a66cd31349fd0eda6`
+
+실제 로컬 파일은 프로그램 안에서만 스트리밍했고 원문·세션·개인 식별자를 모델 입력이나 fixture로 복사하지 않았다. 집계 증거는 `reports/local-september-2026-20261016/evidence/new-producer-structure.json`, 입력 SHA-256은 `71fa641b2d99a65adb8ce83399712d78658d7083029cbb6b164e281ab4cfc5f0`이다.
+
+- 0.158.0-alpha.2.1: app-server 완료 후보 2,779건. emitter 1035의 2,762건은 네 성분 모두 기대 wire이고 total=input+output, read+write≤input, reasoning≤output이었다. emitter 1022의 17건은 오류이며 토큰이 없어 사용량에서 제외한다.
+- 0.159.2: app-server emitter 1103의 130건. 네 성분 wire와 위 수치 제약이 모두 맞았다.
+
+`CodexCompletedProfile`에 이 두 정확 버전·APP_SERVER·emitter·response.completed 분기만 추가한다. CLI·Desktop·다른 이벤트·스팬·metrics에는 확대하지 않는다. 기존 의미 `codex-responses-inclusive-v1`과 매핑 `codex-completed-v2`의 산식은 유지한다. `SeptemberProducerProfilesTest`의 독립 정수 사례는 input100/read40/write10/output20 → uncached50/total120을 검증하고 missing write·wrong emitter·CLI·usage/error 충돌이 가격을 만들지 않음을 확인한다. 전체 정규화 판·가격표는 ADR 0062를 따른다.
+
+## 12. Desktop 두 버전의 완료 분기
+
+ADR 0064는 `service.name=Codex Desktop`, 정확한 `0.153.4`·`0.154.0-alpha.6.2`, `event.name=codex.sse_event`,
+`event.kind=response.completed`, `eventName=event otel/src/events/session_telemetry.rs:1012`에 한해 별도
+`CodexDesktopCompletedProfile`을 등록한다. mapping 판은 `codex-desktop-completed-v1`, 정규화 판은 8이며 가격판 v4는 유지한다.
+
+### 원천 구현과 한계
+
+10절의 두 exact 태그를 다시 확인했다. `session_telemetry.rs:1011–1029`는 `TokenUsage`를 직접 기록하며,
+`codex-api/src/sse/responses.rs:138–152`는 Responses usage의 input/output/cache read/cache write/reasoning/total을 대응시킨다.
+`core/src/client.rs:2232`(0.153.4)·`:2243`(0.154)는 한 응답의 완료 사용량을 이 emitter로 넘긴다.
+`otel/src/provider.rs:352–360`의 `make_resource`는 `settings.service_name`을 resource 이름으로 붙인다.
+서비스 이름에 따른 토큰 재해석이나 누적 변환은 이 경로에 없다. 토큰 포함관계의 근거는 10절의 공식 정의와 이 원천 구현이며,
+표본의 수치 관계만으로 의미를 확정하지 않았다.
+
+| exact 태그 / 불변 커밋 | `session_telemetry.rs` SHA-256 | `responses.rs` SHA-256 |
+|---|---|---|
+| `rust-v0.153.4` / `3d2ee51ca2d5db578f328aa75e20aa22c0197c9a` | `4377d7b8c2f33541f7465cc0194750fd84f160b88b0bcb7114a99afd984ae6c8` | `ffe0a51e8b496d6c6e3b887859a3ee1afcc5b9a4c76d2f3bdffffa719de0aa9c` |
+| `rust-v0.154.0-alpha.6.2` / `b5bffd3ec4db487e7e3dec59663875b0ef7b72ca` | `e4f48558a2853efe0441fc464b41f7a7dd6545ab0ad6e4bce72cdbf48bdd3f76` | `38c1fbcfee732d1b9c3f8990cccf08f2043f4c8526143b939c11e318c57f6f01` |
+
+**Desktop 배포 바이너리 전체가 이 공개 커밋과 같다는 증거는 없다.** 캡처의 exact 버전·emitter·분기·wire 타입과 공개 구현이
+대응하는 그 완료 로그만 지원한다. provider를 추정하지 않고 `provider_unresolved`를 유지한다. Desktop 다른 버전·이벤트·스팬·메트릭에는 확장하지 않는다.
+
+### 캡처·fixture·회귀 검증
+
+- 실제 9월 구조 감사: 0.153.4 2건, 0.154.0-alpha.6.2 3건. 모두 유효한 여섯 성분을 보고하며 input/output/total은 stringValue,
+  cache read/write/reasoning은 intValue다. 오류 충돌 없이 세 포함관계가 원천 정의와 일치한다. 날짜·ID·토큰 원문은 보고서에 복사하지 않는다.
+- 기존 익명화 저장소 fixture `real/logs-codex-desktop-0.153.4-sse.otlp.jsonl`의 2건과
+  `real/logs-codex-desktop-0.154.0-alpha.6.2-sse.otlp.jsonl`의 3건을 새 프로파일로 직접 검증한다. 익명화 규칙은 `real/README.md`를 따른다.
+- `CodexDesktopCompletedProfileTest`는 해당 fixture와 독립 정수 예제(input100/read40/write10/output20 → uncached50/total120/$0.001665)를
+  함께 검증한다. generic에서 mapped로 바뀌어도 같은 원본의 observation ID와 source time은 유지된다.
+- 미지원 Desktop producer·다른 emitter·다른 event/kind는 generic, usage/error 충돌은 diagnostic이며 가격을 만들지 않는다.
+  cache write 미보고는 null이고 다른 신호는 등록하지 않는다. 기존 `CodexProfile` 범위와 과거 fixture 기대값은 유지한다.
