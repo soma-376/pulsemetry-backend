@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 설치된 Codeburn의 가격 모듈만 격리 실행한다. 사용자 설정·세션·네트워크·캐시는 접근하지 않는다.
+// 설치된 Codeburn의 가격 모듈만 node:vm 컨텍스트에서 실행한다(보안 경계가 아니다). 사용자 설정·세션·네트워크·캐시는 접근하지 않는다.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';

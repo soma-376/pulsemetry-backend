@@ -4,7 +4,7 @@ import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
 import java.math.BigDecimal
 import java.time.Instant
 
-/** Codeburn 0.9.24 고정 참조 가격. 실제 모델 동일성·청구액이 아닌 사용자 지정 환산 기준(ADR 0065). */
+/** Codeburn 0.9.24 고정 참조 가격. 실제 모델 동일성·청구액이 아닌 환산 기준이다(ADR 0060). */
 public object CodeburnReferencePrices {
 	public const val VERSION: String = "codeburn-0.9.24-reference-2026-10-16-v1"
 	public val AS_OF: Instant = Instant.parse("2026-10-16T10:00:00Z")

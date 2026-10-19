@@ -5,7 +5,7 @@ import java.math.BigDecimal
 import java.time.Instant
 
 /**
- * 공식 문서 조회 시각에 고정한 Standard/global 사용 환산 단가(허브 ADR 0008·0009, backend ADR 0060·0061).
+ * 공식 문서 조회 시각에 고정한 Standard/global 사용 환산 단가(허브 ADR 0008, backend ADR 0060).
  * 과거 실제 청구 가격이라고 주장하지 않는다. 변경은 새 ID와 정규화 판을 함께 만든다.
  * 근거·미지원 범위는 `docs/pricing/current-public-standard.md`에 있다.
  */
@@ -54,7 +54,7 @@ public object CurrentPublicPrices {
 		),
 	)
 
-	/** ADR 0061: Claude 캐시 생성은 실제 TTL 판정과 분리한 5분 공시 기준으로 평가한다. */
+	/** ADR 0060: Claude 캐시 생성은 실제 TTL 판정과 분리한 5분 공시 기준으로 평가한다. */
 	public val PROFILE_V3: PricingProfile = PricingProfile(
 		pricingVersion = VERSION_V3,
 		basis = PricingBasis.CURRENT_REFERENCE,
@@ -82,7 +82,7 @@ public object CurrentPublicPrices {
 		),
 	)
 
-	/** ADR 0062: 정확한 Luna 모델의 공개 단가를 새 불변 판에 추가한다. */
+	/** ADR 0060: 정확한 Luna 모델의 공개 단가를 새 불변 판에 추가한다. */
 	public val PROFILE: PricingProfile = PricingProfile(
 		pricingVersion = VERSION,
 		basis = PricingBasis.CURRENT_REFERENCE,

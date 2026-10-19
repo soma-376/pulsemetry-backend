@@ -33,4 +33,4 @@ ADR 0061과 [PROFILE-EVIDENCE.md 10절](../PROFILE-EVIDENCE.md#10-2026-10-16-res
 
 실캡처 1개에 더해 미래/다른 버전, Desktop, CLI, 다른 로그, 다른 emitter, 완료 아닌 이벤트는 generic으로 남는다. int로 바뀐 input 및 음수는 해당 성분만 null + invalid_measurement, 충돌 alias는 primary가 아니며, 토큰+오류는 ambiguous diagnostic, 명시적 0은 유효한 보고, 토큰 없는 완료는 stream event다. 스팬·메트릭 프로파일은 null이다. 과거 프로파일 테스트는 그대로 유지한다.
 
-최초 제한 프로파일 추가는 NORMALIZER_REV 2였고, 의미·가격 재평가를 연결한 ADR 0061의 판은 6이다. mapping_version은 `codex-completed-v2`다. observation ID 버전은 바꾸지 않아 같은 입력 재처리는 더 높은 row_version으로 교체된다.
+토큰 의미는 ADR 0061, 가격은 ADR 0060을 따른다. mapping_version은 `codex-completed-v2`다. observation ID 버전은 바꾸지 않아 같은 입력 재처리는 더 높은 row_version으로 교체된다.

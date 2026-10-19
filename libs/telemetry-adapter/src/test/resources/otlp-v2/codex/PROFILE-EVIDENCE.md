@@ -344,7 +344,7 @@ read/write가 빠지면 uncached와 환산액은 null이다. 총계는 input·ou
 - 새 [semantics/](semantics/README.md)는 실제 캡처 형식을 복제한 **synthetic** 17개 사례다. nonzero write,
   정확한 다섯 버전·기존 CLI, 미보고·명시 0·잘못된 wire·음수·캐시 초과·Long overflow·미확인 emitter를 검증한다.
   기본 사례 input 100/read 40/write 10/output 20의 독립 기대값은 uncached 50, total 120이다.
-- 값이 달라지는 매핑 판은 `codex-v2`·`codex-completed-v2`다. 전체 정규화 판 6과 재처리는 ADR 0061을 따른다.
+- 값이 달라지는 매핑 판은 `codex-v2`·`codex-completed-v2`다. 저장된 행의 재평가는 ADR 0062를 따른다.
 
 ## 11. 2026년 9월 원천의 0.158.0-alpha.2.1·0.159.2 완료 로그 한정 지원
 
