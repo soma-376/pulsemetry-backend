@@ -286,8 +286,20 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 		val seeded = data.seedJwt(issuedAt = acceptedAt.minusSeconds(60))
 		val message = IngestTestKafka.accepted(seeded, oneUserPrompt(), acceptedAt)
 		failProcessing(message.messageId, times = 1) { TelemetrySinkUnavailableException("simulated") }
+		val failedBefore = count("pulsemetry.pipeline.attempts", "signal", "logs", "outcome", "transient_failed")
+		val completedBefore = count("pulsemetry.pipeline.attempts", "signal", "logs", "outcome", "completed")
+		val failuresBefore = count("pulsemetry.pipeline.failures", "stage", "process", "reason", "unavailable")
+		val exhaustedBefore = count("pulsemetry.pipeline.retry.exhausted")
+		val startsBefore = registry.get("pulsemetry.pipeline.accepted.to.attempt.start").tags("signal", "logs").timer().count()
 
 		awaitCommitted(IngestTestKafka.publish(message))
+
+		// 일시 실패 한 번 뒤 성공 — 시도 둘, 소진 없음. age 는 시도마다 기록한다.
+		assertThat(count("pulsemetry.pipeline.attempts", "signal", "logs", "outcome", "transient_failed") - failedBefore).isEqualTo(1.0)
+		assertThat(count("pulsemetry.pipeline.attempts", "signal", "logs", "outcome", "completed") - completedBefore).isEqualTo(1.0)
+		assertThat(count("pulsemetry.pipeline.failures", "stage", "process", "reason", "unavailable") - failuresBefore).isEqualTo(1.0)
+		assertThat(count("pulsemetry.pipeline.retry.exhausted")).isEqualTo(exhaustedBefore)
+		assertThat(registry.get("pulsemetry.pipeline.accepted.to.attempt.start").tags("signal", "logs").timer().count() - startsBefore).isEqualTo(2)
 
 		val contexts = processContexts(message.messageId)
 		assertThat(contexts).hasSize(2)

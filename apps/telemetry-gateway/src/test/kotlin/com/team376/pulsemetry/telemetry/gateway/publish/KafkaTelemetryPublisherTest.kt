@@ -6,6 +6,7 @@ import com.team376.pulsemetry.telemetry.ingress.AcceptedTelemetry
 import com.team376.pulsemetry.telemetry.ingress.GatewayAuthContext
 import com.team376.pulsemetry.telemetry.ingress.RawOtlpPayload
 import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaSecurity
+import com.team376.pulsemetry.telemetry.observability.MicrometerTelemetryObserver
 import com.team376.pulsemetry.telemetry.otlp.OtlpMediaType
 import com.team376.pulsemetry.telemetry.otlp.OtlpSignal
 import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics
@@ -76,19 +77,26 @@ class KafkaTelemetryPublisherTest {
 	fun unreachableBroker() {
 		val port = ServerSocket(0).use { it.localPort }
 		val props = properties(TelemetryGatewayProperties.Kafka(bootstrapServers = "127.0.0.1:$port"))
+		val registry = SimpleMeterRegistry()
 		val publisher = KafkaTelemetryPublisher(
 			KafkaProducer(GatewayConfig.producerProperties(props), StringSerializer(), ByteArraySerializer()),
 			"pulsemetry-test-telemetry-ingress",
 			Clock.systemUTC(),
 			Duration.ofSeconds(1),
+			observer = MicrometerTelemetryObserver(registry),
 		)
 		publisher.use {
 			val started = System.nanoTime()
+			var reason = ""
 			assertThatThrownBy { it.publish(message(), Instant.now().plusMillis(7500)) }
 				.isInstanceOfSatisfying(TelemetryPublishException::class.java) {
 					assertThat(it.reason).isIn("metadata_timeout", "delivery_timeout")
+					reason = it.reason
 				}
 			assertThat(Duration.ofNanos(System.nanoTime() - started)).isBetween(Duration.ofMillis(1500), Duration.ofMillis(7500))
+			// timeout 은 미발행 확정이 아니다 — outcome 은 ack 를 확인하지 못했다는 failed 다.
+			assertThat(registry.get("pulsemetry.gateway.publish").tags("signal", "logs", "outcome", "failed", "reason", reason).counter().count()).isEqualTo(1.0)
+			assertThat(registry.get("pulsemetry.gateway.publish.duration").tags("outcome", "failed").timer().count()).isEqualTo(1)
 		}
 	}
 
@@ -114,12 +122,14 @@ class KafkaTelemetryPublisherTest {
 	@DisplayName("기한이 이미 지났으면 보내지 않고 deadline_exceeded 다")
 	fun pastDeadline() {
 		val props = properties(TelemetryGatewayProperties.Kafka(bootstrapServers = "127.0.0.1:1"))
+		val registry = SimpleMeterRegistry()
 		KafkaTelemetryPublisher(
 			KafkaProducer(GatewayConfig.producerProperties(props), StringSerializer(), ByteArraySerializer()),
-			"t", Clock.systemUTC(), Duration.ZERO,
+			"t", Clock.systemUTC(), Duration.ZERO, observer = MicrometerTelemetryObserver(registry),
 		).use { publisher ->
 			assertThatThrownBy { publisher.publish(message(), Instant.now().minusMillis(1)) }
 				.isInstanceOfSatisfying(TelemetryPublishException::class.java) { assertThat(it.reason).isEqualTo("deadline_exceeded") }
 		}
+		assertThat(registry.get("pulsemetry.gateway.publish").tags("outcome", "failed", "reason", "deadline_exceeded").counter().count()).isEqualTo(1.0)
 	}
 }

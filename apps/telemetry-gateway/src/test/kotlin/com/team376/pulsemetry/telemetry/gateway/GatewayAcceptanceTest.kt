@@ -45,6 +45,9 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 	@Autowired
 	private lateinit var context: ApplicationContext
 
+	@Autowired
+	private lateinit var registry: MeterRegistry
+
 	private val http: HttpClient = HttpClient.newHttpClient()
 
 	private fun token(
@@ -69,6 +72,12 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 		contentEncoding?.let { builder.header("Content-Encoding", it) }
 		return http.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray())
 	}
+
+	/**
+	 * 공유 컨텍스트의 누적 counter 합. 테스트는 전후 차이만 본다. 거부·발행 counter 는 응답을 쓰기 전에 오르므로 응답 직후에 읽어도 된다.
+	 * 요청 결과 counter 는 응답을 쓴 뒤에 오르므로 여기서 보지 않는다(`GatewayOtlpControllerTest`).
+	 */
+	private fun count(name: String, vararg tags: String): Double = registry.find(name).tags(*tags).counters().sumOf { it.count() }
 
 	private fun recordsFor(tenantId: UUID, minimum: Int = 1): List<ConsumerRecord<String, ByteArray>> =
 		GatewayTestKafka.records(GatewayTestKafka.shared.bootstrapServers, minimum).filter { it.key().startsWith("$tenantId:") }
@@ -105,11 +114,15 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 		val canary = "CANARY-${UUID.randomUUID()}"
 		val body = """{"resourceLogs":[],"x":"$canary"}""".toByteArray()
 		val before = Instant.now()
+		val acknowledgedBefore = count("pulsemetry.gateway.publish", "signal", "logs", "outcome", "acknowledged", "reason", "none")
+		val bytesBefore = registry.get("pulsemetry.gateway.request.bytes").tags("signal", "logs").summary().count()
 
 		val response = post(raw, gzip(body), contentType = "application/json; charset=utf-8", contentEncoding = " GZIP ")
 
 		assertThat(response.statusCode()).isEqualTo(200)
 		assertThat(String(response.body())).isEqualTo("""{"partialSuccess":{}}""")
+		assertThat(count("pulsemetry.gateway.publish", "signal", "logs", "outcome", "acknowledged", "reason", "none") - acknowledgedBefore).isEqualTo(1.0)
+		assertThat(registry.get("pulsemetry.gateway.request.bytes").tags("signal", "logs").summary().count() - bytesBefore).isEqualTo(1)
 
 		val record = recordsFor(tenantId).single()
 		assertThat(record.key()).isEqualTo("$tenantId:$installationId")
@@ -179,8 +192,11 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 			unknownKid to "jwt_kid_unknown",
 			tooLong to "jwt_lifetime",
 		)
+		val publishedBefore = count("pulsemetry.gateway.publish")
 		cases.forEach { (raw, reason) ->
+			val reasonBefore = count("pulsemetry.gateway.rejections", "stage", "authenticate", "reason", reason)
 			val response = post(raw, """{"resourceLogs":[]}""".toByteArray())
+			assertThat(count("pulsemetry.gateway.rejections", "stage", "authenticate", "reason", reason) - reasonBefore).describedAs(reason).isEqualTo(1.0)
 			assertThat(response.statusCode()).describedAs(reason).isEqualTo(401)
 			assertThat(String(response.body())).isEqualTo(OtlpResponses.UNAUTHORIZED_BODY)
 			assertThat(response.headers().firstValue("WWW-Authenticate")).isEmpty()
@@ -189,12 +205,17 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 		// 인증 전에는 메서드·형식을 알려 주지 않는다.
 		assertThat(post(null, ByteArray(0), method = "GET").statusCode()).isEqualTo(401)
 		assertThat(recordsFor(tenantId, minimum = 0)).isEmpty()
+		// 거부는 발행을 시도하지 않는다.
+		assertThat(count("pulsemetry.gateway.publish")).isEqualTo(publishedBefore)
 	}
 
 	@Test
 	@DisplayName("인증 뒤 405·415·400(encoding) 은 ingest 와 같은 문자열이다")
 	fun requestShapeRejections() {
 		val raw = token()
+		val publishedBefore = count("pulsemetry.gateway.publish")
+		val methodBefore = count("pulsemetry.gateway.rejections", "stage", "request", "reason", "method_not_allowed")
+		val mediaBefore = count("pulsemetry.gateway.rejections", "stage", "request", "reason", "unsupported_media_type")
 
 		val notPost = post(raw, ByteArray(0), method = "PUT")
 		assertThat(notPost.statusCode()).isEqualTo(405)
@@ -207,6 +228,10 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 		val brotli = post(raw, "{}".toByteArray(), contentEncoding = "br")
 		assertThat(brotli.statusCode()).isEqualTo(400)
 		assertThat(String(brotli.body())).isEqualTo("""{"code":3,"message":"unsupported Content-Encoding: br"}""")
+
+		assertThat(count("pulsemetry.gateway.rejections", "stage", "request", "reason", "method_not_allowed") - methodBefore).isEqualTo(1.0)
+		assertThat(count("pulsemetry.gateway.rejections", "stage", "request", "reason", "unsupported_media_type") - mediaBefore).isEqualTo(1.0)
+		assertThat(count("pulsemetry.gateway.publish")).isEqualTo(publishedBefore)
 	}
 
 	@Test
@@ -224,6 +249,8 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 		val tenantId = UUID.randomUUID()
 		val limit = 10 * 1024 * 1024
 		val exact = ByteArray(limit) { (it % 251).toByte() }
+		val tooLargeBefore = count("pulsemetry.gateway.rejections", "stage", "request", "reason", "payload_too_large")
+		val publishedBefore = count("pulsemetry.gateway.publish")
 
 		val accepted = post(token(tenantId), exact, contentType = "application/x-protobuf")
 		assertThat(accepted.statusCode()).isEqualTo(200)
@@ -235,6 +262,9 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 		assertThat(over.statusCode()).isEqualTo(413)
 		assertThat(String(over.body())).isEqualTo("413 request entity too large")
 		assertThat(recordsFor(tenantId)).hasSize(1)
+		assertThat(count("pulsemetry.gateway.rejections", "stage", "request", "reason", "payload_too_large") - tooLargeBefore).isEqualTo(1.0)
+		// 상한 안의 한 건만 발행했다.
+		assertThat(count("pulsemetry.gateway.publish") - publishedBefore).isEqualTo(1.0)
 	}
 
 	@Test
@@ -248,7 +278,7 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 		post(good, "{}".toByteArray(), contentEncoding = canary)
 
 		assertThat(output.all).doesNotContain(canary).doesNotContain(good)
-		assertThat(context.getBean(MeterRegistry::class.java).meters.flatMap { it.id.tags }.joinToString()).doesNotContain(canary).doesNotContain(good)
+		assertThat(registry.meters.flatMap { it.id.tags }.joinToString()).doesNotContain(canary).doesNotContain(good)
 	}
 
 	private fun gzip(body: ByteArray): ByteArray =
