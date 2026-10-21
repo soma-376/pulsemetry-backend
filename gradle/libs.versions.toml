@@ -11,6 +11,9 @@ otelProto = "1.11.0-alpha"
 protobuf = "4.36.1"
 # 아카이브 적재 (ADR 0012). BOM 을 import 해 하위 모듈 버전을 맞춘다.
 awsSdk = "2.40.11"
+# telemetry JWT 발급·검증 (ADR 0065). Spring Security(oauth2-jose)가 끌어오는 판과 같게 고정한다 —
+# 두 경로가 한 클래스패스에서 다른 nimbus 를 보지 않게 한다.
+nimbusJoseJwt = "10.9"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
@@ -90,3 +93,6 @@ awssdk-s3 = { module = "software.amazon.awssdk:s3" }
 awssdk-sesv2 = { module = "software.amazon.awssdk:sesv2" }
 # SES 클라이언트의 연결·읽기 제한 시간을 직접 정한다. 서비스 모듈이 런타임에만 끌어오는 기본 동기 HTTP 클라이언트다.
 awssdk-apache-client = { module = "software.amazon.awssdk:apache-client" }
+
+# --- telemetry JWT (:libs:telemetry-auth, ADR 0065) ---
+nimbus-jose-jwt = { module = "com.nimbusds:nimbus-jose-jwt", version.ref = "nimbusJoseJwt" }

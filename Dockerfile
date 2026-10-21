@@ -29,6 +29,7 @@ COPY apps/retention-worker/build.gradle.kts apps/retention-worker/
 COPY libs/enrollment-persistence/build.gradle.kts libs/enrollment-persistence/
 COPY libs/security/build.gradle.kts libs/security/
 COPY libs/telemetry-collector/build.gradle.kts libs/telemetry-collector/
+COPY libs/telemetry-auth/build.gradle.kts libs/telemetry-auth/
 COPY libs/telemetry-adapter/build.gradle.kts libs/telemetry-adapter/
 COPY libs/telemetry-enricher/build.gradle.kts libs/telemetry-enricher/
 COPY libs/telemetry-persistence/build.gradle.kts libs/telemetry-persistence/

@@ -83,6 +83,8 @@ pulsemetry-backend
     │                                  └ alert/ 알림 규칙의 켜짐·모델·도구 목록과 켜기 판정 (ADR 0051)
     ├── security/                    com.team376.pulsemetry.security
     │                                └ 사용자 JWT·세션·OIDC 신원 연결과 OTLP 경로의 ptt_ 검증 · telemetry token 해시
+    ├── telemetry-auth/              com.team376.pulsemetry.telemetry.auth
+    │                                telemetry 전용 JWT 발급·검증 · 키 파일 로더 · Bearer 추출 (ADR 0065). Spring·RDB 없음
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
     │                                OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
     │                                ├ masking/    blocked_values 14종 값 마스킹
@@ -157,6 +159,10 @@ ClickHouse는 `source/`의 읽기 전용 클라이언트다. 적재 모듈의 `C
 `:libs:security`는 두 묶음이다 — OTLP 경로의 `ptt_` 검증·telemetry token 해시(PROJ-102)와 사용자 인증(JWT 발급·검증,
 세션·RT 회전, 암호 검증 — `user/`, ADR 0018·0026). enrollment-api 가 사용자 인증 경로를, dashboard-api 가 인증 어댑터(AT·현재 세션 검증)를,
 telemetry-ingest 가 `ptt_` 필터를 조립한다.
+
+`:libs:telemetry-auth`는 telemetry 전용 JWT(ADR 0065)의 발급·검증을 담는다. 의존은 nimbus 뿐이고 Spring·RDB·Kafka 를 모른다 —
+DB 없는 Gateway 와 enrollment(발급)·ingest(HTTP 호환 검증)가 같은 규칙을 쓰기 때문이다. `:libs:security`의 사용자 JWT 와 키·`typ`·`aud`를 공유하지 않는다.
+`<컨텍스트>-<역할>` 모듈이지만 telemetry 밖에 같은 역할의 짝이 없으므로 패키지는 `telemetry.auth` 어순이다(5절의 단계 모듈과 같은 이유).
 
 `:libs:telemetry-collector`는 5절이 예고한 단계 모듈 중 첫 번째다(PROJ-114). 하위 패키지는 5절이
 정한 대로 `masking/`·`archive/` 둘이고, 수신 관련 타입은 모듈 루트 패키지에 둔다.

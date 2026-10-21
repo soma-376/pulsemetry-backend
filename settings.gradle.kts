@@ -26,6 +26,9 @@ include(":libs:telemetry-collector")
 include(":libs:telemetry-adapter")
 include(":libs:telemetry-enricher")
 
+// telemetry 전용 JWT 발급·검증. Gateway·ingest·enrollment 가 공유하고 RDB 에 의존하지 않는다 (ADR 0065)
+include(":libs:telemetry-auth")
+
 // telemetry 도메인의 테이블 쓰기 소유 모듈. 역할 모듈이라 어순이 다르다 (ADR 0008 규칙 1 · 0010)
 include(":libs:telemetry-persistence")
 
