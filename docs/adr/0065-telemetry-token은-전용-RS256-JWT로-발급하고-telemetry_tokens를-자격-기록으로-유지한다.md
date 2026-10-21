@@ -38,6 +38,7 @@ Proposed — 허브 [ADR 0001](../../../docs/adr/0001-otlp-authentication-model.
    사유 없이 쓰므로 CHECK 가 재발급을 막는다. 새 코드는 언제나 사유를 쓰고, 사유 없는 폐기는 "사유 불명"으로 거부한다.
    번호는 V33 이다 — 로컬 synthetic 작업이 V32 를 쓰므로 충돌을 피한다.
 5. **회전과 보안 폐기를 구분한다.** 재발급은 `revoked_at IS NULL` 행에만 `rotated` 를 쓴다 — 보안 폐기를 덮어쓰지 않는다.
+   회전의 `revoked_at` 은 설치 행 잠금을 얻은 뒤의 시각이다. 잠금을 기다리는 동안 이전 토큰으로 접수된 데이터가 6의 판정에서 회전 뒤로 밀리지 않게 한다.
    보안 폐기는 `revoked_at` 을 반드시 채우고(`COALESCE`) `security` 를 쓴다. 이미 회전된 행에도 적용된다.
    `revoked_at` 이 채워져 있으므로 구 이미지도 거부한다. 관리 API 를 두지 않고 운영 절차의 SQL 로 한다.
 6. **RDB 판정(Consumer·HTTP 호환 공통)**은 `jti` 로 행·설치·회원·조직을 함께 읽고 접수 시각(`acceptedAt`)으로 판정한다.

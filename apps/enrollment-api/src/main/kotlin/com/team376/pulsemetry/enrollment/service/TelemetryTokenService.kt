@@ -28,13 +28,15 @@ class TelemetryTokenService(
 
 	@Transactional
 	fun reissue(authorizationHeader: String?): TelemetryTokenResponse {
-		val now = clock.instant()
-
 		// 행 잠금으로 재발급을 installation 단위로 직렬화한다. 잠금 없이는 동시 재발급이 서로의
 		// 미커밋 INSERT 를 못 봐 활성 토큰 2개가 남는다. 진 쪽은 기다렸다 이어서 성공한다.
 		val verified = verifier.verify(authorizationHeader)
 		val credential = verified.credential
 		val installation = verified.installation
+
+		// 시각은 잠금을 얻은 뒤에 읽는다. revoked_at 은 Consumer 가 회전 전 접수를 가르는 기준이라(ADR 0065 Decision 6)
+		// 대기 전 시각을 쓰면 기다리는 동안 이전 토큰으로 접수된 데이터가 회전 뒤로 판정돼 버려진다.
+		val now = clock.instant()
 
 		// pit_ 인증은 과거 enroll 완료의 증명이므로, 여기서도 `invited → active` 를 보정한다.
 		// 전환 도입 이전에 enroll 된 invited 구성원이 데몬의 401 → 재발급 루프만으로 복구되는 경로다.
