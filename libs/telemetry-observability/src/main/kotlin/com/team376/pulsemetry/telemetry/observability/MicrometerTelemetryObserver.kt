@@ -45,13 +45,14 @@ public class MicrometerTelemetryObserver(private val registry: MeterRegistry) : 
         "status" -> value.takeIf { it in setOf("200", "400", "401", "404", "405", "413", "415", "500", "503") } ?: "other"
         "stage" -> value.takeIf { it in STAGES } ?: "other"
         "outcome" -> value.takeIf { it in OUTCOMES } ?: "other"
-        "operation" -> value.takeIf { it in setOf("insert", "schema", "select", "other") } ?: "other"
-        "table" -> value.takeIf { it in setOf("telemetry_events", "telemetry_metric_points", "telemetry_ingest_ledger") } ?: "other"
+        "operation" -> value.takeIf { it in setOf("insert", "select", "delete", "schema", "other") } ?: "other"
+        "table" -> value.takeIf { it in TABLES } ?: "other"
         "reason" -> value.takeIf { it in REASONS } ?: "other"
         else -> "other"
     }
 
     private companion object {
+        val TABLES = setOf("telemetry_events", "telemetry_metric_points", "telemetry_ingest_ledger", "telemetry_retention_fence")
         val DURATION_BUCKETS = listOf(5L, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000).map(Duration::ofMillis).toTypedArray()
         val AGE_BUCKETS = listOf(100L, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000, 300000, 600000).map(Duration::ofMillis).toTypedArray()
         val STAGES = PipelineStage.entries.map { it.label }.toSet() + setOf("authenticate", "request", "publish", "envelope", "pipeline", "process", "commit", "container")

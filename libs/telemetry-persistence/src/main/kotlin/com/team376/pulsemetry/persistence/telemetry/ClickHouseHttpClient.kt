@@ -47,6 +47,9 @@ public class ClickHouseHttpClient(
 	 * DDL·SELECT 는 [body] 가 `null` 이고, INSERT 는 행 바이트를 싣는다. [params] 는 쿼리의 `{name:Type}` 자리에 들어가는
 	 * 서버 쪽 파라미터(`param_name`)이고, [queryId] 는 서버의 `query_id` 다 — 없으면 서버가 정한다.
 	 *
+	 * [operation]·[table] 은 운영 지표의 라벨이다(ADR 0068). 호출자가 `insert`·`select`·`delete`·`schema` 와 대상 테이블을
+	 * 밝힌다 — 기본값 `other` 는 분류되지 않은 호출이라는 뜻이다. 허용 목록 밖의 값은 계측 구현이 `other` 로 합친다.
+	 *
 	 * **실패는 둘로 갈린다** — 연결 계열과 `5xx · 429 · 408` 은
 	 * [TelemetrySinkUnavailableException](일시 장애 → 503), 그 밖의 4xx 는
 	 * [TelemetrySinkRejectedException](영구 오류 → 400)이다. 근거는 허브 ADR 0006 이다.

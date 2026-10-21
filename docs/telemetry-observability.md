@@ -51,7 +51,7 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 | `pulsemetry_pipeline_empty_total` | signal | decode 후 레코드가 없는 push |
 | `pulsemetry_pipeline_excluded_observations_total` | reason | source_time·excluded_span·retention 사유 제외 수. 재시도 때 다시 셀 수 있음 |
 | `pulsemetry_pipeline_clock_skew_total` | 없음 | 음수 age를 버린 수. 음수를 0초 성공으로 기록하지 않음 |
-| `pulsemetry_clickhouse_requests_total` | operation,table,outcome | HTTP 요청의 success·permanent_error·transient_error. operation은 insert/schema/select/other |
+| `pulsemetry_clickhouse_requests_total` | operation,table,outcome | HTTP 요청의 success·permanent_error·transient_error. operation은 insert/select/delete/schema, 분류하지 않은 호출만 other. table은 telemetry_events·telemetry_metric_points·telemetry_ingest_ledger·telemetry_retention_fence, 그 밖은 other |
 | `pulsemetry_clickhouse_request_duration_seconds` | operation,table,outcome | ClickHouse HTTP 왕복 시간 |
 | `pulsemetry_clickhouse_rows_submitted_total` | table | INSERT에 제출한 행. 실패·재시도·server retention fence를 포함하므로 실제 적재 수가 아님 |
 

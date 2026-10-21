@@ -21,7 +21,7 @@ public class InsertDrain(
 
 	/** 지금 실행 중인 INSERT 의 `query_id`. */
 	public fun running(): Set<String> =
-		client.execute("SELECT query_id FROM system.processes WHERE query_kind = 'Insert' FORMAT TSVRaw")
+		client.execute("SELECT query_id FROM system.processes WHERE query_kind = 'Insert' FORMAT TSVRaw", operation = "select", table = PROCESSES)
 			.lines().filter { it.isNotBlank() }.toSet()
 
 	/** [queryIds] 가 모두 목록에서 빠지면 true. [timeout] 이 지나도 남아 있으면 false. 빈 집합이면 조회 없이 true. */
@@ -40,5 +40,11 @@ public class InsertDrain(
 		client.execute(
 			"SELECT count() FROM system.processes WHERE has({ids:Array(String)}, query_id) FORMAT TSV",
 			params = mapOf("ids" to queryIds.joinToString(",", "[", "]") { "'" + it.replace("\\", "\\\\").replace("'", "\\'") + "'" }),
+			operation = "select",
+			table = PROCESSES,
 		).trim().toLong()
+
+	private companion object {
+		const val PROCESSES: String = "system.processes"
+	}
 }

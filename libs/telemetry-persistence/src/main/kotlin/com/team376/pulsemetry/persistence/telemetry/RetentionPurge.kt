@@ -36,6 +36,8 @@ public class RetentionPurge(private val client: ClickHouseHttpClient) {
 				"DELETE FROM $table WHERE tenant_id = {tenant:String} AND source_time < {before:DateTime64(9, 'UTC')} " +
 					"SETTINGS lightweight_deletes_sync = 2",
 				params = params(tenantId, deletedBefore),
+				operation = "delete",
+				table = table,
 			)
 		}
 	}
@@ -49,6 +51,8 @@ public class RetentionPurge(private val client: ClickHouseHttpClient) {
 			"SELECT uniqExact(observation_id), count() FROM $table " +
 				"WHERE tenant_id = {tenant:String} AND source_time < {before:DateTime64(9, 'UTC')} FORMAT TSV",
 			params = params(tenantId, deletedBefore),
+			operation = "select",
+			table = table,
 		).trim()
 		val (observations, rows) = line.split('\t').map { it.toLong() }
 		return Target(observations, rows)

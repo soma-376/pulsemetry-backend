@@ -13,7 +13,7 @@ public class PreLedgerHistorySource(private val client: ClickHouseHttpClient) {
 	public val source: String = TABLE
 
 	public fun tenantIds(): List<String> =
-		client.execute("SELECT DISTINCT tenant_id FROM $TABLE WHERE tenant_id != '' ORDER BY tenant_id FORMAT TSVRaw")
+		client.execute("SELECT DISTINCT tenant_id FROM $TABLE WHERE tenant_id != '' ORDER BY tenant_id FORMAT TSVRaw", operation = "select", table = TABLE)
 			.lines()
 			.filter { it.isNotEmpty() }
 

@@ -29,12 +29,14 @@ public class RetentionFence(private val client: ClickHouseHttpClient) {
 				"before" to AnalysisRowWriter.formatTime(EpochNanos.of(value.deletedBefore)),
 				"epoch" to value.policyEpoch.toString(),
 			),
+			operation = "insert",
+			table = TABLE,
 		)
 	}
 
 	/** 지금 fence — INSERT 가 읽는 것과 같은 `max` 다. 없으면 null. */
 	public fun current(tenantId: String): Value? {
-		val line = client.execute(CURRENT, params = mapOf("tenant" to tenantId)).trim()
+		val line = client.execute(CURRENT, params = mapOf("tenant" to tenantId), operation = "select", table = TABLE).trim()
 		if (line.isEmpty()) return null
 		val (before, epoch) = line.split('\t')
 		return Value(Instant.parse(before.replace(' ', 'T') + "Z"), epoch.toLong())
