@@ -133,6 +133,8 @@ DB 장애 시에는 503과 함께 `status=degraded`, `checks.database=down`을 �
 | `pulsemetry.public-base-url` | `http://localhost:8080` | 설치 명령·스크립트에 박히는 서버 주소. 기동 시 형식 검증 |
 | `pulsemetry.admin.api-token` | 없음 | 관리자 API 키. **비어 있으면 기동 실패** |
 | `pulsemetry.token-hash-secret` | 없음 | telemetry token 의 HMAC-SHA256 키. **비어 있으면 기동 실패.** 발급과 dev telemetry-ingest 검증은 `:libs:security`의 `TelemetryTokenHasher`와 같은 키를 쓴다. 기존 auth-proxy와의 해시 호환성도 유지한다. dev EKS는 `DevDataStack` 소유 Secret을 `DevEksStack`의 `TokenHashSecretArn` 출력과 runtime 파일 공급으로 연결한다(`DevEdgeStack`의 같은 출력도 유지). 키 변경 = 발급된 전 토큰 무효 |
+| `pulsemetry.telemetry-jwt.issue-enabled` | `false` | 켜면 enroll·재발급의 `telemetry_token` 이 telemetry JWT 다(ADR 0065). **모든 검증자에 공개키를 먼저 배포한 뒤에만** 켠다. 켰는데 키가 없거나 짝이 틀리면 기동 실패 |
+| `pulsemetry.telemetry-jwt.active-kid` · `.private-key-file` · `.public-key-files.<kid>` | 빈 값 · `/mnt/telemetry-jwt/keys/private.pem` · 빈 맵 | 사용자 JWT 와 다른 키쌍. 키·검증 규칙과 회전 절차는 [telemetry Kafka 운영](telemetry-kafka-operations.md) |
 | `pulsemetry.invitation.default-ttl-hours` | `72` | `expires_in_hours` 생략 시 만료 시간 |
 | `pulsemetry.binaries.dir` | `./binaries` | telemetryctl 릴리스 디렉터리(`v<SemVer>`, §6.3)나 공개 이름의 CLI 바이너리(§6.2)가 놓인 서버 로컬 디렉터리 |
 | `pulsemetry.user-auth.enabled` | `false` | 자체 사용자 AT·RT·세션 인증을 켠다. local 프로필은 true |

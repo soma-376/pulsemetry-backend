@@ -91,7 +91,7 @@ pulsemetry:
 
 서비스 JWT 키는 환경별로 고정한 Secrets Manager ARN 두 개에 별도로 보관한다. 개인키 Secret은 RSA 2048비트 이상 **PKCS8 PEM**, 공개키 Secret은 **`kid → X.509 PEM` JSON 키링**이다. AWS 관리형 `aws/secretsmanager`로 암호화하며 dev EKS는 기존 두 원본과 선택한 `VersionId`를 유지한다. ECS 제거를 이유로 키를 다시 만들지 않는다. 공개키도 이미지에 포함하지 않고 런타임 파일로 공급한다.
 
-앱은 Secrets Manager를 조회하지 않는다. dev EKS의 Pod Identity·ASCP/CSI 공급자가 선택 버전의 공개키 JSON을 kid별 PEM 파일로 풀고 앱의 `public-key-files`에는 **kid → 파일 경로**를 전달한다. enrollment에 개인키·공개키를, dashboard에 공개키만 공급하고 telemetry-ingest에는 JWT Secret 권한을 추가하지 않는다. PEM 원문을 일반 환경변수·Spring 설정·문서·로그·output에 넣지 않는다.
+앱은 Secrets Manager를 조회하지 않는다. dev EKS의 Pod Identity·ASCP/CSI 공급자가 선택 버전의 공개키 JSON을 kid별 PEM 파일로 풀고 앱의 `public-key-files`에는 **kid → 파일 경로**를 전달한다. enrollment에 개인키·공개키를, dashboard에 공개키만 공급하고 telemetry-ingest·telemetry-gateway에는 **사용자** JWT Secret 권한을 추가하지 않는다. telemetry JWT(ADR 0065)는 별도 키쌍이다 — 그 공개키는 Gateway·ingest·enrollment가, 개인키는 enrollment만 받는다([telemetry Kafka 운영](telemetry-kafka-operations.md) 1.2절). 두 키를 섞지 않는다. PEM 원문을 일반 환경변수·Spring 설정·문서·로그·output에 넣지 않는다.
 OIDC client secret은 enrollment에만 주며 dashboard에는 자체 JWT 공개키·issuer·audience만 준다.
 두 종류의 issuer(외부 IdP / Pulsemetry 자체 JWT)를 혼동하지 않는다.
 

@@ -19,11 +19,15 @@ Kotlin + Spring Boot, Gradle 멀티모듈. 시스템 아키텍처의 **Auth Serv
 
 ```
 apps/enrollment-api/         사용자 인증 · 온보딩·조직 관리 · enrollment · manifest · 부트스트랩 서빙 (HTTP)
-apps/telemetry-ingest/       조립 앱 — OTLP 수신부터 적재까지 한 프로세스. 배선만 한다
+apps/telemetry-ingest/       조립 앱 — OTLP 수신부터 적재까지 한 프로세스. 배선만 한다. 모드 http|dual|kafka (Kafka Consumer, ADR 0066)
+apps/telemetry-gateway/      OTLP 접수 앱 — telemetry JWT 만 검증해 Kafka 에 envelope 로 발행한다. DB·S3·ClickHouse 없음 (ADR 0066)
 apps/dashboard-api/          분석·설정·카탈로그 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐. 사용자 인증 어댑터 (ADR 0026)
 apps/retention-worker/       조직별 보존 삭제 — 서버가 아닌 일회성 실행. 분석 원본 DELETE 권한은 여기뿐 (ADR 0024)
 libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이그레이션
 libs/security/               횡단 인증 라이브러리 — 사용자 JWT·세션·OIDC 신원 연결, OTLP 경로 ptt_ 검증 · telemetry token 해시
+libs/telemetry-auth/         telemetry JWT 발급·검증 (RS256, 전용 typ·kid) — nimbus 만 의존 (ADR 0065)
+libs/telemetry-otlp-http/    OTLP/HTTP 경로·허용 목록·응답 바이트 — Gateway 와 ingest 가 같은 응답을 낸다
+libs/telemetry-ingress-contract/ Kafka ingress envelope(protobuf)·codec·접속 설정·운영 로그 이벤트 (ADR 0066)
 libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 신원 스탬프 · 원본 아카이브
 libs/telemetry-adapter/      파이프라인 변환 단계 — 관측 모델 2판 · 제품 프로파일(Codex · Claude Code) · 가격 단계
 libs/telemetry-enricher/     파이프라인 보강 단계 — member_id · 대표 팀 as-of · provider 주석
@@ -48,6 +52,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | 좌석·벤더 연결·청구 | 구현됨. 벤더 연결은 설정으로 활성화 | 좌석 원장·수동 기록·CSV, 커넥터 동기화(Claude Enterprise·Cursor Enterprise — Copilot·Gemini 는 커넥터가 없다, ADR 0054)·회수·복원(관리자 조치), 벤더 청구 누계. 실계정 검증은 남았다(`docs/vendor-connector-verification.md`). ADR 0048·0049·0050 |
 | 알림 | 구현됨 | 규칙 켜기(enrollment-api)·등록 제품 기준 사용 알림(허브 ADR 0008), 주기 평가·개요 미확인 수·확인(dashboard-api 평가 + enrollment-api 확인). 한도 초과는 근거가 없어 켤 수 없다. ADR 0051 |
 | 대시보드 API | 개요·팀·구성원·설정·카탈로그·수집 상태·좌석·알림·작업 상태 조회 구현, ADR 0022·0023 Accepted | `docs/api/README.md` 참고. 관리 쓰기는 enrollment-api가 맡는다. 기간 완전성·비교(ADR 0042), 수집 상태 판정(ADR 0041). API 구현과 프론트 전체 배선·E2E 완료는 별개 |
+| telemetry JWT·Gateway·Kafka 수집 | 로컬 구현, 배포·허브 개정 전(ADR 0065·0066 Proposed, 0067 Accepted) | telemetry JWT 발급(설정으로 켬)·Gateway·ingest Consumer·수신 모드. 200 은 Kafka 접수다. 설정·전환 순서·키 회전·보안 폐기 SQL은 `docs/telemetry-kafka-operations.md`, 로컬 E2E 결과는 `docs/telemetry-kafka-e2e.md` |
 | 텔레메트리 파이프라인 이관 | 단일 앱 구현·dev EKS 실행 계약 채택 | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다. dev EKS 실행·이미지 공급/수동 배포는 허브 ADR 0023을 따르며 실제 AWS 철거·배포·수집 E2E 검증은 별도다 |
 
 **파이프라인은 이 레포의 단일 앱이다**(허브 ADR 0004·0005 — 배포 단위 하나, OTel Collector 바이너리 없음).
@@ -55,8 +60,9 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 [telemetry ingest 계약](../docs/contracts/telemetry-ingest.md)을 따른다. dev OTLP 검증은 이 앱에 조립한 `:libs:security`가 맡는다.
 과거 auth-proxy·collector 경로와 prod의 기존 ECS 계약은 dev EKS 실행 계약과 구분한다. 이 설명은 실제 트래픽 전환·철거 완료의 증거가 아니다.
 
-backend dev CI는 enrollment-api·telemetry-ingest·dashboard-api의 `linux/arm64` 이미지를 ECR에 게시하고,
-세 SHA 이미지 게시가 모두 끝난 뒤 build digest로 `dev` 태그를 순차 승격한다. 실제 EKS 배포는 infra가 확인한
+backend dev CI는 enrollment-api·telemetry-ingest·dashboard-api와 저장소 Secret이 등록된 telemetry-gateway의
+`linux/arm64` SHA 이미지를 ECR에 게시한다. 설정된 이미지 게시가 모두 끝난 뒤 앞 세 앱만 build digest로
+`dev` 태그를 순차 승격하고, Gateway는 SHA 태그와 workflow summary의 digest를 제공한다. 실제 EKS 배포는 infra가 확인한
 immutable digest로 수동 수행한다. enrollment의 원천 Flyway 적용 확인 → ingest → dashboard 순서와 실패·복구는
 [infra EKS 런북](../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다. 이미지 게시·Pod readiness·기능 검증은 각각 확인한다.
 
@@ -94,6 +100,7 @@ immutable digest로 수동 수행한다. enrollment의 원천 Flyway 적용 확�
 | `docs/vendor-connector-evidence.md` · `docs/vendor-connector-verification.md` | 벤더 커넥터의 공식 문서 근거와 실계정 검증 절차 |
 | `tools/mock-vendor/README.md` | 로컬 모의 벤더 서버(벤더 연결·회수·복원 E2E) |
 | `docs/user-auth-operations.md` | 사용자 인증 활성화·키·세션 운영 |
+| `docs/telemetry-kafka-operations.md` · `docs/telemetry-kafka-e2e.md` | telemetry JWT·Gateway·Kafka 설정표·전환 순서·키 회전·보안 폐기 SQL·재처리와 중복·메모리 산정, 로컬 E2E 결과 |
 | `docs/mail-operations.md` | 메일 설정 계약·SES 인프라 인계 조건·실제 발송 확인·전환과 복구 |
 | `tools/dev-seed/README.md` | Docker 전용 시드 생성·적재·검증 |
 | `docs/frontend-e2e-scenarios.md` | 실제 API E2E 목표 시나리오. 통과 보고서가 아님 |
@@ -109,7 +116,8 @@ immutable digest로 수동 수행한다. enrollment의 원천 Flyway 적용 확�
 ./gradlew build                                   # 전체 빌드
 ./gradlew :apps:enrollment-api:test               # 테스트
 ./gradlew :apps:enrollment-api:bootRun            # enrollment 서버 (8080)
-./gradlew :apps:telemetry-ingest:bootRun          # OTLP 수집 서버 (4316)
+./gradlew :apps:telemetry-ingest:bootRun          # OTLP 수집 서버 (4316) — PULSEMETRY_INGEST_MODE=http|dual|kafka
+./gradlew :apps:telemetry-gateway:bootRun         # OTLP 접수 Gateway (8082) — telemetry JWT 공개키 필수
 ./gradlew :apps:dashboard-api:bootRun             # 분석 조회 API (8081) — PULSEMETRY_DASHBOARD_RETRY_AFTER 필수
 ./gradlew :apps:retention-worker:bootRun --args='--tenant=<uuid> --retention-months=<N> --as-of=<ISO-8601>'  # 보존 삭제 한 번 — 설정 전부 필수, 종료 코드 0·1·2·3
 ./gradlew :apps:retention-worker:bootRun --args='--requests'  # 요청 모드 — 저장된 보존 정리 요청을 차례로 실행(ADR 0047). requests.lease·max-runs 필수
@@ -130,6 +138,8 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   기존 auth-proxy도 같은 키·같은 연산으로 조회하는 크로스레포 계약이므로 **한쪽만 고치는 PR을 열지 않는다**
   (`../docs/contracts/enrollment-api.md` §4). **고정 벡터 테스트를 지우지 마라.** auth-proxy와의 호환성 앵커이며
   dev EKS 전환만으로 다른 실행 환경의 auth-proxy 폐기를 단정하지 않는다.
+  telemetry JWT 도 전문의 HMAC 을 `token_hash` 에 저장한다 — 이전 ingest 이미지로
+  되돌릴 때의 복구 경로다(ADR 0065 Decision 3). 새 ingest 는 JWT 를 해시로 조회하지 않는다.
 - **enroll 응답은 정확히 4키다.** 클라이언트가 `DisallowUnknownFields`로 파싱하므로
   **필드를 추가하면 배포된 전 클라이언트가 깨진다.** 이 제약은 중첩 manifest까지 적용된다.
 - **dbml 의 enum 10종은 native enum**이다(ADR-0009가 ADR-0004의 varchar+CHECK를 대체). 진실원은 여전히 Flyway.
@@ -198,6 +208,11 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
 - **인증 조회의 DB 장애는 401도 403도 아니다.** 데몬은 그 둘을 같은 칸에 두고 토큰을 폐기·재발급한다.
   필터에 넘긴 `TelemetryTokenUnavailableHandler`가 503 + `Retry-After`를 쓴다. 예외를 컨테이너까지
   흘리지 마라.
+- **Gateway 의 200 은 Kafka 접수이지 적재가 아니다**(ADR 0066). Gateway 는 본문을 디코딩하지 않으므로 깨진 본문도 200 이고 Consumer 가
+  영구 실패로 확정한다. Consumer 는 매 시도 `jti` 로 RDB 를 다시 판정한다 — Gateway 에 DB 를 붙이지 마라. 새 Kafka·Gateway 경로의 로그는
+  `TelemetryLogEvent` 한 줄(`event=<code>`)이고 infra 경보가 그 코드를 센다 — **코드 문자열을 바꾸지 말고, Bearer·payload·예외 메시지 원문을
+  로그·envelope·record header 에 넣지 마라**(카나리 누출 테스트가 덮는다). telemetry JWT 키는 사용자 JWT 키와 따로다. 수신 모드 전환은
+  공개키 선배포 → 발급 켜기 → ALB 전환 → `kafka` 모드 순서다(`docs/telemetry-kafka-operations.md` 3절).
 - **분석 INSERT 의 fence 조건과 `async_insert = 0` 을 빼지 마라**(ADR 0024). 두 분석 sink 의 INSERT
   (`AnalysisInsert.fenced`)는 서버에서 `telemetry_retention_fence` 를 다시 읽어 tenant 경계 이전 행을 쓰지 않는다.
   보존 작업이 "구 경계로 검사한 쓰기가 끝났다"고 판정하는 근거가 이 조건과 process list 다(시작 때 한 번 평가 —
@@ -216,7 +231,8 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   저장소로 복사해 오라클로 쓰지 마라 — 로컬에서 녹색이고 CI 에서 죽는다. Gradle 의 기본 계약 경로는 형제 `../telemetryctl/contracts` 이므로,
   CI 와 같은 조건으로 돌리려면 `PULSEMETRY_CONTRACTS_DIR` 을 원격 기본 브랜치의 `contracts` 로 둔다.
 - **`GET /api/v1/manifest`는 사용자 RT만 받고 한 서버 트랜잭션에서 정책과 토큰을 회전한다**(ADR 0019 · 허브 ADR 0008).
-  AT·`pit_`·`ptt_`는 받지 않는다. 로컬 적용 완료를 보장하지 않으며 OTLP는 여전히 `ptt_`다. 상태를 바꾸는 GET이라
+  AT·`pit_`·`ptt_`는 받지 않는다. 로컬 적용 완료를 보장하지 않는다. OTLP 자격은 telemetry token 이다 — 발급 설정(`pulsemetry.telemetry-jwt.issue-enabled`)이
+  꺼져 있으면 `ptt_`, 켜져 있으면 telemetry JWT 다(ADR 0065). 상태를 바꾸는 GET이라
   캐시·프리페치·자동 재시도를 걸지 않는다. 저장된 정책은 빌드 때 jar에 넣은 telemetryctl 원본 스키마로 검증한다 —
   그래서 `:apps:enrollment-api`의 Gradle 빌드와 이미지 빌드(named context `telemetry-contracts`)에는 계약 디렉터리가 필요하다.
 - **벤더 자격증명은 암호문으로만 저장한다**(ADR 0048 §6). 키는 `pulsemetry.vendor-connections.credential-keys`(키 ID → Base64 32바이트)이고 관리 응답·메일 키와
