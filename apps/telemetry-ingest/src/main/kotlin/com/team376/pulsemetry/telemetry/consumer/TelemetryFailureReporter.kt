@@ -1,6 +1,9 @@
 package com.team376.pulsemetry.telemetry.consumer
 
 import com.team376.pulsemetry.telemetry.ingress.TelemetryLogEvent
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import com.team376.pulsemetry.telemetry.observability.observe
 import org.apache.kafka.clients.consumer.CommitFailedException
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.clients.consumer.RetriableCommitFailedException
@@ -19,13 +22,14 @@ import org.springframework.kafka.listener.RetryListener
  *
  * 둘 다 예외 메시지 원문을 남기지 않는다. 원인은 클래스 이름뿐이다.
  */
-class TelemetryFailureReporter(private val maxAttempts: Int) : RetryListener {
+class TelemetryFailureReporter(private val maxAttempts: Int, private val observer: TelemetryObserver = TelemetryObserver.NONE) : RetryListener {
 
 	val recoverer: ConsumerRecordRecoverer = ConsumerRecordRecoverer { record, exception -> recover(record, exception) }
 
 	private fun recover(record: ConsumerRecord<*, *>, exception: Exception?) {
 		try {
 			val failure = transientOf(exception)
+			observer.observe(TelemetryMetric.PIPELINE_RETRY_EXHAUSTED, 1.0, "stage" to (failure?.stage ?: stageOf(exception)))
 			log.error(
 				TelemetryLogEvent.RETRY_EXHAUSTED.format(
 					"messageId" to failure?.messageId, "topic" to record.topic(), "partition" to record.partition(), "offset" to record.offset(),
@@ -42,6 +46,8 @@ class TelemetryFailureReporter(private val maxAttempts: Int) : RetryListener {
 		if (transientOf(ex) != null) return
 		try {
 			val root = rootOf(ex)
+			if (isCommitFailure(root)) observer.observe(TelemetryMetric.PIPELINE_COMMIT_FAILURES)
+			else observer.observe(TelemetryMetric.PIPELINE_FAILURES, 1.0, "stage" to stageOf(ex), "reason" to reasonOf(ex))
 			val event = if (isCommitFailure(root)) TelemetryLogEvent.COMMIT_FAILED else TelemetryLogEvent.TRANSIENT_FAILURE
 			log.warn(
 				event.format(

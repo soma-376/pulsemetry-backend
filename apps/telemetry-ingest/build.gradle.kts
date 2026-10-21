@@ -6,6 +6,9 @@ plugins {
 }
 
 dependencies {
+	implementation(project(":libs:telemetry-observability"))
+	implementation(libs.spring.boot.starter.actuator)
+	implementation(libs.micrometer.registry.prometheus)
 	// 적재 모듈이 api() 로 보강·변환 모듈을 함께 끌어온다 (ADR 0014).
 	implementation(project(":libs:telemetry-persistence"))
 	// 수집 운영 기록의 RDS 쪽(tenant 생애 요약·백필) — ADR 0021. DDL 은 enrollment-api 가 적용하고 이 앱은 쓰기만 한다.

@@ -14,6 +14,11 @@ import com.team376.pulsemetry.telemetry.collector.Signal
 import com.team376.pulsemetry.telemetry.collector.SignalConsumer
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveReceipt
 import com.team376.pulsemetry.telemetry.enricher.observation.ObservationEnricher
+import com.team376.pulsemetry.telemetry.observability.PipelineStage
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import com.team376.pulsemetry.telemetry.observability.measure
+import com.team376.pulsemetry.telemetry.observability.observe
 import org.springframework.dao.NonTransientDataAccessException
 import org.springframework.dao.NonTransientDataAccessResourceException
 
@@ -69,6 +74,7 @@ class IngestPipeline(
 	private val schema: ClickHouseSchema,
 	private val boundaries: RetentionBoundaries,
 	private val operations: IngestOperations?,
+	private val observer: TelemetryObserver = TelemetryObserver.NONE,
 ) : SignalConsumer {
 
 	override fun consume(signal: Signal, request: Message, receipt: ArchiveReceipt) {
@@ -77,13 +83,17 @@ class IngestPipeline(
 		val contexts = parts.map { context(receipt, it) }
 
 		val batches = try {
-			parts.zip(contexts).map { (part, context) -> normalize(part.request, context) }
+			observer.measure(PipelineStage.NORMALIZE) { parts.zip(contexts).map { (part, context) -> normalize(part.request, context) } }
 		} catch (exception: RuntimeException) {
 			throw permanent(receipt, parts, "normalize ${signal.path}: ${exception.message}", exception)
 		}
 
+		batches.forEach { batch ->
+			observer.observe(TelemetryMetric.PIPELINE_EXCLUDED_OBSERVATIONS, batch.stats.excludedSpans.toDouble(), "reason" to "excluded_span")
+			observer.observe(TelemetryMetric.PIPELINE_EXCLUDED_OBSERVATIONS, batch.stats.sourceTimeRejections.values.sum().toDouble(), "reason" to "source_time")
+		}
 		val enriched = try {
-			enricher.enrich(batches)
+			observer.measure(PipelineStage.ENRICH) { enricher.enrich(batches) }
 		} catch (exception: NonTransientDataAccessException) {
 			// 자원 계열은 ObservationEnricher 가 이미 EnrichmentUnavailableException 으로 감싼다. 여기까지
 			// 온 것이 있더라도 일시 장애이므로 503 으로 둔다.
@@ -95,23 +105,28 @@ class IngestPipeline(
 		schema.ensureApplied()
 
 		// sink 직전의 삭제 경계(ADR 0024 §3). 읽지 못하면 예외 그대로 503 — 아무것도 쓰지 않고 기록도 남기지 않는다.
-		val boundary = boundaries.read(checkNotNull(receipt.tenantId) { "검증된 tenant 가 없는 영수증이다" })
+		val boundary = observer.measure(PipelineStage.RETENTION) {
+			boundaries.read(checkNotNull(receipt.tenantId) { "검증된 tenant 가 없는 영수증이다" })
+		}
 		val retained = enriched.map { RetainedBatch.of(it, boundary) }
+		observer.observe(TelemetryMetric.PIPELINE_EXCLUDED_OBSERVATIONS, retained.sumOf { it.loaded.beforeBoundary }.toDouble(), "reason" to "retention")
 
 		val versioning = RowVersioning.live(receipt.receivedAt)
 		try {
-			events.insert(retained.flatMap { it.events }, versioning, boundary)
-			metricPoints.insert(retained.flatMap { it.metricPoints }, versioning, boundary)
+			observer.measure(PipelineStage.INSERT) {
+				events.insert(retained.flatMap { it.events }, versioning, boundary)
+				metricPoints.insert(retained.flatMap { it.metricPoints }, versioning, boundary)
+			}
 		} catch (exception: TelemetrySinkRejectedException) {
 			throw permanent(receipt, parts, exception.message.orEmpty(), exception)
 		}
 
-		operations?.loaded(receipt, parts.zip(retained.map { it.loaded }))
+		operations?.let { observer.measure(PipelineStage.OPS) { it.loaded(receipt, parts.zip(retained.map { it.loaded })) } }
 	}
 
 	/** 영구 실패 — 수신 사실을 기록한 뒤 400 으로 올린다. 기록이 실패하면 그 예외(503)가 대신 나간다. */
 	private fun permanent(receipt: ArchiveReceipt, parts: List<ReceiptPart>, message: String, cause: Throwable): PermanentIngestException {
-		operations?.unloaded(receipt, parts)
+		operations?.let { observer.measure(PipelineStage.OPS) { it.unloaded(receipt, parts) } }
 		return PermanentIngestException(message, cause)
 	}
 

@@ -8,7 +8,7 @@ import org.springframework.test.context.DynamicPropertySource
  * Gateway 통합 테스트 기반 — **DB 없이** Kafka 하나와 공개키 하나로 뜬다. 모든 애너테이션이 여기 있다 — 하위 클래스가
  * 설정을 더하면 컨텍스트 캐시가 갈린다.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = ["management.server.port=0"])
 abstract class AbstractGatewayIntegrationTest {
 
 	companion object {

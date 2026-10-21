@@ -10,6 +10,7 @@ import com.team376.pulsemetry.telemetry.ingress.TelemetryEnvelopeCodec
 import com.team376.pulsemetry.telemetry.otlp.OtlpMediaType
 import com.team376.pulsemetry.telemetry.otlp.OtlpResponses
 import com.team376.pulsemetry.telemetry.otlp.OtlpSignal
+import io.micrometer.core.instrument.MeterRegistry
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.DisplayName
@@ -247,6 +248,7 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 		post(good, "{}".toByteArray(), contentEncoding = canary)
 
 		assertThat(output.all).doesNotContain(canary).doesNotContain(good)
+		assertThat(context.getBean(MeterRegistry::class.java).meters.flatMap { it.id.tags }.joinToString()).doesNotContain(canary).doesNotContain(good)
 	}
 
 	private fun gzip(body: ByteArray): ByteArray =

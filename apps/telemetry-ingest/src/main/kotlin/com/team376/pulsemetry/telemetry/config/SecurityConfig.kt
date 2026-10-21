@@ -21,7 +21,9 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
+import org.springframework.core.env.Environment
 import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpMethod
 import org.springframework.security.authentication.AuthenticationManager
 import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.authentication.ProviderManager
@@ -68,6 +70,23 @@ import java.time.Clock
  */
 @Configuration(proxyBeanMethods = false)
 class SecurityConfig {
+
+	@Bean
+	@Order(0)
+	fun metricsSecurityFilterChain(http: HttpSecurity, environment: Environment): SecurityFilterChain = http
+		.securityMatcher { request -> managementRequest(environment, request) }
+		.csrf { it.disable() }
+		.requestCache { it.disable() }
+		.sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
+		.exceptionHandling {
+			it.authenticationEntryPoint { _, response, _ -> writeNotFound(response) }
+			it.accessDeniedHandler { _, response, _ -> writeNotFound(response) }
+		}
+		.authorizeHttpRequests {
+			it.requestMatchers(HttpMethod.GET, "/actuator/prometheus").permitAll()
+			it.anyRequest().denyAll()
+		}
+		.build()
 
 	@Bean
 	@Conditional(OtlpHttpEnabledCondition::class)

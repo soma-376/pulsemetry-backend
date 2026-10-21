@@ -9,6 +9,7 @@ import com.team376.pulsemetry.telemetry.ingress.RawOtlpPayload
 import com.team376.pulsemetry.telemetry.support.AbstractIngestIntegrationTest
 import com.team376.pulsemetry.telemetry.support.IngestTestData
 import com.team376.pulsemetry.telemetry.support.IngestTestKafka
+import io.micrometer.core.instrument.MeterRegistry
 import org.apache.kafka.clients.consumer.CommitFailedException
 import org.apache.kafka.clients.consumer.Consumer
 import org.apache.kafka.clients.producer.RecordMetadata
@@ -73,6 +74,9 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 	@Autowired
 	private lateinit var consumerFactory: DefaultKafkaConsumerFactory<ByteArray, ByteArray>
 
+	@Autowired
+	private lateinit var registry: MeterRegistry
+
 	private val http: HttpClient = HttpClient.newHttpClient()
 
 	/** 수집 코어가 성공적으로 끝낸 message ID 의 순서. */
@@ -94,8 +98,28 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 	// ------------------------------------------------------------------ 정상
 
 	@Test
+	@DisplayName("독립 smoke client의 Claude payload는 FINAL 논리 행 하나와 기대 토큰·archive 참조가 된다")
+	fun smokePayloadPersistsExpectedLogicalRow() {
+		val seeded = data.seedJwt()
+		val now = Instant.now().truncatedTo(ChronoUnit.MICROS)
+		val template = javaClass.getResourceAsStream("/observability-smoke-log.json")!!.bufferedReader().use { it.readText() }
+		val body = template.replace("2026-10-21T15:00:00+00:00", now.toString())
+			.replace("1792594800000000000", (now.epochSecond * 1_000_000_000 + now.nano).toString()).toByteArray()
+		awaitCommitted(IngestTestKafka.publish(IngestTestKafka.accepted(seeded, body)))
+		val row = clickHouse("""
+			SELECT count(), any(event_type), any(tokens_input), any(tokens_output), countIf(notEmpty(ifNull(archive_ref, ''))), any(observation_id)
+			FROM telemetry_events FINAL
+			WHERE tenant_id = '${seeded.tenantId}' AND installation_id = '${seeded.installationId}'
+			AND session_id = '19100000-0000-4000-8000-000000000001'
+			AND request_id = 'req_smoke_19100000000040008000000000000001' FORMAT TSV
+		""".trimIndent()).trim().split('\t')
+		assertThat(row).containsExactly("1", "model.response.usage", "1066", "28", "1", SmokePayloadContractTest.expectedId(body, seeded.tenantId.toString(), seeded.installationId.toString()))
+	}
+
+	@Test
 	@DisplayName("정상 record 는 분석 행이 되고 receipt ID·수신 시각·row version 이 message ID·접수 시각에서 온다")
 	fun processesWithAcceptedReceipt() {
+		val before = count("pulsemetry.pipeline.attempts", "outcome", "completed")
 		val acceptedAt = Instant.now().minusSeconds(120)
 		// 접수 당시 유효했던 토큰이어야 한다 — 판정은 DB 의 발급 시각과 접수 시각으로 한다.
 		val seeded = data.seedJwt(issuedAt = acceptedAt.minusSeconds(60))
@@ -117,11 +141,16 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 		assertThat(row[1]).isEqualTo(seeded.installationId.toString())
 		assertThat(row[2]).isEqualTo(seeded.memberId.toString())
 		assertThat(row[3].toULong()).isEqualTo(RowVersioning.live(acceptedAt).rowVersion)
+		assertThat(count("pulsemetry.pipeline.attempts", "outcome", "completed") - before).isEqualTo(1.0)
+		assertThat(registry.get("pulsemetry.pipeline.accepted.to.completion").tags("signal", "logs").timer().count()).isPositive()
+		assertThat(registry.meters.any { it.id.name.startsWith("kafka.consumer.") }).isTrue()
 	}
 
 	@Test
 	@DisplayName("빈 OTLP 는 아무것도 쓰지 않고 offset 을 확정한다")
 	fun emptyRequestCommits() {
+		val before = count("pulsemetry.pipeline.empty")
+		val rowsBefore = count("pulsemetry.clickhouse.rows.submitted")
 		val seeded = data.seedJwt()
 		val message = IngestTestKafka.accepted(seeded, """{"resourceLogs":[]}""".toByteArray())
 
@@ -129,6 +158,8 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 
 		assertThat(processCalls(message.messageId)).isEqualTo(1)
 		assertThat(clickHouse("SELECT count() FROM telemetry_ingest_ledger WHERE tenant_id = '${seeded.tenantId}'").trim()).isEqualTo("0")
+		assertThat(count("pulsemetry.pipeline.empty") - before).isEqualTo(1.0)
+		assertThat(count("pulsemetry.clickhouse.rows.submitted")).isEqualTo(rowsBefore)
 	}
 
 	// ------------------------------------------------------------------ 영구 실패
@@ -189,6 +220,9 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 	@Test
 	@DisplayName("일시 실패는 최초 + 3회 시도 뒤 retry_exhausted 로 확정하고 같은 partition 의 다음 record 로 넘어간다")
 	fun exhaustsThenMovesOn(output: CapturedOutput) {
+		val failedBefore = count("pulsemetry.pipeline.attempts", "outcome", "transient_failed")
+		val completedBefore = count("pulsemetry.pipeline.attempts", "outcome", "completed")
+		val exhaustedBefore = count("pulsemetry.pipeline.retry.exhausted")
 		val seeded = data.seedJwt()
 		val first = IngestTestKafka.accepted(seeded, oneUserPrompt())
 		val second = IngestTestKafka.accepted(seeded, oneUserPrompt())
@@ -206,6 +240,9 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 				"partition=${firstAt.partition()} offset=${firstAt.offset()} stage=process reason=unavailable attempt=4 cause=TelemetrySinkUnavailableException",
 		)
 		assertThat(completed).containsExactly(second.messageId)
+		assertThat(count("pulsemetry.pipeline.attempts", "outcome", "transient_failed") - failedBefore).isEqualTo(4.0)
+		assertThat(count("pulsemetry.pipeline.attempts", "outcome", "completed") - completedBefore).isEqualTo(1.0)
+		assertThat(count("pulsemetry.pipeline.retry.exhausted") - exhaustedBefore).isEqualTo(1.0)
 		listOf(1, 2, 3, 4).forEach { attempt ->
 			assertThat(output.all).contains("messageId=${first.messageId}").contains("stage=process reason=unavailable attempt=$attempt cause=TelemetrySinkUnavailableException")
 		}
@@ -301,6 +338,7 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 	@Test
 	@DisplayName("offset commit 이 실패하면 성공이 아니다 — 같은 record 를 다시 처리하고 commit_failed 를 남긴다")
 	fun commitFailureRedelivers(output: CapturedOutput) {
+		val before = count("pulsemetry.pipeline.commit.failures")
 		// 할당 직후의 초기 위치 commit 을 건드리지 않도록 할당이 끝난 뒤에 실패를 하나 장전한다.
 		val failures = AtomicInteger(0)
 		val postProcessor = ConsumerPostProcessor<ByteArray, ByteArray> { failingCommits(it, failures) }
@@ -316,6 +354,7 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 			awaitCommitted(IngestTestKafka.publish(message))
 
 			assertThat(processCalls(message.messageId)).isEqualTo(2)
+			assertThat(count("pulsemetry.pipeline.commit.failures") - before).isEqualTo(1.0)
 			assertThat(output.all).contains("event=telemetry_commit_failed").contains("stage=commit reason=commit_failed")
 				.contains("cause=CommitFailedException")
 		} finally {
@@ -340,6 +379,7 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 
 		assertThat(output.all).contains("event=telemetry_retry_exhausted messageId=${transient.messageId}")
 		assertThat(output.all).doesNotContain(canary)
+		assertThat(registry.meters.flatMap { it.id.tags }.joinToString()).doesNotContain(canary)
 	}
 
 	// ------------------------------------------------------------------ 도구
@@ -372,6 +412,9 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 			.filter { it.receiptId == messageId }
 
 	private fun processCalls(messageId: UUID): Int = processContexts(messageId).size
+
+	/** 공유 컨텍스트의 누적 counter 합. 테스트는 전후 차이만 본다. */
+	private fun count(name: String, vararg tags: String): Double = registry.find(name).tags(*tags).counters().sumOf { it.count() }
 
 	private fun awaitCommitted(metadata: RecordMetadata, timeout: Duration = Duration.ofSeconds(30)) {
 		val until = System.nanoTime() + timeout.toNanos()

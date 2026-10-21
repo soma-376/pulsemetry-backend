@@ -4,6 +4,7 @@ import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseSchemaMigrator
 import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
 import com.team376.pulsemetry.persistence.telemetry.TelemetryMetricPointsSink
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import com.team376.pulsemetry.telemetry.pipeline.ClickHouseSchema
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -13,12 +14,13 @@ import org.springframework.context.annotation.Configuration
 class ClickHouseConfig {
 
 	@Bean
-	fun clickHouseHttpClient(properties: TelemetryIngestProperties): ClickHouseHttpClient {
+	fun clickHouseHttpClient(properties: TelemetryIngestProperties, observer: TelemetryObserver): ClickHouseHttpClient {
 		val clickhouse = properties.telemetry.clickhouse
 		return ClickHouseHttpClient(
 			baseUrl = clickhouse.url,
 			database = clickhouse.database,
 			timeout = clickhouse.timeout,
+			observer = observer,
 		)
 	}
 
