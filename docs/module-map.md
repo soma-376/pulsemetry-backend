@@ -54,7 +54,9 @@ pulsemetry-backend
 │   │                                ├ seat/           벤더 연결 설정·커넥터 조립·좌석 동기화와 회수·복원 벤더 제어의 주기 실행 (ADR 0048·0049·0050)
 │   │                                └ management/     온보딩·정책·팀·초대·제품·계약·좌석·벤더 연결·알림 규칙·알림 확인 관리 HTTP
 │   ├── telemetry-ingest/            com.team376.pulsemetry.telemetry
-│   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
+│   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다. HTTP·Kafka Consumer 모드 (ADR 0066)
+│   ├── telemetry-gateway/           com.team376.pulsemetry.telemetry.gateway
+│   │                                OTLP 접수 — telemetry JWT 검증 · Kafka 발행 · ack 뒤 응답. DB·S3 없음 (ADR 0066)
 │   ├── dashboard-api/               com.team376.pulsemetry.dashboard
 │   │                                분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시와 알림 평가 기록뿐 (ADR 0022·0051)
 │   │                                ├ api/            HTTP 표현 계층 — 화면별 컨트롤러
@@ -124,6 +126,11 @@ dashboard-api(커넥터 설명의 capability 표시). 역할 이름은 `connecto
 배선·설정 바인딩과 단계 호출이 전부이고, 그것이 ADR 0011이 라이브러리에서 걷어낸 몫이다.
 기동·배선 정책은 [ADR 0016](adr/0016-조립-앱은-인증-체인과-단계-호출을-배선하고-스키마-적용-실패를-견딘다.md),
 상태 코드 계약은 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)이 담는다.
+
+`:apps:telemetry-gateway`는 OTLP 접수 앱이다([ADR 0066](adr/0066-OTLP-수신은-Gateway가-JWT만-검증해-Kafka에-접수하고-ingest가-RDB로-다시-검증한다.md)).
+telemetry JWT 를 검증하고 원문을 envelope 로 Kafka 에 발행한 뒤 broker ack 를 받아 200 이다. 의존은 `:libs:telemetry-auth`·`:libs:telemetry-ingress-contract`
+(와 그 api 인 `:libs:telemetry-otlp-http`)·kafka-clients 뿐이고 **DB·JPA·S3·ClickHouse 의존이 없다** — `:libs:security`·`:libs:telemetry-collector`를 끌지 않는다.
+이 컨텍스트의 배포 단위가 둘이 되어 3절 내림 조항에 따라 `telemetry.gateway` 패키지를 쓴다. ingest 의 기존 패키지 rename 은 후속이다(ADR 0067 Decision 5).
 
 `:apps:dashboard-api`는 분석 조회 API다([ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md), Proposed).
 원천 스키마를 소유한 라이브러리(`enrollment`·`telemetry-ops`·`telemetry`의 `-persistence`)를 **읽기 소비자**로만 쓰므로 2절의
@@ -377,7 +384,8 @@ libs/
   실측됐고 이음매가 특성화 테스트로 고정돼 있기 때문이다(ADR 0010이 규칙 5에 더한 단서).
 - `:libs:security`는 컨텍스트에 속하지 않는 횡단 모듈이므로 `<컨텍스트>-<역할>`이 아니라 `<역할>`
   형태를 쓴다. OTLP 경로와 관리자 API 경로가 같은 인증 코드를 공유할 자리가 여기다.
-- 이 컨텍스트의 배포 단위는 하나이므로 3절의 내림 조항(`<컨텍스트>.<인바운드>`)은 발동하지 않는다.
+- 이 컨텍스트의 배포 단위는 ingest·Gateway 둘이다. 3절의 내림 조항(`<컨텍스트>.<인바운드>`)에 따라 Gateway 는 `telemetry.gateway` 로 시작했고,
+  ingest 를 `telemetry.ingest` 로 내리는 rename 은 후속이다(ADR 0067 Decision 5).
 
 ## 6. 모듈을 언제 만드는가
 

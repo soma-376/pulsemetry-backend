@@ -1,0 +1,33 @@
+server:
+  # 8082 — enrollment(8080)·dashboard(8081)·ingest(4316)와 겹치지 않고, 데몬 로컬 수신기의 4318 도 피한다 (ADR 0066).
+  port: ${PULSEMETRY_GATEWAY_PORT:8082}
+  # SIGTERM 에 새 접수를 멈추고 진행 중 요청을 끝낸다. 요청 하나는 기한(7.5초) 안에 끝나므로 30초면 남는다.
+  shutdown: graceful
+  tomcat:
+    threads:
+      # 동시 처리 상한. 요청 하나가 본문(최대 10 MiB)과 envelope 사본을 함께 쥐므로 메모리 예산이 이 값에 비례한다
+      # (docs/telemetry-kafka-operations.md — 메모리 산정). 넘친 연결은 accept 대기열에서 기다린다.
+      max: 16
+
+spring:
+  application:
+    name: pulsemetry-telemetry-gateway
+  lifecycle:
+    # graceful 종료의 상한. Pod 종료 유예(60초) 안에 producer 정리(최대 10초)까지 끝난다.
+    timeout-per-shutdown-phase: 30s
+
+pulsemetry:
+  # telemetry JWT 공개키 (ADR 0065) — pulsemetry.telemetry-jwt.public-key-files. kid → X.509 PEM 경로 맵이고 **필수다**
+  # (비어 있으면 기동하지 않는다). 환경변수 이름은 kid 의 대소문자를 잃으므로 배포는 SPRING_APPLICATION_JSON 으로 넣는다:
+  #   {"pulsemetry":{"telemetry-jwt":{"public-key-files":{"<kid>":"/mnt/telemetry-jwt/keys/<alias>"}}}}
+
+  telemetry:
+    kafka:
+      bootstrap-servers: ${PULSEMETRY_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+      # plaintext(로컬) 또는 iam(MSK, 포트 9098). iam 은 아래 역할 ARN·세션 이름이 필요하다.
+      security: ${PULSEMETRY_KAFKA_SECURITY:plaintext}
+      topic: ${PULSEMETRY_KAFKA_TOPIC:pulsemetry-local-telemetry-ingress}
+      iam:
+        # workload 전용 MSK 역할. Pod Identity 자격으로 고정 세션 이름을 써서 assume 한다 (ADR 0066 Decision 9).
+        role-arn: ${PULSEMETRY_KAFKA_IAM_ROLE_ARN:}
+        session-name: ${PULSEMETRY_KAFKA_IAM_SESSION_NAME:}

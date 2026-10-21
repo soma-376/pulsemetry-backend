@@ -9,6 +9,9 @@ include(":apps:enrollment-api")
 // 다섯 단계 모듈을 조립해 OTLP 를 받는 배포 단위 (허브 ADR 0005 · ADR 0011 · 0016)
 include(":apps:telemetry-ingest")
 
+// OTLP 접수 Gateway — telemetry JWT 만 검증하고 Kafka 에 접수한다. DB·S3 의존이 없다 (ADR 0066)
+include(":apps:telemetry-gateway")
+
 // 분석 조회 API. 원천 스키마를 읽기만 하고 자기 캐시에만 쓴다 (ADR 0022)
 include(":apps:dashboard-api")
 

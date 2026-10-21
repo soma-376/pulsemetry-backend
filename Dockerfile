@@ -24,6 +24,7 @@ COPY gradlew settings.gradle.kts build.gradle.kts ./
 COPY gradle gradle
 COPY apps/enrollment-api/build.gradle.kts apps/enrollment-api/
 COPY apps/telemetry-ingest/build.gradle.kts apps/telemetry-ingest/
+COPY apps/telemetry-gateway/build.gradle.kts apps/telemetry-gateway/
 COPY apps/dashboard-api/build.gradle.kts apps/dashboard-api/
 COPY apps/retention-worker/build.gradle.kts apps/retention-worker/
 COPY libs/enrollment-persistence/build.gradle.kts libs/enrollment-persistence/
