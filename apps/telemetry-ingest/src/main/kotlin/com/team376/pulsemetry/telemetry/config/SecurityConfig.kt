@@ -13,6 +13,7 @@ import com.team376.pulsemetry.telemetry.auth.TelemetryJwtVerifier
 import com.team376.pulsemetry.telemetry.collector.Signal
 import com.team376.pulsemetry.telemetry.credential.TelemetryBearerAuthenticationProvider
 import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
+import com.team376.pulsemetry.telemetry.diagnostics.SafeDiagnostic
 import jakarta.servlet.DispatcherType
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
@@ -167,7 +168,7 @@ class SecurityConfig {
 	 */
 	private fun unavailable(handler: OtlpIngestHandler, writer: OtlpResponseWriter) =
 		TelemetryTokenUnavailableHandler { request, response, cause ->
-			log.error("telemetry token 조회가 실패했다 — 503 으로 돌린다", cause)
+			log.error("event=telemetry_auth_store_failed component=postgresql reason=unavailable diagnostic={}", SafeDiagnostic.of(cause))
 			writer.write(
 				response,
 				handler.unavailable(request.getHeader(HttpHeaders.CONTENT_TYPE), UNAVAILABLE_MESSAGE),
