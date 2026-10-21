@@ -69,16 +69,16 @@ Observer 기본값은 no-op이며 `.observe`가 계측 RuntimeException을 격�
 
 ### GC·safepoint 로그 (Infra 인계)
 
-JVM 옵션이라 Spring 설정으로 켜지 않는다. 성능시험 values에서 Infra가 `JAVA_TOOL_OPTIONS`로 넣는다. 이미지 ENTRYPOINT의 `-XX:MaxRAMPercentage=75.0`은 그대로 두고 덧붙는다.
+JVM 옵션이라 Spring 설정으로 켜지 않는다. 인계 계약은 아래 옵션 문자열이다. Infra는 runtime-values의 `jvmGcSafepointLog: true`일 때 chart가 고정한 이 문자열을 `JDK_JAVA_OPTIONS`로 넣는다. java launcher만 읽으므로 jcmd 같은 진단 도구에는 붙지 않는다. 이미지 ENTRYPOINT의 `-XX:MaxRAMPercentage=75.0`은 그대로 두고 덧붙는다.
 
 ```text
-JAVA_TOOL_OPTIONS=-Xlog:gc,safepoint:stderr:utctime,level,tags
+JDK_JAVA_OPTIONS=-Xlog:gc,safepoint:stderr:utctime,level,tags
 ```
 
 stderr에 사건 하나가 한 줄이다. Temurin 25.0.4(런타임 이미지와 같은 메이저)에서 확인한 형식은 다음과 같다.
 
 ```text
-Picked up JAVA_TOOL_OPTIONS: -Xlog:gc,safepoint:stderr:utctime,level,tags
+NOTE: Picked up JDK_JAVA_OPTIONS: -Xlog:gc,safepoint:stderr:utctime,level,tags
 [2026-10-21T18:27:05.621+0000][info][gc] Using G1
 [2026-10-21T18:27:05.811+0000][info][gc] GC(0) Pause Young (Concurrent Start) (G1 Humongous Allocation) 85M->59M(128M) 1.482ms
 [2026-10-21T18:27:05.811+0000][info][safepoint] Safepoint "G1TryInitiateConcMark", Time since last: 185400250 ns, Reaching safepoint: 1875 ns, At safepoint: 1554916 ns, Leaving safepoint: 2375 ns, Total: 1559166 ns, Threads: 0 runnable, 12 total
