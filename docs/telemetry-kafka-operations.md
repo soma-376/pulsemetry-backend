@@ -238,3 +238,7 @@ PULSEMETRY_TOKEN_HASH_SECRET=local-development-token-hash-secret PULSEMETRY_INGE
 ```
 
 수정하지 않은 telemetryctl 데몬까지 묶은 전 구간 확인은 `scripts/telemetry-kafka-e2e/run.sh` 와 [telemetry-kafka-e2e.md](telemetry-kafka-e2e.md)다.
+
+## 운영 지표·장애 로그·smoke
+
+PROJ-191의 분리 관리 포트9404, metric 의미, diagnostic log, 기대 ID/FINAL readback smoke는 [수집 운영 계측](telemetry-observability.md)에 있다. broker ack·consumer 완료·논리 적재는 구별한다.

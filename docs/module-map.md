@@ -91,6 +91,8 @@ pulsemetry-backend
     │                                OTLP/HTTP 표면 — 응답 본문 · gRPC 상태 · signal 경로 · media type · Content-Encoding 허용 목록 (ADR 0067)
     ├── telemetry-ingress-contract/  com.team376.pulsemetry.telemetry.ingress
     │                                Gateway ↔ Consumer Kafka record 계약 — envelope .proto · codec · DTO · 접속 설정 · 로그 이벤트 (ADR 0066)
+    ├── telemetry-observability/     com.team376.pulsemetry.telemetry.observability
+    │                                운영 metric 포트·Micrometer 구현. Spring 조립·registry 수명은 앱 소유 (ADR0068)
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
     │                                OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
     │                                ├ masking/    blocked_values 14종 값 마스킹
@@ -132,7 +134,7 @@ telemetry JWT 의 RDB 판정은 [ADR 0065](adr/0065-telemetry-token은-전용-RS
 
 `:apps:telemetry-gateway`는 OTLP 접수 앱이다([ADR 0066](adr/0066-OTLP-수신은-Gateway가-JWT만-검증해-Kafka에-접수하고-ingest가-RDB로-다시-검증한다.md)).
 telemetry JWT 를 검증하고 원문을 envelope 로 Kafka 에 발행한 뒤 broker ack 를 받아 200 이다. 의존은 `:libs:telemetry-auth`·`:libs:telemetry-ingress-contract`
-(와 그 api 인 `:libs:telemetry-otlp-http`)·kafka-clients 뿐이고 **DB·JPA·S3·ClickHouse 의존이 없다** — `:libs:security`·`:libs:telemetry-collector`를 끌지 않는다.
+(와 그 api 인 `:libs:telemetry-otlp-http`)·`:libs:telemetry-observability`·Actuator/Prometheus·kafka-clients이고 **DB·JPA·S3·ClickHouse 의존이 없다** — `:libs:security`·`:libs:telemetry-collector`를 끌지 않는다.
 이 컨텍스트의 배포 단위가 둘이 되어 3절 내림 조항에 따라 `telemetry.gateway` 패키지를 쓴다. ingest 의 기존 패키지 rename 은 후속이다(ADR 0067 Decision 5).
 
 `:apps:dashboard-api`는 분석 조회 API다([ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md), Proposed).
