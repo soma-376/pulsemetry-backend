@@ -78,6 +78,8 @@ object IngestTestKafka {
 		acceptedAt: Instant = Instant.now(),
 		contentEncoding: String = "",
 		messageId: UUID = UUID.randomUUID(),
+		signal: OtlpSignal = OtlpSignal.LOGS,
+		mediaType: OtlpMediaType = OtlpMediaType.JSON,
 	) = AcceptedTelemetry(
 		messageId = messageId,
 		acceptedAt = acceptedAt,
@@ -90,7 +92,7 @@ object IngestTestKafka {
 			issuedAt = seeded.issuedAt!!,
 			expiresAt = seeded.expiresAt!!,
 		),
-		payload = RawOtlpPayload(OtlpSignal.LOGS, OtlpMediaType.JSON, contentEncoding, body),
+		payload = RawOtlpPayload(signal, mediaType, contentEncoding, body),
 	)
 
 	fun publish(message: AcceptedTelemetry): RecordMetadata =

@@ -1,15 +1,39 @@
 package com.team376.pulsemetry.telemetry.consumer
 
+import com.google.protobuf.ByteString
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
+import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsUnavailableException
+import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
+import com.team376.pulsemetry.telemetry.adapter.observation.IdentityMaterial
+import com.team376.pulsemetry.telemetry.adapter.observation.MetricPoints
+import com.team376.pulsemetry.telemetry.adapter.observation.ObservationIds
+import com.team376.pulsemetry.telemetry.adapter.observation.ObservationSignal
 import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
 import com.team376.pulsemetry.telemetry.collector.PermanentIngestException
 import com.team376.pulsemetry.telemetry.collector.VerifiedIngestContext
 import com.team376.pulsemetry.telemetry.config.KafkaConsumerConfig
 import com.team376.pulsemetry.telemetry.ingress.RawOtlpPayload
+import com.team376.pulsemetry.telemetry.otlp.OtlpMediaType
+import com.team376.pulsemetry.telemetry.otlp.OtlpSignal
 import com.team376.pulsemetry.telemetry.support.AbstractIngestIntegrationTest
 import com.team376.pulsemetry.telemetry.support.IngestTestData
 import com.team376.pulsemetry.telemetry.support.IngestTestKafka
 import io.micrometer.core.instrument.MeterRegistry
+import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
+import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
+import io.opentelemetry.proto.common.v1.AnyValue
+import io.opentelemetry.proto.common.v1.InstrumentationScope
+import io.opentelemetry.proto.common.v1.KeyValue
+import io.opentelemetry.proto.metrics.v1.AggregationTemporality
+import io.opentelemetry.proto.metrics.v1.Metric
+import io.opentelemetry.proto.metrics.v1.NumberDataPoint
+import io.opentelemetry.proto.metrics.v1.ResourceMetrics
+import io.opentelemetry.proto.metrics.v1.ScopeMetrics
+import io.opentelemetry.proto.metrics.v1.Sum
+import io.opentelemetry.proto.resource.v1.Resource
+import io.opentelemetry.proto.trace.v1.ResourceSpans
+import io.opentelemetry.proto.trace.v1.ScopeSpans
+import io.opentelemetry.proto.trace.v1.Span
 import org.apache.kafka.clients.consumer.CommitFailedException
 import org.apache.kafka.clients.consumer.Consumer
 import org.apache.kafka.clients.producer.RecordMetadata
@@ -21,6 +45,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.ArgumentMatchers
 import org.mockito.Mockito.doAnswer
+import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.mockingDetails
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
@@ -101,10 +126,7 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 	@DisplayName("독립 smoke client의 Claude payload는 FINAL 논리 행 하나와 기대 토큰·archive 참조가 된다")
 	fun smokePayloadPersistsExpectedLogicalRow() {
 		val seeded = data.seedJwt()
-		val now = Instant.now().truncatedTo(ChronoUnit.MICROS)
-		val template = javaClass.getResourceAsStream("/observability-smoke-log.json")!!.bufferedReader().use { it.readText() }
-		val body = template.replace("2026-10-21T15:00:00+00:00", now.toString())
-			.replace("1792594800000000000", (now.epochSecond * 1_000_000_000 + now.nano).toString()).toByteArray()
+		val body = smokeLog(Instant.now().truncatedTo(ChronoUnit.MICROS))
 		awaitCommitted(IngestTestKafka.publish(IngestTestKafka.accepted(seeded, body)))
 		val row = clickHouse("""
 			SELECT count(), any(event_type), any(tokens_input), any(tokens_output), countIf(notEmpty(ifNull(archive_ref, ''))), any(observation_id)
@@ -114,6 +136,41 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 			AND request_id = 'req_smoke_19100000000040008000000000000001' FORMAT TSV
 		""".trimIndent()).trim().split('\t')
 		assertThat(row).containsExactly("1", "model.response.usage", "1066", "28", "1", SmokePayloadContractTest.expectedId(body, seeded.tenantId.toString(), seeded.installationId.toString()))
+	}
+
+	@Test
+	@DisplayName("세 signal 모두 Kafka 경로에서 기대 observation_id 집합과 같은 FINAL 논리 행이 된다 — logs·traces 는 events, metrics 는 metric points")
+	fun allSignalsPersistExpectedLogicalRows() {
+		val seeded = data.seedJwt()
+		val tenant = seeded.tenantId.toString()
+		val installation = seeded.installationId.toString()
+		val now = Instant.now().truncatedTo(ChronoUnit.MICROS)
+		val nanos = now.epochSecond * 1_000_000_000 + now.nano
+		val log = smokeLog(now)
+		val trace = llmRequestTrace(nanos)
+		val metrics = tokenUsage(nanos)
+		val tables = listOf("telemetry_events", "telemetry_metric_points")
+		val completedBefore = OtlpSignal.entries.map { completedAttempts(it) }
+		val submittedBefore = tables.map { count("pulsemetry.clickhouse.rows.submitted", "table", it) }
+
+		listOf(
+			IngestTestKafka.accepted(seeded, log),
+			IngestTestKafka.accepted(seeded, trace.toByteArray(), signal = OtlpSignal.TRACES, mediaType = OtlpMediaType.PROTOBUF),
+			IngestTestKafka.accepted(seeded, metrics.toByteArray(), signal = OtlpSignal.METRICS, mediaType = OtlpMediaType.PROTOBUF),
+		).map { IngestTestKafka.publish(it) }.forEach { awaitCommitted(it) }
+
+		val events = clickHouse("SELECT signal, observation_id FROM telemetry_events FINAL WHERE tenant_id = '$tenant' FORMAT TSV")
+			.trim().lines().map { it.split('\t').let { (signal, id) -> signal to id } }
+		assertThat(events).containsExactlyInAnyOrder(
+			"log" to SmokePayloadContractTest.expectedId(log, tenant, installation),
+			"span" to ExpectedIds.span(trace, tenant, installation),
+		)
+		val points = clickHouse("SELECT observation_id FROM telemetry_metric_points FINAL WHERE tenant_id = '$tenant' FORMAT TSV").trim().lines()
+		assertThat(points).containsExactlyInAnyOrderElementsOf(ExpectedIds.points(metrics, tenant, installation)).hasSize(2)
+
+		assertThat(OtlpSignal.entries.map { completedAttempts(it) }.zip(completedBefore) { after, before -> after - before }).containsOnly(1.0)
+		assertThat(tables.map { count("pulsemetry.clickhouse.rows.submitted", "table", it) }.zip(submittedBefore) { after, before -> after - before })
+			.containsExactly(2.0, 2.0)
 	}
 
 	@Test
@@ -262,6 +319,31 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 		awaitCommitted(IngestTestKafka.publish(message))
 
 		assertThat(processCalls(message.messageId)).isEqualTo(4)
+	}
+
+	@Test
+	@DisplayName("분석 테이블·ledger 적재 뒤 실패한 시도를 다시 처리하면 제출 행은 두 번이고 FINAL 논리 행은 하나다")
+	fun retryAfterPartialWriteSubmitsTwiceButStoresOnce() {
+		val seeded = data.seedJwt()
+		val tenant = seeded.tenantId
+		val message = IngestTestKafka.accepted(seeded, oneUserPrompt())
+		// 요약 쓰기만 한 번 실패한다 — 분석 INSERT 와 ledger INSERT 는 이미 끝난 뒤다(두 저장소는 한 트랜잭션이 아니다).
+		doThrow(TelemetryOpsUnavailableException("simulated telemetry_ops outage")).doCallRealMethod()
+			.`when`(summaries).record(anything(), anything(), anything(), anything())
+		val eventsBefore = count("pulsemetry.clickhouse.rows.submitted", "table", "telemetry_events")
+		val ledgerBefore = count("pulsemetry.clickhouse.rows.submitted", "table", "telemetry_ingest_ledger")
+		val failedBefore = count("pulsemetry.pipeline.attempts", "outcome", "transient_failed")
+		val completedBefore = count("pulsemetry.pipeline.attempts", "outcome", "completed")
+
+		awaitCommitted(IngestTestKafka.publish(message))
+
+		assertThat(count("pulsemetry.pipeline.attempts", "outcome", "transient_failed") - failedBefore).isEqualTo(1.0)
+		assertThat(count("pulsemetry.pipeline.attempts", "outcome", "completed") - completedBefore).isEqualTo(1.0)
+		assertThat(count("pulsemetry.clickhouse.rows.submitted", "table", "telemetry_events") - eventsBefore).isEqualTo(2.0)
+		assertThat(count("pulsemetry.clickhouse.rows.submitted", "table", "telemetry_ingest_ledger") - ledgerBefore).isEqualTo(2.0)
+		assertThat(clickHouse("SELECT count(), uniqExact(observation_id) FROM telemetry_events FINAL WHERE tenant_id = '$tenant' FORMAT TSV").trim())
+			.isEqualTo("1\t1")
+		assertThat(clickHouse("SELECT count() FROM telemetry_ingest_ledger FINAL WHERE tenant_id = '$tenant' FORMAT TSV").trim()).isEqualTo("1")
 	}
 
 	@Test
@@ -450,6 +532,16 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 
 	private fun gauge(name: String): Double = registry.get(name).gauge().value()
 
+	private fun completedAttempts(signal: OtlpSignal): Double =
+		count("pulsemetry.pipeline.attempts", "signal", signal.name.lowercase(), "outcome", "completed")
+
+	/** 독립 smoke 와 같은 Claude Code api_request 원문. 시각만 [at] 으로 바꾼다. */
+	private fun smokeLog(at: Instant): ByteArray {
+		val template = javaClass.getResourceAsStream("/observability-smoke-log.json")!!.bufferedReader().use { it.readText() }
+		return template.replace("2026-10-21T15:00:00+00:00", at.toString())
+			.replace("1792594800000000000", (at.epochSecond * 1_000_000_000 + at.nano).toString()).toByteArray()
+	}
+
 	/** 지금 등록된 Kafka consumer client meter 의 client.id 집합. */
 	private fun consumerClientIds(): Set<String> =
 		registry.meters.filter { it.id.name.startsWith("kafka.consumer.") }.mapNotNull { it.id.getTag("client.id") }.toSet()
@@ -505,6 +597,61 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 		""".trimIndent().toByteArray()
 	}
 
+	/** 스팬은 프로파일이 확인한 버전에서만 행이 된다(그 밖은 제외 수) — 실캡처가 있는 버전을 쓴다. */
+	private fun claudeCodeResource(): Resource = Resource.newBuilder()
+		.addAttributes(stringAttribute("service.name", "claude-code"))
+		.addAttributes(stringAttribute("service.version", "2.1.282"))
+		.build()
+
+	/** 프로파일이 허용하는 Claude Code 스팬 하나. */
+	private fun llmRequestTrace(startNanos: Long): ExportTraceServiceRequest = ExportTraceServiceRequest.newBuilder()
+		.addResourceSpans(
+			ResourceSpans.newBuilder().setResource(claudeCodeResource()).addScopeSpans(
+				ScopeSpans.newBuilder()
+					.setScope(InstrumentationScope.newBuilder().setName("com.anthropic.claude_code.tracing").setVersion("2.1.282"))
+					.addSpans(
+						Span.newBuilder()
+							.setTraceId(ByteString.fromHex("4bf92f3577b34da6a3ce929d0e0e4736"))
+							.setSpanId(ByteString.fromHex("1911191119111911"))
+							.setName("claude_code.llm_request")
+							.setKind(Span.SpanKind.SPAN_KIND_INTERNAL)
+							.setStartTimeUnixNano(startNanos)
+							.setEndTimeUnixNano(startNanos + 1_500_000_000)
+							.addAttributes(stringAttribute("session.id", "19100000-0000-4000-8000-000000000001"))
+							.addAttributes(stringAttribute("model", "claude-haiku-4-5-20251001"))
+							.addAttributes(stringAttribute("request_id", "req_smoke_trace_0001")),
+					),
+			),
+		).build()
+
+	/** 입력·출력 두 point 의 토큰 사용 metric. point 마다 관측 하나다. */
+	private fun tokenUsage(timeNanos: Long): ExportMetricsServiceRequest = ExportMetricsServiceRequest.newBuilder()
+		.addResourceMetrics(
+			ResourceMetrics.newBuilder().setResource(claudeCodeResource()).addScopeMetrics(
+				ScopeMetrics.newBuilder()
+					.setScope(InstrumentationScope.newBuilder().setName("com.anthropic.claude_code").setVersion("2.1.282"))
+					.addMetrics(
+						Metric.newBuilder().setName("claude_code.token.usage").setUnit("tokens").setSum(
+							Sum.newBuilder()
+								.setAggregationTemporality(AggregationTemporality.AGGREGATION_TEMPORALITY_DELTA)
+								.setIsMonotonic(true)
+								.addAllDataPoints(listOf("input" to 1066L, "output" to 28L).map { (type, value) ->
+									NumberDataPoint.newBuilder()
+										.setStartTimeUnixNano(timeNanos - 60_000_000_000)
+										.setTimeUnixNano(timeNanos)
+										.setAsInt(value)
+										.addAttributes(stringAttribute("session.id", "19100000-0000-4000-8000-000000000001"))
+										.addAttributes(stringAttribute("type", type))
+										.build()
+								}),
+						),
+					),
+			),
+		).build()
+
+	private fun stringAttribute(key: String, value: String): KeyValue =
+		KeyValue.newBuilder().setKey(key).setValue(AnyValue.newBuilder().setStringValue(value)).build()
+
 	private fun clickHouse(query: String): String {
 		val uri = URI.create(clickHouseUrl() + "/?query=" + URLEncoder.encode(query, StandardCharsets.UTF_8))
 		val response = http.send(HttpRequest.newBuilder(uri).POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString())
@@ -517,6 +664,40 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 		ArgumentMatchers.any<T>()
 		return null as T
 	}
+}
+
+/**
+ * 스팬·metric point 의 기대 관측 ID(id-v1). 수집 코어가 resource 에 검증 신원 둘을 덧붙인 뒤의 내용과 각 관측의 source time
+ * (스팬 시작·point 시각)으로 계산한다 — logs 의 [SmokePayloadContractTest.expectedId] 와 같은 방식이다.
+ */
+private object ExpectedIds {
+	fun span(request: ExportTraceServiceRequest, tenant: String, installation: String): String {
+		val resourceSpans = request.getResourceSpans(0)
+		val scopeSpans = resourceSpans.getScopeSpans(0)
+		val span = scopeSpans.getSpans(0)
+		return ObservationIds.fingerprint(
+			IdentityMaterial(tenant, installation, ObservationSignal.SPAN, "claude-code", EpochNanos(span.startTimeUnixNano)),
+			stamped(resourceSpans.resource, tenant, installation), "", scopeSpans.scope, "", span,
+		)
+	}
+
+	fun points(request: ExportMetricsServiceRequest, tenant: String, installation: String): List<String> {
+		val resourceMetrics = request.getResourceMetrics(0)
+		val scopeMetrics = resourceMetrics.getScopeMetrics(0)
+		val metric = scopeMetrics.getMetrics(0)
+		return metric.sum.dataPointsList.mapIndexed { index, point ->
+			ObservationIds.fingerprint(
+				IdentityMaterial(tenant, installation, ObservationSignal.METRIC, "claude-code", EpochNanos(point.timeUnixNano)),
+				stamped(resourceMetrics.resource, tenant, installation), "", scopeMetrics.scope, "", MetricPoints.single(metric, index),
+			)
+		}
+	}
+
+	private fun stamped(resource: Resource, tenant: String, installation: String): Resource = resource.toBuilder().apply {
+		for ((key, value) in listOf("tenant.id" to tenant, "developer.installation_id" to installation)) {
+			addAttributes(KeyValue.newBuilder().setKey(key).setValue(AnyValue.newBuilder().setStringValue(value)))
+		}
+	}.build()
 }
 
 /** 테스트에서 인증 문맥만 바꾼 사본을 만든다. */

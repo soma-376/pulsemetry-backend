@@ -105,6 +105,6 @@ HTTP200과 논리 행 일치가 모두 있어야 종료코드0이다. 200만 받
 python3 -m unittest discover -s scripts/observability-smoke -p 'test_*.py'
 ```
 
-테스트는 실제 분리한 **random management 포트**에서 scrape, 업무 포트 actuator 차단과 기존404 바이트 계약을 확인한다. JVM·Tomcat·Hikari/JDBC·Kafka binder 노출을 확인하고 실제 Kafka/PostgreSQL/ClickHouse에서 completed/empty/소진4회/commit 실패·재전달과 smoke 논리 행을 검증한다. no-op/실패 observer 반환·재시도 경계, 유한 label, canary, 음수 age도 검증한다. Python fixture ID와 JVM canonical ID를 교차검증한다.
+테스트는 실제 분리한 **random management 포트**에서 scrape, 업무 포트 actuator 차단과 기존404 바이트 계약을 확인한다. JVM·Tomcat·Hikari/JDBC·Kafka binder 노출을 확인하고 실제 Kafka/PostgreSQL/ClickHouse에서 completed/empty/소진4회/commit 실패·재전달과 smoke 논리 행을 검증한다. Kafka 경로에서 logs·traces·metrics 세 signal이 기대 `observation_id` 집합과 같은 `FINAL` 논리 행이 되는지(`allSignalsPersistExpectedLogicalRows`), 분석·ledger INSERT 뒤 실패한 시도를 다시 처리하면 `rows_submitted`는 두 번 오르고 논리 행은 하나인지(`retryAfterPartialWriteSubmitsTwiceButStoresOnce`) 본다. Gateway를 거친 3 signal 관통은 실환경 smoke의 몫이다. no-op/실패 observer 반환·재시도 경계, 유한 label, canary, 음수 age도 검증한다. Python fixture ID와 JVM canonical ID를 교차검증한다.
 
 재생성되는 fixture는 `libs/telemetry-observability/build/metrics-contract.prom`(실제 Prometheus registry에서 시나리오를 주입한 계약 fixture), `apps/telemetry-{gateway,ingest}/build/management-scrape.prom`(로컬 실제 앱 HTTP scrape)다. 로컬 client는 Kafka4.2.1, broker Testcontainers3.9.2이며 운영 MSK와 동일하다고 주장하지 않는다. 실제 배포9404·MSK IAM·내부 Security Group/ClusterIP·CloudWatch/GC/OOM 로그 도착·Grafana query와 alert·standalone smoke의 배포 endpoint 실행은 별도 인수 확인이다. 기존 `telemetry-kafka-e2e/run.sh` verifier는 유지했고 관리 포트 충돌만 피하도록39416/39482를 지정했다.
