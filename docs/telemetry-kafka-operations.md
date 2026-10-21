@@ -95,8 +95,8 @@ record key `tenant_id:installation_id`. Gateway 에는 DB·HMAC·S3·ClickHouse 
 | `kafka` | 닫힘(404) | 시작 | MSK |
 
 health 는 모든 모드에서 `GET /api/v1/healthz` 다. `dual`·`kafka` 에서 listener 컨테이너가 멈춰 있으면 503 `listener_stopped` 다
-(MSK 연결·인증 장애로는 멈추지 않는다). 복구는 재기동이다 — infra chart 는 이 경로를 readiness 에만 쓰고 liveness 는 TCP 이므로,
-멈춘 listener 는 Pod 를 NotReady 로 만들 뿐 자동 재시작하지 않는다(재시작은 운영자 몫, 또는 infra 가 ingest liveness 를 이 경로로 바꾼다).
+(MSK 연결·인증 장애로는 멈추지 않는다). 복구는 재기동이다 — infra chart 는 `dual`·`kafka` ingest 의 readiness 와 liveness 를 모두
+이 경로로 보므로(infra ADR-0036), 멈춘 listener 는 약 30초 뒤 Pod 재시작으로 이어진다. 이 health 가 저장소·MSK 를 보지 않는 것이 그 전제다.
 Gateway 의 health 는 Kafka 를 보지 않는다.
 
 ## 2. 로그 이벤트
