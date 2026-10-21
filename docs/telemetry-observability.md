@@ -4,7 +4,16 @@ PROJ-191의 Backend 구현이다. 설계 결정은 [ADR 0068](adr/0068-수집-�
 
 ## 관리 포트와 기본 binder
 
-Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator/prometheus`를 연다. 업무 포트(8082·4316)의 `/actuator`와 하위 경로는 `404 text/plain`이며 기존 `/api/v1/healthz` 의미는 같다. 관리 포트는 업무 요청·health·env·actuator index를 제공하지 않는다. Prometheus 외 actuator를 exposure 목록에 추가하지 않는다. scrape는 내부 NetworkStack Security Group과 ClusterIP로 제한하고 ALB 경로에는 연결하지 않는다. 같은 호스트에서 앱 둘을 실행하면 관리 포트를 각각 다르게 정한다. 업무 포트와 같은 값은 기동을 거부한다.
+Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator/prometheus`를 연다. 업무 포트(8082·4316)의 `/actuator`와 하위 경로는 `404 text/plain`이며 기존 `/api/v1/healthz` 의미는 같다. 관리 포트는 업무 요청·health·env·actuator index를 제공하지 않는다.
+
+관리 포트의 그 밖 요청은 두 앱이 다르게 거부한다. Boot는 관리 컨텍스트에 부모의 Security 체인만 넘기고 서블릿 필터는 넘기지 않는다.
+
+| 요청 | ingest | Gateway |
+|---|---|---|
+| `/actuator/prometheus` POST·PUT·DELETE | 404 `text/plain` (관리 Security 체인) | 405 (MVC, Boot 오류 JSON) |
+| 그 밖 경로 | 404 `text/plain` | 404 (Boot 오류 JSON) |
+
+업무 포트의 `/actuator`는 ingest가 기본 닫힘 체인, Gateway가 계약 밖 경로 매핑으로 같은 404 바이트를 낸다. `MetricsEndpointTest`가 두 앱의 응답을 고정한다. Prometheus 외 actuator를 exposure 목록에 추가하지 않는다. scrape는 내부 NetworkStack Security Group과 ClusterIP로 제한하고 ALB 경로에는 연결하지 않는다. 같은 호스트에서 앱 둘을 실행하면 관리 포트를 각각 다르게 정한다. 업무 포트와 같은 값은 기동을 거부한다.
 
 공통 tag는 `application`, `service=gateway|ingest`, `environment=${PULSEMETRY_OBSERVABILITY_ENVIRONMENT:local}`다. Kubernetes의 cluster/namespace/pod/job/instance는 Infra target label이다. Infra scrape는 `service=telemetry-gateway|telemetry-ingest` target label을 쓰므로 충돌한 앱 service tag는 `exported_service`가 될 수 있다. Grafana/alert는 Infra의 service 값을 사용하고 raw 앱 scrape의 값과 구별한다. 사용자·tenant·설치·run·message·request ID, URL, exception message를 custom metric label에 넣지 않는다. `MicrometerTelemetryObserver`가 유한 목록으로 값을 다시 제한한다. 알려지지 않은 값은 `other`/`unknown`으로 합친다.
 

@@ -16,7 +16,9 @@ class MetricsEndpointTest : AbstractGatewayIntegrationTest() {
     @LocalServerPort private var port: Int = 0
     @Value("\${local.management.port}") private var managementPort: Int = 0
     private val http = HttpClient.newHttpClient()
-    private fun get(port: Int, path: String) = http.send(HttpRequest.newBuilder(URI("http://localhost:$port$path")).GET().build(), HttpResponse.BodyHandlers.ofString())
+    private fun get(port: Int, path: String) = send(port, "GET", path)
+    private fun send(port: Int, method: String, path: String) =
+        http.send(HttpRequest.newBuilder(URI("http://localhost:$port$path")).method(method, HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString())
 
     @Test
     fun scrapeOnlyOnManagementPort() {
@@ -26,12 +28,23 @@ class MetricsEndpointTest : AbstractGatewayIntegrationTest() {
         assertThat(scrape.body()).contains("jvm_memory_used_bytes", "pulsemetry_gateway_inflight", "tomcat_threads_busy_threads")
         Files.createDirectories(Path.of("build"))
         Files.writeString(Path.of("build/management-scrape.prom"), scrape.body())
-        val post = http.send(HttpRequest.newBuilder(URI("http://localhost:$managementPort/actuator/prometheus")).POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString())
-        assertThat(post.statusCode()).isIn(404, 405)
-        assertThat(get(port, "/actuator/prometheus").statusCode()).isEqualTo(404)
+        // 관리 컨텍스트에는 부모의 서블릿 필터가 걸리지 않는다 — 다른 메서드는 MVC 의 405, 다른 경로는 Boot 오류 응답의 404 다.
+        for (method in listOf("POST", "PUT", "DELETE")) {
+            assertThat(send(managementPort, method, "/actuator/prometheus").statusCode()).describedAs(method).isEqualTo(405)
+        }
         for (path in listOf("/actuator/health", "/actuator/env", "/actuator", "/api/v1/healthz", "/v1/logs")) {
             assertThat(get(managementPort, path).statusCode()).describedAs(path).isEqualTo(404)
         }
         assertThat(get(port, "/api/v1/healthz").statusCode()).isEqualTo(200)
+    }
+
+    @Test
+    fun businessPortActuatorIsTheContractNotFound() {
+        for ((method, path) in listOf("GET" to "/actuator", "GET" to "/actuator/prometheus", "POST" to "/actuator/prometheus")) {
+            val response = send(port, method, path)
+            assertThat(response.statusCode()).describedAs(path).isEqualTo(404)
+            assertThat(response.headers().firstValue("Content-Type")).hasValueSatisfying { assertThat(it).startsWith("text/plain") }
+            assertThat(response.body()).isEqualTo("404 not found")
+        }
     }
 }

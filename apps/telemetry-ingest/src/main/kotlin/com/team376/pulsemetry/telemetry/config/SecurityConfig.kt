@@ -71,16 +71,25 @@ import java.time.Clock
 @Configuration(proxyBeanMethods = false)
 class SecurityConfig {
 
+	/**
+	 * 관리 포트(ADR 0068) — GET `/actuator/prometheus` 만 열고 나머지는 기본 닫힘 체인과 같은 404 다. Boot 가 이 체인을 관리
+	 * 컨텍스트에도 걸어 준다. 업무 포트의 요청은 이 체인에 들지 않는다.
+	 */
 	@Bean
 	@Order(0)
-	fun metricsSecurityFilterChain(http: HttpSecurity, environment: Environment): SecurityFilterChain = http
+	fun metricsSecurityFilterChain(
+		http: HttpSecurity,
+		environment: Environment,
+		handler: OtlpIngestHandler,
+		writer: OtlpResponseWriter,
+	): SecurityFilterChain = http
 		.securityMatcher { request -> managementRequest(environment, request) }
 		.csrf { it.disable() }
 		.requestCache { it.disable() }
 		.sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
 		.exceptionHandling {
-			it.authenticationEntryPoint { _, response, _ -> writeNotFound(response) }
-			it.accessDeniedHandler { _, response, _ -> writeNotFound(response) }
+			it.authenticationEntryPoint { _, response, _ -> writer.write(response, handler.notFound()) }
+			it.accessDeniedHandler { _, response, _ -> writer.write(response, handler.notFound()) }
 		}
 		.authorizeHttpRequests {
 			it.requestMatchers(HttpMethod.GET, "/actuator/prometheus").permitAll()
