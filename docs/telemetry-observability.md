@@ -42,8 +42,8 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 | `pulsemetry_gateway_publish_duration_seconds` | signal,outcome | producer send/ack 대기 시간 |
 | `pulsemetry_pipeline_attempts_total` | signal,outcome | Kafka listener 시도 하나. completed·permanent_rejected·transient_failed |
 | `pulsemetry_pipeline_failures_total` | stage,reason | 영구/일시 처리 실패·컨테이너 실패 사건. attempts와 중복 의미가 있어 합산하지 않음 |
-| `pulsemetry_pipeline_retry_exhausted_total` | stage | 재시도 예산 소진 recoverer 호출 |
-| `pulsemetry_pipeline_commit_failures_total` | 없음 | offset commit 실패 callback |
+| `pulsemetry_pipeline_retry_exhausted_total` | stage | 재시도 예산 소진 recoverer 호출. ingest 기동 때 stage 12종을 0으로 노출 |
+| `pulsemetry_pipeline_commit_failures_total` | 없음 | offset commit 실패 callback. ingest 기동 때 0으로 노출 |
 | `pulsemetry_pipeline_stage_duration_seconds` | stage,outcome | authorize·decode(압축 해제 포함)·mask·archive·normalize·enrich·retention·insert·ops, success/failure |
 | `pulsemetry_pipeline_accepted_to_attempt_start_seconds` | signal | Gateway acceptedAt부터 각 시도 시작까지의 age. 순수 broker 대기시간이 아님 |
 | `pulsemetry_pipeline_accepted_to_completion_seconds` | signal | acceptedAt부터 성공한 시도 완료까지. backlog·재시도·처리시간 포함 |
@@ -56,6 +56,8 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 | `pulsemetry_clickhouse_rows_submitted_total` | table | INSERT에 제출한 행. 실패·재시도·server retention fence를 포함하므로 실제 적재 수가 아님 |
 
 `completed`에는 빈 push와 모든 관측이 제외된 push도 포함된다. 영구 거부는 정상 반환해 offset을 확정하지만 completed가 아니다. 소진한 일시 실패도 오류 처리기가 확정하므로 offset 전진만으로 처리 성공을 주장하지 않는다. commit 실패로 같은 record를 다시 처리하면 attempts와 rows submitted가 다시 증가할 수 있다. 두 분석 테이블과 ops 기록은 하나의 트랜잭션이 아니다.
+
+재시도 소진·commit 실패 counter는 실패 전부터 0으로 있다. Prometheus `increase()`는 처음 보인 series의 첫 값을 증가로 세지 않아서, 첫 실패 때 counter를 만들면 단발 실패가 Infra 경보와 대시보드에서 0이 된다. 새 Pod가 첫 scrape 전에 실패하는 경우는 Infra 경보식이 새 series로 잡는다. 나머지 counter는 처음 실패할 때 생기므로, 각 series의 첫 값은 `increase()`에 잡히지 않는다.
 
 Gateway의 **200은 Kafka 접수**, pipeline completed는 **시도 완료**, ClickHouse success는 **INSERT HTTP 성공**이다. 적재 완전성은 기대 `observation_id` 집합과 `FINAL` 논리 행을 별도 대조해야 한다. 현재 meter는 persisted/E2E counter를 만들지 않는다. 비동기 age는 Gateway와 ingest의 벽시계 차이에도 영향을 받는다. 순수 stage duration은 `System.nanoTime()`을 쓴다.
 

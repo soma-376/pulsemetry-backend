@@ -26,6 +26,8 @@ class MetricsEndpointTest : AbstractIngestIntegrationTest() {
         val scrape = get(managementPort, "/actuator/prometheus")
         assertThat(scrape.statusCode()).isEqualTo(200)
         assertThat(scrape.body()).contains("jvm_memory_used_bytes", "pulsemetry_pipeline_inflight", "pulsemetry_pipeline_listener_running", "tomcat_threads_busy_threads", "hikaricp_connections_active", "jdbc_connections_active")
+        // 실패가 없어도 경보 대상 counter가 있어야 첫 실패가 increase()에 잡힌다(TelemetryFailureReporter).
+        assertThat(scrape.body()).contains("pulsemetry_pipeline_retry_exhausted_total{", "pulsemetry_pipeline_commit_failures_total{")
         assertThat(scrape.body()).doesNotContain("pulsemetry_gateway_")
         Files.createDirectories(Path.of("build"))
         Files.writeString(Path.of("build/management-scrape.prom"), scrape.body())
