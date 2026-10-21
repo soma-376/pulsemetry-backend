@@ -15,11 +15,14 @@ import com.team376.pulsemetry.telemetry.credential.TelemetryBearerAuthentication
 import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
 import jakarta.servlet.DispatcherType
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
 import org.springframework.http.HttpHeaders
 import org.springframework.security.authentication.AuthenticationManager
+import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.authentication.ProviderManager
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
@@ -52,6 +55,8 @@ import java.time.Clock
  *   [TelemetryTokenUnavailableHandler] 가 수집 모듈의 503 본문을 [OtlpResponseWriter] 로 쓴다 —
  *   파이프라인의 503 과 같은 모양이다(허브 §8). 예외를 컨테이너까지 흘리면 안 된다: Boot 의 오류
  *   경로 `/error` 는 OTLP 체인 밖이라 둘째 체인이 받고, 그 `denyAll` 에 걸리면 서버 오류가 경로 거부 응답으로 바뀐다.
+ * - **`kafka` 모드(ADR 0066 Decision 7)에서는 OTLP 체인·해시·JWT 검증을 만들지 않는다.** OTLP 경로는 기본 닫힘 체인이 404 로
+ *   거부하고, 해시 키·telemetry 공개키가 없어도 뜬다.
  * - **체인은 둘이고 기본은 닫힘이다.** 첫 체인이 [Signal] 의 세 경로를 잡고, 둘째 체인이 나머지
  *   전부를 잡아 `/api/v1/healthz` 만 열고 그 밖은 `denyAll` 이다. 명시적 `SecurityFilterChain` 빈이
  *   있으면 Boot 의 기본 체인은 물러나므로, 둘째 체인이 없으면 새로 얹는 경로가 인증 없이 열린다.
@@ -64,6 +69,7 @@ import java.time.Clock
 class SecurityConfig {
 
 	@Bean
+	@Conditional(OtlpHttpEnabledCondition::class)
 	fun telemetryTokenHasher(properties: TelemetryIngestProperties): TelemetryTokenHasher =
 		TelemetryTokenHasher(properties.tokenHashSecret)
 
@@ -82,6 +88,7 @@ class SecurityConfig {
 	 * 그대로 뜨고 JWT 모양의 Bearer 는 401 이다. 맵이 있으면 키를 기동 때 읽고, 읽지 못하면 기동이 실패한다.
 	 */
 	@Bean
+	@Conditional(OtlpHttpEnabledCondition::class)
 	fun telemetryBearerAuthenticationProvider(
 		hasher: TelemetryTokenHasher,
 		telemetryTokens: TelemetryTokenRepository,
@@ -106,10 +113,15 @@ class SecurityConfig {
 		)
 	}
 
+	/**
+	 * `kafka` 모드에는 OTLP 체인이 없어 provider 도 없다. 그래도 매니저 빈은 둔다 — 없으면 Boot 가 메모리 사용자와 생성 암호를
+	 * 만들어 로그에 남긴다. 그 모드의 매니저는 모든 인증을 거부한다.
+	 */
 	@Bean
 	fun telemetryAuthenticationManager(
-		provider: TelemetryBearerAuthenticationProvider,
-	): AuthenticationManager = ProviderManager(provider)
+		provider: ObjectProvider<TelemetryBearerAuthenticationProvider>,
+	): AuthenticationManager = provider.ifAvailable?.let { ProviderManager(it) }
+		?: AuthenticationManager { throw BadCredentialsException("OTLP/HTTP 는 kafka 모드에서 꺼져 있다") }
 
 	@Bean
 	fun telemetryTokenAuthenticationEntryPoint(): AuthenticationEntryPoint =
@@ -127,6 +139,7 @@ class SecurityConfig {
 	 */
 	@Bean
 	@Order(1)
+	@Conditional(OtlpHttpEnabledCondition::class)
 	fun otlpSecurityFilterChain(
 		http: HttpSecurity,
 		authenticationManager: AuthenticationManager,

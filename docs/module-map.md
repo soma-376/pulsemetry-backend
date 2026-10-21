@@ -126,6 +126,9 @@ dashboard-api(커넥터 설명의 capability 표시). 역할 이름은 `connecto
 배선·설정 바인딩과 단계 호출이 전부이고, 그것이 ADR 0011이 라이브러리에서 걷어낸 몫이다.
 기동·배선 정책은 [ADR 0016](adr/0016-조립-앱은-인증-체인과-단계-호출을-배선하고-스키마-적용-실패를-견딘다.md),
 상태 코드 계약은 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)이 담는다.
+수신 모드(`http`·`dual`·`kafka`)와 Kafka Consumer 의 재시도·offset 정책은 [ADR 0066](adr/0066-OTLP-수신은-Gateway가-JWT만-검증해-Kafka에-접수하고-ingest가-RDB로-다시-검증한다.md)이,
+telemetry JWT 의 RDB 판정은 [ADR 0065](adr/0065-telemetry-token은-전용-RS256-JWT로-발급하고-telemetry_tokens를-자격-기록으로-유지한다.md)가 담는다.
+앱 안의 패키지는 `telemetry.credential`(Bearer 분기·RDB 판정)과 `telemetry.consumer`(listener·`ProcessTelemetry`·backoff·실패 로그)가 더해졌다.
 
 `:apps:telemetry-gateway`는 OTLP 접수 앱이다([ADR 0066](adr/0066-OTLP-수신은-Gateway가-JWT만-검증해-Kafka에-접수하고-ingest가-RDB로-다시-검증한다.md)).
 telemetry JWT 를 검증하고 원문을 envelope 로 Kafka 에 발행한 뒤 broker ack 를 받아 200 이다. 의존은 `:libs:telemetry-auth`·`:libs:telemetry-ingress-contract`

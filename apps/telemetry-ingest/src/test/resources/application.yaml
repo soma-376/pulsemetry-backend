@@ -23,3 +23,14 @@ pulsemetry:
   telemetry:
     ops:
       enabled: true
+    # Kafka Consumer 까지 함께 띄운다(ADR 0066 — dual). HTTP 테스트는 그대로 돌고 Consumer 테스트가 같은 컨텍스트를 쓴다.
+    # bootstrap 은 기반 클래스가 Testcontainers 로 넘긴다. 재시도 간격은 운영(1·5·30초)보다 짧게 둔다 — 횟수와 순서는 같다.
+    ingest:
+      mode: dual
+    kafka:
+      topic: pulsemetry-test-telemetry-ingress
+      consumer-group: pulsemetry-test-telemetry-ingest
+      consumer:
+        retry-intervals: 100ms,200ms,300ms
+        auth-exception-retry-interval: 1s
+        shutdown-timeout: 10s

@@ -17,6 +17,11 @@ dependencies {
 	// telemetry JWT 검증 (ADR 0065). HTTP 호환 경로가 쓴다 — 공개키만 받는다.
 	implementation(project(":libs:telemetry-auth"))
 
+	// Kafka Consumer (ADR 0066). 컨테이너·오류 처리기만 쓰고 Boot 의 Kafka 자동설정(spring-boot-kafka)은 끌지 않는다.
+	implementation(libs.spring.kafka)
+	// MSK IAM SASL — 설정 문자열의 클래스 이름으로만 쓰므로 런타임 의존이다.
+	runtimeOnly(libs.aws.msk.iam.auth)
+
 	implementation(libs.spring.boot.starter.webmvc)
 	// 필터 체인 배선. starter 를 쓰는 것은 :libs: 가 아니라 앱이므로 ADR 0011 위반이 아니다 —
 	// 조립 앱이 자동설정을 켜는 자리이고, 명시적 SecurityFilterChain 이 기본 체인을 물린다.
@@ -35,6 +40,8 @@ dependencies {
 	testImplementation(libs.testcontainers.postgresql)
 	// ClickHouse 는 GenericContainer 로 띄운다 — 전용 모듈은 JDBC 드라이버를 요구한다.
 	testImplementation(libs.testcontainers)
+	// Kafka Consumer 통합 테스트(dual 모드 기반).
+	testImplementation(libs.testcontainers.kafka)
 }
 
 // 실행 산출물은 bootJar 하나다. plain jar 를 만들면 Dockerfile 이 둘 중 하나를 골라내야 한다.

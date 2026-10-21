@@ -4,9 +4,11 @@ import com.team376.pulsemetry.security.TelemetryTokenPrincipal
 import com.team376.pulsemetry.telemetry.collector.AuthorizedTelemetryIdentity
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
 import com.team376.pulsemetry.telemetry.otlp.OtlpHttpRequest
+import com.team376.pulsemetry.telemetry.config.OtlpHttpEnabledCondition
 import com.team376.pulsemetry.telemetry.config.TelemetryIngestProperties
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
+import org.springframework.context.annotation.Conditional
 import org.springframework.http.HttpHeaders
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.RequestMapping
@@ -34,6 +36,7 @@ import org.springframework.web.bind.annotation.RestController
  * `ptt_`·telemetry JWT 어느 경로로 인증됐든 principal 은 [TelemetryTokenPrincipal] 이다.
  */
 @RestController
+@Conditional(OtlpHttpEnabledCondition::class)
 class OtlpController(
 	private val handler: OtlpIngestHandler,
 	private val writer: OtlpResponseWriter,
