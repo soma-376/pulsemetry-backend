@@ -1,4 +1,4 @@
-# 로컬 개발용 DB·메일 수신 컨테이너와 일회성 Kotlin 시드. Spring 서버는 호스트에서 Gradle로 실행한다.
+# 로컬 개발용 DB·Kafka·메일 수신 컨테이너와 일회성 Kotlin 시드. Spring 서버는 호스트에서 Gradle로 실행한다.
 # dev-seed가 기존 마이그레이션과 A/B 시드를 준비한다(ADR 0059). C는 명시할 때만 만든다.
 # 테스트는 이 컨테이너들을 쓰지 않는다 — Testcontainers 가 매번 격리된 인스턴스를 띄운다.
 services:
@@ -50,6 +50,64 @@ services:
       timeout: 3s
       retries: 10
 
+  # 텔레메트리 수집 큐 (ADR 0066). dev 의 MSK(Kafka 3.9) 대신 단일 노드 KRaft broker 다 — 인증 없는 PLAINTEXT 다.
+  # 호스트의 Gateway·ingest 는 localhost:9092, Compose 안의 작업은 kafka:29092 로 붙는다.
+  # 운영 MSK 처럼 topic 자동 생성을 끄고 message 상한을 13 MiB 로 둔다(producer 12 MiB + 배치 머리 여유). topic 은 kafka-init 이 만든다.
+  kafka:
+    image: apache/kafka:3.9.2
+    container_name: pulsemetry-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,INTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_MESSAGE_MAX_BYTES: "13631488"
+      KAFKA_REPLICA_FETCH_MAX_BYTES: "13631488"
+    ports:
+      # 인증 없는 로컬 broker 다 — 루프백에만 바인딩한다.
+      - "127.0.0.1:9092:9092"
+    volumes:
+      - pulsemetry-kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  # ingress topic 을 만든다. 이미 있으면 그대로 둔다(--if-not-exists). 운영 topic 은 infra 의 관리 Job 이 만든다(RF 3·minISR 2).
+  # 로컬은 broker 하나라 RF 1 이고, partition·보존·message 상한은 운영과 같다.
+  kafka-init:
+    image: apache/kafka:3.9.2
+    restart: "no"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint:
+      - /opt/kafka/bin/kafka-topics.sh
+      - --bootstrap-server
+      - kafka:29092
+      - --create
+      - --if-not-exists
+      - --topic
+      - ${PULSEMETRY_KAFKA_TOPIC:-pulsemetry-local-telemetry-ingress}
+      - --partitions
+      - "6"
+      - --replication-factor
+      - "1"
+      - --config
+      - max.message.bytes=13631488
+      - --config
+      - retention.ms=259200000
+
   # 메일 수신 컨테이너. local 프로필의 서버가 보낸 메일을 밖으로 내보내지 않고 받아 둔다(ADR 0037).
   # SMTP 1025, 받은 메일의 화면·조회 API 8025. 컨테이너를 지우면 받은 메일도 사라진다.
   mailpit:
@@ -90,3 +148,4 @@ services:
 volumes:
   pulsemetry-postgres-data:
   pulsemetry-clickhouse-data:
+  pulsemetry-kafka-data:

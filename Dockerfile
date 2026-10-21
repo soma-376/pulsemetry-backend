@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# enrollment-api · telemetry-ingest · dashboard-api · retention-worker 컨테이너 이미지. target을 생략하면 enrollment-api를 만든다.
+# enrollment-api · telemetry-ingest · telemetry-gateway · dashboard-api · retention-worker 컨테이너 이미지. target을 생략하면 enrollment-api를 만든다.
 #
 # 빌드 스테이지는 $BUILDPLATFORM 에 고정한다. 산출물이 JVM 바이트코드라 아키텍처를 타지 않으므로,
 # arm64 이미지를 만들 때도 Gradle 빌드는 러너의 네이티브 아키텍처에서 그대로 돌면 된다.
@@ -8,6 +8,7 @@
 #
 #   docker buildx build --platform linux/arm64 --target enrollment-api --build-context telemetry-contracts=../telemetryctl/contracts -t <repo>:<tag> --load .
 #   docker buildx build --platform linux/arm64 --target telemetry-ingest -t <repo>:<tag> --load .
+#   docker buildx build --platform linux/arm64 --target telemetry-gateway -t <repo>:<tag> --load .
 #   docker buildx build --platform linux/arm64 --target dashboard-api -t <repo>:<tag> --load .
 #   docker buildx build --platform linux/arm64 --target retention-worker -t <repo>:<tag> --load .
 #
@@ -102,6 +103,22 @@ RUN java -Djarmode=tools -jar apps/telemetry-ingest/build/libs/*.jar \
 	extract --layers --launcher --destination /extracted
 
 
+# OTLP 접수 Gateway (ADR 0066). DB·S3 의존이 없다 — runtimeClasspath 에 JPA·JDBC 드라이버가 오르지 않는다.
+FROM build-base AS telemetry-gateway-build
+
+RUN --mount=type=cache,target=/root/.gradle,sharing=locked \
+	./gradlew --no-daemon :apps:telemetry-gateway:dependencies --configuration runtimeClasspath > /dev/null
+
+COPY libs libs
+COPY apps apps
+
+RUN --mount=type=cache,target=/root/.gradle,sharing=locked \
+	./gradlew --no-daemon :apps:telemetry-gateway:bootJar -x test
+
+RUN java -Djarmode=tools -jar apps/telemetry-gateway/build/libs/*.jar \
+	extract --layers --launcher --destination /extracted
+
+
 FROM build-base AS dashboard-api-build
 
 RUN --mount=type=cache,target=/root/.gradle,sharing=locked \
@@ -153,6 +170,18 @@ COPY --from=telemetry-ingest-build --chown=pulsemetry:pulsemetry /extracted/appl
 
 USER pulsemetry
 EXPOSE 4316
+
+
+# OTLP 접수 Gateway (ADR 0066). telemetry JWT 공개키(mount)와 Kafka 접속 환경변수만 받는다. EKS workload 다 — ECS 배포 목록에는 없다.
+FROM runtime-base AS telemetry-gateway
+
+COPY --from=telemetry-gateway-build --chown=pulsemetry:pulsemetry /extracted/dependencies/ ./
+COPY --from=telemetry-gateway-build --chown=pulsemetry:pulsemetry /extracted/spring-boot-loader/ ./
+COPY --from=telemetry-gateway-build --chown=pulsemetry:pulsemetry /extracted/snapshot-dependencies/ ./
+COPY --from=telemetry-gateway-build --chown=pulsemetry:pulsemetry /extracted/application/ ./
+
+USER pulsemetry
+EXPOSE 8082
 
 
 # 분석 조회 API (ADR 0022). 배포는 허브의 소재 결정과 사용자 인증 연결 뒤다 — 그 전에는 조직 경로가 전부 401 이다.
