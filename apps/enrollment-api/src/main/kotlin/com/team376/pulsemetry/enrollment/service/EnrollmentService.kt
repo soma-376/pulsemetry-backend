@@ -7,7 +7,6 @@ import com.team376.pulsemetry.enrollment.error.EnrollmentException
 import com.team376.pulsemetry.enrollment.secret.InvitationCode
 import com.team376.pulsemetry.enrollment.secret.Sha256
 import com.team376.pulsemetry.enrollment.secret.SecretToken
-import com.team376.pulsemetry.security.TelemetryTokenHasher
 import com.team376.pulsemetry.persistence.enrollment.entity.Installation
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationCredential
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationManifestAssignment
@@ -15,7 +14,6 @@ import com.team376.pulsemetry.persistence.enrollment.entity.InstallationManifest
 import com.team376.pulsemetry.persistence.enrollment.entity.Manifest
 import com.team376.pulsemetry.persistence.enrollment.entity.MemberStatus
 import com.team376.pulsemetry.persistence.enrollment.entity.Platform
-import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryToken
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationCredentialRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationManifestAssignmentRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
@@ -49,7 +47,7 @@ class EnrollmentService(
 	private val telemetryTokens: TelemetryTokenRepository,
 	private val manifests: ManifestRepository,
 	private val assignments: InstallationManifestAssignmentRepository,
-	private val telemetryTokenHasher: TelemetryTokenHasher,
+	private val telemetryCredentials: TelemetryCredentialIssuer,
 	private val objectMapper: ObjectMapper,
 	private val clock: Clock,
 ) {
@@ -114,15 +112,11 @@ class EnrollmentService(
 			),
 		)
 
-		// 7. telemetry token. 역시 해시만 저장한다 — 단 auth-proxy 가 조회하는 값이라 HMAC 이다.
-		val telemetryToken = SecretToken.telemetryToken()
-		telemetryTokens.save(
-			TelemetryToken(
-				installationId = installation.id,
-				tokenHash = telemetryTokenHasher.hex(telemetryToken),
-				issuedAt = now,
-			),
-		)
+		// 7. telemetry token. 역시 해시만 저장한다 — 단 검증자가 조회하는 값이라 HMAC 이다.
+		// 발급 설정이 켜져 있으면 telemetry JWT 다. 행 id 가 jti 이고 JWT 전문의 HMAC 도 함께 남는다(ADR 0065).
+		val telemetryCredential = telemetryCredentials.issue(invitation.tenantId, installation.id, now)
+		telemetryTokens.save(telemetryCredential.record)
+		val telemetryToken = telemetryCredential.token
 
 		// 8. tenant 의 활성 manifest
 		val manifest = manifests.findByTenantIdAndIsActiveTrue(invitation.tenantId)

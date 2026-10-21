@@ -2,9 +2,6 @@ package com.team376.pulsemetry.enrollment.service
 
 import com.team376.pulsemetry.enrollment.contract.TelemetryTokenResponse
 import com.team376.pulsemetry.enrollment.error.EnrollmentException
-import com.team376.pulsemetry.enrollment.secret.SecretToken
-import com.team376.pulsemetry.security.TelemetryTokenHasher
-import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryToken
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationCredentialRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.MemberRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TelemetryTokenRepository
@@ -25,7 +22,7 @@ class TelemetryTokenService(
 	private val credentials: InstallationCredentialRepository,
 	private val members: MemberRepository,
 	private val telemetryTokens: TelemetryTokenRepository,
-	private val telemetryTokenHasher: TelemetryTokenHasher,
+	private val telemetryCredentials: TelemetryCredentialIssuer,
 	private val clock: Clock,
 ) {
 
@@ -43,22 +40,18 @@ class TelemetryTokenService(
 		// 전환 도입 이전에 enroll 된 invited 구성원이 데몬의 401 → 재발급 루프만으로 복구되는 경로다.
 		members.activateInvited(installation.memberId, now)
 
-		// 살아있는 토큰을 먼저 전부 폐기한다. 재발급은 곧 이전 토큰의 무효화다.
+		// 살아있는 토큰을 먼저 전부 폐기한다. 재발급은 곧 이전 토큰의 무효화다 — 사유는 정상 회전(rotated)이다.
+		// 이미 보안 폐기된 행은 건드리지 않는다(ADR 0065 Decision 5).
 		telemetryTokens.revokeActiveByInstallationId(installation.id, now)
 
-		val telemetryToken = SecretToken.telemetryToken()
-		telemetryTokens.save(
-			TelemetryToken(
-				installationId = installation.id,
-				tokenHash = telemetryTokenHasher.hex(telemetryToken),
-				issuedAt = now,
-			),
-		)
+		// 최초 enrollment 와 같은 발급기다. 발급 설정이 켜져 있으면 telemetry JWT 다(ADR 0065).
+		val telemetryCredential = telemetryCredentials.issue(installation.tenantId, installation.id, now)
+		telemetryTokens.save(telemetryCredential.record)
 		credentials.touchLastUsedAt(credential.id, now)
 
 		return TelemetryTokenResponse(
 			installationId = installation.id.toString(),
-			telemetryToken = telemetryToken,
+			telemetryToken = telemetryCredential.token,
 		)
 	}
 }
