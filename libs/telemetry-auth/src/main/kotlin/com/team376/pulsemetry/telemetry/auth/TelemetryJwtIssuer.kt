@@ -8,6 +8,7 @@ import com.nimbusds.jwt.JWTClaimsSet
 import com.nimbusds.jwt.SignedJWT
 import java.security.interfaces.RSAPrivateKey
 import java.security.interfaces.RSAPublicKey
+import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.Date
@@ -45,6 +46,11 @@ public class TelemetryJwtIssuer(
 	private val activeKid: String,
 	private val privateKey: RSAPrivateKey,
 	publicKeys: Map<String, RSAPublicKey>,
+	/**
+	 * 발급 수명. 계약값은 3시간이고 그보다 길게 둘 수 없다 — 검증기가 3시간 넘는 토큰을 거부한다. 더 짧게 두는 것은 만료 뒤
+	 * 재발급을 짧은 시간 안에 확인하는 검증 환경(로컬 E2E) 용이다. 운영은 기본값을 쓴다.
+	 */
+	private val lifetime: Duration = TelemetryJwtContract.LIFETIME,
 ) {
 	private val signer = RSASSASigner(privateKey)
 
@@ -59,14 +65,17 @@ public class TelemetryJwtIssuer(
 		require(active.modulus == privateKey.modulus) {
 			"telemetry JWT 활성 kid 의 공개키와 개인키가 짝이 아니다: kid=$activeKid"
 		}
+		require(lifetime >= MIN_LIFETIME && lifetime <= TelemetryJwtContract.LIFETIME) {
+			"telemetry JWT 수명은 ${MIN_LIFETIME.seconds}초 이상 ${TelemetryJwtContract.LIFETIME} 이하여야 한다: $lifetime"
+		}
 	}
 
 	/**
-	 * [credentialId] 를 `jti` 로 서명한다. `iat` 는 [now] 를 초로 자른 값, `exp` 는 그 3시간 뒤다.
+	 * [credentialId] 를 `jti` 로 서명한다. `iat` 는 [now] 를 초로 자른 값, `exp` 는 그 수명(기본 3시간) 뒤다.
 	 */
 	public fun issue(credentialId: UUID, tenantId: UUID, installationId: UUID, now: Instant): IssuedTelemetryJwt {
 		val issuedAt = now.truncatedTo(ChronoUnit.SECONDS)
-		val expiresAt = issuedAt.plus(TelemetryJwtContract.LIFETIME)
+		val expiresAt = issuedAt.plus(lifetime)
 		val claims = JWTClaimsSet.Builder()
 			.issuer(TelemetryJwtContract.ISSUER)
 			.audience(TelemetryJwtContract.AUDIENCE)
@@ -89,5 +98,10 @@ public class TelemetryJwtIssuer(
 			issuedAt = issuedAt,
 			expiresAt = expiresAt,
 		)
+	}
+
+	private companion object {
+		/** 시계 오차(30초)보다 짧은 수명은 의미가 없다. */
+		val MIN_LIFETIME: Duration = Duration.ofSeconds(60)
 	}
 }

@@ -2,6 +2,7 @@ package com.team376.pulsemetry.enrollment.config
 
 import com.team376.pulsemetry.enrollment.service.TelemetryCredentialIssuer
 import com.team376.pulsemetry.security.TelemetryTokenHasher
+import com.team376.pulsemetry.telemetry.auth.TelemetryJwtContract
 import com.team376.pulsemetry.telemetry.auth.TelemetryJwtIssuer
 import com.team376.pulsemetry.telemetry.auth.TelemetryJwtKeys
 import org.slf4j.LoggerFactory
@@ -9,6 +10,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import java.nio.file.Path
+import java.time.Duration
 
 /**
  * telemetry JWT 발급 설정(ADR 0065). 사용자 JWT(`pulsemetry.user-auth`)와 키·설정을 공유하지 않는다.
@@ -25,6 +27,11 @@ data class TelemetryJwtProperties(
 	val activeKid: String = "",
 	val privateKeyFile: String = "",
 	val publicKeyFiles: Map<String, String> = emptyMap(),
+	/**
+	 * 발급 수명. 계약값(3시간)이 기본이고 더 길게 둘 수 없다. 짧게 두는 것은 만료 뒤 재발급을 확인하는 검증 환경 용이다
+	 * (`docs/telemetry-kafka-e2e.md`). 운영 배포에서는 설정하지 않는다.
+	 */
+	val lifetime: Duration = TelemetryJwtContract.LIFETIME,
 )
 
 /**
@@ -53,8 +60,12 @@ class TelemetryJwtConfig {
 			activeKid = properties.activeKid,
 			privateKey = TelemetryJwtKeys.privateKey(Path.of(properties.privateKeyFile)),
 			publicKeys = TelemetryJwtKeys.publicKeys(properties.publicKeyFiles),
+			lifetime = properties.lifetime,
 		)
-		log.info("telemetry JWT 발급을 켠다: activeKid={} kids={}", properties.activeKid, properties.publicKeyFiles.keys.sorted())
+		log.info(
+			"telemetry JWT 발급을 켠다: activeKid={} kids={} lifetime={}",
+			properties.activeKid, properties.publicKeyFiles.keys.sorted(), properties.lifetime,
+		)
 		return issuer
 	}
 

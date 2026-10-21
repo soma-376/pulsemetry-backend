@@ -6,6 +6,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import java.time.Duration
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
@@ -65,5 +66,20 @@ class TelemetryJwtIssuerTest {
 			.isInstanceOf(IllegalArgumentException::class.java)
 		val small = TelemetryJwtFixtures.signingKey("small", bits = 1024)
 		assertThatThrownBy { small.issuer() }.isInstanceOf(IllegalArgumentException::class.java)
+	}
+
+	@Test
+	@DisplayName("수명은 60초 이상 3시간 이하로만 줄일 수 있다 — 검증기는 짧은 토큰도 받는다")
+	fun shorterLifetime() {
+		val now = Instant.parse("2026-10-21T01:02:03Z")
+		val short = TelemetryJwtIssuer("tk-1", key.privateKey, TelemetryJwtFixtures.publicKeys(key), Duration.ofSeconds(60))
+		val issued = short.issue(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), now)
+
+		assertThat(issued.expiresAt).isEqualTo(now.plusSeconds(60))
+		assertThat(key.verifier().verify(issued.token, now.plusSeconds(90)).expiresAt).isEqualTo(now.plusSeconds(60))
+		assertThatThrownBy { TelemetryJwtIssuer("tk-1", key.privateKey, TelemetryJwtFixtures.publicKeys(key), Duration.ofSeconds(59)) }
+			.isInstanceOf(IllegalArgumentException::class.java)
+		assertThatThrownBy { TelemetryJwtIssuer("tk-1", key.privateKey, TelemetryJwtFixtures.publicKeys(key), Duration.ofHours(3).plusSeconds(1)) }
+			.isInstanceOf(IllegalArgumentException::class.java)
 	}
 }
