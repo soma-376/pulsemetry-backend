@@ -32,7 +32,7 @@ public class ClickHouseSchemaMigrator(
 	/** [MIGRATIONS] 를 순서대로 실행한다. 이미 적용된 것은 멱등이라 아무 일도 하지 않는다. */
 	public fun apply() {
 		for (statement in statements()) {
-			client.execute(statement)
+			client.execute(statement, operation = "schema")
 		}
 	}
 

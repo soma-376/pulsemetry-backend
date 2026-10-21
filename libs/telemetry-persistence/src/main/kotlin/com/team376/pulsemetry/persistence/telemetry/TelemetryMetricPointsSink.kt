@@ -13,7 +13,8 @@ public class TelemetryMetricPointsSink(private val client: ClickHouseHttpClient)
 		val admitted = boundary.admitted(points) { it.observation.envelope }
 		if (admitted.isEmpty()) return 0
 		val body = admitted.joinToString(separator = "\n", postfix = "\n") { TelemetryMetricPointRow.toJson(it, versioning) }
-		AnalysisInsert.send(client, QUERY, body, boundary)
+		client.rowsSubmitted(TABLE, admitted.size)
+		AnalysisInsert.send(client, QUERY, body, boundary, TABLE)
 		return admitted.size
 	}
 

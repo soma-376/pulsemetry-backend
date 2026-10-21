@@ -46,3 +46,6 @@ include(":libs:telemetry-ops-persistence")
 
 // 벤더 좌석 커넥터 — 포트와 벤더별 구현. 아웃바운드 기술(벤더 HTTP)이 영속성과 달라 나눈다 (ADR 0048)
 include(":libs:vendor-connector")
+
+// Gateway·수집·적재가 공유하는 운영 계측(ADR 0068).
+include(":libs:telemetry-observability")

@@ -9,6 +9,11 @@ import com.team376.pulsemetry.telemetry.collector.masking.AttributeWalker
 import com.team376.pulsemetry.telemetry.collector.masking.MaskingPolicy
 import com.team376.pulsemetry.telemetry.collector.masking.SecretMasker
 import com.team376.pulsemetry.telemetry.ingress.RawOtlpPayload
+import com.team376.pulsemetry.telemetry.observability.PipelineStage
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import com.team376.pulsemetry.telemetry.observability.measure
+import com.team376.pulsemetry.telemetry.observability.observe
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
@@ -97,6 +102,7 @@ public class OtlpIngestProcessor(
 	private val archive: ArchiveWriter,
 	private val next: SignalConsumer,
 	maxDecompressedBytes: Long = DEFAULT_MAX_DECOMPRESSED_BYTES,
+	private val observer: TelemetryObserver = TelemetryObserver.NONE,
 ) : OtlpProcessor {
 
 	private val decoder = OtlpRequestDecoder(maxDecompressedBytes)
@@ -106,6 +112,53 @@ public class OtlpIngestProcessor(
 		val signal = Signal.of(payload.signal)
 		val encoding = OtlpEncoding.of(payload.mediaType)
 
+		val builder = observer.measure(PipelineStage.DECODE) { decode(payload, signal, encoding) }
+
+		// 상위는 레코드가 0건이면 소비자를 부르지 않고 바로 성공을 돌려준다.
+		if (recordCount(builder) == 0) {
+			observer.observe(TelemetryMetric.PIPELINE_EMPTY, 1.0, "signal" to payload.signal.name.lowercase())
+			return
+		}
+
+		// 마스킹은 정규식 규칙이라 같은 입력이면 같게 실패한다 — 영구다(ADR 0067 Decision 1).
+		if (signal.masked) {
+			try {
+				observer.measure(PipelineStage.MASK) { mask(signal, builder) }
+			} catch (e: RuntimeException) {
+				throw OtlpPayloadException("masking_failed", "masking failed", e)
+			}
+		}
+
+		// 아카이브보다 먼저다. 빌더에 찍으므로 아카이브와 다음 단계가 같은 값을 본다.
+		val identity = context.identity
+		IdentityStamper.stamp(builder, StampedIdentity(identity.tenantId.toString(), identity.installationId.toString()))
+
+		val message = builder.build()
+
+		// 모든 resource 가 정확히 한 문서에 들어간다. 하나라도 실패하면 영수증 없이 일시 실패다.
+		val documents = observer.measure(PipelineStage.ARCHIVE) {
+			ProductRouter.split(message).map { routed ->
+				ArchivedDocument(
+					product = routed.product,
+					location = archive.write(routed.product, signal, OtlpJson.toJson(routed.document)),
+					resourceIndexes = routed.resourceIndexes,
+				)
+			}
+		}
+		val receipt = ArchiveReceipt(
+			receiptId = context.receiptId.toString(),
+			receivedAt = context.receivedAt,
+			signal = signal,
+			tenantId = identity.tenantId.toString(),
+			installationId = identity.installationId.toString(),
+			maskingVersion = MaskingPolicy.VERSION,
+			identityVersion = IdentityStamper.VERSION,
+			documents = documents,
+		)
+		next.consume(signal, message, receipt)
+	}
+
+	private fun decode(payload: RawOtlpPayload, signal: Signal, encoding: OtlpEncoding): Message.Builder {
 		// 디코드·압축 해제 실패는 전부 영구다(허브 ADR 0006 — HTTP 400). IOException 계열도 잡는다 —
 		// 깨진 gzip 은 ZipException, 깨진 protobuf 는 InvalidProtocolBufferException 이고 둘 다
 		// RuntimeException 이 아니다. 놓치면 500 이 되어 데몬이 깨진 배치를 영구히 재시도한다.
@@ -125,44 +178,7 @@ public class OtlpIngestProcessor(
 		} catch (e: Exception) {
 			throw OtlpPayloadException("decode_failed", e.message.orEmpty(), e)
 		}
-
-		// 상위는 레코드가 0건이면 소비자를 부르지 않고 바로 성공을 돌려준다.
-		if (recordCount(builder) == 0) return
-
-		// 마스킹은 정규식 규칙이라 같은 입력이면 같게 실패한다 — 영구다(ADR 0067 Decision 1).
-		if (signal.masked) {
-			try {
-				mask(signal, builder)
-			} catch (e: RuntimeException) {
-				throw OtlpPayloadException("masking_failed", "masking failed", e)
-			}
-		}
-
-		// 아카이브보다 먼저다. 빌더에 찍으므로 아카이브와 다음 단계가 같은 값을 본다.
-		val identity = context.identity
-		IdentityStamper.stamp(builder, StampedIdentity(identity.tenantId.toString(), identity.installationId.toString()))
-
-		val message = builder.build()
-
-		// 모든 resource 가 정확히 한 문서에 들어간다. 하나라도 실패하면 영수증 없이 일시 실패다.
-		val documents = ProductRouter.split(message).map { routed ->
-			ArchivedDocument(
-				product = routed.product,
-				location = archive.write(routed.product, signal, OtlpJson.toJson(routed.document)),
-				resourceIndexes = routed.resourceIndexes,
-			)
-		}
-		val receipt = ArchiveReceipt(
-			receiptId = context.receiptId.toString(),
-			receivedAt = context.receivedAt,
-			signal = signal,
-			tenantId = identity.tenantId.toString(),
-			installationId = identity.installationId.toString(),
-			maskingVersion = MaskingPolicy.VERSION,
-			identityVersion = IdentityStamper.VERSION,
-			documents = documents,
-		)
-		next.consume(signal, message, receipt)
+		return builder
 	}
 
 	private fun mask(signal: Signal, builder: Message.Builder) {

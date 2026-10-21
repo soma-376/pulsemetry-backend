@@ -48,8 +48,8 @@ internal object AnalysisInsert {
 	}
 
 	/** 이 요청 하나를 보낸다 — tenant 파라미터와 epoch 를 실은 `query_id` 로. */
-	fun send(client: ClickHouseHttpClient, query: String, body: String, boundary: AnalysisWriteBoundary) {
-		client.execute(query, body.toByteArray(Charsets.UTF_8), mapOf(TENANT_PARAM to boundary.tenantId), boundary.queryId())
+	fun send(client: ClickHouseHttpClient, query: String, body: String, boundary: AnalysisWriteBoundary, table: String) {
+		client.execute(query, body.toByteArray(Charsets.UTF_8), mapOf(TENANT_PARAM to boundary.tenantId), boundary.queryId(), operation = "insert", table = table)
 	}
 
 	/** 입력에서 받는 타입 — Float64 는 문자열이다. */

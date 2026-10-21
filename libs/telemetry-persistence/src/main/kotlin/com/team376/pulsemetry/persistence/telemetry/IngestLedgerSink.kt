@@ -20,7 +20,8 @@ public class IngestLedgerSink(private val client: ClickHouseHttpClient) {
 	public fun insert(entries: List<IngestLedgerEntry>): Int {
 		if (entries.isEmpty()) return 0
 		val body = entries.joinToString(separator = "\n", postfix = "\n") { toJson(it) }
-		client.execute(QUERY, body.toByteArray(Charsets.UTF_8))
+		client.rowsSubmitted(TABLE, entries.size)
+		client.execute(QUERY, body.toByteArray(Charsets.UTF_8), operation = "insert", table = TABLE)
 		return entries.size
 	}
 
