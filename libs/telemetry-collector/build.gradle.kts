@@ -9,6 +9,9 @@ dependencies {
 	// api() 다 — ExportLogsServiceRequest 등이 이 모듈의 공개 시그니처에 나타난다 (ADR 0008 규칙 3).
 	api(libs.opentelemetry.proto)
 	api(libs.protobuf.java)
+	// OTLP/HTTP 표면(경로·media type·응답 본문)은 Gateway 와 공유하는 모듈이 소유한다 (ADR 0067).
+	// api() 다 — Signal 이 OtlpSignal 을, 핸들러가 OtlpHttpRequest·OtlpHttpResponse 를 공개 시그니처에 드러낸다.
+	api(project(":libs:telemetry-otlp-http"))
 
 	// OTLP/JSON 코덱이 쓰는 스트리밍 파서. 계약에 나타나지 않으므로 implementation 이다.
 	implementation(libs.jackson.core)

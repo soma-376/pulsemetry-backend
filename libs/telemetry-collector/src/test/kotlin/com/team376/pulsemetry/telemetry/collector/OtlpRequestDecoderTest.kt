@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.telemetry.collector
 
+import com.team376.pulsemetry.telemetry.otlp.OtlpContentEncoding
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.DisplayName
@@ -19,6 +20,21 @@ class OtlpRequestDecoderTest {
 	@DisplayName("무압축은 본문을 그대로 준다")
 	fun passesThroughUncompressed(encoding: String) {
 		assertThat(decoder.decompress(encoding, BODY)).isEqualTo(BODY)
+	}
+
+	@Test
+	@DisplayName("Gateway 가 쓰는 허용 목록의 모든 값을 디코더가 실제로 푼다 — 목록과 분기는 함께 바뀐다")
+	fun decoderCoversSharedAllowList() {
+		OtlpContentEncoding.SUPPORTED.forEach { encoding ->
+			val encoded = when (encoding) {
+				"gzip" -> ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(BODY) } }.toByteArray()
+				"zlib", "deflate" -> ByteArrayOutputStream().also { out -> DeflaterOutputStream(out).use { it.write(BODY) } }.toByteArray()
+				else -> BODY
+			}
+			assertThat(decoder.decompress(encoding.uppercase(), encoded)).describedAs(encoding).isEqualTo(BODY)
+		}
+		assertThat(OtlpContentEncoding.isSupported("br")).isFalse()
+		assertThatThrownBy { decoder.decompress("br", BODY) }.hasMessage(OtlpContentEncoding.unsupportedMessage("br"))
 	}
 
 	@Test

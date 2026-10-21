@@ -21,6 +21,9 @@ include(":libs:enrollment-persistence")
 // 컨텍스트에 속하지 않는 횡단 모듈. 인증 계층의 자리다 (ADR 0007·0008 규칙 2)
 include(":libs:security")
 
+// OTLP/HTTP 표면(응답 본문·경로·media type). 수집 모듈과 Gateway 가 같은 바이트를 낸다 (ADR 0067)
+include(":libs:telemetry-otlp-http")
+
 // 파이프라인 단계 모듈. 테이블을 소유하지 않는다 (ADR 0010)
 include(":libs:telemetry-collector")
 include(":libs:telemetry-adapter")

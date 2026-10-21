@@ -8,6 +8,10 @@ import com.team376.pulsemetry.telemetry.collector.archive.ProductRouter
 import com.team376.pulsemetry.telemetry.collector.masking.AttributeWalker
 import com.team376.pulsemetry.telemetry.collector.masking.MaskingPolicy
 import com.team376.pulsemetry.telemetry.collector.masking.SecretMasker
+import com.team376.pulsemetry.telemetry.otlp.GrpcCode
+import com.team376.pulsemetry.telemetry.otlp.OtlpHttpRequest
+import com.team376.pulsemetry.telemetry.otlp.OtlpHttpResponse
+import com.team376.pulsemetry.telemetry.otlp.OtlpResponses
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
@@ -92,7 +96,7 @@ public class OtlpIngestHandler(
 		}
 
 		// 상위는 레코드가 0건이면 소비자를 부르지 않고 바로 성공을 돌려준다.
-		if (recordCount(builder) == 0) return success(signal, encoding)
+		if (recordCount(builder) == 0) return success(encoding)
 
 		if (signal.masked) mask(signal, builder)
 
@@ -122,7 +126,7 @@ public class OtlpIngestHandler(
 				documents = documents,
 			)
 			next.consume(signal, message, receipt)
-			success(signal, encoding)
+			success(encoding)
 		} catch (e: PermanentIngestException) {
 			// 영구 오류. 재시도해도 같으므로 클라이언트가 배치를 버리게 한다 — 그러려면 4xx 여야 한다.
 			// 데몬은 5xx 를 전부 재시도하므로 500 으로는 폐기가 만들어지지 않는다(허브 ADR 0006).
@@ -141,12 +145,7 @@ public class OtlpIngestHandler(
 	 * 인증 뒤의 일이고, 그 전에 죽은 요청에 415 를 낼 수는 없다.
 	 */
 	public fun unavailable(contentType: String?, message: String): OtlpHttpResponse =
-		status(
-			OtlpEncoding.ofContentType(contentType) ?: OtlpEncoding.JSON,
-			503,
-			GrpcCode.UNAVAILABLE,
-			message,
-		)
+		OtlpResponses.unavailable(contentType, message)
 
 	private fun mask(signal: Signal, builder: Message.Builder) {
 		when (signal) {
@@ -190,42 +189,17 @@ public class OtlpIngestHandler(
 		Metric.DataCase.DATA_NOT_SET, null -> 0
 	}
 
-	private fun success(signal: Signal, encoding: OtlpEncoding) = OtlpHttpResponse(
-		status = 200,
-		contentType = encoding.contentType,
-		body = OtlpResponses.success(signal, encoding),
-	)
+	private fun success(encoding: OtlpEncoding) = OtlpResponses.successResponse(encoding.mediaType)
 
 	private fun status(encoding: OtlpEncoding, httpStatus: Int, code: GrpcCode, message: String) =
-		OtlpHttpResponse(
-			status = httpStatus,
-			contentType = encoding.contentType,
-			body = OtlpResponses.status(encoding, code, message),
-		)
+		OtlpResponses.statusResponse(encoding.mediaType, httpStatus, code, message)
 
-	/** 상위 `handleUnmatchedMethod` — 본문이 `text/plain` 이다. */
-	private fun methodNotAllowed() = OtlpHttpResponse(
-		status = 405,
-		contentType = "text/plain",
-		body = "405 method not allowed, supported: [POST]".toByteArray(Charsets.UTF_8),
-	)
+	private fun methodNotAllowed() = OtlpResponses.methodNotAllowed()
 
-	/** 상위 `handleUnmatchedContentType` — 본문이 `text/plain` 이다. */
-	private fun unsupportedMediaType() = OtlpHttpResponse(
-		status = 415,
-		contentType = "text/plain",
-		body = (
-			"415 unsupported media type, supported: " +
-				"[${OtlpEncoding.JSON.contentType}, ${OtlpEncoding.PROTOBUF.contentType}]"
-			).toByteArray(Charsets.UTF_8),
-	)
+	private fun unsupportedMediaType() = OtlpResponses.unsupportedMediaType()
 
 	/** 조립 앱의 기본 닫힘 체인도 같은 경로 거부 응답을 사용한다. */
-	public fun notFound(): OtlpHttpResponse = OtlpHttpResponse(
-		status = 404,
-		contentType = "text/plain",
-		body = "404 not found".toByteArray(Charsets.UTF_8),
-	)
+	public fun notFound(): OtlpHttpResponse = OtlpResponses.notFound()
 
 	public companion object {
 		/**

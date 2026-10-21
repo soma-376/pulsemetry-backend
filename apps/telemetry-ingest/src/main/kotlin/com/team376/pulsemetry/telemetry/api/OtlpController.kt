@@ -1,6 +1,6 @@
 package com.team376.pulsemetry.telemetry.api
 
-import com.team376.pulsemetry.telemetry.collector.OtlpHttpRequest
+import com.team376.pulsemetry.telemetry.otlp.OtlpHttpRequest
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
 import com.team376.pulsemetry.telemetry.config.TelemetryIngestProperties
 import jakarta.servlet.http.HttpServletRequest

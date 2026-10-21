@@ -85,6 +85,8 @@ pulsemetry-backend
     │                                └ 사용자 JWT·세션·OIDC 신원 연결과 OTLP 경로의 ptt_ 검증 · telemetry token 해시
     ├── telemetry-auth/              com.team376.pulsemetry.telemetry.auth
     │                                telemetry 전용 JWT 발급·검증 · 키 파일 로더 · Bearer 추출 (ADR 0065). Spring·RDB 없음
+    ├── telemetry-otlp-http/         com.team376.pulsemetry.telemetry.otlp
+    │                                OTLP/HTTP 표면 — 응답 본문 · gRPC 상태 · signal 경로 · media type · Content-Encoding 허용 목록 (ADR 0067)
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
     │                                OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
     │                                ├ masking/    blocked_values 14종 값 마스킹
@@ -163,6 +165,9 @@ telemetry-ingest 가 `ptt_` 필터를 조립한다.
 `:libs:telemetry-auth`는 telemetry 전용 JWT(ADR 0065)의 발급·검증을 담는다. 의존은 nimbus 뿐이고 Spring·RDB·Kafka 를 모른다 —
 DB 없는 Gateway 와 enrollment(발급)·ingest(HTTP 호환 검증)가 같은 규칙을 쓰기 때문이다. `:libs:security`의 사용자 JWT 와 키·`typ`·`aud`를 공유하지 않는다.
 `<컨텍스트>-<역할>` 모듈이지만 telemetry 밖에 같은 역할의 짝이 없으므로 패키지는 `telemetry.auth` 어순이다(5절의 단계 모듈과 같은 이유).
+
+`:libs:telemetry-otlp-http`는 수집 모듈과 Gateway 가 갈라지면 안 되는 OTLP/HTTP 표면(응답 바이트·경로·허용 목록)을 담는다(ADR 0067 Decision 4).
+앱끼리는 의존하지 않으므로(4절) 공유할 것을 `:libs:` 로 올렸다. Spring·JPA·Kafka 에 의존하지 않는다.
 
 `:libs:telemetry-collector`는 5절이 예고한 단계 모듈 중 첫 번째다(PROJ-114). 하위 패키지는 5절이
 정한 대로 `masking/`·`archive/` 둘이고, 수신 관련 타입은 모듈 루트 패키지에 둔다.

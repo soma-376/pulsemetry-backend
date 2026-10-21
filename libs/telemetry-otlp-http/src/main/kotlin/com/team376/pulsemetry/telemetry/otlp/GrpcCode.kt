@@ -1,4 +1,4 @@
-package com.team376.pulsemetry.telemetry.collector
+package com.team376.pulsemetry.telemetry.otlp
 
 /**
  * gRPC 상태 코드와 HTTP 상태의 상호 변환. 상위
@@ -9,7 +9,7 @@ package com.team376.pulsemetry.telemetry.collector
  * (503 → Unavailable → 503 은 같지만 Canceled → 503 → Unavailable 은 다르다)
  * 한쪽 표를 다른 쪽에서 유도하지 마라.
  */
-internal enum class GrpcCode(val number: Int) {
+public enum class GrpcCode(public val number: Int) {
 	OK(0),
 	CANCELLED(1),
 	UNKNOWN(2),
@@ -30,7 +30,7 @@ internal enum class GrpcCode(val number: Int) {
 	;
 
 	/** 상위 `GetHTTPStatusCodeFromStatus`. 재시도 가능 여부가 이 표의 기준이다. */
-	fun toHttpStatus(): Int = when (this) {
+	public fun toHttpStatus(): Int = when (this) {
 		// 재시도 가능
 		CANCELLED, DEADLINE_EXCEEDED, ABORTED, OUT_OF_RANGE, UNAVAILABLE, DATA_LOSS -> 503
 		RESOURCE_EXHAUSTED -> 429
@@ -42,14 +42,14 @@ internal enum class GrpcCode(val number: Int) {
 		else -> 500
 	}
 
-	companion object {
+	public companion object {
 		/**
 		 * 상위 `NewStatusFromMsgAndHTTPCode`. grpc 공식 매핑과 두 자리가 다른데
 		 * (429 → ResourceExhausted, 400 → InvalidArgument) 상위 주석이 그것을 의도된 예외로 못박았다.
 		 *
 		 * main 에서 호출처가 없다 — 상위 표의 전사이고 테스트만 쓴다.
 		 */
-		fun ofHttpStatus(httpStatus: Int): GrpcCode = when (httpStatus) {
+		public fun ofHttpStatus(httpStatus: Int): GrpcCode = when (httpStatus) {
 			400 -> INVALID_ARGUMENT
 			401 -> UNAUTHENTICATED
 			403 -> PERMISSION_DENIED

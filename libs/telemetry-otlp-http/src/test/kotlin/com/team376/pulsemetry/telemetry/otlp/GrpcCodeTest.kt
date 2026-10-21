@@ -1,4 +1,4 @@
-package com.team376.pulsemetry.telemetry.collector
+package com.team376.pulsemetry.telemetry.otlp
 
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.DisplayName

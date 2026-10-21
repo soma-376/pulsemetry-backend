@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.telemetry.collector
 
+import com.team376.pulsemetry.telemetry.otlp.OtlpContentEncoding
 import java.io.ByteArrayInputStream
 import java.util.zip.GZIPInputStream
 import java.util.zip.InflaterInputStream
@@ -34,7 +35,8 @@ internal class OtlpRequestDecoder(
 	 *   `RuntimeException` 이 아니므로 호출자는 `Exception` 으로 잡아야 한다.
 	 */
 	fun decompress(contentEncoding: String?, body: ByteArray): ByteArray {
-		val encoding = contentEncoding.orEmpty().trim().lowercase()
+		// 정규화·허용 목록은 Gateway 와 공유한다(OtlpContentEncoding). 아래 분기와 그 목록은 함께 바꾼다.
+		val encoding = OtlpContentEncoding.normalize(contentEncoding)
 		return when (encoding) {
 			"", "identity", "none" -> body
 			"gzip" -> readCapped(GZIPInputStream(ByteArrayInputStream(body)))

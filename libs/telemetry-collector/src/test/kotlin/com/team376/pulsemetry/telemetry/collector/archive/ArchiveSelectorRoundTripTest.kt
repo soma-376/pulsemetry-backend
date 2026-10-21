@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.telemetry.collector.archive
 
 import com.google.protobuf.Message
-import com.team376.pulsemetry.telemetry.collector.OtlpHttpRequest
+import com.team376.pulsemetry.telemetry.otlp.OtlpHttpRequest
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
 import com.team376.pulsemetry.telemetry.collector.OtlpJson
 import com.team376.pulsemetry.telemetry.collector.Signal
