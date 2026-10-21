@@ -32,6 +32,7 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider
 import software.amazon.awssdk.auth.credentials.ContainerCredentialsProvider
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+import software.amazon.awssdk.core.exception.ApiCallTimeoutException
 import software.amazon.awssdk.core.exception.SdkClientException
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.sesv2.model.SendEmailRequest
@@ -213,8 +214,11 @@ class SesMailTransportTest {
         assertThat(server.requests(PATH)).isEmpty()
     }
 
-    @Test fun `재현 조건 — SDK 의 호출 제한 시간은 자격 증명 조회를 기다리는 시간을 포함하지 않는다`() {
+    @Test fun `재현 조건 — SDK 의 호출 제한 시간은 자격 증명 조회를 기다리는 시간을 끊지 못한다`() {
         // 발송 구현의 기한 없이 SDK 에만 맡기면 선점 임대를 넘긴다. 아래 회귀 테스트가 같은 조건으로 막는지 본다.
+        // ECS 엔드포인트가 두 번 응답하지 않아(읽기 1초씩) 세 번째에 받는다 — 호출은 그때까지 돌아오지 않아 호출 제한(0.4초)과 임대(1.6초)를 모두 넘긴다.
+        // SDK 2.40.x 는 그 뒤 늦게 얻은 자격으로 SES 에 보냈고, MSK IAM 라이브러리에 맞춰 올린 2.51.x(PROJ-245)는 같은 시간이 지난 뒤
+        // 호출 시간 초과로 끝내고 SES 에 묻지 않는다. 어느 판이든 임대를 넘기는 것은 같다.
         server.on("POST", PATH, accepted())
         SlowCredentialsEndpoint(hangs = 2).use { ecs ->
             withContainerCredentials(ecs) {
@@ -223,15 +227,15 @@ class SesMailTransportTest {
                 SesMailTransport.client(Region.US_EAST_1, timeout, credentials) { it.endpointOverride(server.base) }.use { client ->
                     val request = SendEmailRequest.builder().fromEmailAddress(FROM).destination { it.toAddresses(RECIPIENT) }
                         .content { content -> content.simple { it.subject { s -> s.data(SUBJECT) }.body { b -> b.text { t -> t.data("본문") } } } }.build()
-                    val (_, elapsed) = timed { client.sendEmail(request) }
-                    // ECS 엔드포인트가 두 번 응답하지 않아(읽기 1초씩) 세 번째에 받는다 — 호출 제한(0.4초)과 임대(1.6초)를 모두 넘긴다.
-                    assertThat(elapsed).isGreaterThan(timeout.multipliedBy(4))
+                    val started = Instant.now()
+                    assertThatThrownBy { client.sendEmail(request) }.isInstanceOf(ApiCallTimeoutException::class.java)
+                    assertThat(Duration.between(started, Instant.now())).isGreaterThan(timeout.multipliedBy(4))
                     assertThat(ecs.requests.get()).isEqualTo(3)
                 }
                 credentials.close()
             }
         }
-        assertThat(server.requests(PATH)).hasSize(1)
+        assertThat(server.requests(PATH)).isEmpty()
     }
 
     @Test fun `자격 증명 조회가 늦으면 기한 안에 SES 에 묻지 않고 실패하고 늦은 조회는 하나만 돌아 다음 발송이 그 결과를 쓴다`(output: CapturedOutput) {

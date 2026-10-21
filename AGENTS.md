@@ -224,7 +224,8 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   dashboard-api는 `VendorConnections`로 비밀 아닌 열만 읽는다. 옛 키는 `vendor_connections.credential_key_id`가 그 키를 쓰는 행이 없을 때만 뺀다.
 - **메일은 outbox 다**(ADR 0037). 업무 쓰기와 같은 트랜잭션에서 적재하고 enrollment-api 의 발송 작업이 선점해 보낸다 — 명령 안에서 메일 공급자를 부르지 않는다.
   발송 구현은 `pulsemetry.mail.provider`(`smtp`·`ses`)로 고르고 자동 fallback 은 없다(ADR 0058). SES SDK 는 **한 번만 시도**한다 — 재시도는 outbox 가 갖는다.
-  **SDK 의 `apiCallTimeout`은 자격 증명 조회를 포함하지 않는다.** `SesMailTransport`가 조회를 `send-timeout` 기한까지만 기다리고 남은 시간만 호출에 준다 —
+  **SDK 의 `apiCallTimeout`은 자격 증명 조회를 기다리는 시간을 끊지 못한다**(2.51.x 는 조회가 끝난 뒤 시간 초과로 끝내고 2.40.x 는 그대로 보냈다 — `SesMailTransportTest` 재현 조건).
+  `SesMailTransport`가 조회를 `send-timeout` 기한까지만 기다리고 남은 시간만 호출에 준다 —
   이 순서를 빼면 늦은 자격 증명 조회로 발송이 선점 임대를 넘겨 같은 메일이 두 번 나간다.
   ECS 자격 증명 엔드포인트를 늦추는 모의 테스트는 이 제한의 재현 근거이며 dev 실행 환경이 ECS라는 뜻은 아니다.
   공개 실패 코드는 ADR 0037 어휘 그대로이고 SES 세부는 `failure_detail`(`ses_*`)과 로그에만 둔다. AWS 오류 메시지 원문과 SES 접수 ID 를 DB 에 넣지 않는다.

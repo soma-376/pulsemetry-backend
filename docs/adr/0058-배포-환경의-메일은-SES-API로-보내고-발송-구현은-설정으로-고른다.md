@@ -147,6 +147,8 @@ SDK가 스스로 재시도하거나 자격 증명 조회를 기한 없이 기다
 - 새 필수 설정(`provider`, SES 모드의 `ses.region`)이 생겨 메일을 켠 기존 배포 설정도 함께 바꿔야 한다.
 
 ## Follow-up
+- **완료** — AWS SDK BOM 을 MSK IAM 라이브러리 기준 2.51.2 로 올렸다(PROJ-245). 2.51.x 도 자격 증명 조회가 끝날 때까지 호출이 돌아오지 않아
+  임대를 넘기는 것은 같고, 달라진 것은 그 뒤 SES 에 보내지 않고 호출 시간 초과로 끝낸다는 점이다. 결정은 그대로이고 재현 조건 테스트가 새 판의 동작을 고정한다.
 - 배포 환경 준비 — 리전·발신 도메인과 주소·DKIM·DMARC·sandbox 해제·enrollment-api 전용 workload IAM 역할 권한·환경 변수와 비밀 주입(`docs/mail-operations.md` §2·§3). 인프라 작업이다.
   현재 infra `lib/dev/runtime-input.cjs`는 `managementEnabled`·`mailEnabled`의 true를 거부한다. dev EKS에서 메일을 켜려면
   Pod Identity 역할의 SES 권한과 메일 설정·outbox 키 공급을 먼저 구현·검증해야 한다. 단순히 runtime 입력을 true로 바꾸는 절차가 아니다.

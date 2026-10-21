@@ -10,7 +10,9 @@ jsonSchemaValidator = "3.0.6"
 otelProto = "1.11.0-alpha"
 protobuf = "4.36.1"
 # 아카이브 적재 (ADR 0012). BOM 을 import 해 하위 모듈 버전을 맞춘다.
-awsSdk = "2.40.11"
+# MSK IAM 인증 라이브러리(aws-msk-iam-auth 2.3.9)가 빌드된 SDK 판에 맞춘다 — 그 라이브러리가 auth·sts·regions 를
+# 런타임으로 끌어오므로 판이 둘로 갈리지 않게 한다 (ADR 0066). 올릴 때는 S3·SES 회귀 테스트를 함께 돌린다.
+awsSdk = "2.51.2"
 # telemetry JWT 발급·검증 (ADR 0065). Spring Security(oauth2-jose)가 끌어오는 판과 같게 고정한다 —
 # 두 경로가 한 클래스패스에서 다른 nimbus 를 보지 않게 한다.
 nimbusJoseJwt = "10.9"
