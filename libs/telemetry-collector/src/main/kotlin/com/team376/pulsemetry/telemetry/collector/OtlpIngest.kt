@@ -20,12 +20,15 @@ public fun interface SignalConsumer {
 }
 
 /**
- * 재시도해도 소용없는 오류. **400** 이 된다.
+ * 재시도해도 소용없는 오류. HTTP 에서는 **400**, Kafka 에서는 재시도 없이 offset 확정이다(ADR 0066 Decision 6).
  *
  * 상태 코드를 읽는 것은 telemetryctl 데몬이고, 데몬은 **4xx 만 즉시 폐기하고 5xx 는 전부
  * 재시도한다**(허브 ADR 0006). 폐기를 만드는 코드는 4xx 뿐이다.
  *
- * **일시적 장애에 이 예외를 쓰면 배치가 즉시 버려진다.** 일시 장애는 그냥 던지면 503 이 된다.
+ * **일시적 장애에 이 예외를 쓰면 배치가 즉시 버려진다.** 일시 장애는 그냥 던지면 503(Kafka 는 재시도)이 된다.
+ *
+ * [message] 는 HTTP 응답 본문에 실린다(기존 계약). **로그에는 싣지 않는다** — 디코더·하류의 메시지에 본문 조각이 섞일 수 있다.
+ * Kafka 경로의 로그는 [OtlpPayloadException.reason] 같은 코드만 남긴다.
  */
-public class PermanentIngestException(message: String, cause: Throwable? = null) :
+public open class PermanentIngestException(message: String, cause: Throwable? = null) :
 	RuntimeException(message, cause)

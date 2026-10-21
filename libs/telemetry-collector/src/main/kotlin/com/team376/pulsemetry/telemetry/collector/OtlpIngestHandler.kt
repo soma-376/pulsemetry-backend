@@ -1,56 +1,39 @@
 package com.team376.pulsemetry.telemetry.collector
 
-import com.google.protobuf.Message
-import com.team376.pulsemetry.telemetry.collector.archive.ArchiveReceipt
-import com.team376.pulsemetry.telemetry.collector.archive.ArchiveWriter
-import com.team376.pulsemetry.telemetry.collector.archive.ArchivedDocument
-import com.team376.pulsemetry.telemetry.collector.archive.ProductRouter
-import com.team376.pulsemetry.telemetry.collector.masking.AttributeWalker
-import com.team376.pulsemetry.telemetry.collector.masking.MaskingPolicy
-import com.team376.pulsemetry.telemetry.collector.masking.SecretMasker
+import com.team376.pulsemetry.telemetry.ingress.RawOtlpPayload
 import com.team376.pulsemetry.telemetry.otlp.GrpcCode
+import com.team376.pulsemetry.telemetry.otlp.OtlpContentEncoding
 import com.team376.pulsemetry.telemetry.otlp.OtlpHttpRequest
 import com.team376.pulsemetry.telemetry.otlp.OtlpHttpResponse
+import com.team376.pulsemetry.telemetry.otlp.OtlpMediaType
 import com.team376.pulsemetry.telemetry.otlp.OtlpResponses
-import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
-import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
-import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
-import io.opentelemetry.proto.metrics.v1.Metric
+import com.team376.pulsemetry.telemetry.otlp.OtlpSignal
 import java.time.Clock
 import java.util.UUID
 
 /**
- * 수집 단계의 진입점. OTLP 수신 → 마스킹 → 원본 아카이브 → 다음 단계.
+ * 수집 단계의 HTTP 어댑터(ADR 0067 Decision 2). 메서드·경로·`Content-Type` 을 검사하고 [OtlpProcessor] 의 결과를 OTLP/HTTP
+ * 응답으로 바꾼다. 압축 해제·디코딩·마스킹·스탬프·아카이브는 코어([OtlpIngestProcessor])의 몫이다.
  *
- * 현행 collector 설정의 파이프라인 아홉을 한 경로로 접은 것이다. 실시간 스트림과 제품별 아카이브가
- * 별개 파이프라인이었던 것은 collector 가 그렇게밖에 표현할 수 없었기 때문이고, 홉이 사라진
- * 지금은 한 번 수신해 한 번 마스킹하고 두 갈래로 보내면 된다(허브 ADR 0005).
+ * ## 상태 매핑
  *
- * ## 순서가 계약이다
+ * | 결과 | 응답 |
+ * |---|---|
+ * | POST 가 아님 · 모르는 경로 · 모르는 `Content-Type` | 405 · 404 · 415 (상위 문자열 그대로) |
+ * | [PermanentIngestException] — 디코딩·압축 해제·마스킹·하류 영구 실패 | 400, gRPC `INVALID_ARGUMENT`, 메시지 그대로 |
+ * | 그 밖의 `RuntimeException` | 503, gRPC `UNAVAILABLE` |
  *
- * ```
- * 1. 마스킹      세 시그널 모두 (Signal.masked · AttributeWalker)
- * 2. 신원 스탬프  검증된 tenant·installation 을 리소스 속성으로 승격한다
- * 3. 아카이브     제품 구간별로 갈라 외부 저장소에 쓰고, 실제로 쓴 위치로 영수증을 만든다
- * 4. 다음 단계    변환·보강·적재 — 전체 요청과 영수증을 함께 받는다
- * ```
+ * 503 의 `Retry-After` 는 앱의 응답 writer 가 붙인다.
  *
- * **스탬프가 아카이브보다 먼저다.** 신원은 멱등 키의 재료이기 때문이다 — 분석 행의 키 `observation_id` 는 재료에
- * 항상 `tenant_id`·`installation_id` 를 넣는다(ADR 0020 §2). 재처리는 아카이브 원본에 심긴 신원으로 그 문맥을
- * 재현하므로, 신원 없는 원본을 재처리하면 실시간 경로가 만든 키와 **다른 키**가 나오고 합쳐져야 할 행이 중복으로
- * 쌓인다(ADR 0012 · 0016).
+ * ## 영수증
  *
- * **아카이브가 다음 단계보다 먼저다.** 허브 `architecture/overview.md` 2절이 "Adapter 이후 변환이
- * 실패하면 그 시그널은 Object Storage 에만 남는다. 이것이 흐름 D 의 복구 원천이며 별도 DLQ 에
- * 의존하지 않는다"고 못박았다. 순서를 뒤집으면 변환 실패가 곧 데이터 유실이 된다.
- * 같은 이유로 **아카이브가 실패하면 다음 단계를 부르지 않고 503 을 낸다** — 복구 원천 없이
- * 파이프라인을 진행시키지 않는다.
+ * receipt ID 는 요청마다 새 UUID, 수신 시각은 요청이 여기 닿은 때다 — 디코드·마스킹에 걸린 시간을 섞지 않는다.
+ * HTTP 재전송은 새 영수증이다(ADR 0021). Kafka 경로는 이 어댑터를 지나지 않는다.
  *
  * ## 인증은 이 앞이다
  *
- * 필터 체인이 통과시킨 요청만 여기 닿는다(허브 ADR 0005). 폐기된 토큰이나 정지된 tenant 의
- * 요청처럼 거부될 데이터가 외부 저장소에 적재되면 안 되기 때문이다. **이 클래스는 인증을 하지
- * 않는다** — 조립 앱이 `:libs:security` 를 앞에 세운다.
+ * 필터 체인이 통과시킨 요청만 여기 닿는다. 앱이 검증된 principal 에서 [AuthorizedTelemetryIdentity] 를 만들어
+ * **명시적으로** 넘긴다(ADR 0067 — 스레드 지역 신원을 읽지 않는다).
  *
  * ## 스테레오타입을 달지 않는다 (ADR 0011)
  *
@@ -58,155 +41,48 @@ import java.util.UUID
  * 부르고 [OtlpHttpResponse] 를 그대로 내보내면 된다.
  */
 public class OtlpIngestHandler(
-	private val archive: ArchiveWriter,
-	private val next: SignalConsumer,
-	private val identity: IdentitySource = IdentitySource { null },
-	maxDecompressedBytes: Long = OtlpRequestDecoder.DEFAULT_MAX_DECOMPRESSED_BYTES,
+	private val processor: OtlpProcessor,
 	/** 영수증의 수신 시각을 재는 서버 시계. */
 	private val clock: Clock = Clock.systemUTC(),
 ) {
 
-	private val decoder = OtlpRequestDecoder(maxDecompressedBytes)
-	private val walker = AttributeWalker(SecretMasker())
-
-	public fun handle(request: OtlpHttpRequest): OtlpHttpResponse {
+	public fun handle(request: OtlpHttpRequest, identity: AuthorizedTelemetryIdentity): OtlpHttpResponse {
 		// 서버 수신 시각은 요청이 여기 닿은 때다 — 디코드·마스킹에 걸린 시간을 섞지 않는다.
 		val receivedAt = clock.instant()
-		if (!request.method.equals("POST", ignoreCase = true)) return methodNotAllowed()
+		if (!request.method.equals("POST", ignoreCase = true)) return OtlpResponses.methodNotAllowed()
 
 		// 상위는 설정된 경로에만 라우트를 등록하므로 그 밖의 경로는 mux 가 404 를 낸다.
-		val signal = Signal.ofPath(request.path) ?: return notFound()
+		val signal = OtlpSignal.ofPath(request.path) ?: return notFound()
 
-		val encoding = OtlpEncoding.ofContentType(request.contentType) ?: return unsupportedMediaType()
+		val mediaType = OtlpMediaType.ofContentType(request.contentType) ?: return OtlpResponses.unsupportedMediaType()
 
-		// 디코드·압축 해제 실패는 전부 400 이다(허브 ADR 0006). IOException 계열도 잡는다 —
-		// 깨진 gzip 은 ZipException, 깨진 protobuf 는 InvalidProtocolBufferException 이고 둘 다
-		// RuntimeException 이 아니다. 놓치면 500 이 되어 데몬이 깨진 배치를 영구히 재시도한다.
-		val body = try {
-			decoder.decompress(request.contentEncoding, request.body)
-		} catch (e: Exception) {
-			return status(encoding, 400, GrpcCode.INVALID_ARGUMENT, e.message.orEmpty())
-		}
-
-		val builder = signal.newRequestBuilder()
-		try {
-			encoding.decode(body, builder)
-		} catch (e: Exception) {
-			return status(encoding, 400, GrpcCode.INVALID_ARGUMENT, e.message.orEmpty())
-		}
-
-		// 상위는 레코드가 0건이면 소비자를 부르지 않고 바로 성공을 돌려준다.
-		if (recordCount(builder) == 0) return success(encoding)
-
-		if (signal.masked) mask(signal, builder)
-
-		// 아카이브보다 먼저다. 빌더에 찍으므로 아카이브와 다음 단계가 같은 값을 본다.
-		val stamped = identity.current()
-		stamped?.let { IdentityStamper.stamp(builder, it) }
-
-		val message = builder.build()
+		val payload = RawOtlpPayload(
+			signal = signal,
+			mediaType = mediaType,
+			contentEncoding = OtlpContentEncoding.normalize(request.contentEncoding),
+			body = request.body,
+		)
 
 		return try {
-			// 모든 resource 가 정확히 한 문서에 들어간다. 하나라도 실패하면 영수증 없이 503 이다.
-			val documents = ProductRouter.split(message).map { routed ->
-				ArchivedDocument(
-					product = routed.product,
-					location = archive.write(routed.product, signal, OtlpJson.toJson(routed.document)),
-					resourceIndexes = routed.resourceIndexes,
-				)
-			}
-			val receipt = ArchiveReceipt(
-				receiptId = UUID.randomUUID().toString(),
-				receivedAt = receivedAt,
-				signal = signal,
-				tenantId = stamped?.tenantId?.takeIf { it.isNotEmpty() },
-				installationId = stamped?.installationId?.takeIf { it.isNotEmpty() },
-				maskingVersion = MaskingPolicy.VERSION,
-				identityVersion = IdentityStamper.VERSION,
-				documents = documents,
-			)
-			next.consume(signal, message, receipt)
-			success(encoding)
+			processor.process(payload, VerifiedIngestContext(UUID.randomUUID(), receivedAt, identity))
+			OtlpResponses.successResponse(mediaType)
 		} catch (e: PermanentIngestException) {
 			// 영구 오류. 재시도해도 같으므로 클라이언트가 배치를 버리게 한다 — 그러려면 4xx 여야 한다.
 			// 데몬은 5xx 를 전부 재시도하므로 500 으로는 폐기가 만들어지지 않는다(허브 ADR 0006).
-			status(encoding, 400, GrpcCode.INVALID_ARGUMENT, e.message.orEmpty())
+			OtlpResponses.statusResponse(mediaType, 400, GrpcCode.INVALID_ARGUMENT, e.message.orEmpty())
 		} catch (e: RuntimeException) {
 			// 상태가 실리지 않은 오류의 기본은 재시도 가능이다 — 상위 GetStatusFromError 와 같다.
-			status(encoding, 503, GrpcCode.UNAVAILABLE, e.message.orEmpty())
+			OtlpResponses.statusResponse(mediaType, 503, GrpcCode.UNAVAILABLE, e.message.orEmpty())
 		}
 	}
 
 	/**
 	 * 이 진입점 **앞**에서 난 일시 장애를 OTLP 503 본문으로 만든다 — 인증 조회의 DB 장애가 그 경우다.
-	 *
-	 * 본문 형식(`google.rpc.Status`, 요청과 같은 인코딩)은 이 모듈이 소유하고 인코더는 `internal` 이라,
-	 * 앞단이 같은 바이트를 내려면 여기를 부른다. 모르는 `Content-Type` 은 JSON 으로 쓴다 — 415 판정은
-	 * 인증 뒤의 일이고, 그 전에 죽은 요청에 415 를 낼 수는 없다.
+	 * 모르는 `Content-Type` 은 JSON 으로 쓴다 — 415 판정은 인증 뒤의 일이고, 그 전에 죽은 요청에 415 를 낼 수는 없다.
 	 */
 	public fun unavailable(contentType: String?, message: String): OtlpHttpResponse =
 		OtlpResponses.unavailable(contentType, message)
 
-	private fun mask(signal: Signal, builder: Message.Builder) {
-		when (signal) {
-			Signal.LOGS -> walker.maskLogs(builder as ExportLogsServiceRequest.Builder)
-			Signal.TRACES -> walker.maskTraces(builder as ExportTraceServiceRequest.Builder)
-			Signal.METRICS -> walker.maskMetrics(builder as ExportMetricsServiceRequest.Builder)
-		}
-	}
-
-	/**
-	 * 상위가 성공 단축에 쓰는 수 — logs 는 `LogRecordCount()`, traces 는 `SpanCount()`, metrics 는
-	 * `DataPointCount()` 다. metrics 는 메트릭 수가 아니라 **데이터포인트 수**라, 데이터포인트 없는
-	 * 메트릭만 담긴 요청은 소비자를 부르지 않고 200 이다.
-	 */
-	private fun recordCount(builder: Message.Builder): Int = when (builder) {
-		is ExportLogsServiceRequest.Builder ->
-			builder.resourceLogsBuilderList.sumOf { rl ->
-				rl.scopeLogsBuilderList.sumOf { it.logRecordsCount }
-			}
-
-		is ExportTraceServiceRequest.Builder ->
-			builder.resourceSpansBuilderList.sumOf { rs ->
-				rs.scopeSpansBuilderList.sumOf { it.spansCount }
-			}
-
-		is ExportMetricsServiceRequest.Builder ->
-			builder.resourceMetricsBuilderList.sumOf { rm ->
-				rm.scopeMetricsBuilderList.sumOf { sm -> sm.metricsBuilderList.sumOf { dataPointCount(it) } }
-			}
-
-		else -> error("모르는 요청 타입이다: ${builder.descriptorForType.fullName}")
-	}
-
-	/** 다섯 데이터 종류 중 하나만 설정된다(oneof). 설정되지 않은 것은 0 이다. */
-	private fun dataPointCount(metric: Metric.Builder): Int = when (metric.dataCase) {
-		Metric.DataCase.GAUGE -> metric.gauge.dataPointsCount
-		Metric.DataCase.SUM -> metric.sum.dataPointsCount
-		Metric.DataCase.HISTOGRAM -> metric.histogram.dataPointsCount
-		Metric.DataCase.EXPONENTIAL_HISTOGRAM -> metric.exponentialHistogram.dataPointsCount
-		Metric.DataCase.SUMMARY -> metric.summary.dataPointsCount
-		Metric.DataCase.DATA_NOT_SET, null -> 0
-	}
-
-	private fun success(encoding: OtlpEncoding) = OtlpResponses.successResponse(encoding.mediaType)
-
-	private fun status(encoding: OtlpEncoding, httpStatus: Int, code: GrpcCode, message: String) =
-		OtlpResponses.statusResponse(encoding.mediaType, httpStatus, code, message)
-
-	private fun methodNotAllowed() = OtlpResponses.methodNotAllowed()
-
-	private fun unsupportedMediaType() = OtlpResponses.unsupportedMediaType()
-
 	/** 조립 앱의 기본 닫힘 체인도 같은 경로 거부 응답을 사용한다. */
 	public fun notFound(): OtlpHttpResponse = OtlpResponses.notFound()
-
-	public companion object {
-		/**
-		 * 압축을 푼 뒤 본문의 기본 상한. 실제 상한은 생성자 인자가 정하고, 이 값은 조립 앱이
-		 * 자기 설정의 기본값으로 쓰라고 공개한다 — 디코더 자체는 `internal` 이다.
-		 */
-		public const val DEFAULT_MAX_DECOMPRESSED_BYTES: Long =
-			OtlpRequestDecoder.DEFAULT_MAX_DECOMPRESSED_BYTES
-	}
 }

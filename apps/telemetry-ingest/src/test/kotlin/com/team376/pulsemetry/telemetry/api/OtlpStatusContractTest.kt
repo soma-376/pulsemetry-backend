@@ -1,5 +1,9 @@
 package com.team376.pulsemetry.telemetry.api
 
+import java.util.UUID
+import com.team376.pulsemetry.telemetry.collector.OtlpIngestProcessor
+import com.team376.pulsemetry.security.TelemetryTokenPrincipal
+import com.team376.pulsemetry.security.TelemetryTokenAuthenticationToken
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
 import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsUnavailableException
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
@@ -77,7 +81,9 @@ class OtlpStatusContractTest {
 			.perform(
 				post("/v1/logs")
 					.contentType("application/json")
-					.content(ONE_LOG_RECORD),
+					.content(ONE_LOG_RECORD)
+					// 체인이 세운 인증 결과를 흉내 낸다 — 컨트롤러가 principal 을 명시적으로 넘긴다(ADR 0067).
+					.principal(TelemetryTokenAuthenticationToken.authenticated(PRINCIPAL)),
 			)
 			.andReturn()
 			.response
@@ -86,12 +92,14 @@ class OtlpStatusContractTest {
 		val archive = object : ArchiveWriter {
 			override fun write(product: Product, signal: Signal, body: ByteArray) = ArchivedObject("memory://0")
 		}
-		val handler = OtlpIngestHandler(archive = archive, next = next)
+		val handler = OtlpIngestHandler(OtlpIngestProcessor(archive = archive, next = next))
 		val properties = TelemetryIngestProperties(tokenHashSecret = "test-token-hash-secret")
 		return MockMvcBuilders.standaloneSetup(OtlpController(handler, OtlpResponseWriter(properties), properties)).build()
 	}
 
 	private companion object {
+		val PRINCIPAL = TelemetryTokenPrincipal(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
+
 		/** 레코드 0건이면 소비자를 부르지 않으므로 하나는 있어야 한다. */
 		val ONE_LOG_RECORD: ByteArray = """
 			{"resourceLogs":[{"resource":{"attributes":[

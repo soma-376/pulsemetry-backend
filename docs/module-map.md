@@ -176,9 +176,11 @@ Gateway(`:apps:telemetry-gateway`)는 S3 SDK 를 가진 수집 모듈과 JPA 를
 `:libs:telemetry-collector`는 5절이 예고한 단계 모듈 중 첫 번째다(PROJ-114). 하위 패키지는 5절이
 정한 대로 `masking/`·`archive/` 둘이고, 수신 관련 타입은 모듈 루트 패키지에 둔다.
 HTTP 라우팅과 인증 체인은 `:apps:telemetry-ingest`가 붙인다.
-**검증된 신원을 리소스 속성으로 승격하는 것도 이 모듈이다**(`IdentitySource`) — 아카이브 원본이 신원을 담아야
+**검증된 신원을 리소스 속성으로 승격하는 것도 이 모듈이다** — 아카이브 원본이 신원을 담아야
 재처리가 원래 문맥(`observation_id` 재료의 `tenant_id`·`installation_id`)을 재현한다. live 경로의 정규화는 같은
 신원을 영수증(`ArchiveReceipt`)에서 받는다. 심는 자리는 마스킹 뒤·아카이브 앞이다(ADR 0016).
+처리는 전송 독립 코어 `OtlpProcessor`(`RawOtlpPayload` + `VerifiedIngestContext` — receipt ID·수신 시각·**필수인** 검증 완료 신원)가 하고,
+HTTP 어댑터 `OtlpIngestHandler` 는 메서드·경로·media type 검사와 응답 변환만 한다. ingest 의 Kafka Consumer 도 같은 코어를 부른다(ADR 0067).
 적재 대상은 [ADR 0012](adr/0012-원본-아카이브를-S3에-쓰고-파일-구현은-로컬에만-남긴다.md)가 정했다 —
 배포는 S3, 로컬 dev는 파일이고 어느 쪽을 쓸지는 조립 앱이 고른다.
 
@@ -356,7 +358,8 @@ libs/
 
 - **인증이 가장 앞이다.** 필터 체인이 통과시킨 요청만 수집 단계에 닿는다. 폐기된 토큰이나 정지된
   tenant의 요청처럼 거부될 데이터가 외부 저장소에 적재되지 않게 하려면 이 순서여야 한다(허브 ADR 0005).
-- **신원은 `SecurityContextHolder`에서 얻는다.** 단계 사이에 신원 헤더를 실어 나르지 않는다.
+- **신원은 인자로 받는다.** 단계 사이에 신원 헤더를 실어 나르지 않는다. HTTP 는 컨트롤러가 인증된 principal 에서,
+  Kafka 는 RDB 판정 결과에서 검증 완료 신원을 만들어 수집 코어에 넘긴다(ADR 0067 — `SecurityContextHolder` 를 읽던 seam 은 없앴다).
 - **마스킹은 `telemetry.collector.masking` 패키지다.** 허브가 Masker를 별도 노드로 그리지만 이
   저장소에서는 수집 모듈 안에 둔다 — 정규식 규칙 묶음이라 모듈 하나를 지탱할 부피가 아니다.
   클라이언트 마스킹을 신뢰해 서버 마스킹을 생략하지 않는다는 원칙은 그대로다.

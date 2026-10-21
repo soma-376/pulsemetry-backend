@@ -14,8 +14,9 @@ import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexCompleted
 import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexDesktopCompletedProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProfileRegistry
 import com.team376.pulsemetry.telemetry.adapter.observation.pricing.CurrentPublicPrices
-import com.team376.pulsemetry.telemetry.collector.IdentitySource
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
+import com.team376.pulsemetry.telemetry.collector.OtlpIngestProcessor
+import com.team376.pulsemetry.telemetry.collector.OtlpProcessor
 import com.team376.pulsemetry.telemetry.collector.SignalConsumer
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveWriter
 import com.team376.pulsemetry.telemetry.enricher.observation.ObservationEnricher
@@ -27,7 +28,6 @@ import com.team376.pulsemetry.telemetry.pipeline.IngestOperations
 import com.team376.pulsemetry.telemetry.pipeline.IngestPipeline
 import com.team376.pulsemetry.telemetry.pipeline.RdsRetentionBoundaries
 import com.team376.pulsemetry.telemetry.pipeline.RetentionBoundaries
-import com.team376.pulsemetry.telemetry.pipeline.SecurityContextIdentitySource
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -88,22 +88,24 @@ class PipelineConfig {
 		operations: ObjectProvider<IngestOperations>,
 	): SignalConsumer = IngestPipeline(observations::run, enricher, events, metricPoints, schema, boundaries, operations.ifAvailable)
 
+	/**
+	 * 전송 독립 수집 코어(ADR 0067). HTTP 어댑터와 Kafka Consumer 가 같은 인스턴스를 부른다 — 압축 해제 상한·마스킹·
+	 * 스탬프·아카이브 규칙이 두 경로에서 갈라지지 않는다.
+	 */
 	@Bean
-	fun identitySource(): IdentitySource = SecurityContextIdentitySource()
-
-	@Bean
-	fun otlpIngestHandler(
+	fun otlpProcessor(
 		archive: ArchiveWriter,
 		next: SignalConsumer,
-		identity: IdentitySource,
 		properties: TelemetryIngestProperties,
-		clock: Clock,
-	): OtlpIngestHandler = OtlpIngestHandler(
+	): OtlpProcessor = OtlpIngestProcessor(
 		archive = archive,
 		next = next,
-		identity = identity,
 		maxDecompressedBytes = properties.telemetry.ingest.maxDecompressedBytes,
-		// 아카이브 영수증의 수신 시각. S3 키 파티션과 같은 시계다.
-		clock = clock,
 	)
+
+	/** HTTP 어댑터. 신원은 컨트롤러가 인증된 principal 에서 꺼내 명시적으로 넘긴다(ADR 0067 — 스레드 지역 신원을 읽지 않는다). */
+	@Bean
+	fun otlpIngestHandler(processor: OtlpProcessor, clock: Clock): OtlpIngestHandler =
+		// 아카이브 영수증의 수신 시각. S3 키 파티션과 같은 시계다.
+		OtlpIngestHandler(processor, clock)
 }

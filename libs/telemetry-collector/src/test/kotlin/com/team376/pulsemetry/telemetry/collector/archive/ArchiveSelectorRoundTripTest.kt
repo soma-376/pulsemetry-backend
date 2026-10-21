@@ -1,11 +1,13 @@
 package com.team376.pulsemetry.telemetry.collector.archive
 
+import java.util.UUID
+import com.team376.pulsemetry.telemetry.collector.OtlpIngestProcessor
+import com.team376.pulsemetry.telemetry.collector.AuthorizedTelemetryIdentity
 import com.google.protobuf.Message
 import com.team376.pulsemetry.telemetry.otlp.OtlpHttpRequest
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
 import com.team376.pulsemetry.telemetry.collector.OtlpJson
 import com.team376.pulsemetry.telemetry.collector.Signal
-import com.team376.pulsemetry.telemetry.collector.StampedIdentity
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
@@ -56,17 +58,19 @@ class ArchiveSelectorRoundTripTest {
 		var received: Message? = null
 		var receipt: ArchiveReceipt? = null
 		val handler = OtlpIngestHandler(
-			archive = writer,
-			next = { _, request, r ->
-				received = request
-				receipt = r
-			},
-			identity = { StampedIdentity(tenantId = "tenant-verified", installationId = "installation-verified") },
+			OtlpIngestProcessor(
+				archive = writer,
+				next = { _, request, r ->
+					received = request
+					receipt = r
+				},
+			),
 		)
+		val identity = AuthorizedTelemetryIdentity(UUID.randomUUID(), UUID.randomUUID())
 
 		// 같은 파일에 앞선 줄이 있어도 위치가 맞아야 한다 — 두 번 보내 두 번째 영수증을 본다.
-		handler.handle(post(signal))
-		val response = handler.handle(post(signal))
+		handler.handle(post(signal), identity)
+		val response = handler.handle(post(signal), identity)
 		assertThat(response.status).isEqualTo(200)
 
 		val request = received!!
@@ -80,7 +84,7 @@ class ArchiveSelectorRoundTripTest {
 			// resource(스탬프된 신원 포함)도 같다 — 재처리가 원래 신원 문맥을 본다.
 			assertThat(resourceAt(archived, selector.path[0])).isEqualTo(resourceAt(request, path[0]))
 			assertThat(resourceAt(archived, selector.path[0]).attributesList.map { it.value.stringValue })
-				.contains("tenant-verified", "installation-verified")
+				.contains(identity.tenantId.toString(), identity.installationId.toString())
 			// 표기가 왕복한다 — 분석 행의 archive_selector 가 이 문자열이다.
 			assertThat(ArchiveSelector.parse(selector.format())).isEqualTo(selector)
 		}

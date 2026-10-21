@@ -1,11 +1,14 @@
 package com.team376.pulsemetry.telemetry.api
 
-import com.team376.pulsemetry.telemetry.otlp.OtlpHttpRequest
+import com.team376.pulsemetry.security.TelemetryTokenPrincipal
+import com.team376.pulsemetry.telemetry.collector.AuthorizedTelemetryIdentity
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
+import com.team376.pulsemetry.telemetry.otlp.OtlpHttpRequest
 import com.team376.pulsemetry.telemetry.config.TelemetryIngestProperties
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.http.HttpHeaders
+import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
@@ -23,6 +26,12 @@ import org.springframework.web.bind.annotation.RestController
  *   (`0a 00` / `{"partialSuccess":{}}` / `google.rpc.Status`).
  *
  * 응답을 직접 쓰고 `Unit` 을 돌려주므로 컨버터도 콘텐트 협상도 지나지 않는다.
+ *
+ * ## 신원은 인자로 받는다
+ *
+ * OTLP 체인의 필터가 검증한 [Authentication] 을 Spring MVC 가 `request.userPrincipal` 로 넘긴다. 컨트롤러가 그 principal 에서
+ * 신원을 꺼내 수집 모듈에 **명시적으로** 넘긴다(ADR 0067) — 수집 모듈은 스레드 지역 보안 컨텍스트를 읽지 않는다.
+ * `ptt_`·telemetry JWT 어느 경로로 인증됐든 principal 은 [TelemetryTokenPrincipal] 이다.
  */
 @RestController
 class OtlpController(
@@ -34,7 +43,10 @@ class OtlpController(
 	private val maxRequestBytes = properties.telemetry.ingest.maxRequestBytes
 
 	@RequestMapping(path = ["/v1/logs", "/v1/traces", "/v1/metrics"])
-	fun ingest(request: HttpServletRequest, response: HttpServletResponse) {
+	fun ingest(request: HttpServletRequest, response: HttpServletResponse, authentication: Authentication) {
+		// 체인이 인증을 요구하므로 여기 닿은 요청에는 언제나 principal 이 있다. 다른 타입이면 배선 오류다(500).
+		val principal = authentication.principal as TelemetryTokenPrincipal
+		val identity = AuthorizedTelemetryIdentity(tenantId = principal.tenantId, installationId = principal.installationId)
 		val body = readBody(request) ?: return payloadTooLarge(response)
 
 		val result = handler.handle(
@@ -45,6 +57,7 @@ class OtlpController(
 				contentEncoding = request.getHeader(HttpHeaders.CONTENT_ENCODING),
 				body = body,
 			),
+			identity,
 		)
 
 		writer.write(response, result)
