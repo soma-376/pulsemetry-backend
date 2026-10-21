@@ -8,6 +8,8 @@ import com.team376.pulsemetry.telemetry.ingress.RawOtlpPayload
 import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaSecurity
 import com.team376.pulsemetry.telemetry.otlp.OtlpMediaType
 import com.team376.pulsemetry.telemetry.otlp.OtlpSignal
+import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import org.apache.kafka.common.serialization.StringSerializer
@@ -87,6 +89,24 @@ class KafkaTelemetryPublisherTest {
 					assertThat(it.reason).isIn("metadata_timeout", "delivery_timeout")
 				}
 			assertThat(Duration.ofNanos(System.nanoTime() - started)).isBetween(Duration.ofMillis(1500), Duration.ofMillis(7500))
+		}
+	}
+
+	@Test
+	@DisplayName("producer 를 닫으면 client meter 가 해제된다 — 다시 만들어도 이전 meter 가 남지 않는다")
+	fun producerMetersFollowLifecycle() {
+		val registry = SimpleMeterRegistry()
+		val props = properties(TelemetryGatewayProperties.Kafka(bootstrapServers = "127.0.0.1:1"))
+		fun producerMeters() = registry.meters.filter { it.id.name.startsWith("kafka.producer.") }
+
+		// meter 수는 bind 시점에 producer 가 낸 metric 에 따라 달라진다. 닫은 뒤 하나도 남지 않는 것이 계약이다.
+		repeat(2) {
+			val producer = KafkaProducer(GatewayConfig.producerProperties(props), StringSerializer(), ByteArraySerializer())
+			val binder = KafkaClientMetrics(producer).also { it.bindTo(registry) }
+			KafkaTelemetryPublisher(producer, "t", Clock.systemUTC(), Duration.ZERO, clientMetrics = binder).use {
+				assertThat(producerMeters()).isNotEmpty()
+			}
+			assertThat(producerMeters()).isEmpty()
 		}
 	}
 

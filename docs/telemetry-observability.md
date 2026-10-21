@@ -20,7 +20,7 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 - Actuator: `jvm_*`, `process_*`, `system_*`, `http_server_requests_seconds_*`.
 - Tomcat: `server.tomcat.mbeanregistry.enabled=true`로 `tomcat_threads_busy_threads`, `tomcat_threads_current_threads`, `tomcat_threads_config_max_threads` 등을 실제 노출한다. 업무 listener와 management listener를 name label로 구분한다.
 - ingest RDB: Boot 관리 Hikari DataSource의 자동 binder가 `hikaricp_connections_*`, `jdbc_connections_*`를 노출한다. 같은 pool에 수동 binder를 중복 등록하지 않는다. Gateway에는 DB가 없다.
-- Kafka: 수동 producer는 `KafkaClientMetrics`, 수동 consumer factory는 `MicrometerConsumerListener`를 명시 연결한다. client 종료 시 binder도 닫힌다. `kafka_producer_*`, `kafka_consumer_*`를 native 값으로 쓴다. broker 지표와 group의 committed lag는 Infra exporter가 소유한다. consumer client lag는 commit 완료 증거가 아니다.
+- Kafka: 수동 producer는 `KafkaClientMetrics`, 수동 consumer factory는 `MicrometerConsumerListener`를 명시 연결한다. client 종료 시 binder도 닫혀 meter가 해제되고, Consumer를 멈췄다 다시 띄우면 같은 `client.id`로 다시 등록된다(`consumerMetersFollowLifecycle`). `kafka_producer_*`, `kafka_consumer_*`를 native 값으로 쓴다. broker 지표와 group의 committed lag는 Infra exporter가 소유한다. consumer client lag는 commit 완료 증거가 아니다.
 - JVM GC pause는 기본 sum/count/max를 쓴다. client percentile과 추가 GC histogram은 켜지 않았다. consumer의 `pulsemetry_pipeline_listener_running`은 container의 running/expected state이며 처리 성공이나 lag=0을 보장하지 않는다. http 모드에서는 0이다.
 
 ### 계측 on/off
@@ -36,7 +36,7 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 | `pulsemetry_gateway_requests_total` | signal,status,outcome | controller 처리 종료. outcome은 accepted(200), rejected(4xx), failed(그 밖) |
 | `pulsemetry_gateway_request_duration_seconds` | signal,status | 요청 controller 진입부터 응답 처리 종료까지 |
 | `pulsemetry_gateway_request_bytes` | signal | 제한 안에서 본문을 모두 읽은 요청의 전송 byte. decode 전이며 gzip은 압축 byte |
-| `pulsemetry_gateway_inflight` | 없음 | controller 처리 중 요청 수 |
+| `pulsemetry_gateway_inflight` | 없음 | controller 처리 중 요청 수. Gateway에만 있다 |
 | `pulsemetry_gateway_rejections_total` | stage,reason | 인증·요청형태 거부의 고정 사유. 발행 실패는 publish counter |
 | `pulsemetry_gateway_publish_total` | signal,outcome,reason | outcome=acknowledged는 producer future가 broker ack로 끝남. failed는 ack 확인 실패 |
 | `pulsemetry_gateway_publish_duration_seconds` | signal,outcome | producer send/ack 대기 시간 |
@@ -47,7 +47,7 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 | `pulsemetry_pipeline_stage_duration_seconds` | stage,outcome | authorize·decode(압축 해제 포함)·mask·archive·normalize·enrich·retention·insert·ops, success/failure |
 | `pulsemetry_pipeline_accepted_to_attempt_start_seconds` | signal | Gateway acceptedAt부터 각 시도 시작까지의 age. 순수 broker 대기시간이 아님 |
 | `pulsemetry_pipeline_accepted_to_completion_seconds` | signal | acceptedAt부터 성공한 시도 완료까지. backlog·재시도·처리시간 포함 |
-| `pulsemetry_pipeline_inflight` | 없음 | 실행 중 listener 수 |
+| `pulsemetry_pipeline_inflight` | 없음 | 실행 중 listener 수. ingest에만 있다 |
 | `pulsemetry_pipeline_empty_total` | signal | decode 후 레코드가 없는 push |
 | `pulsemetry_pipeline_excluded_observations_total` | reason | source_time·excluded_span·retention 사유 제외 수. 재시도 때 다시 셀 수 있음 |
 | `pulsemetry_pipeline_clock_skew_total` | 없음 | 음수 age를 버린 수. 음수를 0초 성공으로 기록하지 않음 |

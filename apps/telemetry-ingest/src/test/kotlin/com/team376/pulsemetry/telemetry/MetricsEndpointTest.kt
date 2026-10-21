@@ -25,7 +25,8 @@ class MetricsEndpointTest : AbstractIngestIntegrationTest() {
         assertThat(managementPort).isNotEqualTo(port)
         val scrape = get(managementPort, "/actuator/prometheus")
         assertThat(scrape.statusCode()).isEqualTo(200)
-        assertThat(scrape.body()).contains("jvm_memory_used_bytes", "pulsemetry_gateway_inflight", "tomcat_threads_busy_threads", "hikaricp_connections_active", "jdbc_connections_active")
+        assertThat(scrape.body()).contains("jvm_memory_used_bytes", "pulsemetry_pipeline_inflight", "pulsemetry_pipeline_listener_running", "tomcat_threads_busy_threads", "hikaricp_connections_active", "jdbc_connections_active")
+        assertThat(scrape.body()).doesNotContain("pulsemetry_gateway_")
         Files.createDirectories(Path.of("build"))
         Files.writeString(Path.of("build/management-scrape.prom"), scrape.body())
         // 관리 체인(SecurityConfig)이 관리 컨텍스트에도 걸려 GET scrape 밖은 기본 닫힘과 같은 404 다.

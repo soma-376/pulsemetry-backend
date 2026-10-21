@@ -26,6 +26,7 @@ class MetricsEndpointTest : AbstractGatewayIntegrationTest() {
         val scrape = get(managementPort, "/actuator/prometheus")
         assertThat(scrape.statusCode()).isEqualTo(200)
         assertThat(scrape.body()).contains("jvm_memory_used_bytes", "pulsemetry_gateway_inflight", "tomcat_threads_busy_threads")
+        assertThat(scrape.body()).doesNotContain("pulsemetry_pipeline_")
         Files.createDirectories(Path.of("build"))
         Files.writeString(Path.of("build/management-scrape.prom"), scrape.body())
         // 관리 컨텍스트에는 부모의 서블릿 필터가 걸리지 않는다 — 다른 메서드는 MVC 의 405, 다른 경로는 Boot 오류 응답의 404 다.

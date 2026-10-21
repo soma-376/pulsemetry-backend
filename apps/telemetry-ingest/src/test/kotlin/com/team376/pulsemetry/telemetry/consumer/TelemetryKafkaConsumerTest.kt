@@ -365,6 +365,29 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 	}
 
 	@Test
+	@DisplayName("Consumer 를 멈추면 client meter 가 해제되고, 다시 띄워도 쌓이지 않는다 — listener gauge 는 NaN 이 아니다")
+	fun consumerMetersFollowLifecycle() {
+		awaitAssigned()
+		val clients = consumerClientIds()
+		assertThat(clients).isNotEmpty()
+		assertThat(gauge("pulsemetry.pipeline.listener.running")).isEqualTo(1.0)
+
+		repeat(2) {
+			container.stop()
+			assertThat(consumerClientIds()).isEmpty()
+			assertThat(gauge("pulsemetry.pipeline.listener.running")).isZero()
+			container.start()
+			awaitAssigned()
+			assertThat(consumerClientIds()).isEqualTo(clients)
+		}
+
+		System.gc()
+		assertThat(gauge("pulsemetry.pipeline.listener.running")).isEqualTo(1.0)
+		assertThat(gauge("pulsemetry.pipeline.inflight")).isZero()
+		assertThat(registry.find("pulsemetry.pipeline.listener.running").gauges()).hasSize(1)
+	}
+
+	@Test
 	@DisplayName("payload·예외 메시지의 카나리아 문자열은 로그에 남지 않는다")
 	fun canaryNeverLogged(output: CapturedOutput) {
 		val canary = "CANARYKAFKA" + UUID.randomUUID().toString().replace("-", "")
@@ -412,6 +435,12 @@ class TelemetryKafkaConsumerTest : AbstractIngestIntegrationTest() {
 			.filter { it.receiptId == messageId }
 
 	private fun processCalls(messageId: UUID): Int = processContexts(messageId).size
+
+	private fun gauge(name: String): Double = registry.get(name).gauge().value()
+
+	/** 지금 등록된 Kafka consumer client meter 의 client.id 집합. */
+	private fun consumerClientIds(): Set<String> =
+		registry.meters.filter { it.id.name.startsWith("kafka.consumer.") }.mapNotNull { it.id.getTag("client.id") }.toSet()
 
 	/** 공유 컨텍스트의 누적 counter 합. 테스트는 전후 차이만 본다. */
 	private fun count(name: String, vararg tags: String): Double = registry.find(name).tags(*tags).counters().sumOf { it.count() }

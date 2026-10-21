@@ -92,9 +92,10 @@ class KafkaConsumerConfig {
 			setCommonErrorHandler(errorHandler)
 			isAutoStartup = mode.kafkaEnabled
 			setBeanName(CONTAINER_BEAN)
+			// 강한 참조 — 약한 참조가 풀리면 scrape 가 NaN 이 된다. container 는 앱 수명 동안 하나다.
 			Gauge.builder("pulsemetry.pipeline.listener.running", this) {
 				if (it.isRunning && it.isInExpectedState) 1.0 else 0.0
-			}.register(registry)
+			}.strongReference(true).register(registry)
 		}
 	}
 

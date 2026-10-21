@@ -9,16 +9,25 @@ import java.time.Duration
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
-/** registry의 수명은 앱이 소유한다. gauge backing object를 강하게 참조하고 유한 allowlist만 label에 싣는다. */
-public class MicrometerTelemetryObserver(private val registry: MeterRegistry) : TelemetryObserver {
-    private val inflight = listOf(TelemetryMetric.GATEWAY_INFLIGHT, TelemetryMetric.PIPELINE_INFLIGHT).associateWith { metric ->
+/**
+ * registry의 수명은 앱이 소유한다. gauge backing object를 강하게 참조하고 유한 allowlist만 label에 싣는다.
+ *
+ * [gauges]는 이 앱이 실제로 움직이는 gauge다 — 다른 앱의 gauge를 0으로 노출하지 않는다. 목록 밖 gauge 기록은 버린다.
+ * 같은 registry에 observer를 둘 만들지 않는다. 같은 이름의 gauge는 먼저 만든 observer의 값에 묶인다.
+ */
+public class MicrometerTelemetryObserver(
+    private val registry: MeterRegistry,
+    gauges: Set<TelemetryMetric> = TelemetryMetric.entries.filter { it.kind == TelemetryMetric.Kind.GAUGE }.toSet(),
+) : TelemetryObserver {
+    private val inflight = gauges.associateWith { metric ->
+        require(metric.kind == TelemetryMetric.Kind.GAUGE) { "gauge가 아니다: $metric" }
         AtomicLong().also { Gauge.builder(metric.meterName, it, AtomicLong::toDouble).register(registry) }
     }
 
     override fun record(metric: TelemetryMetric, value: Double, vararg tags: Pair<String, String>) {
         if (!value.isFinite()) return
         if (metric.kind == TelemetryMetric.Kind.GAUGE) {
-            inflight.getValue(metric).addAndGet(value.toLong())
+            inflight[metric]?.addAndGet(value.toLong())
             return
         }
         if (value < 0) {

@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.telemetry.config
 
 import com.team376.pulsemetry.telemetry.observability.MicrometerTelemetryObserver
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
 import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import io.micrometer.core.instrument.MeterRegistry
 import jakarta.servlet.http.HttpServletRequest
@@ -28,7 +29,11 @@ class ObservabilityConfig(private val environment: Environment) {
      */
     @Bean
     fun telemetryObserver(registry: MeterRegistry): TelemetryObserver =
-        if (environment.getProperty(ENABLED, Boolean::class.java, true)) MicrometerTelemetryObserver(registry) else TelemetryObserver.NONE
+        if (environment.getProperty(ENABLED, Boolean::class.java, true)) {
+            MicrometerTelemetryObserver(registry, gauges = setOf(TelemetryMetric.PIPELINE_INFLIGHT))
+        } else {
+            TelemetryObserver.NONE
+        }
 
     companion object {
         const val ENABLED: String = "pulsemetry.observability.enabled"

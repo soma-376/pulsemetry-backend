@@ -56,6 +56,22 @@ class TelemetryObserverTest {
     }
 
     @Test
+    fun gaugesAreScopedToTheAppAndSurviveGc() {
+        PrometheusMeterRegistry(PrometheusConfig.DEFAULT).let { registry ->
+            val observer = MicrometerTelemetryObserver(registry, gauges = setOf(TelemetryMetric.GATEWAY_INFLIGHT))
+            observer.observe(TelemetryMetric.PIPELINE_INFLIGHT)
+            observer.observe(TelemetryMetric.GATEWAY_INFLIGHT)
+            System.gc()
+            assertThat(registry.find("pulsemetry.pipeline.inflight").gauge()).isNull()
+            assertThat(registry.get("pulsemetry.gateway.inflight").gauges()).hasSize(1)
+            assertThat(registry.get("pulsemetry.gateway.inflight").gauge().value()).isEqualTo(1.0)
+            assertThatThrownBy { MicrometerTelemetryObserver(registry, gauges = setOf(TelemetryMetric.GATEWAY_REQUESTS)) }
+                .isInstanceOf(IllegalArgumentException::class.java)
+            registry.close()
+        }
+    }
+
+    @Test
     fun negativeAgeIsNotSuccessfulLatencyAndInflightReturnsToZero() {
         PrometheusMeterRegistry(PrometheusConfig.DEFAULT).let { registry ->
             val observer = MicrometerTelemetryObserver(registry)
