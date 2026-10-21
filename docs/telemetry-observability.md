@@ -67,6 +67,29 @@ Observer 기본값은 no-op이며 `.observe`가 계측 RuntimeException을 격�
 
 이 로그의 목적은 서비스 기동·종료·의존성 실패 원인을 좁히는 것이다. trace ID, 새 message context, envelope header/schema 변경은 없다. MSK broker 로그, ClickHouse system 로그, GC/safepoint stderr, OOMKilled·exit code·restart·Kubernetes Event는 Infra의 CloudWatch 수집과 함께 확인한다. heap dump·stack dump를 자동 강제 생성하지 않는다. 앱 로그가 없는 SIGKILL/OOM도 플랫폼 증거로 판단한다.
 
+### GC·safepoint 로그 (Infra 인계)
+
+JVM 옵션이라 Spring 설정으로 켜지 않는다. 성능시험 values에서 Infra가 `JAVA_TOOL_OPTIONS`로 넣는다. 이미지 ENTRYPOINT의 `-XX:MaxRAMPercentage=75.0`은 그대로 두고 덧붙는다.
+
+```text
+JAVA_TOOL_OPTIONS=-Xlog:gc,safepoint:stderr:utctime,level,tags
+```
+
+stderr에 사건 하나가 한 줄이다. Temurin 25.0.4(런타임 이미지와 같은 메이저)에서 확인한 형식은 다음과 같다.
+
+```text
+Picked up JAVA_TOOL_OPTIONS: -Xlog:gc,safepoint:stderr:utctime,level,tags
+[2026-10-21T18:27:05.621+0000][info][gc] Using G1
+[2026-10-21T18:27:05.811+0000][info][gc] GC(0) Pause Young (Concurrent Start) (G1 Humongous Allocation) 85M->59M(128M) 1.482ms
+[2026-10-21T18:27:05.811+0000][info][safepoint] Safepoint "G1TryInitiateConcMark", Time since last: 185400250 ns, Reaching safepoint: 1875 ns, At safepoint: 1554916 ns, Leaving safepoint: 2375 ns, Total: 1559166 ns, Threads: 0 runnable, 12 total
+[2026-10-21T18:27:05.811+0000][info][gc       ] GC(1) Concurrent Mark Cycle
+```
+
+- tags 칸은 공백으로 폭을 맞출 수 있다(`[gc       ]`). parser는 값을 trim한다.
+- 첫 `Using <GC>` 줄로 collector를 확인한다. CPU·메모리가 작은 컨테이너에서는 JVM이 G1 대신 Serial을 고를 수 있다.
+- `gc*`(하위 태그 전부)·debug 수준은 켜지 않는다. 앱 로그와 같은 stderr라 Fluent Bit이 그대로 수집한다.
+- calibration부터 비교시험 전체가 같은 옵션과 `PULSEMETRY_OBSERVABILITY_ENABLED` 값을 쓴다.
+
 ## 독립 smoke 실행
 
 `scripts/observability-smoke/smoke.py`는 Python3 표준 라이브러리만 쓰고 미완성 k6 runner와 독립적이다. 실행자는 **유효한 telemetry JWT**, 그 JWT의 tenant/installation UUID, retention 범위 안 현재 source time, 접근 가능한 Gateway·각 metrics·ClickHouse endpoint를 준비한다. 인증/시드는 기존 [로컬 Kafka E2E](telemetry-kafka-e2e.md)를 따른다. 이 도구는 토큰·tenant를 발급하거나 인프라를 배포하지 않는다. JWT 파일은 제한된 권한으로 만들고 저장소 밖에 둔다.
