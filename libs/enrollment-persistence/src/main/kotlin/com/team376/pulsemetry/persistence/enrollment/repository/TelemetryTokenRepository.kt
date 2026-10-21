@@ -15,9 +15,12 @@ interface TelemetryTokenRepository : JpaRepository<TelemetryToken, UUID> {
 	fun findAllByInstallationIdAndRevokedAtIsNull(installationId: UUID): List<TelemetryToken>
 
 	/**
-	 * 해당 installation 의 살아있는 telemetry token 을 전부 폐기한다.
+	 * 해당 installation 의 살아있는 telemetry token 을 전부 정상 회전(`rotated`)으로 폐기한다.
 	 * 재발급(`POST /api/v1/installations/telemetry-token`, `docs/enrollment-server-spec.md` §4.3)은
 	 * 새 토큰을 만들기 전에 이걸 먼저 부른다.
+	 *
+	 * **`revoked_at IS NULL` 인 행만 건드린다** — 이미 폐기된 행의 사유(특히 `security`)를 회전으로 덮어쓰지 않는다
+	 * (ADR 0065 Decision 5).
 	 *
 	 * @return 폐기된 행 수. 이미 폐기된 토큰은 세지 않는다.
 	 */
@@ -25,7 +28,8 @@ interface TelemetryTokenRepository : JpaRepository<TelemetryToken, UUID> {
 	@Query(
 		"""
 		UPDATE TelemetryToken t
-		SET t.revokedAt = :now
+		SET t.revokedAt = :now,
+		    t.revokeReason = com.team376.pulsemetry.persistence.enrollment.entity.TelemetryTokenRevokeReason.rotated
 		WHERE t.installationId = :installationId
 		  AND t.revokedAt IS NULL
 		""",
@@ -74,6 +78,41 @@ interface TelemetryTokenRepository : JpaRepository<TelemetryToken, UUID> {
 		""",
 	)
 	fun findAuthRowByTokenHash(@Param("tokenHash") tokenHash: String): TelemetryTokenAuthRow?
+
+	/**
+	 * telemetry JWT 의 RDB 판정이 쓰는 조회(ADR 0065 Decision 6). `jti`(= 행 id) 하나로 자격 기록과 설치·회원·조직 상태를
+	 * 함께 읽는다. **해시로 찾지 않는다** — JWT 는 서명으로 이미 출처를 확인했고, 해시는 구 ingest 롤백 호환용이다.
+	 *
+	 * [findAuthRowByTokenHash] 와 같은 이유로 네이티브이고 상태를 `::text` 로 투영한다. 형식·사유도 문자열로 받는다 —
+	 * 판정이 모르는 값을 거부할 수 있어야 한다.
+	 */
+	@Query(
+		nativeQuery = true,
+		value = """
+		SELECT tt.id                       AS tokenId,
+		       (tt.revoked_at IS NOT NULL) AS tokenRevoked,
+		       i.tenant_id                 AS tenantId,
+		       i.id                        AS installationId,
+		       i.member_id                 AS memberId,
+		       i.status::text              AS installationStatus,
+		       (i.revoked_at IS NOT NULL)  AS installationRevoked,
+		       m.status::text              AS memberStatus,
+		       t.status::text              AS tenantStatus,
+		       (t.deleted_at IS NOT NULL)  AS tenantDeleted,
+		       tt.token_format             AS tokenFormat,
+		       tt.issued_at                AS issuedAt,
+		       tt.expires_at               AS expiresAt,
+		       tt.signing_kid              AS signingKid,
+		       tt.revoked_at               AS revokedAt,
+		       tt.revoke_reason            AS revokeReason
+		  FROM enrollment.telemetry_tokens AS tt
+		  JOIN enrollment.installations AS i ON i.id = tt.installation_id
+		  JOIN enrollment.members AS m ON m.id = i.member_id
+		  JOIN enrollment.tenants AS t ON t.id = i.tenant_id
+		 WHERE tt.id = :credentialId
+		""",
+	)
+	fun findCredentialRowById(@Param("credentialId") credentialId: UUID): TelemetryCredentialRow?
 }
 
 /**
@@ -92,4 +131,19 @@ interface TelemetryTokenAuthRow {
 	val memberStatus: String
 	val tenantStatus: String
 	val tenantDeleted: Boolean
+}
+
+/**
+ * [TelemetryTokenRepository.findCredentialRowById] 의 투영. 설치·회원·조직 상태는 [TelemetryTokenAuthRow] 와 같고
+ * (`TelemetryTokenDecision` 을 그대로 쓴다), 자격 기록의 형식·시각·kid·폐기 사유를 더한다.
+ *
+ * [tokenFormat]·[revokeReason] 이 문자열인 것은 의도다 — 모르는 값이 역직렬화 예외가 아니라 판정의 거부가 되게 한다.
+ */
+interface TelemetryCredentialRow : TelemetryTokenAuthRow {
+	val tokenFormat: String
+	val issuedAt: Instant
+	val expiresAt: Instant?
+	val signingKid: String?
+	val revokedAt: Instant?
+	val revokeReason: String?
 }

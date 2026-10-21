@@ -12,6 +12,8 @@ import com.team376.pulsemetry.persistence.enrollment.entity.Team
 import com.team376.pulsemetry.persistence.enrollment.entity.TeamMembership
 import com.team376.pulsemetry.persistence.enrollment.entity.TeamStatus
 import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryToken
+import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryTokenFormat
+import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryTokenRevokeReason
 import com.team376.pulsemetry.persistence.enrollment.entity.Tenant
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -107,10 +109,37 @@ object EnrollmentFixtures {
 		installationId: UUID,
 		tokenHash: String = randomHash(),
 		revokedAt: Instant? = null,
+		revokeReason: TelemetryTokenRevokeReason? = null,
 	): TelemetryToken = TelemetryToken(
 		installationId = installationId,
 		tokenHash = tokenHash,
 		revokedAt = revokedAt,
+		revokeReason = revokeReason,
+	)
+
+	/**
+	 * telemetry JWT 의 자격 기록(ADR 0065). 발급기처럼 초로 자른 발급 시각과 3시간 뒤 만료를 쓴다.
+	 * 실제 서명은 `:libs:telemetry-auth` 의 몫이다 — 여기서는 행만 만든다.
+	 */
+	fun jwtCredential(
+		installationId: UUID,
+		id: UUID = UUID.randomUUID(),
+		issuedAt: Instant = Instant.now().truncatedTo(ChronoUnit.SECONDS),
+		expiresAt: Instant = issuedAt.plus(3, ChronoUnit.HOURS),
+		signingKid: String = "telemetry-test",
+		tokenHash: String = randomHash(),
+		revokedAt: Instant? = null,
+		revokeReason: TelemetryTokenRevokeReason? = null,
+	): TelemetryToken = TelemetryToken(
+		installationId = installationId,
+		tokenHash = tokenHash,
+		id = id,
+		issuedAt = issuedAt,
+		revokedAt = revokedAt,
+		tokenFormat = TelemetryTokenFormat.jwt,
+		expiresAt = expiresAt,
+		signingKid = signingKid,
+		revokeReason = revokeReason,
 	)
 
 	fun manifest(
