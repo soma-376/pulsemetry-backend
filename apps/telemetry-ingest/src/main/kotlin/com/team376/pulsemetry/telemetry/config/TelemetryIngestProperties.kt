@@ -28,7 +28,18 @@ data class TelemetryIngestProperties(
 	val tokenHashSecret: String,
 
 	val telemetry: Telemetry = Telemetry(),
+
+	/** telemetry JWT 검증(ADR 0065). 비어 있으면 HTTP ingest 는 `ptt_` 만 받는다. */
+	val telemetryJwt: TelemetryJwt = TelemetryJwt(),
 ) {
+
+	/**
+	 * `kid → X.509 PEM 경로` 맵(`pulsemetry.telemetry-jwt.public-key-files`). 배포는 `SPRING_APPLICATION_JSON` 으로 넣는다 —
+	 * 환경변수 이름은 kid 의 대소문자를 잃는다. 개인키는 받지 않는다(enrollment 전용).
+	 */
+	data class TelemetryJwt(
+		val publicKeyFiles: Map<String, String> = emptyMap(),
+	)
 
 	data class Telemetry(
 		val archive: Archive = Archive(),

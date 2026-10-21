@@ -9,7 +9,7 @@ import org.springframework.security.web.AuthenticationEntryPoint
 import java.nio.charset.StandardCharsets
 
 /**
- * 거부 사유 열한 가지를 **하나의 401** 로 접는다.
+ * 거부 사유 전부(ptt_ 의 열한 가지와 telemetry JWT 의 둘)를 **하나의 401** 로 접는다.
  *
  * 사유를 알려 주면 유효한 토큰을 찾는 탐색이 쉬워진다. 원본도 같은 이유로 사유를 응답에 담지 않고,
  * `WWW-Authenticate` 헤더도 붙이지 않는다.

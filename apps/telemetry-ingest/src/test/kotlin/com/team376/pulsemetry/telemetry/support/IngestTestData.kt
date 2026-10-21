@@ -1,5 +1,6 @@
 package com.team376.pulsemetry.telemetry.support
 
+import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryTokenRevokeReason
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.InvitationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.MemberRepository
@@ -56,16 +57,60 @@ class IngestTestData(
 		TelemetryOpsSchemaMigrator(dataSource).migrate()
 	}
 
-	/** 심은 신원과 그것으로 인증할 수 있는 원문 토큰. */
+	/** 심은 신원과 그것으로 인증할 수 있는 원문 토큰. JWT 로 시드했으면 자격 기록의 id·발급·만료 시각도 있다. */
 	data class Seeded(
 		val tenantId: UUID,
 		val memberId: UUID,
 		val teamId: UUID,
 		val installationId: UUID,
 		val rawToken: String,
+		val credentialId: UUID? = null,
+		val issuedAt: Instant? = null,
+		val expiresAt: Instant? = null,
 	)
 
 	fun seed(): Seeded {
+		val chain = seedChain()
+
+		// 원문은 시드에 박지 않고 매번 만든다. 저장하는 것은 해시뿐이다.
+		val rawToken = "ptt_" + UUID.randomUUID().toString().replace("-", "")
+		telemetryTokens.save(
+			EnrollmentFixtures.telemetryToken(
+				installationId = chain.installationId,
+				tokenHash = hasher.hex(rawToken),
+			),
+		)
+		return chain.copy(rawToken = rawToken)
+	}
+
+	/**
+	 * telemetry JWT 자격 기록(ADR 0065)으로 시드한다. 행 id 가 `jti` 이고, 발급기처럼 초로 자른 `iat`·3시간 뒤 `exp`·kid 를
+	 * 행에 그대로 남기며 JWT 전문의 HMAC 도 저장한다 — enrollment 의 발급 순서와 같다.
+	 */
+	fun seedJwt(
+		issuedAt: Instant = Instant.now(),
+		revokedAt: Instant? = null,
+		revokeReason: TelemetryTokenRevokeReason? = null,
+	): Seeded {
+		val chain = seedChain()
+		val credentialId = UUID.randomUUID()
+		val issued = IngestJwtKeys.KEY.issuer().issue(credentialId, chain.tenantId, chain.installationId, issuedAt)
+		telemetryTokens.save(
+			EnrollmentFixtures.jwtCredential(
+				installationId = chain.installationId,
+				id = credentialId,
+				issuedAt = issued.issuedAt,
+				expiresAt = issued.expiresAt,
+				signingKid = issued.keyId,
+				tokenHash = hasher.hex(issued.token),
+				revokedAt = revokedAt,
+				revokeReason = revokeReason,
+			),
+		)
+		return chain.copy(rawToken = issued.token, credentialId = credentialId, issuedAt = issued.issuedAt, expiresAt = issued.expiresAt)
+	}
+
+	private fun seedChain(): Seeded {
 		val tenant = tenants.save(EnrollmentFixtures.tenant())
 		val member = members.save(EnrollmentFixtures.member(tenantId = tenant.id))
 		val team = teams.save(EnrollmentFixtures.team(tenantId = tenant.id))
@@ -89,21 +134,12 @@ class IngestTestData(
 			),
 		)
 
-		// 원문은 시드에 박지 않고 매번 만든다. 저장하는 것은 해시뿐이다.
-		val rawToken = "ptt_" + UUID.randomUUID().toString().replace("-", "")
-		telemetryTokens.save(
-			EnrollmentFixtures.telemetryToken(
-				installationId = installation.id,
-				tokenHash = hasher.hex(rawToken),
-			),
-		)
-
 		return Seeded(
 			tenantId = tenant.id,
 			memberId = member.id,
 			teamId = team.id,
 			installationId = installation.id,
-			rawToken = rawToken,
+			rawToken = "",
 		)
 	}
 

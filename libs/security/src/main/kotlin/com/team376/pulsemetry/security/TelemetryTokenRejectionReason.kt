@@ -3,7 +3,7 @@ package com.team376.pulsemetry.security
 /**
  * OTLP 경로에서 `ptt_` 토큰을 거부하는 사유.
  *
- * **사유는 클라이언트에게 노출하지 않는다.** 열한 가지가 전부 같은 401 본문으로 접힌다
+ * **사유는 클라이언트에게 노출하지 않는다.** 전부 같은 401 본문으로 접힌다
  * ([TelemetryTokenAuthenticationEntryPoint]). 어느 단계에서 걸렸는지 알려 주면 유효한 토큰을
  * 찾는 탐색이 쉬워지기 때문이다. 사유는 서버 로그에만 남는다.
  *
@@ -34,4 +34,13 @@ enum class TelemetryTokenRejectionReason(val code: String) {
 	TENANT_DELETED("tenant_deleted"),
 	TENANT_SUSPENDED("tenant_suspended"),
 	TENANT_TERMINATED("tenant_terminated"),
+
+	/**
+	 * telemetry JWT(ADR 0065)의 서명·용도·형식·시간 검증이 실패했다. 세부 사유(`jwt_*`)는 검증한 쪽이 같은 줄에 남긴다.
+	 * 이식 원본에는 없던 사유다 — JWT 는 해시로 조회하지 않으므로 위의 열한 가지로 표현되지 않는다.
+	 */
+	TELEMETRY_JWT_REJECTED("telemetry_jwt_rejected"),
+
+	/** telemetry JWT 의 RDB 판정(자격 기록·회전·보안 폐기·차단)이 거부했다. 세부 사유(`credential_*`·차단 코드)는 판정한 쪽이 남긴다. */
+	TELEMETRY_CREDENTIAL_REJECTED("telemetry_credential_rejected"),
 }

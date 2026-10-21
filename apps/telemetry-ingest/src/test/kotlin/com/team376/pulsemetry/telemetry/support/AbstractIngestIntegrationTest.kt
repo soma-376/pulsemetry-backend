@@ -69,6 +69,8 @@ abstract class AbstractIngestIntegrationTest {
 			registry.add("pulsemetry.telemetry.clickhouse.url") {
 				"http://${clickhouse.host}:${clickhouse.getMappedPort(HTTP_PORT)}"
 			}
+			// telemetry JWT 검증을 켠다(ADR 0065). 공개키 하나 — 서명은 IngestTestData 가 같은 키로 한다.
+			registry.add("pulsemetry.telemetry-jwt.public-key-files.${IngestJwtKeys.KID}") { IngestJwtKeys.PUBLIC_PEM.toString() }
 		}
 
 		fun clickHouseUrl(): String = "http://${clickhouse.host}:${clickhouse.getMappedPort(HTTP_PORT)}"

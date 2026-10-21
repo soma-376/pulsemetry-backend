@@ -14,6 +14,8 @@ dependencies {
 	// 두 리포지토리(TelemetryTokenRepository · TeamMembershipRepository)는 :libs:security 와
 	// :libs:telemetry-enricher 가 api() 로 노출한다 — 생성자 인자 타입은 계약이다 (module-map 4절).
 	implementation(project(":libs:security"))
+	// telemetry JWT 검증 (ADR 0065). HTTP 호환 경로가 쓴다 — 공개키만 받는다.
+	implementation(project(":libs:telemetry-auth"))
 
 	implementation(libs.spring.boot.starter.webmvc)
 	// 필터 체인 배선. starter 를 쓰는 것은 :libs: 가 아니라 앱이므로 ADR 0011 위반이 아니다 —
@@ -27,6 +29,8 @@ dependencies {
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
+	// telemetry JWT 키쌍·위조 토큰을 테스트마다 만든다.
+	testImplementation(testFixtures(project(":libs:telemetry-auth")))
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.postgresql)
 	// ClickHouse 는 GenericContainer 로 띄운다 — 전용 모듈은 JDBC 드라이버를 요구한다.

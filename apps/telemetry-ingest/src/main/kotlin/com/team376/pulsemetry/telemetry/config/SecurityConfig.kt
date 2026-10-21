@@ -8,7 +8,11 @@ import com.team376.pulsemetry.security.TelemetryTokenHasher
 import com.team376.pulsemetry.security.TelemetryTokenUnavailableHandler
 import com.team376.pulsemetry.telemetry.api.OtlpResponseWriter
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
+import com.team376.pulsemetry.telemetry.auth.TelemetryJwtKeys
+import com.team376.pulsemetry.telemetry.auth.TelemetryJwtVerifier
 import com.team376.pulsemetry.telemetry.collector.Signal
+import com.team376.pulsemetry.telemetry.credential.TelemetryBearerAuthenticationProvider
+import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
 import jakarta.servlet.DispatcherType
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
@@ -22,6 +26,7 @@ import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.web.AuthenticationEntryPoint
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.access.intercept.AuthorizationFilter
+import java.time.Clock
 
 /**
  * OTLP 경로의 인증을 세운다 — 이 저장소의 **첫 필터 체인**이다.
@@ -37,7 +42,9 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter
  *
  * ## 지켜야 하는 것
  *
- * - **거부 사유 열한 가지가 하나의 401 본문으로 접힌다.** 본문은
+ * - **Bearer 는 형식으로 갈린다**(ADR 0065 Decision 7). `ptt_` 등은 기존 해시 조회, telemetry JWT 는 검증기와 RDB 판정이다.
+ *   JWT 를 해시로 조회하지 않는다.
+ * - **거부 사유가 전부 하나의 401 본문으로 접힌다.** 본문은
  *   [TelemetryTokenAuthenticationEntryPoint] 의 상수이고 `WWW-Authenticate` 는 붙지 않는다.
  * - **인증 조회의 DB 장애는 401 이 아니라 503 + `Retry-After` 다.** 데몬은 401 과 403 을 같은
  *   칸에 두고 토큰을 폐기·재발급하므로, 장애가 그 둘로 보이면 멀쩡한 토큰이 버려진다.
@@ -60,16 +67,48 @@ class SecurityConfig {
 	fun telemetryTokenHasher(properties: TelemetryIngestProperties): TelemetryTokenHasher =
 		TelemetryTokenHasher(properties.tokenHashSecret)
 
+	/**
+	 * telemetry JWT 의 RDB 판정(ADR 0065 Decision 6). HTTP 호환 경로와 Kafka Consumer 가 같은 인스턴스를 쓴다.
+	 */
 	@Bean
-	fun telemetryTokenAuthenticationProvider(
+	fun telemetryCredentialAuthorizer(telemetryTokens: TelemetryTokenRepository): TelemetryCredentialAuthorizer =
+		TelemetryCredentialAuthorizer(telemetryTokens)
+
+	/**
+	 * Bearer 를 형식으로 가르는 provider 하나만 등록한다(ADR 0065 Decision 7). 해시 조회 provider 는 그 안에서 만든다 —
+	 * `AuthenticationProvider` 빈이 둘이면 매니저가 앞의 것이 던진 거부를 삼키고 다음 것을 불러 JWT 가 해시 조회로 흘러간다.
+	 *
+	 * 공개키 맵(`pulsemetry.telemetry-jwt.public-key-files`)이 비어 있으면 JWT 검증을 켜지 않는다 — 공개키를 받지 않은 배포가
+	 * 그대로 뜨고 JWT 모양의 Bearer 는 401 이다. 맵이 있으면 키를 기동 때 읽고, 읽지 못하면 기동이 실패한다.
+	 */
+	@Bean
+	fun telemetryBearerAuthenticationProvider(
 		hasher: TelemetryTokenHasher,
 		telemetryTokens: TelemetryTokenRepository,
-	): TelemetryTokenAuthenticationProvider =
-		TelemetryTokenAuthenticationProvider(hasher, telemetryTokens)
+		authorizer: TelemetryCredentialAuthorizer,
+		properties: TelemetryIngestProperties,
+		clock: Clock,
+	): TelemetryBearerAuthenticationProvider {
+		val files = properties.telemetryJwt.publicKeyFiles
+		val verifier = if (files.isEmpty()) {
+			log.warn("telemetry JWT 공개키가 없다 — HTTP ingest 는 ptt_ 만 받고 JWT 모양의 Bearer 는 401 이다")
+			null
+		} else {
+			TelemetryJwtVerifier(TelemetryJwtKeys.publicKeys(files)).also {
+				log.info("telemetry JWT 검증을 켠다: kids={}", it.keyIds.sorted())
+			}
+		}
+		return TelemetryBearerAuthenticationProvider(
+			opaque = TelemetryTokenAuthenticationProvider(hasher, telemetryTokens),
+			verifier = verifier,
+			authorizer = authorizer,
+			clock = clock,
+		)
+	}
 
 	@Bean
 	fun telemetryAuthenticationManager(
-		provider: TelemetryTokenAuthenticationProvider,
+		provider: TelemetryBearerAuthenticationProvider,
 	): AuthenticationManager = ProviderManager(provider)
 
 	@Bean

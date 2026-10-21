@@ -3,7 +3,8 @@ package com.team376.pulsemetry.security
 import java.util.UUID
 
 /**
- * `ptt_` 검증을 통과한 요청의 신원.
+ * `ptt_` 검증을 통과한 요청의 신원. telemetry JWT(ADR 0065)의 HTTP 호환 경로도 RDB 판정 뒤 같은 타입을 만든다 —
+ * 그때 [tokenId] 는 `jti`(= `telemetry_tokens.id`)다.
  *
  * **신원은 전적으로 토큰에서 파생된다.** 클라이언트가 자칭한 값을 신뢰하지 않는다는 것이
  * OTLP 계약의 중심 결정이다 (허브 `contracts/telemetry-ingest.md` §3).
