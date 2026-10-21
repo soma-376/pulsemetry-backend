@@ -14,6 +14,8 @@ awsSdk = "2.40.11"
 # telemetry JWT 발급·검증 (ADR 0065). Spring Security(oauth2-jose)가 끌어오는 판과 같게 고정한다 —
 # 두 경로가 한 클래스패스에서 다른 nimbus 를 보지 않게 한다.
 nimbusJoseJwt = "10.9"
+# envelope 코드 생성 (:libs:telemetry-ingress-contract, ADR 0066). protoc 는 런타임 protobuf-java 와 같은 판이다.
+protobufPlugin = "0.10.0"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
@@ -22,6 +24,8 @@ kotlin-spring = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotl
 kotlin-jpa = { id = "org.jetbrains.kotlin.plugin.jpa", version.ref = "kotlin" }
 spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
 spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "springDependencyManagement" }
+# .proto 에서 Java 를 생성한다. envelope 계약 모듈에만 적용한다.
+protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }
 
 # 버전이 없는 항목은 Spring Boot BOM 이 버전을 결정한다.
 [libraries]
@@ -83,6 +87,8 @@ json-schema-validator = { module = "com.networknt:json-schema-validator", versio
 # 버전은 카탈로그가 고정하므로 사정거리 밖이다. 대안은 .proto 벤더링뿐이다.
 opentelemetry-proto = { module = "io.opentelemetry.proto:opentelemetry-proto", version.ref = "otelProto" }
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
+# protoc 실행 파일. 생성 코드가 요구하는 런타임과 같은 판이어야 한다 — 다르면 ProtobufRuntimeVersionException 이다.
+protoc = { module = "com.google.protobuf:protoc", version.ref = "protobuf" }
 # OTLP/JSON 코덱이 쓰는 스트리밍 파서. databind 는 쓰지 않는다 — 디스크립터로 직접 순회한다.
 # Boot BOM 이 tools.jackson(Jackson 3) 을 관리하므로 버전을 적지 않는다.
 jackson-core = { module = "tools.jackson.core:jackson-core" }

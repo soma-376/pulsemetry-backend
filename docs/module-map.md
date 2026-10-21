@@ -87,6 +87,8 @@ pulsemetry-backend
     │                                telemetry 전용 JWT 발급·검증 · 키 파일 로더 · Bearer 추출 (ADR 0065). Spring·RDB 없음
     ├── telemetry-otlp-http/         com.team376.pulsemetry.telemetry.otlp
     │                                OTLP/HTTP 표면 — 응답 본문 · gRPC 상태 · signal 경로 · media type · Content-Encoding 허용 목록 (ADR 0067)
+    ├── telemetry-ingress-contract/  com.team376.pulsemetry.telemetry.ingress
+    │                                Gateway ↔ Consumer Kafka record 계약 — envelope .proto · codec · DTO · 접속 설정 · 로그 이벤트 (ADR 0066)
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
     │                                OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
     │                                ├ masking/    blocked_values 14종 값 마스킹
@@ -166,8 +168,10 @@ telemetry-ingest 가 `ptt_` 필터를 조립한다.
 DB 없는 Gateway 와 enrollment(발급)·ingest(HTTP 호환 검증)가 같은 규칙을 쓰기 때문이다. `:libs:security`의 사용자 JWT 와 키·`typ`·`aud`를 공유하지 않는다.
 `<컨텍스트>-<역할>` 모듈이지만 telemetry 밖에 같은 역할의 짝이 없으므로 패키지는 `telemetry.auth` 어순이다(5절의 단계 모듈과 같은 이유).
 
-`:libs:telemetry-otlp-http`는 수집 모듈과 Gateway 가 갈라지면 안 되는 OTLP/HTTP 표면(응답 바이트·경로·허용 목록)을 담는다(ADR 0067 Decision 4).
-앱끼리는 의존하지 않으므로(4절) 공유할 것을 `:libs:` 로 올렸다. Spring·JPA·Kafka 에 의존하지 않는다.
+`:libs:telemetry-otlp-http`와 `:libs:telemetry-ingress-contract`는 Gateway 와 ingest 가 갈라지면 안 되는 정의를 담는다(ADR 0067 Decision 4).
+앱끼리는 의존하지 않으므로(4절) 공유할 것을 `:libs:` 로 올렸다 — 응답 바이트·경로·허용 목록은 전자, envelope·record key·Kafka 접속·로그 이벤트 코드는 후자다.
+둘 다 Spring·JPA·Kafka 클라이언트에 의존하지 않는다. envelope 의 Java 코드는 protobuf gradle plugin 이 후자 모듈에서만 생성한다.
+Gateway(`:apps:telemetry-gateway`)는 S3 SDK 를 가진 수집 모듈과 JPA 를 가진 `:libs:security` 에 의존하지 않는다.
 
 `:libs:telemetry-collector`는 5절이 예고한 단계 모듈 중 첫 번째다(PROJ-114). 하위 패키지는 5절이
 정한 대로 `masking/`·`archive/` 둘이고, 수신 관련 타입은 모듈 루트 패키지에 둔다.

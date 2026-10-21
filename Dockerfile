@@ -31,6 +31,7 @@ COPY libs/security/build.gradle.kts libs/security/
 COPY libs/telemetry-collector/build.gradle.kts libs/telemetry-collector/
 COPY libs/telemetry-auth/build.gradle.kts libs/telemetry-auth/
 COPY libs/telemetry-otlp-http/build.gradle.kts libs/telemetry-otlp-http/
+COPY libs/telemetry-ingress-contract/build.gradle.kts libs/telemetry-ingress-contract/
 COPY libs/telemetry-adapter/build.gradle.kts libs/telemetry-adapter/
 COPY libs/telemetry-enricher/build.gradle.kts libs/telemetry-enricher/
 COPY libs/telemetry-persistence/build.gradle.kts libs/telemetry-persistence/
