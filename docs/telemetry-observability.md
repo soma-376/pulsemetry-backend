@@ -23,6 +23,10 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 - Kafka: 수동 producer는 `KafkaClientMetrics`, 수동 consumer factory는 `MicrometerConsumerListener`를 명시 연결한다. client 종료 시 binder도 닫힌다. `kafka_producer_*`, `kafka_consumer_*`를 native 값으로 쓴다. broker 지표와 group의 committed lag는 Infra exporter가 소유한다. consumer client lag는 commit 완료 증거가 아니다.
 - JVM GC pause는 기본 sum/count/max를 쓴다. client percentile과 추가 GC histogram은 켜지 않았다. consumer의 `pulsemetry_pipeline_listener_running`은 container의 running/expected state이며 처리 성공이나 lag=0을 보장하지 않는다. http 모드에서는 0이다.
 
+### 계측 on/off
+
+`PULSEMETRY_OBSERVABILITY_ENABLED`(`pulsemetry.observability.enabled`, 기본 true)가 false면 두 앱이 `MicrometerTelemetryObserver` 대신 no-op observer를 조립한다. 꺼지는 것은 `pulsemetry_*` 업무 지표뿐이다. JVM·process·Tomcat·Hikari/JDBC·Kafka client binder와 관리 포트 scrape는 양쪽이 같다. ingest의 `pulsemetry_pipeline_listener_running`은 요청마다 기록하지 않는 상태 gauge라 꺼도 남는다. calibration 전에 저부하 on/off를 비교하고, 비교시험 전체에서 한 값으로 고정한다.
+
 ## 지표 의미
 
 이름은 Prometheus에 노출되는 이름이다. Timer는 `_bucket`, `_count`, `_sum`, `_max`를 갖는다. 초 단위 일반 bucket은 0.005·0.01·0.025·0.05·0.1·0.25·0.5·1·2.5·5·10·30, 비동기 age bucket은 0.1·0.25·0.5·1·2.5·5·10·30·60·120·300·600이다. byte histogram은 1KiB·16KiB·64KiB·256KiB·1MiB·4MiB·10MiB다. 최초 사건 전 counter/timer series가 없을 수 있으므로 target 생존은 `up`/JVM 지표로 판단한다.

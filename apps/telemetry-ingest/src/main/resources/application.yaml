@@ -45,6 +45,11 @@ pulsemetry:
   # 갈리면 발급된 모든 토큰이 401 이 된다. 기본값이 없다: http·dual 모드에서 비어 있으면 기동이 실패한다(kafka 모드는 쓰지 않는다).
   token-hash-secret: ${PULSEMETRY_TOKEN_HASH_SECRET:}
 
+  # 업무 계측 on/off (ADR 0068). false 면 pulsemetry_* 지표만 끈다 — JVM·Tomcat·Hikari·Kafka client 지표와 scrape 는 그대로다.
+  # listener 기동 상태(pulsemetry_pipeline_listener_running)는 요청마다 기록하지 않는 상태 gauge 라 양쪽 모두 남긴다.
+  observability:
+    enabled: ${PULSEMETRY_OBSERVABILITY_ENABLED:true}
+
   # telemetry JWT 공개키 (ADR 0065) — pulsemetry.telemetry-jwt.public-key-files. kid → X.509 PEM 경로 맵이다.
   # 비어 있으면 HTTP 경로는 ptt_ 만 받고 JWT 모양은 401 이다. 배포는 SPRING_APPLICATION_JSON 으로 넣는다:
   #   {"pulsemetry":{"telemetry-jwt":{"public-key-files":{"<kid>":"/mnt/telemetry-jwt/keys/<alias>"}}}}

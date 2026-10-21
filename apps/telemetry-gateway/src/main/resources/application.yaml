@@ -19,6 +19,10 @@ spring:
     timeout-per-shutdown-phase: 30s
 
 pulsemetry:
+  # 업무 계측 on/off (ADR 0068). false 면 pulsemetry_* 지표만 끈다 — JVM·Kafka client 지표와 scrape 는 그대로다.
+  observability:
+    enabled: ${PULSEMETRY_OBSERVABILITY_ENABLED:true}
+
   # telemetry JWT 공개키 (ADR 0065) — pulsemetry.telemetry-jwt.public-key-files. kid → X.509 PEM 경로 맵이고 **필수다**
   # (비어 있으면 기동하지 않는다). 환경변수 이름은 kid 의 대소문자를 잃으므로 배포는 SPRING_APPLICATION_JSON 으로 넣는다:
   #   {"pulsemetry":{"telemetry-jwt":{"public-key-files":{"<kid>":"/mnt/telemetry-jwt/keys/<alias>"}}}}

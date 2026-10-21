@@ -13,7 +13,7 @@ import org.springframework.core.env.Environment
  * Security 체인뿐이라 서블릿 필터로는 관리 포트를 막지 못한다. 업무 포트의 `/actuator` 는 기본 닫힘 체인이 404 로 거부한다.
  */
 @Configuration(proxyBeanMethods = false)
-class ObservabilityConfig(environment: Environment) {
+class ObservabilityConfig(private val environment: Environment) {
 
     init {
         // 두 포트가 같으면 actuator 가 업무 서버에 붙는다. 기동을 거부한다.
@@ -22,8 +22,17 @@ class ObservabilityConfig(environment: Environment) {
         require(management == 0 || management != application) { "management.server.port must differ from server.port" }
     }
 
+    /**
+     * `pulsemetry.observability.enabled`(`PULSEMETRY_OBSERVABILITY_ENABLED`, 기본 true)가 false 면 `pulsemetry_*` 업무 계측만 no-op 이다.
+     * JVM·Tomcat·Kafka client binder 와 scrape 는 그대로다 — 계측 on/off 비교의 대상은 이 observer 뿐이다.
+     */
     @Bean
-    fun telemetryObserver(registry: MeterRegistry): TelemetryObserver = MicrometerTelemetryObserver(registry)
+    fun telemetryObserver(registry: MeterRegistry): TelemetryObserver =
+        if (environment.getProperty(ENABLED, Boolean::class.java, true)) MicrometerTelemetryObserver(registry) else TelemetryObserver.NONE
+
+    companion object {
+        const val ENABLED: String = "pulsemetry.observability.enabled"
+    }
 }
 
 /** 관리 컨텍스트의 실제 포트는 서버 시작 후 정해진다. 테스트의 random port도 같은 판정을 쓴다. */
