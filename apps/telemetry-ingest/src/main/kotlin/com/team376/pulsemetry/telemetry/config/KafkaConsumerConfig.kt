@@ -6,15 +6,20 @@ import com.team376.pulsemetry.telemetry.consumer.TelemetryFailureReporter
 import com.team376.pulsemetry.telemetry.consumer.TelemetryRecordListener
 import com.team376.pulsemetry.telemetry.consumer.TelemetryRetryBackOff
 import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.MeterRegistry
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory
+import org.springframework.kafka.core.MicrometerConsumerListener
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer
 import org.springframework.kafka.listener.ContainerProperties
 import org.springframework.kafka.listener.DefaultErrorHandler
+import java.time.Clock
 
 /**
  * Kafka Consumer 의 조립(ADR 0066 Decision 6·7). Boot 의 Kafka 자동설정은 쓰지 않는다 — 접속 방식(plaintext·IAM)과 모드가
@@ -37,16 +42,18 @@ import org.springframework.kafka.listener.DefaultErrorHandler
 class KafkaConsumerConfig {
 
 	@Bean
-	fun processTelemetry(authorizer: TelemetryCredentialAuthorizer, processor: OtlpProcessor): ProcessTelemetry =
-		ProcessTelemetry(authorizer, processor)
+	fun processTelemetry(authorizer: TelemetryCredentialAuthorizer, processor: OtlpProcessor, observer: TelemetryObserver): ProcessTelemetry =
+		ProcessTelemetry(authorizer, processor, observer)
 
 	@Bean
-	fun telemetryConsumerFactory(properties: TelemetryIngestProperties): DefaultKafkaConsumerFactory<ByteArray, ByteArray> =
-		DefaultKafkaConsumerFactory(consumerProperties(properties), ByteArrayDeserializer(), ByteArrayDeserializer())
+	fun telemetryConsumerFactory(properties: TelemetryIngestProperties, registry: MeterRegistry): DefaultKafkaConsumerFactory<ByteArray, ByteArray> =
+		DefaultKafkaConsumerFactory(consumerProperties(properties), ByteArrayDeserializer(), ByteArrayDeserializer()).apply {
+			addListener(MicrometerConsumerListener(registry))
+		}
 
 	@Bean
-	fun telemetryFailureReporter(properties: TelemetryIngestProperties): TelemetryFailureReporter =
-		TelemetryFailureReporter(maxAttempts = properties.telemetry.kafka.consumer.retryIntervals.size + 1)
+	fun telemetryFailureReporter(properties: TelemetryIngestProperties, observer: TelemetryObserver): TelemetryFailureReporter =
+		TelemetryFailureReporter(maxAttempts = properties.telemetry.kafka.consumer.retryIntervals.size + 1, observer = observer)
 
 	@Bean
 	fun telemetryErrorHandler(reporter: TelemetryFailureReporter, properties: TelemetryIngestProperties): DefaultErrorHandler =
@@ -62,12 +69,15 @@ class KafkaConsumerConfig {
 		process: ProcessTelemetry,
 		errorHandler: DefaultErrorHandler,
 		properties: TelemetryIngestProperties,
+		observer: TelemetryObserver,
+		registry: MeterRegistry,
+		clock: Clock,
 	): ConcurrentMessageListenerContainer<ByteArray, ByteArray> {
 		val kafka = properties.telemetry.kafka
 		val consumer = kafka.consumer
 		val containerProperties = ContainerProperties(kafka.topic).apply {
 			setAckMode(ContainerProperties.AckMode.RECORD)
-			setMessageListener(TelemetryRecordListener(process))
+			setMessageListener(TelemetryRecordListener(process, observer, clock))
 			setStopImmediate(true)
 			setShutdownTimeout(consumer.shutdownTimeout.toMillis())
 			setAuthExceptionRetryInterval(consumer.authExceptionRetryInterval)
@@ -82,6 +92,10 @@ class KafkaConsumerConfig {
 			setCommonErrorHandler(errorHandler)
 			isAutoStartup = mode.kafkaEnabled
 			setBeanName(CONTAINER_BEAN)
+			// 강한 참조 — 약한 참조가 풀리면 scrape 가 NaN 이 된다. container 는 앱 수명 동안 하나다.
+			Gauge.builder("pulsemetry.pipeline.listener.running", this) {
+				if (it.isRunning && it.isInExpectedState) 1.0 else 0.0
+			}.strongReference(true).register(registry)
 		}
 	}
 

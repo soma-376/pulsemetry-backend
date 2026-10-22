@@ -4,6 +4,9 @@ import com.team376.pulsemetry.telemetry.ingress.AcceptedTelemetry
 import com.team376.pulsemetry.telemetry.ingress.TelemetryEnvelopeCodec
 import com.team376.pulsemetry.telemetry.ingress.TelemetryLogEvent
 import com.team376.pulsemetry.telemetry.ingress.TelemetryRecordKey
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import com.team376.pulsemetry.telemetry.observability.observe
 import org.apache.kafka.clients.producer.Producer
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.common.errors.AuthenticationException
@@ -35,9 +38,27 @@ class KafkaTelemetryPublisher(
 	private val topic: String,
 	private val clock: Clock,
 	private val closeTimeout: Duration,
+	private val observer: TelemetryObserver = TelemetryObserver.NONE,
+	private val clientMetrics: AutoCloseable? = null,
 ) : TelemetryPublisher, AutoCloseable {
 
 	override fun publish(message: AcceptedTelemetry, deadline: Instant): PublishedRecord {
+		val started = System.nanoTime()
+		var outcome = "failed"
+		var reason = "broker_error"
+		try {
+			return send(message, deadline).also { outcome = "acknowledged"; reason = "none" }
+		} catch (failure: TelemetryPublishException) {
+			reason = failure.reason
+			throw failure
+		} finally {
+			val signal = message.payload.signal.name.lowercase()
+			observer.observe(TelemetryMetric.GATEWAY_PUBLISH, 1.0, "signal" to signal, "outcome" to outcome, "reason" to reason)
+			observer.observe(TelemetryMetric.GATEWAY_PUBLISH_DURATION, (System.nanoTime() - started) / 1e9, "signal" to signal, "outcome" to outcome)
+		}
+	}
+
+	private fun send(message: AcceptedTelemetry, deadline: Instant): PublishedRecord {
 		if (!clock.instant().isBefore(deadline)) throw TelemetryPublishException("deadline_exceeded")
 		val record = ProducerRecord<String, ByteArray>(
 			topic,
@@ -74,7 +95,11 @@ class KafkaTelemetryPublisher(
 	}
 
 	override fun close() {
-		producer.close(closeTimeout)
+		try {
+			producer.close(closeTimeout)
+		} finally {
+			clientMetrics?.close()
+		}
 	}
 
 	private fun reasonOf(cause: Throwable): String = when (cause) {

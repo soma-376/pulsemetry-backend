@@ -1,5 +1,8 @@
 package com.team376.pulsemetry.persistence.telemetry
 
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import com.team376.pulsemetry.telemetry.observability.observe
 import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
@@ -35,6 +38,7 @@ public class ClickHouseHttpClient(
 	// ClickHouse 는 리다이렉트를 내지 않는다. 따라가면 POST 본문이 상태별로 다르게 처리된다.
 	private val httpClient: HttpClient =
 		HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER).build(),
+	private val observer: TelemetryObserver = TelemetryObserver.NONE,
 ) {
 
 	/**
@@ -42,6 +46,9 @@ public class ClickHouseHttpClient(
 	 *
 	 * DDL·SELECT 는 [body] 가 `null` 이고, INSERT 는 행 바이트를 싣는다. [params] 는 쿼리의 `{name:Type}` 자리에 들어가는
 	 * 서버 쪽 파라미터(`param_name`)이고, [queryId] 는 서버의 `query_id` 다 — 없으면 서버가 정한다.
+	 *
+	 * [operation]·[table] 은 운영 지표의 라벨이다(ADR 0068). 호출자가 `insert`·`select`·`delete`·`schema` 와 대상 테이블을
+	 * 밝힌다 — 기본값 `other` 는 분류되지 않은 호출이라는 뜻이다. 허용 목록 밖의 값은 계측 구현이 `other` 로 합친다.
 	 *
 	 * **실패는 둘로 갈린다** — 연결 계열과 `5xx · 429 · 408` 은
 	 * [TelemetrySinkUnavailableException](일시 장애 → 503), 그 밖의 4xx 는
@@ -56,7 +63,29 @@ public class ClickHouseHttpClient(
 		body: ByteArray? = null,
 		params: Map<String, String> = emptyMap(),
 		queryId: String? = null,
+		operation: String = "other",
+		table: String = "other",
 	): String {
+		val started = System.nanoTime()
+		var outcome = "transient_error"
+		try {
+			return request(query, body, params, queryId).also { outcome = "success" }
+		} catch (failure: TelemetrySinkRejectedException) {
+			outcome = "permanent_error"
+			throw failure
+		} finally {
+			val tags = arrayOf("operation" to operation, "table" to table, "outcome" to outcome)
+			observer.observe(TelemetryMetric.CLICKHOUSE_REQUESTS, 1.0, *tags)
+			observer.observe(TelemetryMetric.CLICKHOUSE_REQUEST_DURATION, (System.nanoTime() - started) / 1e9, *tags)
+		}
+	}
+
+	/** 입력 행 수이며 서버 fence 뒤의 실제 저장 행 수가 아니다. 재시도도 매번 센다. */
+	internal fun rowsSubmitted(table: String, count: Int) {
+		observer.observe(TelemetryMetric.CLICKHOUSE_ROWS_SUBMITTED, count.toDouble(), "table" to table)
+	}
+
+	private fun request(query: String, body: ByteArray?, params: Map<String, String>, queryId: String?): String {
 		val uri = URI.create(
 			baseUrl.trimEnd('/') +
 				"/?query=" + encode(query) +

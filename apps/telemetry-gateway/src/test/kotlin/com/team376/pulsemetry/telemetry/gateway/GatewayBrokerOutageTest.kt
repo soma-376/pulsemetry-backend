@@ -1,10 +1,12 @@
 package com.team376.pulsemetry.telemetry.gateway
 
 import com.team376.pulsemetry.telemetry.gateway.support.GatewayTestKafka
+import io.micrometer.core.instrument.MeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
@@ -24,11 +26,14 @@ import java.util.UUID
  * 컨테이너를 멈추므로 다른 테스트와 Kafka 를 공유하지 않는다 — 설정이 달라 컨텍스트도 따로 뜬다.
  */
 @ExtendWith(OutputCaptureExtension::class)
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = ["management.server.port=0"])
 class GatewayBrokerOutageTest {
 
 	@LocalServerPort
 	private var port: Int = 0
+
+	@Autowired
+	private lateinit var registry: MeterRegistry
 
 	private val http: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()
 
@@ -52,6 +57,7 @@ class GatewayBrokerOutageTest {
 		val docker = kafka.dockerClient
 		docker.pauseContainerCmd(kafka.containerId).exec()
 		try {
+			val failedBefore = publishes("failed")
 			val started = System.nanoTime()
 			val response = post()
 			val elapsed = Duration.ofNanos(System.nanoTime() - started)
@@ -60,6 +66,10 @@ class GatewayBrokerOutageTest {
 			assertThat(response.headers().firstValue("Retry-After")).hasValue("1")
 			assertThat(elapsed).isLessThan(Duration.ofMillis(9500))
 			assertThat(output.all).contains("event=telemetry_publish_failed")
+			// ack 를 확인하지 못한 발행은 failed 다 — 실제로 발행됐을 가능성은 남는다(사유는 시간 예산 쪽).
+			assertThat(publishes("failed") - failedBefore).isEqualTo(1.0)
+			assertThat(registry.find("pulsemetry.gateway.publish").tags("outcome", "failed").counters().map { it.id.getTag("reason") })
+				.isSubsetOf("delivery_timeout", "deadline_exceeded", "metadata_timeout", "broker_error")
 		} finally {
 			docker.unpauseContainerCmd(kafka.containerId).exec()
 		}
@@ -73,6 +83,9 @@ class GatewayBrokerOutageTest {
 		}
 		assertThat(status).isEqualTo(200)
 	}
+
+	private fun publishes(outcome: String): Double =
+		registry.find("pulsemetry.gateway.publish").tags("outcome", outcome).counters().sumOf { it.count() }
 
 	companion object {
 		private val kafka = GatewayTestKafka.container().also {

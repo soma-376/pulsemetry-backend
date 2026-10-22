@@ -3,6 +3,8 @@
 # 앱은 Flyway 를 끈다(enrollment-api 가 소유). 테스트는 격리된 Testcontainers 인스턴스라
 # 스키마를 만들 주체가 없으므로 여기서만 켠다. :libs: 의 테스트 yaml 셋과 같은 형태다.
 spring:
+  application:
+    name: pulsemetry-telemetry-ingest
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -34,3 +36,24 @@ pulsemetry:
         retry-intervals: 100ms,200ms,300ms
         auth-exception-retry-interval: 1s
         shutdown-timeout: 10s
+
+management:
+  server:
+    port: 0
+  endpoints:
+    web:
+      exposure:
+        include: prometheus
+      discovery:
+        enabled: false
+  metrics:
+    use-global-registry: false
+    tags:
+      application: ${spring.application.name}
+      service: ingest
+      environment: local
+
+server:
+  tomcat:
+    mbeanregistry:
+      enabled: true

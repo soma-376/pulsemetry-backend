@@ -209,6 +209,8 @@ object RepriceStoredUsage {
 		private fun stored(tenant: String, ids: List<String>): Map<String, Stored> = client.execute(
 			"SELECT observation_id,row_version,analysis_hash FROM telemetry_events FINAL WHERE tenant_id={tenant:String} AND observation_id IN ({ids:Array(String)}) FORMAT JSONEachRow",
 			params = mapOf("tenant" to tenant, "ids" to ids.joinToString(",", "[", "]") { "'$it'" }),
+			operation = "select",
+			table = "telemetry_events",
 		).lineSequence().filter(String::isNotBlank).map(mapper::readTree).associate {
 			it["observation_id"].asString() to Stored(it["row_version"].asString().toULong(), it["analysis_hash"].asString())
 		}

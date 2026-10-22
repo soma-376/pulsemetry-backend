@@ -11,6 +11,9 @@ import com.team376.pulsemetry.telemetry.ingress.AcceptedTelemetry
 import com.team376.pulsemetry.telemetry.ingress.GatewayAuthContext
 import com.team376.pulsemetry.telemetry.ingress.RawOtlpPayload
 import com.team376.pulsemetry.telemetry.ingress.TelemetryLogEvent
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import com.team376.pulsemetry.telemetry.observability.observe
 import com.team376.pulsemetry.telemetry.otlp.GrpcCode
 import com.team376.pulsemetry.telemetry.otlp.OtlpContentEncoding
 import com.team376.pulsemetry.telemetry.otlp.OtlpHttpResponse
@@ -57,6 +60,7 @@ class GatewayOtlpController(
 	private val writer: GatewayResponseWriter,
 	private val clock: Clock,
 	properties: TelemetryGatewayProperties,
+	private val observer: TelemetryObserver = TelemetryObserver.NONE,
 ) {
 
 	private val maxRequestBytes = properties.telemetry.gateway.maxRequestBytes
@@ -65,6 +69,25 @@ class GatewayOtlpController(
 
 	@RequestMapping(path = ["/v1/logs", "/v1/traces", "/v1/metrics"])
 	fun ingest(request: HttpServletRequest, response: HttpServletResponse) {
+		val started = System.nanoTime()
+		val signal = OtlpSignal.ofPath(request.requestURI)?.name?.lowercase() ?: "unknown"
+		var failed = false
+		observer.observe(TelemetryMetric.GATEWAY_INFLIGHT)
+		try {
+			handle(request, response)
+		} catch (failure: Throwable) {
+			failed = true
+			throw failure
+		} finally {
+			val status = if (failed) "500" else response.status.toString()
+			val outcome = if (status == "200") "accepted" else if (status.startsWith("4")) "rejected" else "failed"
+			observer.observe(TelemetryMetric.GATEWAY_REQUESTS, 1.0, "signal" to signal, "status" to status, "outcome" to outcome)
+			observer.observe(TelemetryMetric.GATEWAY_REQUEST_DURATION, (System.nanoTime() - started) / 1e9, "signal" to signal, "status" to status)
+			observer.observe(TelemetryMetric.GATEWAY_INFLIGHT, -1.0)
+		}
+	}
+
+	private fun handle(request: HttpServletRequest, response: HttpServletResponse) {
 		val startedAt = clock.instant()
 		val deadline = startedAt.plus(requestDeadline)
 
@@ -93,6 +116,8 @@ class GatewayOtlpController(
 
 		// 3. 본문 상한. 압축을 풀기 전 바이트다.
 		val body = readBody(request) ?: return reject(response, "request", "payload_too_large", OtlpResponses.payloadTooLarge())
+
+		observer.observe(TelemetryMetric.GATEWAY_REQUEST_BYTES, body.size.toDouble(), "signal" to signal.name.lowercase())
 
 		// 4. 접수 시각. 10 MiB 를 읽는 사이에 만료될 수 있으므로 이 시각으로 다시 본다.
 		val acceptedAt = clock.instant()
@@ -135,6 +160,7 @@ class GatewayOtlpController(
 
 	/** 거부 로그는 단계·사유·상태뿐이다. 토큰·본문·헤더 값을 싣지 않는다. */
 	private fun reject(response: HttpServletResponse, stage: String, reason: String, result: OtlpHttpResponse) {
+		observer.observe(TelemetryMetric.GATEWAY_REJECTIONS, 1.0, "stage" to stage, "reason" to reason)
 		log.info(TelemetryLogEvent.GATEWAY_REJECTED.format("stage" to stage, "reason" to reason, "status" to result.status))
 		writer.write(response, result)
 	}

@@ -7,6 +7,8 @@ plugins {
 }
 
 dependencies {
+	// Observer가 공개 생성자 계약에 나타난다. Boot starter는 끌지 않는다.
+	api(project(":libs:telemetry-observability"))
 	// 적재 대상 타입. insert(events: List<EnrichedEvent>, …) 가 이 모듈의 공개 시그니처다 (ADR 0014).
 	// 어댑터의 관측 타입은 이 간선을 타고 전이로 따라온다.
 	api(project(":libs:telemetry-enricher"))

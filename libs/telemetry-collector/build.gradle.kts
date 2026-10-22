@@ -5,6 +5,8 @@ plugins {
 }
 
 dependencies {
+	// Observer가 공개 생성자 계약에 나타난다. Boot starter는 끌지 않는다.
+	api(project(":libs:telemetry-observability"))
 	// OTLP 메시지 타입. protobuf-java 의 Builder 가 곧 가변 모델이라 마스킹이 그 위에서 바로 된다.
 	// api() 다 — ExportLogsServiceRequest 등이 이 모듈의 공개 시그니처에 나타난다 (ADR 0008 규칙 3).
 	api(libs.opentelemetry.proto)

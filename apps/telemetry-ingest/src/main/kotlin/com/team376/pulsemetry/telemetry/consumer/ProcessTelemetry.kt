@@ -5,6 +5,9 @@ import com.team376.pulsemetry.telemetry.collector.VerifiedIngestContext
 import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
 import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialRejectedException
 import com.team376.pulsemetry.telemetry.ingress.AcceptedTelemetry
+import com.team376.pulsemetry.telemetry.observability.PipelineStage
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import com.team376.pulsemetry.telemetry.observability.measure
 
 /**
  * Kafka 로 받은 접수 하나를 처리한다 — RDB 판정 → 수집 코어(ADR 0066 Decision 6 · ADR 0067 Decision 3).
@@ -19,11 +22,12 @@ import com.team376.pulsemetry.telemetry.ingress.AcceptedTelemetry
 class ProcessTelemetry(
 	private val authorizer: TelemetryCredentialAuthorizer,
 	private val processor: OtlpProcessor,
+	private val observer: TelemetryObserver = TelemetryObserver.NONE,
 ) {
 
 	fun execute(message: AcceptedTelemetry) {
 		val credential = try {
-			authorizer.authorize(message.auth, message.acceptedAt)
+			observer.measure(PipelineStage.AUTHORIZE) { authorizer.authorize(message.auth, message.acceptedAt) }
 		} catch (e: TelemetryCredentialRejectedException) {
 			throw e
 		} catch (e: RuntimeException) {

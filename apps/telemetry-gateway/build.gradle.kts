@@ -5,6 +5,9 @@ plugins {
 }
 
 dependencies {
+	implementation(project(":libs:telemetry-observability"))
+	implementation(libs.spring.boot.starter.actuator)
+	implementation(libs.micrometer.registry.prometheus)
 	implementation(project(":libs:telemetry-auth"))
 	// envelope·codec·Kafka 접속 설정·로그 이벤트. OTLP/HTTP 표면(:libs:telemetry-otlp-http)을 api() 로 함께 끌어온다.
 	implementation(project(":libs:telemetry-ingress-contract"))

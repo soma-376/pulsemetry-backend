@@ -3,6 +3,9 @@ package com.team376.pulsemetry.telemetry.gateway.config
 import com.team376.pulsemetry.telemetry.auth.TelemetryJwtKeys
 import com.team376.pulsemetry.telemetry.auth.TelemetryJwtVerifier
 import com.team376.pulsemetry.telemetry.gateway.publish.KafkaTelemetryPublisher
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerConfig
 import org.apache.kafka.common.serialization.ByteArraySerializer
@@ -34,14 +37,18 @@ class GatewayConfig {
 	 * 종료는 Spring 이 웹 서버의 graceful 종료를 끝낸 뒤 [KafkaTelemetryPublisher.close] 로 한다.
 	 */
 	@Bean(destroyMethod = "close")
-	fun telemetryPublisher(properties: TelemetryGatewayProperties, clock: Clock): KafkaTelemetryPublisher {
+	fun telemetryPublisher(properties: TelemetryGatewayProperties, clock: Clock, observer: TelemetryObserver, registry: MeterRegistry): KafkaTelemetryPublisher {
 		val kafka = properties.telemetry.kafka
 		log.info("telemetry ingress producer: {} topic={}", kafka.connection(), kafka.topic)
+		val producer = KafkaProducer(producerProperties(properties), StringSerializer(), ByteArraySerializer())
+		val clientMetrics = KafkaClientMetrics(producer).also { it.bindTo(registry) }
 		return KafkaTelemetryPublisher(
-			producer = KafkaProducer(producerProperties(properties), StringSerializer(), ByteArraySerializer()),
+			producer = producer,
 			topic = kafka.topic,
 			clock = clock,
 			closeTimeout = kafka.producer.closeTimeout,
+			observer = observer,
+			clientMetrics = clientMetrics,
 		)
 	}
 

@@ -6,6 +6,10 @@ import com.team376.pulsemetry.telemetry.gateway.publish.PublishedRecord
 import com.team376.pulsemetry.telemetry.gateway.publish.TelemetryPublishException
 import com.team376.pulsemetry.telemetry.gateway.publish.TelemetryPublisher
 import com.team376.pulsemetry.telemetry.ingress.AcceptedTelemetry
+import com.team376.pulsemetry.telemetry.observability.MicrometerTelemetryObserver
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -40,6 +44,41 @@ class GatewayOtlpControllerTest {
 		addHeader("Authorization", "Bearer " + key.issuer().issue(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), Instant.now()).token)
 		contentType = "application/json"
 		setContent("""{"resourceLogs":[]}""".toByteArray())
+	}
+
+	@Test
+	fun instrumentationFailurePreservesAcceptanceAndRejection() {
+		val observer = TelemetryObserver { _, _, _ -> throw IllegalStateException("metrics unavailable") }
+		for ((publisher, expected) in listOf(
+			TelemetryPublisher { _, _ -> PublishedRecord("t", 0, 0) } to 200,
+			TelemetryPublisher { _, _ -> throw TelemetryPublishException("broker_error", "Exception") } to 503,
+		)) {
+			val response = MockHttpServletResponse()
+			GatewayOtlpController(key.verifier(), publisher, writer, Clock.systemUTC(), properties, observer).ingest(request(), response)
+			assertThat(response.status).isEqualTo(expected)
+		}
+	}
+
+	@Test
+	@DisplayName("요청 결과는 상태로 갈린다 — 200 accepted, 401 rejected, 503 failed. 처리 중 요청 수는 끝나면 0 이다")
+	fun requestOutcomesAndInflight() {
+		val registry = SimpleMeterRegistry()
+		val observer = MicrometerTelemetryObserver(registry, gauges = setOf(TelemetryMetric.GATEWAY_INFLIGHT))
+		val accepted = TelemetryPublisher { _, _ -> PublishedRecord("t", 0, 0) }
+		val failing = TelemetryPublisher { _, _ -> throw TelemetryPublishException("delivery_timeout", "TimeoutException") }
+		val unauthenticated = MockHttpServletRequest("POST", "/v1/logs").apply { contentType = "application/json" }
+
+		GatewayOtlpController(key.verifier(), accepted, writer, Clock.systemUTC(), properties, observer).ingest(request(), MockHttpServletResponse())
+		GatewayOtlpController(key.verifier(), accepted, writer, Clock.systemUTC(), properties, observer).ingest(unauthenticated, MockHttpServletResponse())
+		GatewayOtlpController(key.verifier(), failing, writer, Clock.systemUTC(), properties, observer).ingest(request(), MockHttpServletResponse())
+
+		fun requests(status: String, outcome: String) =
+			registry.get("pulsemetry.gateway.requests").tags("signal", "logs", "status", status, "outcome", outcome).counter().count()
+		assertThat(requests("200", "accepted")).isEqualTo(1.0)
+		assertThat(requests("401", "rejected")).isEqualTo(1.0)
+		assertThat(requests("503", "failed")).isEqualTo(1.0)
+		assertThat(registry.get("pulsemetry.gateway.request.duration").timers().sumOf { it.count() }).isEqualTo(3)
+		assertThat(registry.get("pulsemetry.gateway.inflight").gauge().value()).isZero()
 	}
 
 	@Test

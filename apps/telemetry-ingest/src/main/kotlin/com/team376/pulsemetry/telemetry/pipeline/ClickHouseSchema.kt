@@ -2,6 +2,7 @@ package com.team376.pulsemetry.telemetry.pipeline
 
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseSchemaMigrator
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
+import com.team376.pulsemetry.telemetry.diagnostics.SafeDiagnostic
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.InitializingBean
 import java.time.Duration
@@ -68,18 +69,18 @@ class ClickHouseSchema(
 				return
 			} catch (exception: TelemetrySinkUnavailableException) {
 				log.warn(
-					"clickhouse 스키마 미적용 ({}) — 재시도 {}/{}",
-					exception.message,
+					"event=telemetry_schema_failed component=clickhouse reason=unavailable diagnostic={} attempt={}/{}",
+					SafeDiagnostic.of(exception),
 					attempt + 1,
 					startupAttempts,
 				)
 				sleepBeforeRetry()
 			} catch (exception: RuntimeException) {
-				log.error("clickhouse 스키마 적용이 거부됐다 — 기동에서는 재시도하지 않는다", exception)
+				log.error("event=telemetry_schema_failed component=clickhouse reason=schema_rejected diagnostic={}", SafeDiagnostic.of(exception))
 				return
 			}
 		}
-		log.warn("clickhouse 스키마를 적용하지 못한 채 기동한다. 아카이브는 계속 돌고 적재는 503 이다.")
+		log.warn("event=telemetry_schema_unavailable component=clickhouse reason=startup_attempts_exhausted")
 	}
 
 	/**
@@ -103,7 +104,7 @@ class ClickHouseSchema(
 				throw exception
 			} catch (exception: RuntimeException) {
 				retryNotBefore = System.nanoTime() + startupBackoff.toNanos()
-				log.error("clickhouse 스키마 적용이 거부됐다 — {} 뒤에 다시 본다", startupBackoff, exception)
+				log.error("event=telemetry_schema_failed component=clickhouse reason=schema_rejected retryAfter={} diagnostic={}", startupBackoff, SafeDiagnostic.of(exception))
 				throw TelemetrySinkUnavailableException(
 					"clickhouse 스키마 적용이 거부됐다: ${exception.message}",
 					exception,

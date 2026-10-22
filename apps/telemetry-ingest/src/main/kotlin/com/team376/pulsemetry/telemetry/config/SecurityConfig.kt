@@ -13,6 +13,7 @@ import com.team376.pulsemetry.telemetry.auth.TelemetryJwtVerifier
 import com.team376.pulsemetry.telemetry.collector.Signal
 import com.team376.pulsemetry.telemetry.credential.TelemetryBearerAuthenticationProvider
 import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
+import com.team376.pulsemetry.telemetry.diagnostics.SafeDiagnostic
 import jakarta.servlet.DispatcherType
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
@@ -20,7 +21,9 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
+import org.springframework.core.env.Environment
 import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpMethod
 import org.springframework.security.authentication.AuthenticationManager
 import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.authentication.ProviderManager
@@ -67,6 +70,32 @@ import java.time.Clock
  */
 @Configuration(proxyBeanMethods = false)
 class SecurityConfig {
+
+	/**
+	 * 관리 포트(ADR 0068) — GET `/actuator/prometheus` 만 열고 나머지는 기본 닫힘 체인과 같은 404 다. Boot 가 이 체인을 관리
+	 * 컨텍스트에도 걸어 준다. 업무 포트의 요청은 이 체인에 들지 않는다.
+	 */
+	@Bean
+	@Order(0)
+	fun metricsSecurityFilterChain(
+		http: HttpSecurity,
+		environment: Environment,
+		handler: OtlpIngestHandler,
+		writer: OtlpResponseWriter,
+	): SecurityFilterChain = http
+		.securityMatcher { request -> managementRequest(environment, request) }
+		.csrf { it.disable() }
+		.requestCache { it.disable() }
+		.sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
+		.exceptionHandling {
+			it.authenticationEntryPoint { _, response, _ -> writer.write(response, handler.notFound()) }
+			it.accessDeniedHandler { _, response, _ -> writer.write(response, handler.notFound()) }
+		}
+		.authorizeHttpRequests {
+			it.requestMatchers(HttpMethod.GET, "/actuator/prometheus").permitAll()
+			it.anyRequest().denyAll()
+		}
+		.build()
 
 	@Bean
 	@Conditional(OtlpHttpEnabledCondition::class)
@@ -167,7 +196,7 @@ class SecurityConfig {
 	 */
 	private fun unavailable(handler: OtlpIngestHandler, writer: OtlpResponseWriter) =
 		TelemetryTokenUnavailableHandler { request, response, cause ->
-			log.error("telemetry token 조회가 실패했다 — 503 으로 돌린다", cause)
+			log.error("event=telemetry_auth_store_failed component=postgresql reason=unavailable diagnostic={}", SafeDiagnostic.of(cause))
 			writer.write(
 				response,
 				handler.unavailable(request.getHeader(HttpHeaders.CONTENT_TYPE), UNAVAILABLE_MESSAGE),

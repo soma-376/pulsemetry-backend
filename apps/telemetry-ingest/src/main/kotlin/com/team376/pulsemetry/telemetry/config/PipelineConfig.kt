@@ -23,6 +23,7 @@ import com.team376.pulsemetry.telemetry.enricher.observation.ObservationEnricher
 import com.team376.pulsemetry.telemetry.enricher.provider.AiAnalysisProvider
 import com.team376.pulsemetry.telemetry.enricher.provider.GithubProvider
 import com.team376.pulsemetry.telemetry.enricher.provider.JiraProvider
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import com.team376.pulsemetry.telemetry.pipeline.ClickHouseSchema
 import com.team376.pulsemetry.telemetry.pipeline.IngestOperations
 import com.team376.pulsemetry.telemetry.pipeline.IngestPipeline
@@ -86,7 +87,8 @@ class PipelineConfig {
 		schema: ClickHouseSchema,
 		boundaries: RetentionBoundaries,
 		operations: ObjectProvider<IngestOperations>,
-	): SignalConsumer = IngestPipeline(observations::run, enricher, events, metricPoints, schema, boundaries, operations.ifAvailable)
+		observer: TelemetryObserver,
+	): SignalConsumer = IngestPipeline(observations::run, enricher, events, metricPoints, schema, boundaries, operations.ifAvailable, observer)
 
 	/**
 	 * 전송 독립 수집 코어(ADR 0067). HTTP 어댑터와 Kafka Consumer 가 같은 인스턴스를 부른다 — 압축 해제 상한·마스킹·
@@ -97,10 +99,12 @@ class PipelineConfig {
 		archive: ArchiveWriter,
 		next: SignalConsumer,
 		properties: TelemetryIngestProperties,
+		observer: TelemetryObserver,
 	): OtlpProcessor = OtlpIngestProcessor(
 		archive = archive,
 		next = next,
 		maxDecompressedBytes = properties.telemetry.ingest.maxDecompressedBytes,
+		observer = observer,
 	)
 
 	/** HTTP 어댑터. 신원은 컨트롤러가 인증된 principal 에서 꺼내 명시적으로 넘긴다(ADR 0067 — 스레드 지역 신원을 읽지 않는다). */

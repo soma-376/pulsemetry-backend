@@ -5,6 +5,7 @@ import com.team376.pulsemetry.persistence.telemetry.IngestLedgerSink
 import com.team376.pulsemetry.persistence.telemetry.PreLedgerHistorySource
 import com.team376.pulsemetry.persistence.telemetryops.TenantIngestSummaryStore
 import com.team376.pulsemetry.persistence.telemetryops.TenantSummaryBackfill
+import com.team376.pulsemetry.telemetry.diagnostics.SafeDiagnostic
 import com.team376.pulsemetry.telemetry.pipeline.IngestOperationsRecorder
 import org.slf4j.LoggerFactory
 import org.springframework.boot.ApplicationRunner
@@ -56,7 +57,7 @@ class OpsConfig {
 					)
 				}
 			} catch (exception: Exception) {
-				log.warn("pre-ledger backfill failed; retried at next startup: {}", exception.message)
+				log.warn("event=telemetry_backfill_failed component=pipeline reason=unavailable diagnostic={}", SafeDiagnostic.of(exception))
 			}
 		}
 	}

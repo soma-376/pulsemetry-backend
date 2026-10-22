@@ -1,6 +1,10 @@
 package com.team376.pulsemetry.telemetry.consumer
 
 import com.team376.pulsemetry.telemetry.ingress.TelemetryLogEvent
+import com.team376.pulsemetry.telemetry.observability.PipelineStage
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import com.team376.pulsemetry.telemetry.observability.observe
 import org.apache.kafka.clients.consumer.CommitFailedException
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.clients.consumer.RetriableCommitFailedException
@@ -18,14 +22,23 @@ import org.springframework.kafka.listener.RetryListener
  *   `telemetry_commit_failed` 를 남긴다. listener 가 던진 일시 실패는 listener 가 이미 남겼으므로 여기서는 건너뛴다.
  *
  * 둘 다 예외 메시지 원문을 남기지 않는다. 원인은 클래스 이름뿐이다.
+ *
+ * 두 counter 는 생성 때 0 으로 노출한다. Prometheus `increase()` 는 처음 보인 series 의 첫 값을 증가로 세지 않으므로, 첫 실패에
+ * counter 를 만들면 단발 소진·commit 실패가 경보와 대시보드에서 0 이 된다. stage 는 [RETRY_EXHAUSTED_STAGES] 전부다.
  */
-class TelemetryFailureReporter(private val maxAttempts: Int) : RetryListener {
+class TelemetryFailureReporter(private val maxAttempts: Int, private val observer: TelemetryObserver = TelemetryObserver.NONE) : RetryListener {
 
 	val recoverer: ConsumerRecordRecoverer = ConsumerRecordRecoverer { record, exception -> recover(record, exception) }
+
+	init {
+		RETRY_EXHAUSTED_STAGES.forEach { observer.observe(TelemetryMetric.PIPELINE_RETRY_EXHAUSTED, 0.0, "stage" to it) }
+		observer.observe(TelemetryMetric.PIPELINE_COMMIT_FAILURES, 0.0)
+	}
 
 	private fun recover(record: ConsumerRecord<*, *>, exception: Exception?) {
 		try {
 			val failure = transientOf(exception)
+			observer.observe(TelemetryMetric.PIPELINE_RETRY_EXHAUSTED, 1.0, "stage" to (failure?.stage ?: stageOf(exception)))
 			log.error(
 				TelemetryLogEvent.RETRY_EXHAUSTED.format(
 					"messageId" to failure?.messageId, "topic" to record.topic(), "partition" to record.partition(), "offset" to record.offset(),
@@ -42,6 +55,8 @@ class TelemetryFailureReporter(private val maxAttempts: Int) : RetryListener {
 		if (transientOf(ex) != null) return
 		try {
 			val root = rootOf(ex)
+			if (isCommitFailure(root)) observer.observe(TelemetryMetric.PIPELINE_COMMIT_FAILURES)
+			else observer.observe(TelemetryMetric.PIPELINE_FAILURES, 1.0, "stage" to stageOf(ex), "reason" to reasonOf(ex))
 			val event = if (isCommitFailure(root)) TelemetryLogEvent.COMMIT_FAILED else TelemetryLogEvent.TRANSIENT_FAILURE
 			log.warn(
 				event.format(
@@ -82,3 +97,6 @@ class TelemetryFailureReporter(private val maxAttempts: Int) : RetryListener {
 		}
 	}
 }
+
+/** recoverer 가 붙일 수 있는 stage — 처리 단계 이름, listener 의 분류되지 않은 일시 실패 `process`, `stageOf` 의 `commit`·`container`. */
+internal val RETRY_EXHAUSTED_STAGES: List<String> = PipelineStage.entries.map { it.label } + listOf("process", "commit", "container")

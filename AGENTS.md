@@ -28,6 +28,7 @@ libs/security/               횡단 인증 라이브러리 — 사용자 JWT·�
 libs/telemetry-auth/         telemetry JWT 발급·검증 (RS256, 전용 typ·kid) — nimbus 만 의존 (ADR 0065)
 libs/telemetry-otlp-http/    OTLP/HTTP 경로·허용 목록·응답 바이트 — Gateway 와 ingest 가 같은 응답을 낸다
 libs/telemetry-ingress-contract/ Kafka ingress envelope(protobuf)·codec·접속 설정·운영 로그 이벤트 (ADR 0066)
+libs/telemetry-observability/ 운영 계측 포트·Micrometer 구현 — Spring 없음, 앱이 조립 (ADR 0068)
 libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 신원 스탬프 · 원본 아카이브
 libs/telemetry-adapter/      파이프라인 변환 단계 — 관측 모델 2판 · 제품 프로파일(Codex · Claude Code) · 가격 단계
 libs/telemetry-enricher/     파이프라인 보강 단계 — member_id · 대표 팀 as-of · provider 주석
@@ -53,6 +54,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | 알림 | 구현됨 | 규칙 켜기(enrollment-api)·등록 제품 기준 사용 알림(허브 ADR 0008), 주기 평가·개요 미확인 수·확인(dashboard-api 평가 + enrollment-api 확인). 한도 초과는 근거가 없어 켤 수 없다. ADR 0051 |
 | 대시보드 API | 개요·팀·구성원·설정·카탈로그·수집 상태·좌석·알림·작업 상태 조회 구현, ADR 0022·0023 Accepted | `docs/api/README.md` 참고. 관리 쓰기는 enrollment-api가 맡는다. 기간 완전성·비교(ADR 0042), 수집 상태 판정(ADR 0041). API 구현과 프론트 전체 배선·E2E 완료는 별개 |
 | telemetry JWT·Gateway·Kafka 수집 | 로컬 구현, 배포·허브 개정 전(ADR 0065·0066 Proposed, 0067 Accepted) | telemetry JWT 발급(설정으로 켬)·Gateway·ingest Consumer·수신 모드. 200 은 Kafka 접수다. 설정·전환 순서·키 회전·보안 폐기 SQL은 `docs/telemetry-kafka-operations.md`, 로컬 E2E 결과는 `docs/telemetry-kafka-e2e.md` |
+| 수집 운영 계측(PROJ-191) | 로컬 구현·검증, 배포 인수 전 | Gateway/ingest 관리9404 Prometheus·Kafka native·단계/CH semantic metrics. `PULSEMETRY_OBSERVABILITY_ENABLED=false`면 업무 지표만 끈다. GC·safepoint 옵션 문자열은 Infra가 성능 비교 구간에 `JDK_JAVA_OPTIONS`로 넣는다. `docs/telemetry-observability.md`와 ADR0068. 200·completed·rows submitted는 실제 적재와 다르며 독립 smoke의 FINAL 기대 ID 대조로 확인 |
 | 텔레메트리 파이프라인 이관 | 단일 앱 구현·dev EKS 실행 계약 채택 | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다. dev EKS 실행·이미지 공급/수동 배포는 허브 ADR 0023을 따르며 실제 AWS 철거·배포·수집 E2E 검증은 별도다 |
 
 **파이프라인은 이 레포의 단일 앱이다**(허브 ADR 0004·0005 — 배포 단위 하나, OTel Collector 바이너리 없음).
@@ -202,7 +204,7 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   수신 ledger·요약에 기록한 뒤 400이고, 기록이 실패하면 503이다(ADR 0021). 행을 옮기면 허브
   `contracts/telemetry-ingest.md` §8을 같은 커밋에서 고친다.
 - **`:apps:telemetry-ingest`의 OTLP 밖 경로는 기본 닫힘이다.** 둘째 `SecurityFilterChain`이 `/api/v1/healthz`만
-  열고 나머지는 `denyAll`이다. 관리 엔드포인트를 얹으려면 그 체인에 경로를 명시한다. 예외는 ERROR
+  열고 나머지는 `denyAll`이다. 관리 scrape는 분리 포트9404의 별도 체인에서 GET `/actuator/prometheus`만 허용한다(ADR0068). 업무 포트에는 actuator를 열지 않는다. 예외는 ERROR
   디스패치 하나다 — 내부 오류는 원래 서버 오류 응답을 보존한다. 외부의 계약 밖 요청은
   `denyAll`을 유지하며 `404 text/plain`으로 거부한다(허브 계약 §8).
 - **인증 조회의 DB 장애는 401도 403도 아니다.** 데몬은 그 둘을 같은 칸에 두고 토큰을 폐기·재발급한다.

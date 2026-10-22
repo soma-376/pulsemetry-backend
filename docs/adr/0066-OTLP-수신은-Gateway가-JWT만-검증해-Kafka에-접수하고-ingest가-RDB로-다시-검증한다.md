@@ -4,7 +4,9 @@
 
 Proposed — 허브 [ADR 0005](../../../docs/adr/0005-single-app-telemetry-topology.md)(단일 앱·큐 없음)와
 [ADR 0006](../../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)(200 의 의미·영구 실패 400·서버 큐 없음),
-허브 `contracts/telemetry-ingest.md` 를 부분 대체할 허브 개정이 남아 있다(Follow-up).
+허브 `contracts/telemetry-ingest.md` 를 부분 대체할 허브 개정이 남아 있다(Follow-up). 개정 초안은 docs 저장소
+`docs/PROJ-191-observability-contract` 브랜치의 허브 ADR 0023 이다 — Gateway/Kafka 경로에서 허브 ADR 0001·0005·0006 을 부분 대체하고
+직접 HTTP ingest 의 상태 코드 계약은 유지한다. 머지 전이며 번호는 머지 직전 허브 인덱스로 다시 확인한다.
 경로 전환은 배포 설정(`PULSEMETRY_INGEST_MODE`, ALB 대상)으로 하며 이 ADR 만으로 운영 경로가 바뀌지 않는다.
 
 ## Context
@@ -110,9 +112,10 @@ Proposed — 허브 [ADR 0005](../../../docs/adr/0005-single-app-telemetry-topol
 ## Follow-up
 
 - 허브 개정: ADR 0005(단일 앱·네트워크 홉 없음), ADR 0006(200 의 의미, Gateway 경로의 디코드 실패, "서버 큐 없음" — Alternative C 의 재검토 조건이 충족됐다),
-  `contracts/telemetry-ingest.md`(Gateway 경로·envelope·상태 표)를 부분 대체한다. 이 레포에서는 허브를 고치지 않는다.
+  `contracts/telemetry-ingest.md`(Gateway 경로·envelope·상태 표)를 부분 대체한다. 이 레포에서는 허브를 고치지 않는다. 초안은 허브 ADR 0023 이다(Status 참고).
 - `kafka` 모드 전환이 안정되면 ingest 의 HMAC 키·telemetry 공개키·외부 NodePort 를 걷는다(infra).
-- 처리량 지표(micrometer)는 아직 없다. 경보는 로그 metric filter 와 MSK consumer lag 으로 건다(infra). Pod 재시작·OOM 경보는 Container Insights 이후다.
+- 처리량·단계 지표는 [ADR 0068](0068-수집-운영-계측은-전송-계약과-분리하고-앱에서-조립한다.md)(PROJ-191)이 Micrometer 로 더했다. 기존 로그 metric filter·MSK consumer lag 경보는 유지한다.
+  Prometheus 경보와 Pod 재시작·OOM 경보는 infra ADR 0037(PROJ-191 관측 스택)이 맡는다.
 - backoff 를 늘리거나 단건 처리 시간이 `max.poll.interval.ms` 에 가까워지면 Decision 6 의 backoff 방식을 재검토한다.
 
 ## References
