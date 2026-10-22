@@ -16,7 +16,7 @@ telemetryctl 로그인 배선은 별도 전환해야 한다.
 Cognito는 운영 회원 원장이 아니며 초대/회원 API에서 Cognito 계정을 만들지 않는다(허브 ADR 0010).
 운영은 고객사의 OIDC 제공자에 연결한다. 인증 서버 자체를 이 저장소에서 배포하지 않는다.
 
-JWT 키 원본·최초 생성·버전 고정과 파일 공급의 공통 결정은 [허브 ADR 0022](../../docs/adr/0022-user-jwt-key-provisioning.md), dev AWS 전달 방식은 [infra ADR 0030](../../infra/docs/adr/0030-dev-user-jwt-keys-from-secrets-manager.md)을 따른다. 이 문서는 기존 파일 소비 코드와 채택된 후속 공급 경로를 구분한다. Secrets Manager 초기화·ECS writer·EKS CSI 공급과 AWS 배포는 아직 구현·검증하지 않았다.
+JWT 키 원본·최초 생성·버전 고정과 파일 공급의 공통 결정은 [허브 ADR 0022](../../docs/adr/0022-user-jwt-key-provisioning.md), dev EKS 전용 실행·배포 경계는 [허브 ADR 0023](../../docs/adr/0023-dev-backend-eks-only.md)을 따른다. [infra ADR 0030](../../infra/docs/adr/0030-dev-user-jwt-keys-from-secrets-manager.md)의 EKS 전달 방식과 [EKS 수동 배포 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 함께 읽는다. infra에는 Pod Identity·ASCP/CSI 파일 공급 코드가 있다. 이 사실은 Secret 최초 등록·선택 버전·실제 mount 권한·AWS 배포·인증 기능 검증의 완료를 뜻하지 않는다.
 
 `tenants.sso_enabled`는 기본 false이며 비활성 회사는 조직 조회·authorize에서 제외한다.
 회사별 `oidc_issuer`, `oidc_client_id`, `oidc_client_secret_ref`를 DB에서 읽는다.
@@ -89,9 +89,9 @@ pulsemetry:
       company-a: ${PULSEMETRY_OIDC_CLIENT_SECRET}
 ```
 
-서비스 JWT 키는 환경별로 고정한 Secrets Manager ARN 두 개에 별도로 보관한다. 개인키 Secret은 RSA 2048비트 이상 **PKCS8 PEM**, 공개키 Secret은 **`kid → X.509 PEM` JSON 키링**이다. AWS 관리형 `aws/secretsmanager`로 암호화하며 dev ECS/EKS는 같은 원본을 소비한다. 공개키도 이미지에 포함하지 않고 런타임 파일로 공급한다.
+서비스 JWT 키는 환경별로 고정한 Secrets Manager ARN 두 개에 별도로 보관한다. 개인키 Secret은 RSA 2048비트 이상 **PKCS8 PEM**, 공개키 Secret은 **`kid → X.509 PEM` JSON 키링**이다. AWS 관리형 `aws/secretsmanager`로 암호화하며 dev EKS는 기존 두 원본과 선택한 `VersionId`를 유지한다. ECS 제거를 이유로 키를 다시 만들지 않는다. 공개키도 이미지에 포함하지 않고 런타임 파일로 공급한다.
 
-앱은 Secrets Manager를 조회하지 않는다. infra 공급자가 공개키 JSON을 kid별 PEM 파일로 풀고 앱의 `public-key-files`에는 **kid → 파일 경로**를 전달한다. enrollment에 개인키·공개키를, dashboard에 공개키만 공급하고 telemetry-ingest에는 JWT Secret 권한을 추가하지 않는다. PEM 원문을 일반 환경변수·Spring 설정·문서·로그·output에 넣지 않는다.
+앱은 Secrets Manager를 조회하지 않는다. dev EKS의 Pod Identity·ASCP/CSI 공급자가 선택 버전의 공개키 JSON을 kid별 PEM 파일로 풀고 앱의 `public-key-files`에는 **kid → 파일 경로**를 전달한다. enrollment에 개인키·공개키를, dashboard에 공개키만 공급하고 telemetry-ingest에는 JWT Secret 권한을 추가하지 않는다. PEM 원문을 일반 환경변수·Spring 설정·문서·로그·output에 넣지 않는다.
 OIDC client secret은 enrollment에만 주며 dashboard에는 자체 JWT 공개키·issuer·audience만 준다.
 두 종류의 issuer(외부 IdP / Pulsemetry 자체 JWT)를 혼동하지 않는다.
 
@@ -151,7 +151,7 @@ RSA 2048비트 이상, 개인키 PKCS8·공개키 X509 PEM을 사용한다. 운�
 
 ### JWT 키 공급의 수락 조건
 
-다음은 후속 공급 구현·배포의 검증 조건이며 이번 문서 변경의 통과 결과가 아니다. 성공한 health 응답만으로 충족했다고 판단하지 않는다.
+다음은 실제 키 공급·배포의 수락 조건이며 이번 문서 변경의 통과 결과가 아니다. CSI 공급 코드나 성공한 health 응답만으로 충족했다고 판단하지 않는다.
 
 | 시나리오 | 기대 결과와 확인 지점 |
 | --- | --- |
@@ -161,7 +161,7 @@ RSA 2048비트 이상, 개인키 PKCS8·공개키 X509 PEM을 사용한다. 운�
 | dashboard 맵의 잘못된 kid·다른 공개키 | 공급자는 기대하는 전체 kid와 파일·버전 대응을 검사한다. 실제 enrollment 발급 AT가 모든 enrollment·dashboard 검증 인스턴스에서 검증되고, 모르는 kid·다른 키의 서명은 거부되는지 확인한다 |
 | 두 Secret 중 하나만 등록 | 배포 참조를 확정하거나 앱을 시작하지 않는다. 같은 키쌍으로 누락 등록을 복구하고 두 VersionId를 검증한 뒤 진행한다 |
 | 공개키 전파·signer 전환의 일부 인스턴스 실패 | 해당 단계에서 멈춘다. 모든 검증 인스턴스의 신·구 키 준비 전 signer를 바꾸지 않고, 마지막 구 키 발급 시각을 전체 signer 기준으로 기록한다 |
-| 교체와 롤백 | 아래 순서로 신·구 토큰 검증·최소 330초 경계·구 키 제거·보존 버전 복구를 확인한다. ECS/EKS에서 동시에 실행 중인 모든 인스턴스를 포함한다 |
+| 교체와 롤백 | 아래 순서로 신·구 토큰 검증·최소 330초 경계·구 키 제거·보존 버전 복구를 확인한다. 실제 실행 중인 모든 verifier/signer를 포함하며, 철거 전에 남아 있는 ECS 인스턴스도 제외하지 않는다 |
 
 ## 쿠키와 세션
 
@@ -187,6 +187,8 @@ OIDC callback의 정상적인 실패 안내는302로 신뢰된 UI에 복귀하�
 이메일 회사 탐색은 공개 API로 소속 정보 노출 가능성이 있다. 최소 필드·no-store·IP 제한을 적용하되 운영에서 탐색 남용을 감시한다.
 
 ## 키 교체와 보존
+
+dev EKS의 모든 replica와 철거 전에 실제로 남아 있는 ECS verifier/signer를 대상으로 한다. 문서의 EKS 전용 계약만으로 구 인스턴스가 종료됐다고 판단하지 않는다.
 
 1. 고정 ARN의 새 값 버전을 등록·검증하고 배포 기록을 준비한다. 새 공개키와 구 공개키를 함께 담은 공개키 VersionId를 모든 enrollment·dashboard 검증 인스턴스에 적용한다. 각 인스턴스의 신·구 키 검증 성공을 확인한다.
 2. 공개키 전파가 끝난 뒤 모든 enrollment signer의 개인키 VersionId와 active-kid를 함께 전환한다. 일부 전환이면 구 공개키를 유지하며 중단 지점을 복구한다.
@@ -260,6 +262,6 @@ docker buildx build --target enrollment-api \
   --build-context telemetry-contracts=../telemetryctl/contracts -t <repo>:<tag> --load .
 ```
 
-CI의 PR 검증과 develop 배포는 telemetryctl 기본 브랜치를 체크아웃해 그 `contracts`를 쓴다(ref를 고정하지 않는다).
+CI의 PR 검증과 develop 이미지 게시 workflow는 telemetryctl 기본 브랜치를 체크아웃해 그 `contracts`를 쓴다(ref를 고정하지 않는다). dev CI는 이미지 공급만 하며 EKS 배포는 infra 런북에 따른 별도 수동 작업이다.
 계약 테스트는 telemetryctl 기본 브랜치에 있는 `enrollment-envelope`·`enrollment-manifest` 두 스키마만 원본으로 읽는다. 사용자 토큰 봉투·AT 클레임·재조회 봉투의 오라클은
 [인증 API](api/auth.md)와 [manifest 재조회](api/enrollment.md)의 표다 — 원격 기본 브랜치에 없는 스키마를 읽게 하면 CI가 죽는다.

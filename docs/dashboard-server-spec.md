@@ -10,6 +10,7 @@ HTTP 명세는 [페이지·기능별 API 문서](api/README.md)로 이전했다.
 레포 간 확정 계약은 [문서 허브](../../docs/contracts/README.md)가 우선한다.
 현행 공통 계약은 [dashboard API 계약](../../docs/contracts/dashboard-api.md), 채택 근거는 [허브 ADR 0021](../../docs/adr/0021-dashboard-runtime-and-deployment-contract.md)이다.
 JWT 키 원본·버전 고정·파일 공급은 [허브 ADR 0022](../../docs/adr/0022-user-jwt-key-provisioning.md)가 보완한다.
+dev 백엔드의 EKS 전용 실행과 이미지 공급·수동 배포 분리는 [허브 ADR 0023](../../docs/adr/0023-dev-backend-eks-only.md)이 정한다. backend dev CI는 세 앱의 ARM64 이미지를 게시하며, 운영자는 확인한 immutable digest로 [infra EKS 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)에 따라 배포한다. enrollment의 원천 Flyway 적용을 확인한 뒤 ingest·dashboard를 배포한다. prod와 별도 frontend의 ECS 배포는 이 dev 전환 범위 밖이다.
 이 문서는 그 계약을 구현하는 설정과 코드 근거를 기록한다. 문서 채택은 AWS 배포·실 DB 권한 적용·E2E 완료를 뜻하지 않는다.
 
 ## API 목록
@@ -63,7 +64,7 @@ enrollment-api와 같은 값을 준다(local 프로필은 둘 다 true).
 
 | 설정·환경변수 | 기본값·기동 검증 |
 | --- | --- |
-| `server.port` / `PULSEMETRY_DASHBOARD_PORT` | 8081. ECS container port와 EKS Service targetPort도 이 계약을 따른다 |
+| `server.port` / `PULSEMETRY_DASHBOARD_PORT` | 8081. dev EKS의 container port와 Service targetPort도 이 계약을 따른다 |
 | `pulsemetry.user-auth.enabled` / `PULSEMETRY_USER_AUTH_ENABLED` | false. 활성하지 않으면 업무 API 인증은 거부된다 |
 | `pulsemetry.user-auth.issuer` / `PULSEMETRY_USER_AUTH_ISSUER` | 빈 값. 활성 시 비어 있으면 실패; enrollment 자체 JWT issuer와 동일 |
 | `pulsemetry.user-auth.audience` / `PULSEMETRY_USER_AUTH_AUDIENCE` | 빈 값. 활성 시 비어 있으면 실패; enrollment 자체 JWT audience와 동일 |
@@ -71,6 +72,8 @@ enrollment-api와 같은 값을 준다(local 프로필은 둘 다 true).
 | `pulsemetry.user-auth.allowed-origins` / `PULSEMETRY_USER_AUTH_ALLOWED_ORIGINS` | 빈 목록. 브라우저 origin을 정확히 지정 |
 | `pulsemetry.management.enabled` / `PULSEMETRY_MANAGEMENT_ENABLED` | false. 쓰기 capability 표시에 사용하며 명령은 enrollment로 전달 |
 | `pulsemetry.mail.enabled` / `PULSEMETRY_MAIL_ENABLED` | false. 설치 업데이트 안내 capability 표시에만 사용; enrollment와 동일하게 지정 |
+
+현재 infra [runtime 입력 검사](../../infra/lib/dev/runtime-input.cjs)는 관리·메일 추가 Secret 공급이 없어 `managementEnabled` 또는 `mailEnabled`가 true이면 거부한다. 위 플래그의 앱 지원과 dev EKS 활성화 완료는 다르며, 메일 준비 조건은 [메일 발송 운영](mail-operations.md#3-배포-준비-조건--인프라-작업에-넘기는-것)을 따른다.
 
 네 연결의 설정을 모두 전달한다. 각 `PASSWORD`는 설정 항목이지만 구현은 빈 문자열을 허용한다. 배포 시 준비된 DB 계정의 인증 정책에 맞춰 값을 주입하며, 빈 값이 기동 검증에서 거부된다고 가정하지 않는다. 비밀은 런타임 secret 주입을 쓰고 이미지·일반 environment·문서·output에 값을 기록하지 않는다.
 
@@ -132,11 +135,11 @@ RDS source와 cache는 **같은 RDS 논리 DB**의 원천(`enrollment`·`telemet
 
 `PULSEMETRY_USER_AUTH_PUBLIC_KEY_FILE`은 `public-key-files.local`의 **경로만** 바꾼다. 발급자가 `active-kid=key-2026-09`처럼 다른 `kid`를 쓰면 YAML 또는 `SPRING_APPLICATION_JSON`으로 `public-key-files`의 정확한 키 이름을 설정해야 한다. 키 교체·origin·검증 예시는 [사용자 인증 운영](user-auth-operations.md)의 dashboard 설정을 따른다.
 
-배포 공개키 원본은 환경별 고정 ARN의 **`kid → X.509 PEM` JSON 키링 Secret**이다. dev ECS/EKS는 같은 원본을 소비하며 infra가 고정 공개키 VersionId의 키링을 kid별 PEM 파일로 공급한다. dashboard는 Secrets Manager를 직접 조회하지 않고 `kid → 파일 경로` 맵만 읽는다. 키를 이미지에 넣거나 PEM 원문을 환경변수로 전달하지 않는다. private-key-file·active-kid·개인키 Secret 권한은 이 앱에 주지 않는다. 배포 기록의 개인키/공개키 VersionId·active-kid와 파일 맵은 enrollment 공급까지 하나의 묶음으로 관리하지만 이 앱에는 공개키와 검증 설정만 전달한다.
+배포 공개키 원본은 환경별 고정 ARN의 **`kid → X.509 PEM` JSON 키링 Secret**이다. dev EKS는 기존 원본과 선택한 공개키 VersionId를 유지하며 infra의 Pod Identity·ASCP/CSI가 키링을 kid별 PEM 파일로 공급한다. ECS 제거를 이유로 원본을 재생성하지 않는다. dashboard는 Secrets Manager를 직접 조회하지 않고 `kid → 파일 경로` 맵만 읽는다. 키를 이미지에 넣거나 PEM 원문을 환경변수로 전달하지 않는다. private-key-file·active-kid·개인키 Secret 권한은 이 앱에 주지 않는다. 배포 기록의 개인키/공개키 VersionId·active-kid와 파일 맵은 enrollment 공급까지 하나의 묶음으로 관리하지만 이 앱에는 공개키와 검증 설정만 전달한다.
 
 `SecurityConfig.dashboardAuthenticator()`·`UserJwt.verifier()`의 기동 검사는 issuer/audience·유효 공개키 맵·RSA 2048비트 이상과 실제 파일 파싱을 확인한다. 파일 누락·빈 파일·읽기 불가·잘못된 PEM은 실패하지만 빈 경로 항목은 제외하므로 다른 유효 키가 남으면 그 항목만으로 기동이 실패하지 않는다. 개인키가 없어 발급자 키쌍을 비교하거나 올바른 PEM의 잘못된 kid 배치를 기동 때 판별할 수 없다. 공급자는 모든 기대 kid의 파일·VersionId 대응을 검증하고, 실제 발급 AT를 모든 enrollment·dashboard 검증 인스턴스에서 확인해야 한다.
 
-교체는 모든 검증 인스턴스에 신·구 공개키 적용·검증 → 모든 enrollment signer의 개인키·kid 전환 → 마지막 구 키 발급 후 330초 이상 대기 → 구 공개키 제거 순서다. 파일은 기동 때 한 번 읽으므로 자동 reload는 없다. 롤백도 공개키를 먼저 복구하고 마지막 새 키 발급 후 330초 동안 새 공개키를 유지한다. 등록 부분 실패·키쌍/kid 불일치·교체/롤백의 [수락 조건](user-auth-operations.md#jwt-키-공급의-수락-조건)을 따른다. Secrets Manager 초기화·ECS writer·EKS CSI 파일 전달과 실제 배포 검증은 후속 작업이다.
+교체는 모든 검증 인스턴스에 신·구 공개키 적용·검증 → 모든 enrollment signer의 개인키·kid 전환 → 마지막 구 키 발급 후 330초 이상 대기 → 구 공개키 제거 순서다. dev EKS의 모든 replica와 철거 전에 실제로 남아 있는 ECS verifier/signer도 포함한다. 파일은 기동 때 한 번 읽으므로 자동 reload는 없다. 롤백도 공개키를 먼저 복구하고 마지막 새 키 발급 후 330초 동안 새 공개키를 유지한다. 등록 부분 실패·키쌍/kid 불일치·교체/롤백의 [수락 조건](user-auth-operations.md#jwt-키-공급의-수락-조건)을 따른다. infra의 EKS CSI 파일 공급 코드는 구현됐지만, 실제 Secret 등록·선택 버전·mount 권한·배포 및 인증 검증의 완료는 별도 증거로 확인한다.
 
 전체 path·HTTP method·OPTIONS 소유권은 [허브 계약의 공통 라우팅 표](../../docs/contracts/dashboard-api.md)가 단일 출처다. 이 문서의 API 목록은 HTTP 상세로 가는 길잡이이며 ALB 규칙을 만들 때 접두만으로 추정하지 않는다. 대표 충돌의 구현 근거는 다음과 같다.
 

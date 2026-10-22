@@ -3,9 +3,10 @@
 메일 발송의 설정 계약, 배포 환경(SES)을 준비하는 인프라 작업에 넘길 조건, 실제 발송 확인 절차, 전환·복구 절차를 담는다.
 결정은 [ADR 0037](adr/0037-메일은-outbox에-적재하고-enrollment-api의-발송-작업이-SMTP로-보낸다.md)(outbox)과
 [ADR 0058](adr/0058-배포-환경의-메일은-SES-API로-보내고-발송-구현은-설정으로-고른다.md)(발송 구현 선택·SES)이 정한다. API의 발송 상태는 [초대 API 공통 규칙](api/reference/invitations.md)이 정한다.
+dev 백엔드의 실행·배포 경계는 [허브 ADR 0023](../../docs/adr/0023-dev-backend-eks-only.md), 실제 설치는 [infra EKS 수동 배포 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다.
 
 > **검증 상태.** 이 저장소의 코드는 로컬·CI 에서 AWS 계정 없이 검증했다 — SMTP 는 메일 수신 컨테이너(Mailpit)로, SES 는 실제 SDK 를 로컬 HTTP 모의 서버에 붙여서다.
-> **실제 SES 로 보낸 적은 없다.** 리전·발신 주소·identity·IAM·DNS 는 아직 정해지지 않았고 인프라 코드도 바뀌지 않았다. CI 성공을 실제 발송 확인으로 읽지 않는다 — 실제 확인은 §5 다.
+> **실제 SES 발송 증거는 없다.** dev EKS의 기본 runtime 공급 코드는 있지만 메일 활성화에 필요한 설정·암호화 키·SES 권한 공급은 미구현이다(§3). CI 성공을 실제 발송 확인으로 읽지 않는다 — 실제 확인은 §5 다.
 
 ## 1. 보장하는 것과 보장하지 않는 것
 
@@ -40,10 +41,10 @@
 | `PULSEMETRY_MAIL_SES_CONFIGURATION_SET` | 선택 | 불필요 | 비우면 요청에서 뺀다. 영문·숫자·`_`·`-` 64자 이하 |
 | `PULSEMETRY_MAIL_SMTP_HOST` · `_PORT` · `_USERNAME` · `_PASSWORD` · `_STARTTLS` | 불필요 | 필수 | SMTP 접속 |
 
-- SES 자격 증명은 SDK 기본 공급자 체인에서 찾는다. 배포에서는 **enrollment-api 태스크 역할**이다. 정적 AWS 키 설정은 없다. 앱은 기동할 때 AWS 에 말하지 않는다 — 리전·권한·identity 오류는 첫 발송에서 드러난다(§4).
-- SDK 의 호출 제한은 자격 증명 조회를 포함하지 않는다(ECS 자격 증명 엔드포인트는 연결·읽기 1초에 다섯 번까지 재시도한다). 그래서 발송 구현이 조회를 전용 스레드에서 `send-timeout` 기한까지만 기다리고
+- SES 자격 증명은 SDK 기본 공급자 체인에서 찾는다. dev EKS에서는 **enrollment-api ServiceAccount에 연결된 Pod Identity 역할**에 발송 권한을 준비해야 한다(§3). 정적 AWS 키 설정은 없다. 앱은 기동할 때 AWS 에 말하지 않는다 — 리전·권한·identity 오류는 첫 발송에서 드러난다(§4). EKS Pod Identity도 [SDK 컨테이너 자격 증명 공급자](https://docs.aws.amazon.com/sdkref/latest/guide/feature-container-credentials.html)를 사용한다.
+- SDK 의 호출 제한은 자격 증명 조회를 포함하지 않는다. 로컬 테스트는 느린 ECS 형식 자격 증명 엔드포인트로 이 조건을 재현하며, dev ECS 실행을 전제하지 않는다. 발송 구현은 조회를 전용 스레드에서 `send-timeout` 기한까지만 기다리고
   남은 시간만 SES 호출에 준다. 기한을 넘기면 SES 에 묻지 않고 `ses_credentials_unavailable`로 실패하고, 조회는 뒤에서 이어져 다음 시도가 그 결과를 쓴다.
-  SES 가 메일을 받을 수 있는 시각은 선점 뒤 `send-timeout` 안이므로 임대(네 배)를 넘긴 중복 발송은 생기지 않는다. `send-timeout`은 자격 증명 첫 조회(태스크 시작 직후)에 걸리는 시간도 감안해 정한다.
+  SES 가 메일을 받을 수 있는 시각은 선점 뒤 `send-timeout` 안이므로 임대(네 배)를 넘긴 중복 발송은 생기지 않는다. `send-timeout`은 자격 증명 첫 조회(프로세스 시작 직후)에 걸리는 시간도 감안해 정한다.
 - 업무별로 함께 켜야 하는 설정이 있다 — 초대·설치 안내는 `pulsemetry.management.enabled`와 `PULSEMETRY_INVITATION_ACCEPT_URL`, 문의 통지는 `pulsemetry.inquiries.enabled`와 `PULSEMETRY_INQUIRIES_NOTIFICATION_RECIPIENT`(명세 §8).
 - `PULSEMETRY_MAIL_ENABLED=false`는 **일시 정지가 아니다.** 꺼진 동안 생긴 업무 메일은 적재되지 않는다(발송 상태 `not_sent`/`mail_disabled`).
 - local 프로필은 `smtp`(Compose 의 Mailpit `localhost:1025`, 화면 `localhost:8025`)로 켠다. local 값(5초·1분·3회·10초)은 운영 권장값이 아니다.
@@ -51,8 +52,10 @@
 
 ## 3. 배포 준비 조건 — 인프라 작업에 넘기는 것
 
-이 절의 실행은 인프라 작업의 몫이다. 이 저장소는 인프라 코드를 바꾸지 않았다.
-조사 시점(인프라 저장소 `fb128f0`)의 dev `enrollment-api` 태스크에는 메일·관리·문의 활성화 설정과 메일 암호화 키 주입이 없고, SES 리소스·발송 권한도 없다.
+이 절의 실행은 인프라 작업의 몫이다. PROJ-251은 backend 문서를 정리하며 인프라 코드를 바꾸지 않는다.
+현재 로컬 infra 코드의 [runtime 입력 검사](../../infra/lib/dev/runtime-input.cjs)는 `managementEnabled` 또는 `mailEnabled`가 true이면 추가 Secret 공급 미구현으로 거부한다.
+[값 생성기](../../infra/scripts/eks-values.mjs)는 두 플래그를 enrollment·dashboard에 전달하지만 현재 허용값은 false뿐이다.
+[enrollment Pod Identity 역할](../../infra/lib/dev/eks-runtime.ts)과 기본 CSI 파일 공급은 구현됐으나 SES 발송 권한·메일 및 문의 설정·관리 응답과 메일 암호화 키 공급은 없다. SES identity·발송 인프라와 아래 준비 조건은 후속 작업이며, 이 소스 확인은 실제 AWS 상태 확인이 아니다.
 prod 는 다른 앱 구성이므로 dev 설정을 옮긴 것으로 prod 준비를 끝냈다고 하지 않는다.
 
 ### 3.1 계정·리전·발신 identity
@@ -69,7 +72,7 @@ prod 는 다른 앱 구성이므로 dev 설정을 옮긴 것으로 prod 준비�
 
 ### 3.3 최소 권한
 
-- **enrollment-api 태스크 역할에만** `ses:SendEmail`을 준다. 태스크 실행 역할·EC2 호스트 역할·다른 서비스 역할에 메일 권한을 주지 않는다. `ses:*`와 정적 AWS 키를 쓰지 않는다.
+- **enrollment-api의 Pod Identity 역할에만** `ses:SendEmail`을 준다. EKS 노드 역할·다른 workload 역할에 메일 권한을 주지 않는다. `ses:*`와 정적 AWS 키를 쓰지 않는다.
 - 리소스는 발신 identity 와(쓰면) configuration set 의 ARN 으로 좁히고 발신 주소를 조건으로 묶는다. 예시 — 값은 확정 뒤 채운다.
 
 ```json
@@ -86,9 +89,9 @@ prod 는 다른 앱 구성이므로 dev 설정을 옮긴 것으로 prod 준비�
 
 ### 3.4 설정과 비밀
 
-- 공통·SES 설정(§2)은 ECS `environment`로, 기존 outbox 키(`PULSEMETRY_MAIL_ENCRYPTION_KEY`)는 Secrets Manager → ECS `secrets`로 넣는다. 값을 `environment`·output 에 두지 않는다.
+- 비밀이 아닌 공통·SES 설정(§2)은 EKS workload 설정으로, outbox 키(`PULSEMETRY_MAIL_ENCRYPTION_KEY`)는 Secrets Manager → Pod Identity·ASCP/CSI → runtime 파일로 공급하도록 준비한다. 현재 chart에 메일 키 공급은 없으므로 Secret 참조·읽기 권한·필수 파일 검사를 추가한 뒤 활성화한다. 키 값을 일반 environment·Helm values·output 에 두지 않는다. 기존 outbox가 있으면 같은 키를 유지한다.
 - token hash·관리 응답·벤더 자격증명 키를 재사용하지 않는다 — 용도가 다른 비밀은 키를 나눈다(ADR 0037 대안 E).
-- 인프라 저장소의 dev 규칙은 "실제 Secret 3개만 둔다"이다. 메일 키 Secret 을 더하려면 그 규칙을 먼저 개정한다.
+- 메일 전용 Secret 원본·보존 책임과 enrollment만의 읽기 권한을 infra에서 정한다. 기존 DB·HMAC·관리자 토큰·JWT·OIDC 공급에 메일 키가 포함됐다고 가정하지 않는다.
 - `PULSEMETRY_MAIL_PROVIDER`·`PULSEMETRY_MAIL_SES_REGION`은 새 필수값이다. 메일을 켠 배포 설정에 함께 넣는다.
 
 ### 3.5 업무 기능 활성화
@@ -98,7 +101,7 @@ prod 는 다른 앱 구성이므로 dev 설정을 옮긴 것으로 prod 준비�
 
 ### 3.6 네트워크
 
-- 실행 중인 태스크에서 SES API 의 HTTPS(443) egress, DNS, ECS 태스크 자격 증명 엔드포인트 접근을 확인한다.
+- 실행 중인 enrollment Pod에서 SES API 의 HTTPS(443) egress, DNS, Pod Identity 자격 증명 공급 경로를 확인한다.
 - SMTP 포트 개방이나 Mailpit 은 SES 모드의 조건이 아니다.
 
 ### 3.7 관측과 피드백
@@ -135,14 +138,14 @@ API 와 화면에는 공개 코드(`message_rejected`·`invalid_address`·`send_
 | `failure_detail` | 공개 코드 | 처리 | 운영 조치 |
 |---|---|---|---|
 | `ses_invalid_address` | `invalid_address` | 영구 | 수신자 주소를 고친 뒤 업무 절차로 새 메일 |
-| `ses_credentials_unavailable` | `send_error` | 재시도 | 기한 안에 자격 증명을 얻지 못했다(조회 지연·실패). **SES 에 묻지 않았다.** 태스크 역할·자격 증명 엔드포인트 접근·`send-timeout`을 본다. 로그의 `error`가 `TimeoutException`이면 지연이다 |
+| `ses_credentials_unavailable` | `send_error` | 재시도 | 기한 안에 자격 증명을 얻지 못했다(조회 지연·실패). **SES 에 묻지 않았다.** Pod Identity 역할·ServiceAccount 연결·자격 증명 공급 경로·`send-timeout`을 본다. 로그의 `error`가 `TimeoutException`이면 지연이다 |
 | `ses_message_rejected` | `message_rejected` | 영구 | identity 검증·sandbox 수신자·내용 확인 |
 | `ses_bad_request` | `message_rejected` | 영구 | 요청 형식 문제. 발신 주소·리전·configuration set 이름 확인 |
 | `ses_throttled` | `send_error` | 재시도 | 발송 속도 한도. 인스턴스 수와 발송 주기를 본다 |
 | `ses_limit_exceeded` | `send_error` | 재시도 | 계정 한도 오류. 속도 한도와 같은 것으로 보지 않는다 |
 | `ses_configuration_error` | `send_error` | 재시도 | MAIL FROM 도메인 미검증, 없는 configuration set 등 |
 | `ses_sending_disabled` | `send_error` | 재시도 | 계정·configuration set 의 발송 중지 또는 계정 정지 |
-| `ses_auth_failed` | `send_error` | 재시도 | 태스크 역할·권한·서명·토큰 만료 |
+| `ses_auth_failed` | `send_error` | 재시도 | Pod Identity 역할·권한·서명·토큰 만료 |
 | `ses_unavailable` | `send_error` | 재시도 | SES 5xx 또는 연결 실패(DNS·egress 포함) |
 | `ses_timeout` | `send_error` | 재시도 | 제한 시간 초과. **SES 가 받았는지 알 수 없다** — 재시도가 중복일 수 있다 |
 | `ses_unknown_error` | `send_error` | 재시도 | 분류하지 못한 SDK 오류 |
@@ -193,7 +196,7 @@ FROM enrollment.mail_outbox GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
 | 테스트 | 확인하는 것 |
 |---|---|
 | `MailDispatchTest` | 실제 PostgreSQL·SMTP — 업무 롤백, 중복 방지, 동시 선점, 재시도·최대 시도, 취소, 만료 임대, 본문 삭제, 결과 기록 실패, 로그 비노출, 필수 설정·provider 검사 |
-| `SesMailTransportTest` | 실제 SDK + 로컬 HTTP 모의 서버(가짜 자격 증명·고정 테스트 리전) — 요청 직렬화, 오류 분류, SDK 단일 시도, 제한 시간, 주소 검사, 클라이언트 닫기, 실제 PostgreSQL outbox 와의 상태 전이·접수 로그. 늦은 ECS 자격 증명 엔드포인트로 SDK 만으로는 임대를 넘긴다는 재현 조건과, 발송 한 번이 기한 안에 SES 에 묻지 않고 끝나며 늦은 조회가 하나만 돌아 다음 발송에 쓰이는지 |
+| `SesMailTransportTest` | 실제 SDK + 로컬 HTTP 모의 서버(가짜 자격 증명·고정 테스트 리전) — 요청 직렬화, 오류 분류, SDK 단일 시도, 제한 시간, 주소 검사, 클라이언트 닫기, 실제 PostgreSQL outbox 와의 상태 전이·접수 로그. 느린 ECS 형식의 로컬 모의 자격 증명 엔드포인트로 SDK 만으로는 임대를 넘긴다는 재현 조건과, 발송 한 번이 기한 안에 SES 에 묻지 않고 끝나며 늦은 조회가 하나만 돌아 다음 발송에 쓰이는지. 실제 ECS·EKS 자격 증명 공급을 검증한 것은 아니다 |
 | `SesMailConfigTest` | SES 설정만으로 앱이 뜨고 SES 구현을 쓴다(SMTP 설정 없음, AWS 호출 없음) |
 | `InvitationMailApiTest` · `InstallationInvitationApiTest` · `InstallationNotificationApiTest` | 업무 트리거·발송 상태·설치 안내 작업 결과(SMTP) |
 
