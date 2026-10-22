@@ -132,7 +132,7 @@ DB 장애 시에는 503과 함께 `status=degraded`, `checks.database=down`을 �
 |---|---|---|
 | `pulsemetry.public-base-url` | `http://localhost:8080` | 설치 명령·스크립트에 박히는 서버 주소. 기동 시 형식 검증 |
 | `pulsemetry.admin.api-token` | 없음 | 관리자 API 키. **비어 있으면 기동 실패** |
-| `pulsemetry.token-hash-secret` | 없음 | telemetry token 의 HMAC-SHA256 키. **비어 있으면 기동 실패.** auth-proxy(ai-telemetry-pipeline)와 같은 값을 써야 OTLP 인증이 성립한다. dev 인프라에서는 `DevEdgeStack` 의 `TokenHashSecretArn` 이 가리키는 Secrets Manager 값. 키 변경 = 발급된 전 토큰 무효 |
+| `pulsemetry.token-hash-secret` | 없음 | telemetry token 의 HMAC-SHA256 키. **비어 있으면 기동 실패.** 발급과 dev telemetry-ingest 검증은 `:libs:security`의 `TelemetryTokenHasher`와 같은 키를 쓴다. 기존 auth-proxy와의 해시 호환성도 유지한다. dev EKS는 `DevDataStack` 소유 Secret을 `DevEksStack`의 `TokenHashSecretArn` 출력과 runtime 파일 공급으로 연결한다(`DevEdgeStack`의 같은 출력도 유지). 키 변경 = 발급된 전 토큰 무효 |
 | `pulsemetry.invitation.default-ttl-hours` | `72` | `expires_in_hours` 생략 시 만료 시간 |
 | `pulsemetry.binaries.dir` | `./binaries` | telemetryctl 릴리스 디렉터리(`v<SemVer>`, §6.3)나 공개 이름의 CLI 바이너리(§6.2)가 놓인 서버 로컬 디렉터리 |
 | `pulsemetry.user-auth.enabled` | `false` | 자체 사용자 AT·RT·세션 인증을 켠다. local 프로필은 true |
@@ -155,7 +155,7 @@ DB 장애 시에는 503과 함께 `status=degraded`, `checks.database=down`을 �
 | `pulsemetry.mail.smtp.host` · `.port` | 없음 | SMTP 서버. `smtp`일 때만 필요 |
 | `pulsemetry.mail.smtp.username` · `.password` | 없음 | SMTP 계정. `smtp`일 때만 필요. 로그·응답에 싣지 않는다 |
 | `pulsemetry.mail.smtp.starttls` | 없음 | STARTTLS를 요구하는가(`true`·`false`). `smtp`일 때만 필요. 운영 SMTP는 `true` |
-| `pulsemetry.mail.ses.region` | 없음 | SES 리전. `ses`일 때만 필요. 다른 AWS 설정에서 추론하지 않는다. 자격 증명은 SDK 기본 공급자 체인(배포에서는 태스크 역할)이고 정적 키 설정은 없다 |
+| `pulsemetry.mail.ses.region` | 없음 | SES 리전. `ses`일 때만 필요. 다른 AWS 설정에서 추론하지 않는다. 자격 증명은 SDK 기본 공급자 체인을 쓴다. dev EKS의 enrollment Pod Identity 역할에 SES 권한을 준비해야 하며 정적 AWS 키 설정은 없다. 현재 infra의 메일 활성화 제약은 [메일 운영](mail-operations.md#3-배포-준비-조건--인프라-작업에-넘기는-것)을 따른다 |
 | `pulsemetry.mail.ses.configuration-set` | 없음 | SES configuration set 이름. 선택 — 비우면 요청에서 뺀다 |
 | `pulsemetry.mail.from` | 없음 | 발신 주소. SES 에서는 검증된 identity 의 주소 |
 | `pulsemetry.mail.encryption-key` | 없음 | 대기 중인 메일 본문의 AES-256-GCM 키(Base64 32바이트). 바꾸면 그때 대기 중이던 메일은 본문을 읽지 못해 실패로 끝난다 |
@@ -264,50 +264,57 @@ GUI 패키지는 받지 않아도 된다(서빙하지 않는다). 새 릴리스�
 
 ### 9.4 공유 RDS(controlplane) 접속 — 파이프라인과 같은 DB 를 본다
 
-텔레메트리 파이프라인의 auth-proxy(`DATABASE_URL`)와 post-processor(`ENRICHMENT_PG_DSN`)는
-infra 가 띄우는 RDS 의 **`controlplane`** 데이터베이스를 가리킨다. 이 서버가 발급한 토큰이
-OTLP 경로에서 검증되려면 **이 서버도 같은 DB 에 붙어야 한다** (ADR 0009).
+dev EKS의 enrollment-api·telemetry-ingest와 dashboard-api의 원천 연결은 infra가 준비한 RDS의
+**`controlplane`** 데이터베이스를 사용한다. 발급·OTLP 검증·사용자 세션 조회가 같은 원천을 보도록
+DB 주소·계정·권한을 준비한다. 계약은 [공유 데이터 계약](../../docs/contracts/data-model.md)과
+[허브 ADR 0023 — dev 백엔드 EKS 전용](../../docs/adr/0023-dev-backend-eks-only.md)을 따른다.
 
-**이 절의 로컬 `bootRun` 레시피는 enrollment 서버가 dev 에 배포되기 전까지의 공식 잠정 절차다.**
-공유 RDS 의 `enrollment` 스키마 부트스트랩(마이그레이션 적용)은 이 절차로만 한다 —
-파이프라인 DDL 을 `psql` 로 직접 넣는 우회는 쓰지 않는다. 부트스트랩 주체는 backend Flyway 다.
+공유 RDS의 원천 스키마 부트스트랩 주체는 **backend Flyway**다. dev 배포는 다음 순서로 진행한다.
 
-```sh
-# 엔드포인트·자격증명은 infra DevEdgeStack 의 CfnOutput 에서 얻는다.
-#   RdsEndpoint          → 호스트
-#   RdsSecretArn         → username / password (Secrets Manager)
-#   TokenHashSecretArn   → PULSEMETRY_TOKEN_HASH_SECRET (Secrets Manager)
-export PULSEMETRY_DB_URL="jdbc:postgresql://<RdsEndpoint>:5432/controlplane?sslmode=require"
-export PULSEMETRY_DB_USERNAME=postgres
-export PULSEMETRY_DB_PASSWORD=...        # RdsSecretArn 시크릿의 password
-export PULSEMETRY_TOKEN_HASH_SECRET=...  # TokenHashSecretArn 시크릿 값 (auth-proxy 와 동일해야 한다)
-export PULSEMETRY_ADMIN_API_TOKEN=...
-./gradlew :apps:enrollment-api:bootRun
-```
+1. infra가 저장소·계정·권한과 runtime 입력을 준비한다. DB 자격 증명·HMAC 키 등은 runtime 파일로 공급하며
+   실제 값은 문서·일반 환경변수·배포 출력에 적지 않는다.
+2. enrollment-api를 먼저 배포하고 `enrollment`·`telemetry_ops` Flyway 적용과 DB 연결을 확인한다.
+3. `spring.flyway.enabled=false`인 telemetry-ingest를 배포한다. 이 앱에서 enrollment DDL을 실행하지 않는다.
+4. dashboard-api를 배포한다. 원천은 읽고 자기 RDS·ClickHouse 캐시 DDL만 기동 시 적용한다.
 
-- JDBC 의 `sslmode=require` 는 libpq 와 같은 의미다 — 암호화하되 CA 검증은 하지 않으므로
-  RDS CA 번들이 필요 없다 (infra 의 `CONTROL_DB_SSLMODE` 와 동일한 전제).
-- **스키마 부트스트랩은 Flyway 가 맡는다.** 빈 DB 면 V1 부터 생성하고, 파이프라인 DDL 로
-  수동 부트스트랩된 스키마가 이미 있으면 `baseline-on-migrate` 가 DROP 없이 baseline
-  (V1 스킵) 후 V2 부터 적용한다. V1 이 그 DDL 과 같은 물리 형태(native enum)라서
-  성립하는 동작이다 (ADR 0009).
+입력 생성·Helm 실행·실패와 복구는 [infra EKS 수동 배포 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다.
+로컬 `bootRun`은 §10의 개발 절차다. dev 공유 RDS의 배포 절차를 대신하지 않으며 파이프라인 DDL을
+`psql`로 직접 넣는 우회도 사용하지 않는다.
+
+- 빈 DB에는 Flyway가 V1부터 적용한다. ADR 0009의 기존 수동 부트스트랩 스키마에 대한 baseline 조건은
+  유지하지만, 기존 스키마의 물리 형태·이력 확인 없이 임의의 DB에 baseline을 적용하지 않는다.
 - 개발 시드는 Docker의 고정 개발 DB에만 적재한다. 서버 프로필은 시드를 실행하지 않는다(ADR 0031).
-- 수용 기준(B3): enroll 로 발급받은 `ptt_` 토큰으로
-  `curl -X POST http://<alb-dns>/v1/traces -H "Authorization: Bearer <ptt>"
-  -H "Content-Type: application/json" -d '{"resourceSpans":[]}'` → **2xx**,
-  토큰 없이 → 401.
+- B3의 실제 배선 확인은 enrollment 발급 → OTLP 인증·적재와 dashboard 원천 조회를 대상 DB에서 검증해야 한다.
+  정상 토큰의 수집 성공·토큰 없는 요청의 401, 분석 행의 적재를 구분해 확인한다. 이미지 게시나 health 응답만으로
+  [telemetry ingest 계약의 B3](../../docs/contracts/telemetry-ingest.md#5-b3의-구현검증-경계와-legacy-조사-항목)를 해소하지 않는다.
 
 ---
 
 ### 9.5 사용자 JWT 키 공급과 교체
 
-배포 키의 공통 결정은 [허브 ADR 0022](../../docs/adr/0022-user-jwt-key-provisioning.md), 절차와 수락 조건은 [사용자 인증 운영](user-auth-operations.md#최초-공급과-배포-기록)을 따른다. 환경별 고정 ARN의 개인키 PKCS8 PEM과 공개키 키링 Secret을 infra가 고정 VersionId의 파일로 공급한다. 이 앱에는 개인키 파일 경로·active-kid·전체 공개키 파일 맵을 함께 전달하고, dashboard에는 같은 공개키만 전달한다. 두 Secret의 최초 등록·검증 전에는 배포 참조를 확정하지 않으며 부분 실패는 같은 키쌍으로 복구한다.
+배포 키의 공통 결정은 [허브 ADR 0022](../../docs/adr/0022-user-jwt-key-provisioning.md), dev EKS 적용 범위는 [허브 ADR 0023](../../docs/adr/0023-dev-backend-eks-only.md), 절차와 수락 조건은 [사용자 인증 운영](user-auth-operations.md#최초-공급과-배포-기록)을 따른다. 환경별 고정 ARN의 개인키 PKCS8 PEM과 공개키 키링 Secret을 infra가 고정 VersionId의 파일로 공급한다. dev EKS는 기존 원본과 선택 버전을 유지한다. 이 앱에는 개인키 파일 경로·active-kid·전체 공개키 파일 맵을 함께 전달하고, dashboard에는 같은 공개키만 전달한다. 두 Secret의 최초 등록·검증 전에는 배포 참조를 확정하지 않으며 부분 실패는 같은 키쌍으로 복구한다.
 
 `UserAuthConfig.userJwt()`와 `UserJwt` 생성자는 실제 파일의 읽기·파싱·RSA 크기와 활성 kid의 modulus 일치를 기동 시 검사한다. 공급자는 별도로 키쌍의 실제 서명/검증·VersionId 대응·앱 UID의 읽기 권한을 확인한다. 키 누락·빈 파일·읽기 불가·잘못된 PEM·키쌍/kid 불일치·등록 부분 실패는 배포 중단 조건이다. 빈 공개키 경로 항목은 앱이 제외하므로 다른 유효 키가 있어도 공급자의 기대 kid 누락 검사는 생략하지 않는다.
 
-모든 enrollment·dashboard 검증 인스턴스에 신·구 공개키를 먼저 적용·검증한 뒤 모든 signer의 개인키·kid를 전환한다. 마지막 구 키 발급 후 330초 이상 기다려 구 공개키를 제거한다. 롤백 버전과 배포 기록을 보존하고, 롤백 시에도 공개키를 먼저 복구하며 직전 새 키로 발급한 AT의 330초 검증 기간을 유지한다. 앱은 기동 때만 파일을 읽으며 자동 생성·회전·reload를 하지 않는다.
+모든 enrollment·dashboard 검증 인스턴스에 신·구 공개키를 먼저 적용·검증한 뒤 모든 signer의 개인키·kid를 전환한다. dev EKS의 구 replica와 철거 전 실제 남아 있는 ECS signer/verifier도 포함한다. 마지막 구 키 발급 후 330초 이상 기다려 구 공개키를 제거한다. 롤백 버전과 배포 기록을 보존하고, 롤백 시에도 공개키를 먼저 복구하며 직전 새 키로 발급한 AT의 330초 검증 기간을 유지한다. 앱은 기동 때만 파일을 읽으며 자동 생성·회전·reload를 하지 않는다.
 
-Secrets Manager 초기화·ECS/EKS 파일 전달 코드는 후속 작업이다. 아래 local 프로필의 Compose 키는 개발 fixture이며 AWS 키 공급이나 배포 검증 완료를 증명하지 않는다.
+현재 infra 로컬 구현에는 Pod Identity·ASCP/CSI를 통한 버전 지정 파일 공급이 있다. 실제 Secret 등록·mount 권한·기동과 토큰 발급/검증·교체/롤백은 별도 운영 증거로 확인한다. 아래 local 프로필의 Compose 키는 개발 fixture이며 AWS 키 공급이나 배포 검증 완료를 증명하지 않는다.
+
+### 9.6 dev 이미지 공급과 배포 책임
+
+`.github/workflows/deploy_dev.yml`은 enrollment-api·telemetry-ingest·dashboard-api 세 앱의 `linux/arm64`
+이미지를 검증·빌드해 ECR에 게시한다. 세 `sha-<commit>` 이미지 게시가 모두 성공한 뒤 각 build digest로
+`dev` 태그를 enrollment → ingest → dashboard 순서로 승격한다. 승격 도중 실패하면 이후 앱은 중단하고
+이미 바뀐 태그는 유지한다. 같은 digest의 재실행은 멱등 처리하며 태그 갱신은 원자적 배포가 아니다.
+
+CI는 ECS 조회·재배포·안정화 대기나 CDK·Helm·kubectl 실행을 하지 않는다. 운영자는 앱별 **immutable digest**와
+runtime/workload 입력을 확인해 infra 런북으로 수동 배포한다. `sha-<commit>`도 재실행으로 이동할 수 있으므로
+commit·태그·digest의 대응을 함께 기록한다. retention-worker는 이 CI의 이미지 게시 대상이 아니다.
+
+CDK는 AWS 자원·IAM, Helm과 운영 절차는 Kubernetes workload·runtime 공급·배포, EKS Auto Mode는 노드를 소유한다.
+§9.4의 기동 순서를 따르며 이미지 게시·Pod readiness·기능 검증 성공은 각각 기록한다.
+prod의 기존 ECS와 별도 frontend ECS는 이 dev 백엔드 정리의 대상이 아니다. 실제 ECS 철거·Snapshot은
+[infra 철거 런북](../../infra/docs/runbooks/dev-ecs-retirement.md)의 별도 작업이다.
 
 ## 10. 로컬 실행
 
@@ -376,7 +383,8 @@ psql postgresql://pulsemetry:pulsemetry@localhost:5432/pulsemetry \
 토큰 없이 `POST http://localhost:4316/v1/traces` 를 부르면
 `{"error":"unauthorized","message":"Invalid or expired credential"}` 가 401 로 돌아온다.
 
-이 절차가 **compose 단독 E2E** 다 — 자동화는 PROJ-106 에서 이미지·CI 와 함께 다룬다(ADR 0016 Follow-up).
+이 절차는 **Compose 개발 DB와 별도 실행한 Spring 앱의 수동 E2E**다. 자동화·diagnostics 후속 상태는 ADR 0016 Follow-up을 따른다.
+§9.6의 이미지 공급 구현이나 이 수동 절차를 dev EKS 수집 E2E 통과로 해석하지 않는다.
 
 ### 10.2 데몬 → 서버 → 화면 실경로 검증
 

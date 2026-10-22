@@ -3,6 +3,9 @@
 ## Status
 Accepted ([ADR 0004](0004-Flyway-마이그레이션과-varchar-CHECK-스키마-관리.md) 의 "varchar + CHECK 이식" 결정을 대체한다. 진실원 = Flyway 등 나머지 결정은 유지)
 
+dev 의 마이그레이션 실행 순서는 [허브 ADR 0023](../../../docs/adr/0023-dev-backend-eks-only.md)을 따른다.
+아래 Context 는 native enum 채택 당시의 공유 DB·구 파이프라인 상태이며 현재 배포 상태를 뜻하지 않는다.
+
 ## Context
 E2E 검증(soma-376/E2E-FLOW-VERIFICATION.md B3)에서 이 서버와 텔레메트리 파이프라인이
 **같은 enrollment DB 를 보지 않는 문제**가 확인됐다. 공유 RDB 는 infra 가 띄우는
@@ -67,9 +70,12 @@ Follow-up), dev 에서는 파이프라인 저장소의 `sql/rds/schema.sql` 을 
   리셋해야 한다.
 
 ## Follow-up
-- 공유 RDS 접속 레시피와 부트스트랩 절차는 `docs/enrollment-server-spec.md` §9 에 있다.
-  dev 배포 전까지는 §9.4 의 로컬 `bootRun` 레시피가 **공식 잠정 절차**다 — `psql` 직접 주입은 쓰지 않는다.
-- 수용 기준: enroll 로 발급한 토큰으로 ALB `/v1/traces` POST → 2xx (B1·B2·B3 동시 입증).
+- 공유 RDS 접속과 부트스트랩 책임은 [enrollment 서버 명세](../enrollment-server-spec.md) §9.4 에 있다.
+  dev 는 저장소·권한 준비 후 enrollment 의 Flyway 적용을 확인하고 ingest·dashboard 순서로 배포한다.
+  ingest 는 Flyway 를 실행하지 않고 dashboard 는 자기 캐시 DDL 만 적용한다. 실행은
+  [EKS 수동 배포 런북](../../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따르며 `psql` 직접 DDL 주입은 쓰지 않는다.
+- 인증·배선 smoke 조건: enroll 로 발급한 토큰으로 ALB `/v1/traces` POST → 2xx, 토큰 없이 → 401.
+  이 응답만으로 실제 분석 적재·조회나 전체 E2E 성공을 판단하지 않는다.
 - **완료** — 파이프라인 `sql/rds/schema.sql`·`seed.sql` 동기화(V2·V3 부분 유니크 인덱스,
   초대 코드 무염 SHA-256)를 PROJ-79 에서 반영했다.
   **이후 마이그레이션을 추가할 때마다 파이프라인 사본 동기화를 체크리스트로 확인한다.**

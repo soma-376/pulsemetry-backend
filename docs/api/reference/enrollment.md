@@ -141,8 +141,8 @@ WHERE code_hash = :codeHash
 403 `forbidden` 으로 끊는다 — 발급 시점 차단([기존 §4.1](../../enrollment-server-spec.md#41-관리자-api))과 같은 정책이다. 트랜잭션
 롤백으로 소비도 취소되므로 코드는 살아 있고, 정지 해제 뒤 같은 코드로 다시 설치할 수 있다.
 
-**enroll 성공은 대상 멤버의 `invited → active` 전환 이벤트다.** OTLP 경로의
-auth-proxy(ai-telemetry-pipeline)가 `invited`·`suspended` 멤버의 토큰을 거부하므로,
+**enroll 성공은 대상 멤버의 `invited → active` 전환 이벤트다.** dev OTLP 경로의
+`:apps:telemetry-ingest`에 조립한 `:libs:security`가 `invited`·`suspended` 멤버의 토큰을 거부하므로,
 이 전환 없이는 발급된 telemetry token 이 전부 401 이 된다. 재발급([기존 §4.3](../../enrollment-server-spec.md#43-2단-토큰-모델과-봉투-분리)의
 `POST /api/v1/installations/telemetry-token`)도 같은 전환을 보정한다 — pit_ 인증이 과거
 enroll 완료의 증명이기 때문이다. 전환은 `invited` 에서만 일어난다. `suspended` 는
@@ -178,7 +178,8 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 - `telemetry_token`: `ptt_` + base64url(32 랜덤 바이트, 패딩 없음)
 - 해시: 초대 코드와 `installation_token` 은 **SHA-256 hex 소문자 64자**.
   `telemetry_token` 만 **HMAC-SHA256(`pulsemetry.token-hash-secret`, 토큰 전문) hex 소문자 64자** —
-  auth-proxy 가 같은 키·같은 연산으로 `token_hash` 를 조회하기 때문이다 ([기존 §8](../../enrollment-server-spec.md#8-설정))
+  발급과 dev OTLP 검증이 `:libs:security`의 `TelemetryTokenHasher`와 같은 키로 `token_hash`를 만든다.
+  기존 auth-proxy와도 같은 연산을 유지하는 계약이므로 고정 벡터 테스트를 보존한다 ([기존 §8](../../enrollment-server-spec.md#8-설정)).
 
 토큰과 초대 코드의 원본은 DB 에 저장하지 않는다. `*_hash` 컬럼에는 해시만 들어간다.
 해시가 결정론적이어야 유니크 인덱스 조회가 성립하므로 bcrypt·Argon2 를 쓸 수 없다.

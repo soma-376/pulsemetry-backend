@@ -44,22 +44,27 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | 사람 계정·로그인 | 표준 OIDC 구현. 개발·데모는 Cognito, 외부 계정 없는 테스트는 모의 OIDC | 비밀번호 API 대신 사전 등록 회원을 최초 SSO의 검증된 이메일로 연결하고 이후 issuer/sub로 식별한다. dashboard-api는 자체 JWT·현재 세션을 검증한다. 허브 ADR 0010·0013, `docs/user-auth-operations.md` 참고. 프론트 BFF·OIDC 배선은 구현됐으며 CLI 배선·운영 배포·SAML은 별도 |
 | 수집 정책·온보딩 | 최초 생성·수정·완료 상태 구현 | `PUT /collection-policy`가 최초 manifest를 만들거나 새 판을 저장하고, 회수 기준·집계 보존을 manifest 와 따로 저장한다. 서버가 기존 설치에 밀어 넣지 않는다. telemetryctl 기본 브랜치의 데몬은 새 정책을 스스로 받지 않는다 — 이미 설치된 기기는 다시 설치해야 새 판을 받는다(ADR 0053). ADR 0029·0032·0033·0046 |
 | 설치 보고·업데이트 확인 | 서버 구현됨. 데몬 쪽은 업데이트 확인만 있다 | 설치 보고 수신(수집 구간·적용 판), 업데이트 확인(telemetryctl 릴리스 디렉터리와 `SHA256SUMS`로 판 확인), 정책 적용 현황·업데이트 안내 메일. telemetryctl 기본 브랜치에는 보고 송신·RT 재조회·CLI 로그인이 없어 그 데몬의 설치는 적용 판 확인 불가다. ADR 0040·0043·0053, 허브 `contracts/daemon-updates.md` |
-| 메일 | 구현됨. 설정으로 활성화 | 초대 메일·문의 통지·설치 업데이트 안내를 outbox 로 적재하고 enrollment-api 의 발송 작업이 보낸다 — 로컬·테스트는 SMTP(Mailpit), 배포는 SES API(`pulsemetry.mail.provider`). SES 는 모의 서버로만 검증했고 실제 발송과 인프라 준비(리전·identity·태스크 역할·비밀)는 남았다(`docs/mail-operations.md`). ADR 0037·0038·0043·0058 |
+| 메일 | 앱 구현됨. dev 인프라 활성화 준비는 별도 | 초대 메일·문의 통지·설치 업데이트 안내를 outbox 로 적재하고 enrollment-api 의 발송 작업이 보낸다 — 로컬·테스트는 SMTP(Mailpit), 배포는 SES API(`pulsemetry.mail.provider`). SES 는 모의 서버로만 검증했다. 현재 infra runtime 입력은 관리·메일 활성화를 거부하며, dev EKS enrollment Pod Identity 역할의 SES 권한·설정·암호화 키 공급과 실제 발송 확인은 남았다(`docs/mail-operations.md`). ADR 0037·0038·0043·0058 |
 | 좌석·벤더 연결·청구 | 구현됨. 벤더 연결은 설정으로 활성화 | 좌석 원장·수동 기록·CSV, 커넥터 동기화(Claude Enterprise·Cursor Enterprise — Copilot·Gemini 는 커넥터가 없다, ADR 0054)·회수·복원(관리자 조치), 벤더 청구 누계. 실계정 검증은 남았다(`docs/vendor-connector-verification.md`). ADR 0048·0049·0050 |
 | 알림 | 구현됨 | 규칙 켜기(enrollment-api)·등록 제품 기준 사용 알림(허브 ADR 0008), 주기 평가·개요 미확인 수·확인(dashboard-api 평가 + enrollment-api 확인). 한도 초과는 근거가 없어 켤 수 없다. ADR 0051 |
 | 대시보드 API | 개요·팀·구성원·설정·카탈로그·수집 상태·좌석·알림·작업 상태 조회 구현, ADR 0022·0023 Accepted | `docs/api/README.md` 참고. 관리 쓰기는 enrollment-api가 맡는다. 기간 완전성·비교(ADR 0042), 수집 상태 판정(ADR 0041). API 구현과 프론트 전체 배선·E2E 완료는 별개 |
-| 텔레메트리 파이프라인 이관 | **코드는 끝났다. 배포만 남았다** | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다 — 남은 것은 infra 가 이 앱을 배포하고 collector 컨테이너를 내리는 일이다(PROJ-106) |
+| 텔레메트리 파이프라인 이관 | 단일 앱 구현·dev EKS 실행 계약 채택 | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다. dev EKS 실행·이미지 공급/수동 배포는 허브 ADR 0023을 따르며 실제 AWS 철거·배포·수집 E2E 검증은 별도다 |
 
 **파이프라인은 이 레포의 단일 앱이다**(허브 ADR 0004·0005 — 배포 단위 하나, OTel Collector 바이너리 없음).
-모듈 구성은 `docs/module-map.md`가 담는다. **이식은 끝났고 배포만 남았다** — 위 표의 마지막 행이 상태다.
-전환 전까지는 실제 OTLP 트래픽을 auth-proxy와 collector 컨테이너가 받으므로, 허브
-`contracts/telemetry-ingest.md` §1·§3·§4의 현행 서술은 infra가 전환을 끝낸 뒤에 고친다(허브 ADR 0005 Follow-up).
+모듈 구성은 `docs/module-map.md`가 담는다. dev 실행 계약은 [허브 ADR 0023 — dev 백엔드 EKS 전용](../docs/adr/0023-dev-backend-eks-only.md)과
+[telemetry ingest 계약](../docs/contracts/telemetry-ingest.md)을 따른다. dev OTLP 검증은 이 앱에 조립한 `:libs:security`가 맡는다.
+과거 auth-proxy·collector 경로와 prod의 기존 ECS 계약은 dev EKS 실행 계약과 구분한다. 이 설명은 실제 트래픽 전환·철거 완료의 증거가 아니다.
+
+backend dev CI는 enrollment-api·telemetry-ingest·dashboard-api의 `linux/arm64` 이미지를 ECR에 게시하고,
+세 SHA 이미지 게시가 모두 끝난 뒤 build digest로 `dev` 태그를 순차 승격한다. 실제 EKS 배포는 infra가 확인한
+immutable digest로 수동 수행한다. enrollment의 원천 Flyway 적용 확인 → ingest → dashboard 순서와 실패·복구는
+[infra EKS 런북](../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다. 이미지 게시·Pod readiness·기능 검증은 각각 확인한다.
 
 **이 레포가 소유하지 않는 것** — 요청이 오면 올바른 레포를 알린다.
 
 | 항목 | 소유 레포 |
 |---|---|
-| AWS 리소스, 태스크 정의, **현행 파이프라인의** 배포 collector 설정 | `infra` |
+| AWS/CDK 자원·IAM, Kubernetes/Helm workload·runtime 공급·수동 배포, prod의 기존 ECS·collector 설정 | `infra` |
 | 로컬 수신기·데몬·벤더 도구 배선, enroll 봉투·manifest **계약 스키마 파일**(`enrollment-envelope`·`enrollment-manifest`) | `telemetryctl` |
 | 스키마 다이어그램(dbml) | `rdb-schema` — 단 **마이그레이션 진실원은 이 레포의 Flyway**다 |
 
@@ -96,6 +101,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | `docs/adr/` | 설계 결정. 최신 목록과 상태는 `docs/adr/README.md` 참고 |
 | `../docs/contracts/enrollment-api.md` | telemetryctl과의 **계약** — 경계에 걸리는 변경은 여기가 기준 |
 | `../docs/contracts/dashboard-api.md` · `../docs/adr/0021-dashboard-runtime-and-deployment-contract.md` | Dashboard 앱 소재·저장소·인증·배포 책임과 전체 path·method·OPTIONS 소유권. 배포·실 DB 검증 완료와 문서 채택은 별개 |
+| `../docs/adr/0023-dev-backend-eks-only.md` · `../infra/docs/runbooks/dev-eks-manual-deployment.md` | dev EKS 실행·이미지 공급과 수동 배포의 책임, 배포 순서·검증·복구. prod·별도 frontend ECS는 변경 대상 밖 |
 
 ## 명령어
 
@@ -119,11 +125,11 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
 ## 이 레포에서 특히 조심할 것
 
 - **토큰 해시 방식.** `telemetry_token`만 HMAC-SHA256(`pulsemetry.token-hash-secret`)이고,
-  초대 코드와 `installation_token`은 무염 SHA-256이다. **auth-proxy가 같은 키·같은 연산으로 조회하므로
-  한쪽만 고치는 PR을 열지 않는다** (`../docs/contracts/enrollment-api.md` §4).
-  연산 자체는 `:libs:security`의 `TelemetryTokenHasher` 한 벌뿐이다 — 발급(`:apps:enrollment-api`)과
-  검증(`:libs:security`)이 같은 클래스를 쓴다. **고정 벡터 테스트를 지우지 마라.** auth-proxy가
-  폐기될 때까지 크로스레포 계약의 앵커다.
+  초대 코드와 `installation_token`은 무염 SHA-256이다. 연산 자체는 `:libs:security`의 `TelemetryTokenHasher` 한 벌뿐이다 —
+  발급(`:apps:enrollment-api`)과 dev OTLP 검증(`:apps:telemetry-ingest`에 조립한 `:libs:security`)이 같은 클래스·같은 키를 쓴다.
+  기존 auth-proxy도 같은 키·같은 연산으로 조회하는 크로스레포 계약이므로 **한쪽만 고치는 PR을 열지 않는다**
+  (`../docs/contracts/enrollment-api.md` §4). **고정 벡터 테스트를 지우지 마라.** auth-proxy와의 호환성 앵커이며
+  dev EKS 전환만으로 다른 실행 환경의 auth-proxy 폐기를 단정하지 않는다.
 - **enroll 응답은 정확히 4키다.** 클라이언트가 `DisallowUnknownFields`로 파싱하므로
   **필드를 추가하면 배포된 전 클라이언트가 깨진다.** 이 제약은 중첩 manifest까지 적용된다.
 - **dbml 의 enum 10종은 native enum**이다(ADR-0009가 ADR-0004의 varchar+CHECK를 대체). 진실원은 여전히 Flyway.
@@ -219,7 +225,8 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
 - **메일은 outbox 다**(ADR 0037). 업무 쓰기와 같은 트랜잭션에서 적재하고 enrollment-api 의 발송 작업이 선점해 보낸다 — 명령 안에서 메일 공급자를 부르지 않는다.
   발송 구현은 `pulsemetry.mail.provider`(`smtp`·`ses`)로 고르고 자동 fallback 은 없다(ADR 0058). SES SDK 는 **한 번만 시도**한다 — 재시도는 outbox 가 갖는다.
   **SDK 의 `apiCallTimeout`은 자격 증명 조회를 포함하지 않는다.** `SesMailTransport`가 조회를 `send-timeout` 기한까지만 기다리고 남은 시간만 호출에 준다 —
-  이 순서를 빼면 늦은 ECS 자격 증명 조회로 발송이 선점 임대를 넘겨 같은 메일이 두 번 나간다.
+  이 순서를 빼면 늦은 자격 증명 조회로 발송이 선점 임대를 넘겨 같은 메일이 두 번 나간다.
+  ECS 자격 증명 엔드포인트를 늦추는 모의 테스트는 이 제한의 재현 근거이며 dev 실행 환경이 ECS라는 뜻은 아니다.
   공개 실패 코드는 ADR 0037 어휘 그대로이고 SES 세부는 `failure_detail`(`ses_*`)과 로그에만 둔다. AWS 오류 메시지 원문과 SES 접수 ID 를 DB 에 넣지 않는다.
   초대 코드는 메일 본문·CLI 설치 명령에만 싣고 SSO 로그인 링크에는 붙이지 않는다(ADR 0056). 발급은 발송이 아니다 — `delivery` 상태를 따로 낸다.
 - **비동기 명령은 공통 작업 기록이다**(ADR 0039). 접수(202)는 완료가 아니다 — 결과는 dashboard-api 의 작업 상태 조회로 본다. 조치 대기(`awaiting_admin_action`)는 관리자의 확인으로만 끝난다.

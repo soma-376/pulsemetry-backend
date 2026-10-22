@@ -6,6 +6,9 @@ Accepted — [ADR 0037](0037-메일은-outbox에-적재하고-enrollment-api의-
 outbox 적재·하나씩 선점·임대·상태 전이·중복 방지 키·본문 암호화·공개 실패 코드 어휘·모듈 배치는 ADR 0037 그대로 유효하다.
 [ADR 0038](0038-초대-메일은-코드를-본문과-링크의-fragment에만-싣고-발송-상태를-발급과-따로-낸다.md)·[ADR 0043](0043-설치-업데이트-안내는-구성원에게-보내는-메일이고-결과는-발송-결과다.md)의 "SMTP 서버가 받았다"는 "설정된 메일 공급자가 받았다"로 읽는다.
 
+dev 실행 환경은 [허브 ADR 0023](../../../docs/adr/0023-dev-backend-eks-only.md)에 따라 EKS다.
+메일용 권한·설정·비밀 공급과 실제 SES 발송은 여전히 후속 인프라 작업이며, 아래 ECS 자격 증명 모의 시험은 SDK 동작의 재현 근거다.
+
 ## Context
 
 메일은 업무 쓰기와 같은 트랜잭션에서 `enrollment.mail_outbox`에 적재하고, enrollment-api의 발송 작업(`MailDispatchJob` → `MailDispatcher.runOnce`)이
@@ -39,7 +42,8 @@ SDK가 스스로 재시도하거나 자격 증명 조회를 기한 없이 기다
 - **SES 구현(`SesMailTransport`)은 AWS SDK v2의 SES API `SendEmail`을 부른다.** 단순(Simple) 내용에 발신 주소, 수신자 한 명(`ToAddresses`만), UTF-8 제목과 텍스트 본문을 싣는다.
   `X-Pulsemetry-Mail-Id` 헤더에 outbox 메일 ID 를 싣는다 — 받은 쪽이 재전송을 알아보는 용도이고 SES 의 중복 방지 키가 아니다.
   configuration set 이름은 설정(`pulsemetry.mail.ses.configuration-set`)으로 받는다. 비어 있으면 요청에서 뺀다. 이름을 지어내거나 SES 리소스를 만들지 않는다. 태그는 싣지 않는다.
-- **자격 증명은 SDK 기본 공급자 체인이다.** 배포에서는 enrollment-api 태스크 역할의 임시 자격 증명이다. 정적 AWS 키 설정을 두지 않는다.
+- **자격 증명은 SDK 기본 공급자 체인이다.** 배포에서는 enrollment-api 전용 workload IAM 역할의 임시 자격 증명을 사용한다.
+  dev EKS는 enrollment-api 서비스계정의 Pod Identity 역할에 SES 권한을 준비해야 한다. 현재 SES 권한·설정 공급이 완료됐다는 뜻은 아니다. 정적 AWS 키 설정을 두지 않는다.
   리전은 필수 설정 `pulsemetry.mail.ses.region`이고 다른 AWS 설정에서 추론하지 않는다. 클라이언트는 발송 구현 하나가 갖고 컨텍스트가 닫힐 때 함께 닫는다.
   만들 때 AWS 에 말하지 않는다 — 설정 검증은 형식만 본다. 메일이 꺼져 있으면 클라이언트를 만들지 않는다.
 - **SDK는 한 번만 시도한다. 재시도는 outbox 가 갖는다.**
@@ -75,7 +79,7 @@ SDK가 스스로 재시도하거나 자격 증명 조회를 기한 없이 기다
   수신자·제목·본문·요청과 응답 전체는 남기지 않는다. 수락 로그는 SES 수락의 증거이고 뒤이은 outbox `sent` 기록의 성공이 아니다.
 - **`sent`는 "설정된 메일 공급자가 받았다"이다.** SES 에서는 `SendEmail`이 성공 응답을 준 것이다. 수신함 도착·읽음·반송 없음·정책 적용을 뜻하지 않는다.
   반송·신고 이벤트를 앱이 받지 않는다. SES 의 수신 거부 목록(suppression)에 걸린 수신자도 `sent`일 수 있다.
-- **배포 준비 조건은 `docs/mail-operations.md`가 담는다** — 환경 변수·비밀·태스크 역할 권한(`ses:SendEmail`만)·발신 identity·네트워크·피드백 경로와 전환·복구 절차.
+- **배포 준비 조건은 `docs/mail-operations.md`가 담는다** — 환경 변수·비밀·enrollment-api 전용 workload IAM 역할 권한(`ses:SendEmail`만)·발신 identity·네트워크·피드백 경로와 전환·복구 절차.
   인프라 코드는 이 결정으로 바뀌지 않는다.
 
 ## Alternatives Considered
@@ -124,7 +128,7 @@ SDK가 스스로 재시도하거나 자격 증명 조회를 기한 없이 기다
 ## Consequences/Tradeoffs
 
 ### Positive
-- 배포 환경은 SMTP 계정·암호 없이 태스크 역할로 보낸다. 주입할 비밀은 outbox 본문 암호화 키 하나다.
+- 배포 환경은 SMTP 계정·암호 없이 workload IAM 역할로 보낸다. 메일을 위해 주입할 비밀은 outbox 본문 암호화 키 하나다.
 - 업무 트리거·outbox 의미·공개 발송 상태가 그대로라 화면과 API 소비자는 바뀌지 않는다.
 - SES 가 메일을 받을 수 있는 시각이 선점 뒤 `send-timeout` 안으로 묶인다 — 자격 증명 조회가 늦어도 임대를 넘긴 발송이 생기지 않는다.
 - 로컬·CI 는 AWS 계정 없이 돌고, SES 구현은 실제 SDK 를 로컬 HTTP 모의 서버(SES·ECS 자격 증명 엔드포인트)에 붙여 요청 직렬화·오류 해석·단일 시도·제한 시간·늦은 자격 증명 조회를 검증한다(`SesMailTransportTest`).
@@ -143,7 +147,9 @@ SDK가 스스로 재시도하거나 자격 증명 조회를 기한 없이 기다
 - 새 필수 설정(`provider`, SES 모드의 `ses.region`)이 생겨 메일을 켠 기존 배포 설정도 함께 바꿔야 한다.
 
 ## Follow-up
-- 배포 환경 준비 — 리전·발신 도메인과 주소·DKIM·DMARC·sandbox 해제·태스크 역할 권한·환경 변수와 비밀 주입(`docs/mail-operations.md` §2·§3). 인프라 작업이다.
+- 배포 환경 준비 — 리전·발신 도메인과 주소·DKIM·DMARC·sandbox 해제·enrollment-api 전용 workload IAM 역할 권한·환경 변수와 비밀 주입(`docs/mail-operations.md` §2·§3). 인프라 작업이다.
+  현재 infra `lib/dev/runtime-input.cjs`는 `managementEnabled`·`mailEnabled`의 true를 거부한다. dev EKS에서 메일을 켜려면
+  Pod Identity 역할의 SES 권한과 메일 설정·outbox 키 공급을 먼저 구현·검증해야 한다. 단순히 runtime 입력을 true로 바꾸는 절차가 아니다.
 - 실제 SES 로 보내는 smoke 확인(`docs/mail-operations.md` §5). 이 결정의 코드 검증은 실제 발송을 포함하지 않는다.
 - 반송·신고 이벤트 소비와 접수 ID 의 영속화 — 필요해지면 `sent`와 비동기 반송의 관계를 제품 계약부터 정한다.
 - 발송량과 SES 한도가 정해지면 재시도 간격·최대 시도·발송 주기를 다시 본다. 인스턴스가 여럿이면 초당 합계가 늘어난다 — 한도를 넘으면 속도 제한을 설계한다.
