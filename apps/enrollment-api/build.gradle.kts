@@ -8,6 +8,8 @@ dependencies {
 	// telemetry token 해시. 발급(이 앱)과 검증(:libs:security)이 같은 연산을 써야 하므로
 	// 정의를 한 벌로 둔다 (ADR 0008 규칙 3·5). 이 의존은 필터 체인을 켜지 않는다 — ADR 0011.
 	implementation(project(":libs:security"))
+	// telemetry JWT 발급 (ADR 0065). 개인키는 이 앱에만 공급된다. 검증 규칙은 Gateway·ingest 와 같은 모듈이 소유한다.
+	implementation(project(":libs:telemetry-auth"))
 	// telemetry_ops 스키마의 마이그레이션. 이 앱이 RDS 마이그레이션을 실행하는 유일한 프로세스라 그 몫을
 	// 함께 진다 (ADR 0021). 요약 writer 는 ingest 가 쓰고, 이 앱은 DDL 만 적용한다.
 	implementation(project(":libs:telemetry-ops-persistence"))
@@ -36,6 +38,8 @@ dependencies {
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
 	// 좌석 동기화 통합 테스트가 벤더 API 모의 서버(JDK 내장 HTTP 서버)를 쓴다.
 	testImplementation(testFixtures(project(":libs:vendor-connector")))
+	// telemetry JWT 키쌍·PEM 을 테스트마다 만든다.
+	testImplementation(testFixtures(project(":libs:telemetry-auth")))
 	// 앱 컨텍스트가 뜨려면 실제 PostgreSQL 이 필요하다 (Flyway 가 기동 시 마이그레이션한다).
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.postgresql)

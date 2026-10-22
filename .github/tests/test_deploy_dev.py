@@ -126,6 +126,7 @@ class ImagePublicationWorkflowTest(unittest.TestCase):
         "ECR_REPO_ENROLLMENT_API": "fixture/enrollment",
         "ECR_REPO_TELEMETRY_INGEST": "fixture/ingest",
         "ECR_REPO_DASHBOARD_API": "fixture/dashboard",
+        "ECR_REPO_TELEMETRY_GATEWAY": "fixture/gateway",
         "ENROLLMENT_IMAGE_DIGEST": "sha256:" + "a" * 64,
         "INGEST_IMAGE_DIGEST": "sha256:" + "b" * 64,
         "DASHBOARD_IMAGE_DIGEST": "sha256:" + "c" * 64,
@@ -279,6 +280,61 @@ with open(sys.argv[1], "a") as log:
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.lifecycle(calls), self.expected_lifecycle())
         self.assertEqual(state, self.expected_state(("enrollment", "ingest", "dashboard")))
+
+    GATEWAY_BUILD = "Build and push telemetry-gateway"
+    GATEWAY_REPORT = "Report telemetry-gateway image digest"
+
+    def test_gateway_image_is_built_without_dev_tag_promotion(self):
+        workflow = WORKFLOW.read_text()
+        self.assertIn("ECR_REPO_TELEMETRY_GATEWAY: ${{ secrets.ECR_REPO_TELEMETRY_GATEWAY_DEV }}", workflow)
+        build = workflow_step(self.GATEWAY_BUILD)
+        for line in (
+            "id: build-gateway", "if: ${{ env.ECR_REPO_TELEMETRY_GATEWAY != '' }}", "context: .", "file: Dockerfile",
+            "target: telemetry-gateway", "platforms: linux/arm64", "provenance: false", "push: true",
+            "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_TELEMETRY_GATEWAY }}:sha-${{ github.sha }}",
+            "cache-from: type=gha,scope=telemetry-gateway", "cache-to: type=gha,mode=max,scope=telemetry-gateway",
+        ):
+            self.assertIn(line, build)
+        self.assertNotIn("build-contexts:", build)
+        # 세 이미지 뒤, dev 태그 승격 전에 만든다. Gateway 는 승격 대상이 아니다.
+        self.assertLess(workflow.index("- name: Build and push dashboard-api"), workflow.index(f"- name: {self.GATEWAY_BUILD}"))
+        self.assertLess(workflow.index(f"- name: {self.GATEWAY_REPORT}"), workflow.index(f"- name: {self.PROMOTE}"))
+        self.assertNotIn("GATEWAY", workflow_step(self.PROMOTE))
+        self.assertIn("telemetry-gateway-digest: ${{ steps.build-gateway.outputs.digest }}", workflow)
+        self.assertIn("if: ${{ env.ECR_REPO_TELEMETRY_GATEWAY != '' }}", workflow_step(self.GATEWAY_REPORT))
+
+    def test_missing_gateway_repository_skips_only_the_gateway(self):
+        result, calls, state = self.run_steps(ECR_REPO_TELEMETRY_GATEWAY="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ECR_REPO_TELEMETRY_GATEWAY_DEV", result.stdout)
+        self.assertEqual(self.lifecycle(calls), self.expected_lifecycle())
+        self.assertEqual(state, self.expected_state(("enrollment", "ingest", "dashboard")))
+
+    def test_gateway_repository_must_differ_from_promoted_repositories(self):
+        for setting, _ in self.APPS:
+            with self.subTest(setting=setting):
+                value = self.ENV[f"ECR_REPO_{setting}"]
+                result, calls, state = self.run_steps(ECR_REPO_TELEMETRY_GATEWAY=value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(value, result.stdout + result.stderr)
+                self.assertEqual(calls, [])
+
+    def test_gateway_digest_report_requires_a_digest_and_hides_the_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            env = {**os.environ, **self.ENV, "GITHUB_SHA": "commit", "GITHUB_STEP_SUMMARY": str(summary)}
+            script = step_script(self.GATEWAY_REPORT)
+            ok = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+                                env={**env, "GATEWAY_IMAGE_DIGEST": DIGEST}, capture_output=True, text=True, timeout=10)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            self.assertIn(DIGEST, ok.stdout)
+            self.assertIn(DIGEST, summary.read_text())
+            self.assertNotIn(self.ENV["ECR_REPO_TELEMETRY_GATEWAY"], ok.stdout + summary.read_text())
+            for bad in ("", "sha256:short", "latest"):
+                with self.subTest(digest=bad):
+                    failed = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+                                            env={**env, "GATEWAY_IMAGE_DIGEST": bad}, capture_output=True, text=True, timeout=10)
+                    self.assertNotEqual(failed.returncode, 0)
 
     def test_each_required_setting_stops_before_aws_without_values(self):
         for key, secret_name in self.REQUIRED.items():

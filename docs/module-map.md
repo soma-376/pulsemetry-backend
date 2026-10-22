@@ -54,7 +54,9 @@ pulsemetry-backend
 │   │                                ├ seat/           벤더 연결 설정·커넥터 조립·좌석 동기화와 회수·복원 벤더 제어의 주기 실행 (ADR 0048·0049·0050)
 │   │                                └ management/     온보딩·정책·팀·초대·제품·계약·좌석·벤더 연결·알림 규칙·알림 확인 관리 HTTP
 │   ├── telemetry-ingest/            com.team376.pulsemetry.telemetry
-│   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다
+│   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다. HTTP·Kafka Consumer 모드 (ADR 0066)
+│   ├── telemetry-gateway/           com.team376.pulsemetry.telemetry.gateway
+│   │                                OTLP 접수 — telemetry JWT 검증 · Kafka 발행 · ack 뒤 응답. DB·S3 없음 (ADR 0066)
 │   ├── dashboard-api/               com.team376.pulsemetry.dashboard
 │   │                                분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시와 알림 평가 기록뿐 (ADR 0022·0051)
 │   │                                ├ api/            HTTP 표현 계층 — 화면별 컨트롤러
@@ -83,6 +85,12 @@ pulsemetry-backend
     │                                  └ alert/ 알림 규칙의 켜짐·모델·도구 목록과 켜기 판정 (ADR 0051)
     ├── security/                    com.team376.pulsemetry.security
     │                                └ 사용자 JWT·세션·OIDC 신원 연결과 OTLP 경로의 ptt_ 검증 · telemetry token 해시
+    ├── telemetry-auth/              com.team376.pulsemetry.telemetry.auth
+    │                                telemetry 전용 JWT 발급·검증 · 키 파일 로더 · Bearer 추출 (ADR 0065). Spring·RDB 없음
+    ├── telemetry-otlp-http/         com.team376.pulsemetry.telemetry.otlp
+    │                                OTLP/HTTP 표면 — 응답 본문 · gRPC 상태 · signal 경로 · media type · Content-Encoding 허용 목록 (ADR 0067)
+    ├── telemetry-ingress-contract/  com.team376.pulsemetry.telemetry.ingress
+    │                                Gateway ↔ Consumer Kafka record 계약 — envelope .proto · codec · DTO · 접속 설정 · 로그 이벤트 (ADR 0066)
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
     │                                OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
     │                                ├ masking/    blocked_values 14종 값 마스킹
@@ -118,6 +126,14 @@ dashboard-api(커넥터 설명의 capability 표시). 역할 이름은 `connecto
 배선·설정 바인딩과 단계 호출이 전부이고, 그것이 ADR 0011이 라이브러리에서 걷어낸 몫이다.
 기동·배선 정책은 [ADR 0016](adr/0016-조립-앱은-인증-체인과-단계-호출을-배선하고-스키마-적용-실패를-견딘다.md),
 상태 코드 계약은 [허브 ADR 0006](../../docs/adr/0006-otlp-ingest-retry-and-status-contract.md)이 담는다.
+수신 모드(`http`·`dual`·`kafka`)와 Kafka Consumer 의 재시도·offset 정책은 [ADR 0066](adr/0066-OTLP-수신은-Gateway가-JWT만-검증해-Kafka에-접수하고-ingest가-RDB로-다시-검증한다.md)이,
+telemetry JWT 의 RDB 판정은 [ADR 0065](adr/0065-telemetry-token은-전용-RS256-JWT로-발급하고-telemetry_tokens를-자격-기록으로-유지한다.md)가 담는다.
+앱 안의 패키지는 `telemetry.credential`(Bearer 분기·RDB 판정)과 `telemetry.consumer`(listener·`ProcessTelemetry`·backoff·실패 로그)가 더해졌다.
+
+`:apps:telemetry-gateway`는 OTLP 접수 앱이다([ADR 0066](adr/0066-OTLP-수신은-Gateway가-JWT만-검증해-Kafka에-접수하고-ingest가-RDB로-다시-검증한다.md)).
+telemetry JWT 를 검증하고 원문을 envelope 로 Kafka 에 발행한 뒤 broker ack 를 받아 200 이다. 의존은 `:libs:telemetry-auth`·`:libs:telemetry-ingress-contract`
+(와 그 api 인 `:libs:telemetry-otlp-http`)·kafka-clients 뿐이고 **DB·JPA·S3·ClickHouse 의존이 없다** — `:libs:security`·`:libs:telemetry-collector`를 끌지 않는다.
+이 컨텍스트의 배포 단위가 둘이 되어 3절 내림 조항에 따라 `telemetry.gateway` 패키지를 쓴다. ingest 의 기존 패키지 rename 은 후속이다(ADR 0067 Decision 5).
 
 `:apps:dashboard-api`는 분석 조회 API다([ADR 0022](adr/0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md), Proposed).
 원천 스키마를 소유한 라이브러리(`enrollment`·`telemetry-ops`·`telemetry`의 `-persistence`)를 **읽기 소비자**로만 쓰므로 2절의
@@ -158,12 +174,23 @@ ClickHouse는 `source/`의 읽기 전용 클라이언트다. 적재 모듈의 `C
 세션·RT 회전, 암호 검증 — `user/`, ADR 0018·0026). enrollment-api 가 사용자 인증 경로를, dashboard-api 가 인증 어댑터(AT·현재 세션 검증)를,
 telemetry-ingest 가 `ptt_` 필터를 조립한다.
 
+`:libs:telemetry-auth`는 telemetry 전용 JWT(ADR 0065)의 발급·검증을 담는다. 의존은 nimbus 뿐이고 Spring·RDB·Kafka 를 모른다 —
+DB 없는 Gateway 와 enrollment(발급)·ingest(HTTP 호환 검증)가 같은 규칙을 쓰기 때문이다. `:libs:security`의 사용자 JWT 와 키·`typ`·`aud`를 공유하지 않는다.
+`<컨텍스트>-<역할>` 모듈이지만 telemetry 밖에 같은 역할의 짝이 없으므로 패키지는 `telemetry.auth` 어순이다(5절의 단계 모듈과 같은 이유).
+
+`:libs:telemetry-otlp-http`와 `:libs:telemetry-ingress-contract`는 Gateway 와 ingest 가 갈라지면 안 되는 정의를 담는다(ADR 0067 Decision 4).
+앱끼리는 의존하지 않으므로(4절) 공유할 것을 `:libs:` 로 올렸다 — 응답 바이트·경로·허용 목록은 전자, envelope·record key·Kafka 접속·로그 이벤트 코드는 후자다.
+둘 다 Spring·JPA·Kafka 클라이언트에 의존하지 않는다. envelope 의 Java 코드는 protobuf gradle plugin 이 후자 모듈에서만 생성한다.
+Gateway(`:apps:telemetry-gateway`)는 S3 SDK 를 가진 수집 모듈과 JPA 를 가진 `:libs:security` 에 의존하지 않는다.
+
 `:libs:telemetry-collector`는 5절이 예고한 단계 모듈 중 첫 번째다(PROJ-114). 하위 패키지는 5절이
 정한 대로 `masking/`·`archive/` 둘이고, 수신 관련 타입은 모듈 루트 패키지에 둔다.
 HTTP 라우팅과 인증 체인은 `:apps:telemetry-ingest`가 붙인다.
-**검증된 신원을 리소스 속성으로 승격하는 것도 이 모듈이다**(`IdentitySource`) — 아카이브 원본이 신원을 담아야
+**검증된 신원을 리소스 속성으로 승격하는 것도 이 모듈이다** — 아카이브 원본이 신원을 담아야
 재처리가 원래 문맥(`observation_id` 재료의 `tenant_id`·`installation_id`)을 재현한다. live 경로의 정규화는 같은
 신원을 영수증(`ArchiveReceipt`)에서 받는다. 심는 자리는 마스킹 뒤·아카이브 앞이다(ADR 0016).
+처리는 전송 독립 코어 `OtlpProcessor`(`RawOtlpPayload` + `VerifiedIngestContext` — receipt ID·수신 시각·**필수인** 검증 완료 신원)가 하고,
+HTTP 어댑터 `OtlpIngestHandler` 는 메서드·경로·media type 검사와 응답 변환만 한다. ingest 의 Kafka Consumer 도 같은 코어를 부른다(ADR 0067).
 적재 대상은 [ADR 0012](adr/0012-원본-아카이브를-S3에-쓰고-파일-구현은-로컬에만-남긴다.md)가 정했다 —
 배포는 S3, 로컬 dev는 파일이고 어느 쪽을 쓸지는 조립 앱이 고른다.
 
@@ -341,7 +368,8 @@ libs/
 
 - **인증이 가장 앞이다.** 필터 체인이 통과시킨 요청만 수집 단계에 닿는다. 폐기된 토큰이나 정지된
   tenant의 요청처럼 거부될 데이터가 외부 저장소에 적재되지 않게 하려면 이 순서여야 한다(허브 ADR 0005).
-- **신원은 `SecurityContextHolder`에서 얻는다.** 단계 사이에 신원 헤더를 실어 나르지 않는다.
+- **신원은 인자로 받는다.** 단계 사이에 신원 헤더를 실어 나르지 않는다. HTTP 는 컨트롤러가 인증된 principal 에서,
+  Kafka 는 RDB 판정 결과에서 검증 완료 신원을 만들어 수집 코어에 넘긴다(ADR 0067 — `SecurityContextHolder` 를 읽던 seam 은 없앴다).
 - **마스킹은 `telemetry.collector.masking` 패키지다.** 허브가 Masker를 별도 노드로 그리지만 이
   저장소에서는 수집 모듈 안에 둔다 — 정규식 규칙 묶음이라 모듈 하나를 지탱할 부피가 아니다.
   클라이언트 마스킹을 신뢰해 서버 마스킹을 생략하지 않는다는 원칙은 그대로다.
@@ -359,7 +387,8 @@ libs/
   실측됐고 이음매가 특성화 테스트로 고정돼 있기 때문이다(ADR 0010이 규칙 5에 더한 단서).
 - `:libs:security`는 컨텍스트에 속하지 않는 횡단 모듈이므로 `<컨텍스트>-<역할>`이 아니라 `<역할>`
   형태를 쓴다. OTLP 경로와 관리자 API 경로가 같은 인증 코드를 공유할 자리가 여기다.
-- 이 컨텍스트의 배포 단위는 하나이므로 3절의 내림 조항(`<컨텍스트>.<인바운드>`)은 발동하지 않는다.
+- 이 컨텍스트의 배포 단위는 ingest·Gateway 둘이다. 3절의 내림 조항(`<컨텍스트>.<인바운드>`)에 따라 Gateway 는 `telemetry.gateway` 로 시작했고,
+  ingest 를 `telemetry.ingest` 로 내리는 rename 은 후속이다(ADR 0067 Decision 5).
 
 ## 6. 모듈을 언제 만드는가
 

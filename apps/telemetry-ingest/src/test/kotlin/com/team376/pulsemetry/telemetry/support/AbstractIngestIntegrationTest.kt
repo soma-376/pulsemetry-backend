@@ -6,6 +6,7 @@ import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerCo
 import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
 import com.team376.pulsemetry.persistence.telemetryops.TenantIngestSummaryStore
 import com.team376.pulsemetry.persistence.telemetryops.TenantRetentionBoundaryStore
+import com.team376.pulsemetry.telemetry.collector.OtlpProcessor
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import org.springframework.test.context.DynamicPropertyRegistry
@@ -50,6 +51,10 @@ abstract class AbstractIngestIntegrationTest {
 	@MockitoSpyBean
 	protected lateinit var retentionBoundaries: TenantRetentionBoundaryStore
 
+	/** 수집 코어의 호출을 센다 — RDB 가 거부한 record 는 디코딩·마스킹·아카이브에 닿지 않아야 한다(ADR 0065·0067). */
+	@MockitoSpyBean
+	protected lateinit var otlpProcessor: OtlpProcessor
+
 	companion object {
 		private const val HTTP_PORT: Int = 8123
 
@@ -69,6 +74,10 @@ abstract class AbstractIngestIntegrationTest {
 			registry.add("pulsemetry.telemetry.clickhouse.url") {
 				"http://${clickhouse.host}:${clickhouse.getMappedPort(HTTP_PORT)}"
 			}
+			// telemetry JWT 검증을 켠다(ADR 0065). 공개키 하나 — 서명은 IngestTestData 가 같은 키로 한다.
+			registry.add("pulsemetry.telemetry-jwt.public-key-files.${IngestJwtKeys.KID}") { IngestJwtKeys.PUBLIC_PEM.toString() }
+			// dual 모드의 Consumer 가 붙는 broker (ADR 0066). topic·group 이름은 테스트 application.yaml 에 있다.
+			registry.add("pulsemetry.telemetry.kafka.bootstrap-servers") { IngestTestKafka.container.bootstrapServers }
 		}
 
 		fun clickHouseUrl(): String = "http://${clickhouse.host}:${clickhouse.getMappedPort(HTTP_PORT)}"

@@ -27,8 +27,16 @@ object TelemetryTokenDecision {
 	private const val TENANT_TERMINATED = "terminated"
 
 	/** 거부 사유. 통과하면 `null`. */
-	fun reject(row: TelemetryTokenAuthRow): TelemetryTokenRejectionReason? = when {
-		row.tokenRevoked -> TelemetryTokenRejectionReason.TOKEN_REVOKED
+	fun reject(row: TelemetryTokenAuthRow): TelemetryTokenRejectionReason? =
+		if (row.tokenRevoked) TelemetryTokenRejectionReason.TOKEN_REVOKED else rejectHolder(row)
+
+	/**
+	 * 토큰 자체의 폐기를 빼고 설치·회원·조직 상태만 본다. 순서와 극성은 [reject] 와 같다.
+	 *
+	 * telemetry JWT 의 RDB 판정(ADR 0065 Decision 6)이 쓴다 — 그 경로는 토큰 폐기를 사유(`rotated`·`security`)와 접수 시각으로
+	 * 따로 판정하므로, 폐기 여부 하나로 거부하는 [reject] 를 그대로 쓸 수 없다. 설치·회원·조직의 차단 규칙은 두 경로가 같아야 한다.
+	 */
+	fun rejectHolder(row: TelemetryTokenAuthRow): TelemetryTokenRejectionReason? = when {
 		row.installationRevoked -> TelemetryTokenRejectionReason.INSTALLATION_REVOKED
 		row.installationStatus != INSTALLATION_ACTIVE -> TelemetryTokenRejectionReason.INSTALLATION_INACTIVE
 		row.memberStatus == MEMBER_SUSPENDED -> TelemetryTokenRejectionReason.MEMBER_SUSPENDED

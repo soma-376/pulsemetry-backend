@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.telemetry.collector
 
+import com.team376.pulsemetry.telemetry.otlp.OtlpHttpRequest
+import com.team376.pulsemetry.telemetry.otlp.OtlpHttpResponse
 import com.google.protobuf.Message
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveReceipt
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveWriter
@@ -30,24 +32,28 @@ class OtlpIngestHandlerTest {
 	private val consumed = mutableListOf<Pair<Signal, Message>>()
 	private val receipts = mutableListOf<ArchiveReceipt>()
 	private var downstream: (Signal, Message) -> Unit = { s, m -> consumed += s to m }
-	private var identity: StampedIdentity? = null
+	private val identity = AuthorizedTelemetryIdentity(tenantId = TENANT, installationId = INSTALLATION)
 
 	private val handler = OtlpIngestHandler(
-		archive = archive,
-		next = { signal, request, receipt ->
-			receipts += receipt
-			downstream(signal, request)
-		},
-		identity = { identity },
+		processor = OtlpIngestProcessor(
+			archive = archive,
+			next = { signal, request, receipt ->
+				receipts += receipt
+				downstream(signal, request)
+			},
+		),
 		clock = Clock.fixed(RECEIVED_AT, ZoneOffset.UTC),
 	)
+
+	/** 인증 체인이 검증한 신원을 컨트롤러가 넘기는 것과 같다(ADR 0067). */
+	private fun handle(request: OtlpHttpRequest): OtlpHttpResponse = handler.handle(request, identity)
 
 	// ------------------------------------------------------------------ 상태 매핑
 
 	@Test
 	@DisplayName("POST 가 아니면 405 — 본문은 text/plain 이다")
 	fun rejectsNonPost() {
-		val response = handler.handle(request(method = "GET"))
+		val response = handle(request(method = "GET"))
 
 		assertThat(response.status).isEqualTo(405)
 		assertThat(response.contentType).isEqualTo("text/plain")
@@ -58,13 +64,13 @@ class OtlpIngestHandlerTest {
 	@Test
 	@DisplayName("모르는 경로면 404 — 상위는 그 경로에 라우트를 등록하지 않는다")
 	fun rejectsUnknownPath() {
-		assertThat(handler.handle(request(path = "/v1/profiles")).status).isEqualTo(404)
+		assertThat(handle(request(path = "/v1/profiles")).status).isEqualTo(404)
 	}
 
 	@Test
 	@DisplayName("아는 Content-Type 이 아니면 415 — 지원 목록을 본문에 적는다")
 	fun rejectsUnknownContentType() {
-		val response = handler.handle(request(contentType = "text/csv"))
+		val response = handle(request(contentType = "text/csv"))
 
 		assertThat(response.status).isEqualTo(415)
 		assertThat(response.body.toString(Charsets.UTF_8)).isEqualTo(
@@ -76,7 +82,7 @@ class OtlpIngestHandlerTest {
 	@ValueSource(strings = ["application/json", "application/json; charset=utf-8", "APPLICATION/JSON"])
 	@DisplayName("Content-Type 의 파라미터와 대소문자를 무시한다 — 상위 mime.ParseMediaType 과 같다")
 	fun acceptsContentTypeParameters(contentType: String) {
-		val response = handler.handle(request(contentType = contentType, body = "{}".toByteArray()))
+		val response = handle(request(contentType = contentType, body = "{}".toByteArray()))
 
 		assertThat(response.status).isEqualTo(200)
 	}
@@ -84,7 +90,7 @@ class OtlpIngestHandlerTest {
 	@Test
 	@DisplayName("모르는 Content-Encoding 이면 400 이고 본문이 google.rpc.Status 다")
 	fun rejectsUnknownContentEncoding() {
-		val response = handler.handle(request(contentEncoding = "br", body = "{}".toByteArray()))
+		val response = handle(request(contentEncoding = "br", body = "{}".toByteArray()))
 
 		assertThat(response.status).isEqualTo(400)
 		assertThat(response.contentType).isEqualTo("application/json")
@@ -95,7 +101,7 @@ class OtlpIngestHandlerTest {
 	@Test
 	@DisplayName("본문이 깨졌으면 400 이고 코드는 INVALID_ARGUMENT(3) 다 — HTTP 코드를 싣지 않는다")
 	fun rejectsUnparseableBody() {
-		val response = handler.handle(request(body = "not json".toByteArray()))
+		val response = handle(request(body = "not json".toByteArray()))
 
 		assertThat(response.status).isEqualTo(400)
 		assertThat(response.body.toString(Charsets.UTF_8)).startsWith("""{"code":3,""")
@@ -104,7 +110,7 @@ class OtlpIngestHandlerTest {
 	@Test
 	@DisplayName("깨진 gzip 이면 400 이다 — ZipException 은 RuntimeException 이 아니라 따로 잡아야 한다")
 	fun rejectsCorruptGzip() {
-		val response = handler.handle(
+		val response = handle(
 			request(contentEncoding = "gzip", body = "definitely not gzip".toByteArray()),
 		)
 
@@ -118,7 +124,7 @@ class OtlpIngestHandlerTest {
 	fun rejectsCorruptProtobuf() {
 		// 필드 1, wire type 2(길이 접두) 뒤에 길이 0xff 를 선언하고 바이트가 없다 — 잘린 메시지다.
 		val truncated = byteArrayOf(0x0a, 0xff.toByte(), 0x01)
-		val response = handler.handle(
+		val response = handle(
 			request(contentType = "application/x-protobuf", body = truncated),
 		)
 
@@ -134,7 +140,7 @@ class OtlpIngestHandlerTest {
 	fun downstreamFailureIsRetryable() {
 		downstream = { _, _ -> throw IllegalStateException("clickhouse down") }
 
-		val response = handler.handle(request(body = oneLogRecord()))
+		val response = handle(request(body = oneLogRecord()))
 
 		assertThat(response.status).isEqualTo(503)
 		assertThat(response.body.toString(Charsets.UTF_8))
@@ -146,7 +152,7 @@ class OtlpIngestHandlerTest {
 	fun permanentDownstreamFailureIsNotRetryable() {
 		downstream = { _, _ -> throw PermanentIngestException("schema mismatch") }
 
-		val response = handler.handle(request(body = oneLogRecord()))
+		val response = handle(request(body = oneLogRecord()))
 
 		// 근거는 허브 ADR 0006 이다. 그 ADR 없이 분류를 넓히지 마라.
 		assertThat(response.status).isEqualTo(400)
@@ -160,14 +166,14 @@ class OtlpIngestHandlerTest {
 	@EnumSource(Signal::class)
 	@DisplayName("세 경로 모두 받는다")
 	fun acceptsEverySignalPath(signal: Signal) {
-		assertThat(handler.handle(request(path = signal.path, body = "{}".toByteArray())).status)
+		assertThat(handle(request(path = signal.path, body = "{}".toByteArray())).status)
 			.isEqualTo(200)
 	}
 
 	@Test
 	@DisplayName("gzip 을 푼다")
 	fun decompressesGzip() {
-		val response = handler.handle(
+		val response = handle(
 			request(contentEncoding = "gzip", body = gzip(oneLogRecord())),
 		)
 
@@ -185,7 +191,7 @@ class OtlpIngestHandlerTest {
 			}.build().toByteArray(),
 		)
 
-		val response = handler.handle(
+		val response = handle(
 			request(contentType = "application/x-protobuf", body = proto.toByteArray()),
 		)
 
@@ -197,7 +203,7 @@ class OtlpIngestHandlerTest {
 	@Test
 	@DisplayName("레코드가 0건이면 하류를 부르지 않고 200 이다")
 	fun shortCircuitsEmptyRequests() {
-		val response = handler.handle(request(body = """{"resourceLogs":[]}""".toByteArray()))
+		val response = handle(request(body = """{"resourceLogs":[]}""".toByteArray()))
 
 		assertThat(response.status).isEqualTo(200)
 		assertThat(consumed).isEmpty()
@@ -213,7 +219,7 @@ class OtlpIngestHandlerTest {
 			 "scopeMetrics":[{"metrics":[{"name":"m"},{"name":"h","histogram":{"dataPoints":[]}}]}]}]}
 		""".trimIndent().toByteArray()
 
-		val response = handler.handle(request(path = "/v1/metrics", body = body))
+		val response = handle(request(path = "/v1/metrics", body = body))
 
 		assertThat(response.status).isEqualTo(200)
 		assertThat(consumed).isEmpty()
@@ -228,7 +234,7 @@ class OtlpIngestHandlerTest {
 			 "scope_logs":[{"log_records":[{"body":{"stringValue":"hi"}}]}]}]}
 		""".trimIndent().toByteArray()
 
-		val response = handler.handle(request(body = body))
+		val response = handle(request(body = body))
 
 		assertThat(response.status).isEqualTo(200)
 		assertThat(consumed).hasSize(1)
@@ -239,7 +245,7 @@ class OtlpIngestHandlerTest {
 	@Test
 	@DisplayName("logs 는 마스킹해서 아카이브와 하류에 같은 값을 보낸다")
 	fun masksLogsBeforeArchiveAndDownstream() {
-		handler.handle(request(body = oneLogRecord(attributeValue = "sk-abcdefghij1234567890")))
+		handle(request(body = oneLogRecord(attributeValue = "sk-abcdefghij1234567890")))
 
 		val archived = archive.written.single()
 		assertThat(archived.body.toString(Charsets.UTF_8)).doesNotContain("sk-abcdefghij")
@@ -269,7 +275,7 @@ class OtlpIngestHandlerTest {
 			    "exemplars":[{"asInt":"1","filteredAttributes":[{"key":"ex","value":{"stringValue":"$secret"}}]}]}]}}]}]}]}
 		""".trimIndent().toByteArray()
 
-		handler.handle(request(path = "/v1/metrics", body = body))
+		handle(request(path = "/v1/metrics", body = body))
 
 		val archived = archive.written.single().body.toString(Charsets.UTF_8)
 		assertThat(archived).doesNotContain(secret).contains("token ****").contains("claude-sonnet")
@@ -289,7 +295,7 @@ class OtlpIngestHandlerTest {
 			  "scopeLogs":[{"logRecords":[{"body":{"stringValue":"b"}}]}]}]}
 		""".trimIndent().toByteArray()
 
-		handler.handle(request(body = body))
+		handle(request(body = body))
 
 		assertThat(archive.written.map { it.product })
 			.containsExactlyInAnyOrder(Product.CLAUDE_CODE, Product.CODEX)
@@ -301,7 +307,7 @@ class OtlpIngestHandlerTest {
 	@ValueSource(strings = ["node_repl", "Claude-Code", "codex", "codex-app-server-2", ""])
 	@DisplayName("별칭 표에 없는 서비스는 버리지 않고 unknown 구간에 아카이브한다 — 정확 일치만 제품이다")
 	fun unregisteredServicesAreArchivedAsUnknown(serviceName: String) {
-		handler.handle(request(body = oneLogRecord(serviceName = serviceName)))
+		handle(request(body = oneLogRecord(serviceName = serviceName)))
 
 		assertThat(archive.written.map { it.product }).containsExactly(Product.UNKNOWN)
 		assertThat(consumed).hasSize(1)
@@ -310,7 +316,7 @@ class OtlpIngestHandlerTest {
 	@Test
 	@DisplayName("service.name 이 없어도 unknown 구간에 아카이브한다 — 이식 원본은 양쪽 필터가 모두 버렸다")
 	fun missingServiceNameIsArchivedAsUnknown() {
-		handler.handle(request(body = oneLogRecord(serviceName = null)))
+		handle(request(body = oneLogRecord(serviceName = null)))
 
 		assertThat(archive.written.map { it.product }).containsExactly(Product.UNKNOWN)
 		assertThat(consumed).hasSize(1)
@@ -320,7 +326,7 @@ class OtlpIngestHandlerTest {
 	@ValueSource(strings = ["codex_cli_rs", "codex-app-server", "Codex Desktop"])
 	@DisplayName("Codex 의 세 서비스 이름은 codex 구간이다")
 	fun codexAliasesShareTheCodexSegment(serviceName: String) {
-		handler.handle(request(body = oneLogRecord(serviceName = serviceName)))
+		handle(request(body = oneLogRecord(serviceName = serviceName)))
 
 		assertThat(archive.written.map { it.product }).containsExactly(Product.CODEX)
 	}
@@ -330,16 +336,14 @@ class OtlpIngestHandlerTest {
 	@Test
 	@DisplayName("영수증이 수신 시각·시그널·검증된 신원·정책 버전과 실제로 쓴 위치를 담는다")
 	fun theReceiptCarriesWhatWasActuallyWritten() {
-		identity = StampedIdentity(tenantId = "ten-1", installationId = "inst-1")
-
-		handler.handle(request(body = oneLogRecord()))
+		handle(request(body = oneLogRecord()))
 
 		val receipt = receipts.single()
 		assertThat(UUID.fromString(receipt.receiptId)).isNotNull()
 		assertThat(receipt.receivedAt).isEqualTo(RECEIVED_AT)
 		assertThat(receipt.signal).isEqualTo(Signal.LOGS)
-		assertThat(receipt.tenantId).isEqualTo("ten-1")
-		assertThat(receipt.installationId).isEqualTo("inst-1")
+		assertThat(receipt.tenantId).isEqualTo(TENANT.toString())
+		assertThat(receipt.installationId).isEqualTo(INSTALLATION.toString())
 		assertThat(receipt.maskingVersion).isEqualTo(MaskingPolicy.VERSION)
 		assertThat(receipt.identityVersion).isEqualTo("stamp-v1")
 		assertThat(receipt.documents.single().location.uri).isEqualTo("memory://0")
@@ -348,8 +352,8 @@ class OtlpIngestHandlerTest {
 	@Test
 	@DisplayName("요청마다 새 영수증이다 — 같은 본문의 재전송도 다른 receiptId 다")
 	fun everyRequestGetsItsOwnReceipt() {
-		handler.handle(request(body = oneLogRecord()))
-		handler.handle(request(body = oneLogRecord()))
+		handle(request(body = oneLogRecord()))
+		handle(request(body = oneLogRecord()))
 
 		assertThat(receipts.map { it.receiptId }.toSet()).hasSize(2)
 	}
@@ -367,7 +371,7 @@ class OtlpIngestHandlerTest {
 			  "scopeLogs":[{"logRecords":[{"body":{"stringValue":"c"}},{"body":{"stringValue":"d"}}]}]}]}
 		""".trimIndent().toByteArray()
 
-		handler.handle(request(body = body))
+		handle(request(body = body))
 
 		val receipt = receipts.single()
 		assertThat(receipt.documents.map { it.product }).containsExactly(Product.CODEX, Product.UNKNOWN)
@@ -385,7 +389,7 @@ class OtlpIngestHandlerTest {
 	fun archiveFailureStopsThePipeline() {
 		archive.failWith = IllegalStateException("s3 unreachable")
 
-		val response = handler.handle(request(body = oneLogRecord()))
+		val response = handle(request(body = oneLogRecord()))
 
 		assertThat(response.status).isEqualTo(503)
 		assertThat(consumed).isEmpty()
@@ -402,7 +406,7 @@ class OtlpIngestHandlerTest {
 		assertThat(documents).hasSize(48)
 
 		documents.forEach { document ->
-			assertThat(handler.handle(request(body = document.toByteArray())).status).isEqualTo(200)
+			assertThat(handle(request(body = document.toByteArray())).status).isEqualTo(200)
 		}
 
 		assertThat(consumed).hasSize(48)
@@ -421,7 +425,7 @@ class OtlpIngestHandlerTest {
 	@DisplayName("합성 fixture 5문서도 같은 경로를 지난다")
 	fun roundTripsTheSyntheticCapture() {
 		fixtureLines("/otlp/logs_synthetic.otlp.jsonl").forEach { document ->
-			assertThat(handler.handle(request(body = document.toByteArray())).status).isEqualTo(200)
+			assertThat(handle(request(body = document.toByteArray())).status).isEqualTo(200)
 		}
 
 		assertThat(consumed).hasSize(5)
@@ -432,7 +436,7 @@ class OtlpIngestHandlerTest {
 	fun archiveDocumentEqualsParsedRequest() {
 		val document = fixtureLines("/otlp/logs_real.otlp.jsonl").first()
 
-		handler.handle(request(body = document.toByteArray()))
+		handle(request(body = document.toByteArray()))
 
 		val fromDownstream = consumed.single().second as ExportLogsServiceRequest
 		val fromArchive = ExportLogsServiceRequest.newBuilder()
@@ -447,25 +451,22 @@ class OtlpIngestHandlerTest {
 	@Test
 	@DisplayName("검증된 신원을 리소스 속성으로 심는다 — 아카이브와 하류가 같은 값을 본다")
 	fun stampsIdentityIntoResourceAttributes() {
-		identity = StampedIdentity(tenantId = "ten-1", installationId = "inst-1")
-
-		handler.handle(request(body = oneLogRecord()))
+		handle(request(body = oneLogRecord()))
 
 		// 아카이브가 먼저 쓰이므로, 여기 보이면 외부 저장소의 원본도 신원을 갖는다는 뜻이다.
 		val archived = archive.written.single().body.toString(Charsets.UTF_8)
-		assertThat(archived).contains("tenant.id").contains("ten-1")
-		assertThat(archived).contains("developer.installation_id").contains("inst-1")
+		assertThat(archived).contains("tenant.id").contains(TENANT.toString())
+		assertThat(archived).contains("developer.installation_id").contains(INSTALLATION.toString())
 
 		val resource = (consumed.single().second as ExportLogsServiceRequest).getResourceLogs(0).resource
 		assertThat(resource.attributesList.associate { it.key to it.value.stringValue })
-			.containsEntry("tenant.id", "ten-1")
-			.containsEntry("developer.installation_id", "inst-1")
+			.containsEntry("tenant.id", TENANT.toString())
+			.containsEntry("developer.installation_id", INSTALLATION.toString())
 	}
 
 	@Test
 	@DisplayName("클라이언트 자기신고를 덮어쓴다 — 검증된 값이 신뢰 경계다")
 	fun theVerifiedValueWinsOverSelfReport() {
-		identity = StampedIdentity(tenantId = "ten-real", installationId = null)
 		val body = """
 			{"resourceLogs":[{"resource":{"attributes":[
 			  {"key":"service.name","value":{"stringValue":"claude-code"}},
@@ -473,67 +474,43 @@ class OtlpIngestHandlerTest {
 			 "scopeLogs":[{"logRecords":[{"body":{"stringValue":"hi"}}]}]}]}
 		""".trimIndent().toByteArray()
 
-		handler.handle(request(body = body))
+		handle(request(body = body))
 
 		val resource = (consumed.single().second as ExportLogsServiceRequest).getResourceLogs(0).resource
 		val attributes = resource.attributesList.filter { it.key == "tenant.id" }
 		assertThat(attributes).singleElement()
-		assertThat(attributes.single().value.stringValue).isEqualTo("ten-real")
-	}
-
-	@Test
-	@DisplayName("빈 값은 건너뛴다 — 없는 신원으로 있는 값을 지우지 않는다")
-	fun anEmptyValueIsNotStamped() {
-		identity = StampedIdentity(tenantId = "", installationId = null)
-
-		handler.handle(request(body = oneLogRecord()))
-
-		val resource = (consumed.single().second as ExportLogsServiceRequest).getResourceLogs(0).resource
-		assertThat(resource.attributesList.map { it.key }).doesNotContain("tenant.id")
-	}
-
-	@Test
-	@DisplayName("신원이 없으면 아무것도 심지 않는다 — 인증을 세우지 않은 호출자의 기본값이다")
-	fun noIdentityStampsNothing() {
-		identity = null
-
-		handler.handle(request(body = oneLogRecord()))
-
-		val resource = (consumed.single().second as ExportLogsServiceRequest).getResourceLogs(0).resource
-		assertThat(resource.attributesList.map { it.key }).containsExactly("service.name")
+		assertThat(attributes.single().value.stringValue).isEqualTo(TENANT.toString())
 	}
 
 	@Test
 	@DisplayName("metrics 에도 심는다 — 마스킹하지 않는 신호라고 신원까지 빠지지 않는다")
 	fun stampsMetricsToo() {
-		identity = StampedIdentity(tenantId = "ten-1", installationId = "inst-1")
 		val body = """
 			{"resourceMetrics":[{"resource":{"attributes":[
 			  {"key":"service.name","value":{"stringValue":"claude-code"}}]},
 			 "scopeMetrics":[{"metrics":[{"name":"m","sum":{"dataPoints":[{"asInt":"1"}]}}]}]}]}
 		""".trimIndent().toByteArray()
 
-		handler.handle(request(path = "/v1/metrics", body = body))
+		handle(request(path = "/v1/metrics", body = body))
 
 		assertThat(archive.written.single().body.toString(Charsets.UTF_8))
-			.contains("developer.installation_id").contains("inst-1")
+			.contains("developer.installation_id").contains(INSTALLATION.toString())
 	}
 
 	@ParameterizedTest(name = "{0}")
 	@EnumSource(Signal::class)
 	@DisplayName("같은 신원 키가 여러 번 와도 전부 검증값이다 — 하류는 마지막 값을 읽는다")
 	fun duplicateIdentityKeysAreAllOverwritten(signal: Signal) {
-		identity = StampedIdentity(tenantId = "ten-real", installationId = "inst-real")
 		// 가짜 값을 뒤에 둔다. 첫 항목만 덮어쓰면 하류가 읽는 마지막 값이 가짜가 된다.
 		val attributes = """
-			{"key":"tenant.id","value":{"stringValue":"ten-real"}},
-			{"key":"developer.installation_id","value":{"stringValue":"inst-real"}},
+			{"key":"tenant.id","value":{"stringValue":"$TENANT"}},
+			{"key":"developer.installation_id","value":{"stringValue":"$INSTALLATION"}},
 			{"key":"service.name","value":{"stringValue":"claude-code"}},
 			{"key":"tenant.id","value":{"stringValue":"ten-fake"}},
 			{"key":"developer.installation_id","value":{"stringValue":"inst-fake"}}
 		""".trimIndent()
 
-		val response = handler.handle(request(path = signal.path, body = withResourceAttributes(signal, attributes)))
+		val response = handle(request(path = signal.path, body = withResourceAttributes(signal, attributes)))
 
 		assertThat(response.status).isEqualTo(200)
 		val archived = archive.written.single().body.toString(Charsets.UTF_8)
@@ -542,8 +519,8 @@ class OtlpIngestHandlerTest {
 		val resource = firstResource(consumed.single().second)
 		val byKey = resource.attributesList.groupBy({ it.key }, { it.value.stringValue })
 		// 항목 수는 그대로다 — 위치와 개수를 바꾸지 않는다.
-		assertThat(byKey["tenant.id"]).containsExactly("ten-real", "ten-real")
-		assertThat(byKey["developer.installation_id"]).containsExactly("inst-real", "inst-real")
+		assertThat(byKey["tenant.id"]).containsExactly(TENANT.toString(), TENANT.toString())
+		assertThat(byKey["developer.installation_id"]).containsExactly(INSTALLATION.toString(), INSTALLATION.toString())
 	}
 
 	// ------------------------------------------------------------------ 도구
@@ -623,5 +600,7 @@ class OtlpIngestHandlerTest {
 
 	private companion object {
 		val RECEIVED_AT: Instant = Instant.parse("2026-09-25T01:02:03.123456789Z")
+		val TENANT: UUID = UUID.fromString("0f000000-0000-4000-8000-00000000000a")
+		val INSTALLATION: UUID = UUID.fromString("0f000000-0000-4000-8000-00000000000b")
 	}
 }

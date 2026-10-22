@@ -8,20 +8,28 @@ import com.team376.pulsemetry.security.TelemetryTokenHasher
 import com.team376.pulsemetry.security.TelemetryTokenUnavailableHandler
 import com.team376.pulsemetry.telemetry.api.OtlpResponseWriter
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
+import com.team376.pulsemetry.telemetry.auth.TelemetryJwtKeys
+import com.team376.pulsemetry.telemetry.auth.TelemetryJwtVerifier
 import com.team376.pulsemetry.telemetry.collector.Signal
+import com.team376.pulsemetry.telemetry.credential.TelemetryBearerAuthenticationProvider
+import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
 import jakarta.servlet.DispatcherType
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.annotation.Order
 import org.springframework.http.HttpHeaders
 import org.springframework.security.authentication.AuthenticationManager
+import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.authentication.ProviderManager
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.web.AuthenticationEntryPoint
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.access.intercept.AuthorizationFilter
+import java.time.Clock
 
 /**
  * OTLP 경로의 인증을 세운다 — 이 저장소의 **첫 필터 체인**이다.
@@ -37,7 +45,9 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter
  *
  * ## 지켜야 하는 것
  *
- * - **거부 사유 열한 가지가 하나의 401 본문으로 접힌다.** 본문은
+ * - **Bearer 는 형식으로 갈린다**(ADR 0065 Decision 7). `ptt_` 등은 기존 해시 조회, telemetry JWT 는 검증기와 RDB 판정이다.
+ *   JWT 를 해시로 조회하지 않는다.
+ * - **거부 사유가 전부 하나의 401 본문으로 접힌다.** 본문은
  *   [TelemetryTokenAuthenticationEntryPoint] 의 상수이고 `WWW-Authenticate` 는 붙지 않는다.
  * - **인증 조회의 DB 장애는 401 이 아니라 503 + `Retry-After` 다.** 데몬은 401 과 403 을 같은
  *   칸에 두고 토큰을 폐기·재발급하므로, 장애가 그 둘로 보이면 멀쩡한 토큰이 버려진다.
@@ -45,6 +55,8 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter
  *   [TelemetryTokenUnavailableHandler] 가 수집 모듈의 503 본문을 [OtlpResponseWriter] 로 쓴다 —
  *   파이프라인의 503 과 같은 모양이다(허브 §8). 예외를 컨테이너까지 흘리면 안 된다: Boot 의 오류
  *   경로 `/error` 는 OTLP 체인 밖이라 둘째 체인이 받고, 그 `denyAll` 에 걸리면 서버 오류가 경로 거부 응답으로 바뀐다.
+ * - **`kafka` 모드(ADR 0066 Decision 7)에서는 OTLP 체인·해시·JWT 검증을 만들지 않는다.** OTLP 경로는 기본 닫힘 체인이 404 로
+ *   거부하고, 해시 키·telemetry 공개키가 없어도 뜬다.
  * - **체인은 둘이고 기본은 닫힘이다.** 첫 체인이 [Signal] 의 세 경로를 잡고, 둘째 체인이 나머지
  *   전부를 잡아 `/api/v1/healthz` 만 열고 그 밖은 `denyAll` 이다. 명시적 `SecurityFilterChain` 빈이
  *   있으면 Boot 의 기본 체인은 물러나므로, 둘째 체인이 없으면 새로 얹는 경로가 인증 없이 열린다.
@@ -57,20 +69,59 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter
 class SecurityConfig {
 
 	@Bean
+	@Conditional(OtlpHttpEnabledCondition::class)
 	fun telemetryTokenHasher(properties: TelemetryIngestProperties): TelemetryTokenHasher =
 		TelemetryTokenHasher(properties.tokenHashSecret)
 
+	/**
+	 * telemetry JWT 의 RDB 판정(ADR 0065 Decision 6). HTTP 호환 경로와 Kafka Consumer 가 같은 인스턴스를 쓴다.
+	 */
 	@Bean
-	fun telemetryTokenAuthenticationProvider(
+	fun telemetryCredentialAuthorizer(telemetryTokens: TelemetryTokenRepository): TelemetryCredentialAuthorizer =
+		TelemetryCredentialAuthorizer(telemetryTokens)
+
+	/**
+	 * Bearer 를 형식으로 가르는 provider 하나만 등록한다(ADR 0065 Decision 7). 해시 조회 provider 는 그 안에서 만든다 —
+	 * `AuthenticationProvider` 빈이 둘이면 매니저가 앞의 것이 던진 거부를 삼키고 다음 것을 불러 JWT 가 해시 조회로 흘러간다.
+	 *
+	 * 공개키 맵(`pulsemetry.telemetry-jwt.public-key-files`)이 비어 있으면 JWT 검증을 켜지 않는다 — 공개키를 받지 않은 배포가
+	 * 그대로 뜨고 JWT 모양의 Bearer 는 401 이다. 맵이 있으면 키를 기동 때 읽고, 읽지 못하면 기동이 실패한다.
+	 */
+	@Bean
+	@Conditional(OtlpHttpEnabledCondition::class)
+	fun telemetryBearerAuthenticationProvider(
 		hasher: TelemetryTokenHasher,
 		telemetryTokens: TelemetryTokenRepository,
-	): TelemetryTokenAuthenticationProvider =
-		TelemetryTokenAuthenticationProvider(hasher, telemetryTokens)
+		authorizer: TelemetryCredentialAuthorizer,
+		properties: TelemetryIngestProperties,
+		clock: Clock,
+	): TelemetryBearerAuthenticationProvider {
+		val files = properties.telemetryJwt.publicKeyFiles
+		val verifier = if (files.isEmpty()) {
+			log.warn("telemetry JWT 공개키가 없다 — HTTP ingest 는 ptt_ 만 받고 JWT 모양의 Bearer 는 401 이다")
+			null
+		} else {
+			TelemetryJwtVerifier(TelemetryJwtKeys.publicKeys(files)).also {
+				log.info("telemetry JWT 검증을 켠다: kids={}", it.keyIds.sorted())
+			}
+		}
+		return TelemetryBearerAuthenticationProvider(
+			opaque = TelemetryTokenAuthenticationProvider(hasher, telemetryTokens),
+			verifier = verifier,
+			authorizer = authorizer,
+			clock = clock,
+		)
+	}
 
+	/**
+	 * `kafka` 모드에는 OTLP 체인이 없어 provider 도 없다. 그래도 매니저 빈은 둔다 — 없으면 Boot 가 메모리 사용자와 생성 암호를
+	 * 만들어 로그에 남긴다. 그 모드의 매니저는 모든 인증을 거부한다.
+	 */
 	@Bean
 	fun telemetryAuthenticationManager(
-		provider: TelemetryTokenAuthenticationProvider,
-	): AuthenticationManager = ProviderManager(provider)
+		provider: ObjectProvider<TelemetryBearerAuthenticationProvider>,
+	): AuthenticationManager = provider.ifAvailable?.let { ProviderManager(it) }
+		?: AuthenticationManager { throw BadCredentialsException("OTLP/HTTP 는 kafka 모드에서 꺼져 있다") }
 
 	@Bean
 	fun telemetryTokenAuthenticationEntryPoint(): AuthenticationEntryPoint =
@@ -88,6 +139,7 @@ class SecurityConfig {
 	 */
 	@Bean
 	@Order(1)
+	@Conditional(OtlpHttpEnabledCondition::class)
 	fun otlpSecurityFilterChain(
 		http: HttpSecurity,
 		authenticationManager: AuthenticationManager,

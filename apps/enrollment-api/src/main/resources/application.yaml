@@ -128,6 +128,14 @@ pulsemetry:
   admin:
     # 기본값이 없다. 비어 있으면 기동이 실패한다 — 빈 키로 관리자 API 가 열리면 안 된다.
     api-token: ${PULSEMETRY_ADMIN_API_TOKEN:}
+  # telemetry 전용 JWT 발급 (ADR 0065). 기본은 꺼짐 — 지금처럼 ptt_ 를 발급하고 아래 키를 읽지 않는다.
+  # 모든 검증자(Gateway·HTTP ingest)에 공개키를 먼저 배포한 뒤에만 켠다. 켰는데 키가 없거나 짝이 틀리면 기동이 실패한다.
+  # 공개키 맵(kid → X.509 PEM 경로)은 SPRING_APPLICATION_JSON 으로 넣는다 — 환경변수 이름은 kid 의 대소문자를 잃는다:
+  #   {"pulsemetry":{"telemetry-jwt":{"public-key-files":{"<kid>":"/mnt/telemetry-jwt/keys/<alias>"}}}}
+  telemetry-jwt:
+    issue-enabled: ${PULSEMETRY_TELEMETRY_JWT_ISSUE_ENABLED:false}
+    active-kid: ${PULSEMETRY_TELEMETRY_JWT_ACTIVE_KID:}
+    private-key-file: ${PULSEMETRY_TELEMETRY_JWT_PRIVATE_KEY_FILE:/mnt/telemetry-jwt/keys/private.pem}
   # telemetry token 해시 키. auth-proxy 와 공유해야 OTLP 인증이 성립한다 (같은 키로 HMAC-SHA256).
   # 기본값이 없다. 비어 있으면 기동이 실패한다 — 빈 키로 해시하면 조회가 조용히 전부 어긋난다.
   token-hash-secret: ${PULSEMETRY_TOKEN_HASH_SECRET:}

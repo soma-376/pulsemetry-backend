@@ -1,10 +1,15 @@
 server:
   # 4316 인 이유와 4318 을 쓰지 않는 이유는 ADR 0016 Decision 에 있다.
   port: ${PULSEMETRY_INGEST_PORT:4316}
+  # SIGTERM 에 새 요청을 멈추고 진행 중 요청을 끝낸다.
+  shutdown: graceful
 
 spring:
   application:
     name: pulsemetry-telemetry-ingest
+  lifecycle:
+    # 종료 단계 하나의 상한. Kafka 컨테이너의 종료 대기(45초)보다 길고 Pod 종료 유예(90초) 안이다 (ADR 0066 Decision 11).
+    timeout-per-shutdown-phase: 50s
 
   datasource:
     # 로컬 기본값은 docker-compose.yml 의 postgres 서비스를 가리킨다.
@@ -34,8 +39,12 @@ spring:
 
 pulsemetry:
   # telemetry token 해시 키. :apps:enrollment-api 가 발급할 때 쓰는 값과 **같아야** 한다 —
-  # 갈리면 발급된 모든 토큰이 401 이 된다. 기본값이 없다: 비어 있으면 기동이 실패한다.
+  # 갈리면 발급된 모든 토큰이 401 이 된다. 기본값이 없다: http·dual 모드에서 비어 있으면 기동이 실패한다(kafka 모드는 쓰지 않는다).
   token-hash-secret: ${PULSEMETRY_TOKEN_HASH_SECRET:}
+
+  # telemetry JWT 공개키 (ADR 0065) — pulsemetry.telemetry-jwt.public-key-files. kid → X.509 PEM 경로 맵이다.
+  # 비어 있으면 HTTP 경로는 ptt_ 만 받고 JWT 모양은 401 이다. 배포는 SPRING_APPLICATION_JSON 으로 넣는다:
+  #   {"pulsemetry":{"telemetry-jwt":{"public-key-files":{"<kid>":"/mnt/telemetry-jwt/keys/<alias>"}}}}
 
   telemetry:
     archive:
@@ -50,10 +59,25 @@ pulsemetry:
       database: ${PULSEMETRY_CLICKHOUSE_DATABASE:default}
 
     ingest:
+      # 수신 모드 (ADR 0066 Decision 7). http — 기존 OTLP/HTTP(ptt_·telemetry JWT), dual — HTTP + Kafka Consumer,
+      # kafka — Consumer 와 health 만(OTLP 경로 404, 해시 키·공개키 불필요). 모르는 값이면 기동이 실패한다.
+      mode: ${PULSEMETRY_INGEST_MODE:http}
       # 고정 참조 단가로 환산한다. 실제 청구액이 아니다. none은 가격 계산을 명시적으로 끈다.
       pricing-profile: ${PULSEMETRY_PRICING_PROFILE:codeburn-0.9.24-reference-2026-10-16-v1}
       # 503 에 실어 보낼 값. 데몬은 이것을 하한으로 쓰고 15초에서 자른다 (허브 ADR 0006).
       retry-after: 1s
+
+    # Kafka Consumer (ADR 0066). 접속 값은 Gateway 와 같은 환경변수다. mode=http 에서는 broker 에 붙지 않는다.
+    kafka:
+      bootstrap-servers: ${PULSEMETRY_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+      # plaintext(로컬) 또는 iam(MSK, 포트 9098). iam 은 아래 역할 ARN·세션 이름이 필요하다.
+      security: ${PULSEMETRY_KAFKA_SECURITY:plaintext}
+      topic: ${PULSEMETRY_KAFKA_TOPIC:pulsemetry-local-telemetry-ingress}
+      consumer-group: ${PULSEMETRY_KAFKA_CONSUMER_GROUP:pulsemetry-local-telemetry-ingest}
+      iam:
+        # workload 전용 MSK 역할. Pod Identity 자격으로 고정 세션 이름을 써서 assume 한다 (ADR 0066 Decision 9).
+        role-arn: ${PULSEMETRY_KAFKA_IAM_ROLE_ARN:}
+        session-name: ${PULSEMETRY_KAFKA_IAM_SESSION_NAME:}
 
     ops:
       # 수집 운영 기록(수신 ledger·tenant 생애 요약·백필) — ADR 0021. 허브 ADR 0007 채택 전에는 운영 경로에

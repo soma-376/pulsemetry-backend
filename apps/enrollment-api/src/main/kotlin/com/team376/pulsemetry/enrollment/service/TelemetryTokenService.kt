@@ -2,9 +2,6 @@ package com.team376.pulsemetry.enrollment.service
 
 import com.team376.pulsemetry.enrollment.contract.TelemetryTokenResponse
 import com.team376.pulsemetry.enrollment.error.EnrollmentException
-import com.team376.pulsemetry.enrollment.secret.SecretToken
-import com.team376.pulsemetry.security.TelemetryTokenHasher
-import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryToken
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationCredentialRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.MemberRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TelemetryTokenRepository
@@ -25,40 +22,38 @@ class TelemetryTokenService(
 	private val credentials: InstallationCredentialRepository,
 	private val members: MemberRepository,
 	private val telemetryTokens: TelemetryTokenRepository,
-	private val telemetryTokenHasher: TelemetryTokenHasher,
+	private val telemetryCredentials: TelemetryCredentialIssuer,
 	private val clock: Clock,
 ) {
 
 	@Transactional
 	fun reissue(authorizationHeader: String?): TelemetryTokenResponse {
-		val now = clock.instant()
-
 		// 행 잠금으로 재발급을 installation 단위로 직렬화한다. 잠금 없이는 동시 재발급이 서로의
 		// 미커밋 INSERT 를 못 봐 활성 토큰 2개가 남는다. 진 쪽은 기다렸다 이어서 성공한다.
 		val verified = verifier.verify(authorizationHeader)
 		val credential = verified.credential
 		val installation = verified.installation
 
+		// 시각은 잠금을 얻은 뒤에 읽는다. revoked_at 은 Consumer 가 회전 전 접수를 가르는 기준이라(ADR 0065 Decision 6)
+		// 대기 전 시각을 쓰면 기다리는 동안 이전 토큰으로 접수된 데이터가 회전 뒤로 판정돼 버려진다.
+		val now = clock.instant()
+
 		// pit_ 인증은 과거 enroll 완료의 증명이므로, 여기서도 `invited → active` 를 보정한다.
 		// 전환 도입 이전에 enroll 된 invited 구성원이 데몬의 401 → 재발급 루프만으로 복구되는 경로다.
 		members.activateInvited(installation.memberId, now)
 
-		// 살아있는 토큰을 먼저 전부 폐기한다. 재발급은 곧 이전 토큰의 무효화다.
+		// 살아있는 토큰을 먼저 전부 폐기한다. 재발급은 곧 이전 토큰의 무효화다 — 사유는 정상 회전(rotated)이다.
+		// 이미 보안 폐기된 행은 건드리지 않는다(ADR 0065 Decision 5).
 		telemetryTokens.revokeActiveByInstallationId(installation.id, now)
 
-		val telemetryToken = SecretToken.telemetryToken()
-		telemetryTokens.save(
-			TelemetryToken(
-				installationId = installation.id,
-				tokenHash = telemetryTokenHasher.hex(telemetryToken),
-				issuedAt = now,
-			),
-		)
+		// 최초 enrollment 와 같은 발급기다. 발급 설정이 켜져 있으면 telemetry JWT 다(ADR 0065).
+		val telemetryCredential = telemetryCredentials.issue(installation.tenantId, installation.id, now)
+		telemetryTokens.save(telemetryCredential.record)
 		credentials.touchLastUsedAt(credential.id, now)
 
 		return TelemetryTokenResponse(
 			installationId = installation.id.toString(),
-			telemetryToken = telemetryToken,
+			telemetryToken = telemetryCredential.token,
 		)
 	}
 }

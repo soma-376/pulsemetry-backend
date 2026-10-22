@@ -14,6 +14,13 @@ dependencies {
 	// 두 리포지토리(TelemetryTokenRepository · TeamMembershipRepository)는 :libs:security 와
 	// :libs:telemetry-enricher 가 api() 로 노출한다 — 생성자 인자 타입은 계약이다 (module-map 4절).
 	implementation(project(":libs:security"))
+	// telemetry JWT 검증 (ADR 0065). HTTP 호환 경로가 쓴다 — 공개키만 받는다.
+	implementation(project(":libs:telemetry-auth"))
+
+	// Kafka Consumer (ADR 0066). 컨테이너·오류 처리기만 쓰고 Boot 의 Kafka 자동설정(spring-boot-kafka)은 끌지 않는다.
+	implementation(libs.spring.kafka)
+	// MSK IAM SASL — 설정 문자열의 클래스 이름으로만 쓰므로 런타임 의존이다.
+	runtimeOnly(libs.aws.msk.iam.auth)
 
 	implementation(libs.spring.boot.starter.webmvc)
 	// 필터 체인 배선. starter 를 쓰는 것은 :libs: 가 아니라 앱이므로 ADR 0011 위반이 아니다 —
@@ -27,10 +34,14 @@ dependencies {
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
+	// telemetry JWT 키쌍·위조 토큰을 테스트마다 만든다.
+	testImplementation(testFixtures(project(":libs:telemetry-auth")))
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.postgresql)
 	// ClickHouse 는 GenericContainer 로 띄운다 — 전용 모듈은 JDBC 드라이버를 요구한다.
 	testImplementation(libs.testcontainers)
+	// Kafka Consumer 통합 테스트(dual 모드 기반).
+	testImplementation(libs.testcontainers.kafka)
 }
 
 // 실행 산출물은 bootJar 하나다. plain jar 를 만들면 Dockerfile 이 둘 중 하나를 골라내야 한다.

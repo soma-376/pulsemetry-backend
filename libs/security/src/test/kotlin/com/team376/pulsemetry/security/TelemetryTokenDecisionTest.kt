@@ -79,6 +79,21 @@ class TelemetryTokenDecisionTest {
 		assertThat(TelemetryTokenDecision.reject(row)).isNull()
 	}
 
+	@ParameterizedTest(name = "{0}")
+	@MethodSource("singleBrokenField")
+	@DisplayName("rejectHolder 는 토큰 폐기만 빼고 같은 사유·순서로 판정한다 — telemetry JWT 의 RDB 판정이 쓴다")
+	fun holderDecisionMatchesExceptTokenRevocation(expected: TelemetryTokenRejectionReason, row: FakeAuthRow) {
+		val holder = TelemetryTokenDecision.rejectHolder(row)
+
+		if (expected == TelemetryTokenRejectionReason.TOKEN_REVOKED) {
+			assertThat(holder).isNull()
+		} else {
+			assertThat(holder).isEqualTo(expected)
+		}
+		// 폐기된 토큰이어도 설치·회원·조직 판정은 그대로다.
+		assertThat(TelemetryTokenDecision.rejectHolder(row.copy(tokenRevoked = true))).isEqualTo(holder)
+	}
+
 	private companion object {
 
 		@JvmStatic

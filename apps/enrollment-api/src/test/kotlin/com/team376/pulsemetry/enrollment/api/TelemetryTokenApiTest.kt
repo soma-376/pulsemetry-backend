@@ -24,6 +24,8 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 import java.sql.Connection
+import java.time.Instant
+import java.time.OffsetDateTime
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
@@ -407,6 +409,54 @@ class TelemetryTokenApiTest {
 			assertThat(response.statusCode()).isEqualTo(200)
 			assertThat(data.activeTelemetryTokenCount(installationId)).isEqualTo(1)
 		}
+	}
+
+	/**
+	 * 회전 시각은 잠금을 얻은 뒤의 시각이다(ADR 0065 Decision 5·6).
+	 *
+	 * Consumer 는 `acceptedAt < revoked_at` 인 접수만 회전 전으로 본다. 잠금을 기다리기 전에 읽은 시각을 쓰면
+	 * 대기하는 동안 이전 토큰으로 접수된 데이터가 `credential_rotated` 로 버려진다. 대기 중의 한 시점을 접수 시각으로 잡고
+	 * 이전 토큰의 `revoked_at` 이 그보다 뒤인지 본다. 잠금은 위 테스트와 같은 방식으로 강제한다.
+	 */
+	@Test
+	@Timeout(value = 60, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+	@DisplayName("회전 시각은 installation 행 잠금을 얻은 뒤다 — 잠금 대기 중의 접수는 회전 전으로 판정된다")
+	fun rotationTimeIsReadAfterInstallationRowLock() {
+		val installationToken = data.credential(installationId)
+		// 데우기를 겸해 이전 토큰을 받는다. 이 토큰이 잠금 대기 중에 쓰인다.
+		val warmUp = postReissue("Bearer $installationToken")
+		assertThat(warmUp.statusCode()).isEqualTo(200)
+		val previousHash = telemetryTokenHasher.hex(objectMapper.readTree(warmUp.body()).get("telemetry_token").asString())
+
+		val acceptedDuringWait = Executors.newVirtualThreadPerTaskExecutor().use { executor ->
+			val probeConnection = dataSource.connection
+			val (pending, acceptedAt) = try {
+				probeConnection.autoCommit = false
+				lockInstallationRow(probeConnection, installationId)
+				val submitted = executor.submit(Callable { postReissue("Bearer $installationToken") })
+				awaitBlockedSession(submitted)
+				// 재발급이 잠금을 기다리는 지금, Gateway 가 이전 토큰으로 데이터를 접수했다고 본다.
+				submitted to Instant.now()
+			} finally {
+				probeConnection.rollback()
+				probeConnection.close()
+			}
+			assertThat(pending.get(30, TimeUnit.SECONDS).statusCode()).isEqualTo(200)
+			acceptedAt
+		}
+
+		val revokedAt = dataSource.connection.use { connection ->
+			connection.prepareStatement("SELECT revoked_at FROM enrollment.telemetry_tokens WHERE token_hash = ?").use { statement ->
+				statement.setString(1, previousHash)
+				statement.executeQuery().use { rows ->
+					check(rows.next()) { "이전 토큰 행이 없다" }
+					rows.getObject(1, OffsetDateTime::class.java).toInstant()
+				}
+			}
+		}
+		assertThat(acceptedDuringWait)
+			.describedAs("잠금 대기 중의 접수 시각은 회전 시각보다 앞서야 한다")
+			.isBefore(revokedAt)
 	}
 
 	// ── 헬퍼 ─────────────────────────────────────────────────────────────────

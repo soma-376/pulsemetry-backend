@@ -9,25 +9,15 @@ import io.opentelemetry.proto.common.v1.KeyValue
 import io.opentelemetry.proto.resource.v1.Resource
 
 /**
- * 인증 계층이 검증한 신원. 문자열 둘뿐이다.
+ * 스탬프에 쓰는 신원 문자열 둘. 코어가 [AuthorizedTelemetryIdentity] 에서 만든다.
  *
- * 이 모듈은 `:libs:security` 를 알지 않는다 — 토큰도 principal 타입도 여기 나타나지 않고,
- * 조립 앱이 값만 꺼내 넘긴다(ADR 0011 · 0016).
+ * 승격 규칙(빈 값은 건너뛴다 등)은 문자열 위에서 정의돼 있어 이 타입을 따로 둔다. 예전에는 조립 앱이 스레드 지역 신원에서 이 값을
+ * 꺼내 넘겼다(`IdentitySource`) — 그 seam 은 ADR 0067 이 없앴다.
  */
-public class StampedIdentity(
-	public val tenantId: String?,
-	public val installationId: String?,
+internal class StampedIdentity(
+	val tenantId: String?,
+	val installationId: String?,
 )
-
-/**
- * 지금 처리 중인 요청의 신뢰 신원을 돌려준다. 없으면 `null` 이다.
- *
- * 조립 앱이 `SecurityContextHolder` 에서 꺼내 구현한다. 기본 구현은 아무것도 심지 않는다 —
- * 인증을 세우지 않은 테스트가 그 자리를 쓴다.
- */
-public fun interface IdentitySource {
-	public fun current(): StampedIdentity?
-}
 
 /**
  * 검증된 신원을 OTLP **리소스 속성**으로 승격한다.

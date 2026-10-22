@@ -25,6 +25,9 @@ env:
   ECR_REPO_ENROLLMENT_API: ${{ secrets.ECR_REPO_ENROLLMENT_API_DEV }}
   ECR_REPO_TELEMETRY_INGEST: ${{ secrets.ECR_REPO_TELEMETRY_INGEST_DEV }}
   ECR_REPO_DASHBOARD_API: ${{ secrets.ECR_REPO_DASHBOARD_API_DEV }}
+  # telemetry-gateway 는 EKS workload 다(ADR 0066). 이미지만 게시하고 ECS 로 배포하지 않는다.
+  # 선택 Secret 이다 — 등록되지 않으면 Gateway 빌드를 건너뛰고 나머지 배포는 그대로 돈다.
+  ECR_REPO_TELEMETRY_GATEWAY: ${{ secrets.ECR_REPO_TELEMETRY_GATEWAY_DEV }}
 
   AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN_DEV }}
 
@@ -77,6 +80,9 @@ jobs:
   deploy:
     name: Build and publish images to ECR
     needs: validate
+    # EKS 수동 배포 절차가 읽는 Gateway 이미지 digest. 저장소 Secret 이 없으면 비어 있다.
+    outputs:
+      telemetry-gateway-digest: ${{ steps.build-gateway.outputs.digest }}
     # dev EKS 노드가 ARM64이므로 linux/arm64 이미지를 네이티브 ARM 러너에서 만든다.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
@@ -122,6 +128,18 @@ jobs:
             exit 1
           fi
 
+          # telemetry-gateway 이미지 공급은 선택이다. 저장소가 있으면 세 앱의 저장소와 겹치면 안 된다.
+          if [[ -n "${ECR_REPO_TELEMETRY_GATEWAY:-}" ]]; then
+            if [[ "$ECR_REPO_TELEMETRY_GATEWAY" == "$ECR_REPO_ENROLLMENT_API" \
+               || "$ECR_REPO_TELEMETRY_GATEWAY" == "$ECR_REPO_TELEMETRY_INGEST" \
+               || "$ECR_REPO_TELEMETRY_GATEWAY" == "$ECR_REPO_DASHBOARD_API" ]]; then
+              echo '::error::telemetry-gateway의 ECR 저장소는 세 앱의 저장소와 달라야 한다.'
+              exit 1
+            fi
+          else
+            echo '::notice::ECR_REPO_TELEMETRY_GATEWAY_DEV가 없어 telemetry-gateway 이미지 공급을 건너뛴다.'
+          fi
+
           echo "이미지 게시 설정 확인 완료"
 
       - name: Checkout backend
@@ -154,7 +172,7 @@ jobs:
 
       # Dockerfile과 빌드 컨텍스트는 레포 루트다. 이미지 게시 역할에 ECR pull 권한이 없으므로
       # registry cache 대신 GitHub Actions cache만 쓴다.
-      # 세 SHA 이미지가 모두 게시되기 전에는 호환용 dev 태그를 갱신하지 않는다.
+      # 필수 세 SHA 이미지와 설정된 Gateway 이미지가 모두 게시되기 전에는 호환용 dev 태그를 갱신하지 않는다.
       - name: Build and push enrollment-api
         id: build-enrollment
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -201,6 +219,44 @@ jobs:
             ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_DASHBOARD_API }}:sha-${{ github.sha }}
           cache-from: type=gha,scope=dashboard-api
           cache-to: type=gha,mode=max,scope=dashboard-api
+
+      # telemetry-gateway 는 EKS workload 다(ADR 0066). SHA 이미지를 게시하고 digest 를 수동 배포 절차로 넘긴다.
+      # dev 태그는 옮기지 않는다. Gateway 빌드가 실패하면 세 앱의 dev 태그 승격도 시작하지 않는다.
+      # 저장소 Secret 이 없으면 Gateway 게시만 건너뛴다.
+      - name: Build and push telemetry-gateway
+        id: build-gateway
+        if: ${{ env.ECR_REPO_TELEMETRY_GATEWAY != '' }}
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile
+          target: telemetry-gateway
+          platforms: linux/arm64
+          provenance: false
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_TELEMETRY_GATEWAY }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=telemetry-gateway
+          cache-to: type=gha,mode=max,scope=telemetry-gateway
+
+      # digest 는 비밀이 아니다. 저장소 이름(Secret)은 출력하지 않는다.
+      - name: Report telemetry-gateway image digest
+        if: ${{ env.ECR_REPO_TELEMETRY_GATEWAY != '' }}
+        env:
+          GATEWAY_IMAGE_DIGEST: ${{ steps.build-gateway.outputs.digest }}
+        run: |
+          if [[ ! "$GATEWAY_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo '::error::telemetry-gateway 이미지 digest를 확인할 수 없다.'
+            exit 1
+          fi
+          echo "telemetry-gateway 이미지 digest: $GATEWAY_IMAGE_DIGEST (태그 sha-$GITHUB_SHA)"
+          {
+            echo '### telemetry-gateway 이미지'
+            echo
+            echo "- digest: \`$GATEWAY_IMAGE_DIGEST\`"
+            echo "- 태그: \`sha-$GITHUB_SHA\`"
+            echo '- ECS 로 배포하지 않는다. EKS 수동 배포 절차에 이 digest 를 넘긴다.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # 이번 빌드의 digest로 세 앱의 dev 태그를 순서대로 갱신한다.
       # 실패하면 이후 승격은 중단하고 앞서 갱신한 태그는 유지한다. EKS 배포는 운영자가 별도로 수행한다.
