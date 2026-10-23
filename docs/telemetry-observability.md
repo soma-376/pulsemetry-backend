@@ -109,6 +109,8 @@ NOTE: Picked up JDK_JAVA_OPTIONS: -Xlog:gc,safepoint:stderr:utctime,level,tags
 - 공개 요청의 `traceparent`·`tracestate`·`baggage`·B3 header는 서버 observation 전에 지운다. 요청은 언제나 새 플랫폼 root다.
 - health(`/api/v1/healthz`)·관리(`/actuator/**`) 요청과 Spring Security 내부 단계는 span을 만들지 않는다.
 - 활성 span 안의 로그에만 `trace_id=<32 hex> span_id=<16 hex>`가 붙는다. 기존 `event=<code>` 형식은 그대로다.
+- sampled 요청·record는 span 안에서 `event=platform_trace_completed stage=gateway|ingest … outcome=…` 한 줄을 남긴다. 로그에서 trace로 넘어가는 기준점이며 경보 대상이 아니다.
+- 끄면(기본) 앱이 `Tracer`·`Propagator`를 NOOP으로 둔다. span·로그 trace 필드·완료 로그·Kafka header가 없다. `management.tracing.export.enabled=false`만으로는 span과 MDC가 남는다.
 - 전송은 비동기 batch(queue 2048, timeout 10초)다. Collector 장애·queue 초과 때 span을 버리고 업무 응답·Kafka ack·commit은 기다리지 않는다.
   trace가 없다는 것만으로 처리 실패를 판단하지 않는다.
 

@@ -279,6 +279,8 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 		post(good, "{}".toByteArray(), contentEncoding = canary)
 
 		assertThat(output.all).doesNotContain(canary).doesNotContain(good)
+		// 플랫폼 trace 를 끈 기본 설정에는 완료 로그와 trace 필드가 없다(ADR 0069).
+		assertThat(output.all).doesNotContain("platform_trace_completed").doesNotContain("trace_id=")
 		assertThat(registry.meters.flatMap { it.id.tags }.joinToString()).doesNotContain(canary).doesNotContain(good)
 	}
 

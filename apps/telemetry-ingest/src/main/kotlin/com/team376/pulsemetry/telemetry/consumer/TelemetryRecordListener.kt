@@ -62,7 +62,11 @@ class TelemetryRecordListener(
 		observer.observe(TelemetryMetric.PIPELINE_INFLIGHT)
 		try {
 			tracing.scope(span).use {
-				handle(record, attempt, span) { signal = it }.also { outcome = it }
+				try {
+					handle(record, attempt, span) { signal = it }.also { outcome = it }
+				} finally {
+					traceCompleted(span, signal, outcome, attempt)
+				}
 			}
 		} finally {
 			span.tag("pulsemetry.signal", signal).tag("pulsemetry.outcome", outcome).end()
@@ -100,6 +104,15 @@ class TelemetryRecordListener(
 			throw transient(record, message.messageId, "process", e, attempt, span)
 		}
 		return "permanent_rejected"
+	}
+
+	/** sampled 시도는 처리 span 안에서 완료 한 줄을 남긴다(ADR 0069). 로그 실패가 offset 판정을 바꾸지 않는다. */
+	private fun traceCompleted(span: Span, signal: String, outcome: String, attempt: Int) {
+		runCatching {
+			if (tracing.sampled(span)) {
+				log.info(TelemetryLogEvent.PLATFORM_TRACE_COMPLETED.format("stage" to "ingest", "signal" to signal, "outcome" to outcome, "attempt" to attempt))
+			}
+		}
 	}
 
 	private fun permanent(record: ConsumerRecord<*, *>, messageId: UUID?, stage: String, reason: String, attempt: Int, span: Span) {

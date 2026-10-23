@@ -2,12 +2,15 @@ package com.team376.pulsemetry.telemetry.gateway.config
 
 import com.team376.pulsemetry.telemetry.observability.PlatformTracing
 import io.micrometer.observation.ObservationPredicate
+import io.micrometer.tracing.Tracer
+import io.micrometer.tracing.propagation.Propagator
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.sdk.resources.Resource
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletRequestWrapper
 import jakarta.servlet.http.HttpServletResponse
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.micrometer.tracing.opentelemetry.autoconfigure.SdkTracerProviderBuilderCustomizer
 import org.springframework.boot.web.servlet.FilterRegistrationBean
 import org.springframework.context.annotation.Bean
@@ -35,6 +38,18 @@ class TracingConfig(private val environment: Environment) {
             environment.getProperty(PlatformTracing.ENDPOINT_PROPERTY),
         )
     }
+
+    /**
+     * 끄면(기본) Boot 의 OTel tracer 대신 NOOP 을 먼저 둔다. `management.tracing.export.enabled=false` 만으로는 내보내기·전파만 꺼지고
+     * 기본 sampler 의 span 생성과 로그 MDC(trace_id)가 남는다 — 꺼진 상태를 지금과 같게 하려면 tracer 자체가 NOOP 이어야 한다.
+     */
+    @Bean
+    @ConditionalOnProperty(name = [PlatformTracing.ENABLED_PROPERTY], havingValue = "false", matchIfMissing = true)
+    fun disabledPlatformTracer(): Tracer = Tracer.NOOP
+
+    @Bean
+    @ConditionalOnProperty(name = [PlatformTracing.ENABLED_PROPERTY], havingValue = "false", matchIfMissing = true)
+    fun disabledPlatformPropagator(): Propagator = Propagator.NOOP
 
     @Bean
     fun platformTraceResource(): SdkTracerProviderBuilderCustomizer = SdkTracerProviderBuilderCustomizer { builder ->

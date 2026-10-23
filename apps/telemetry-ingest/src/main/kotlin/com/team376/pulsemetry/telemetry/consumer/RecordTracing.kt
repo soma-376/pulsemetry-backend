@@ -42,6 +42,9 @@ class RecordTracing(private val tracer: Tracer = Tracer.NOOP, private val propag
 			.start()
 	}
 
+	/** sampled 된 span 인가. 끄거나 sampling 에서 빠진 요청은 false 다. */
+	fun sampled(span: Span): Boolean = runCatching { span.context().sampled() == true }.getOrDefault(false)
+
 	/** span 을 현재 문맥으로 연다. 닫으면 이전 문맥과 MDC 로 돌아간다 — 다음 record 로 문맥이 새지 않는다. */
 	fun scope(span: Span): Tracer.SpanInScope = runCatching { tracer.withSpan(span) }.getOrElse { Tracer.NOOP.withSpan(null) }
 

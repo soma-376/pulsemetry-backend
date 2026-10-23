@@ -58,6 +58,8 @@ endpoint·서비스 이름·sampling·속성 허용목록은 backend와 infra가
 | `POD_NAMESPACE`, `POD_NAME` | resource `k8s.namespace.name`, `k8s.pod.name` (Downward API) | 없음 |
 
 - 꺼져 있으면 exporter·전송 작업이 없다. 켜져 있는데 endpoint가 비어 있으면 기동하지 않는다.
+  export만 끄면 Boot가 기본 sampler로 span과 로그 MDC를 계속 만든다. 그래서 꺼지면 앱이 `Tracer`·`Propagator`를 NOOP으로 먼저 둔다.
+  꺼진 상태의 로그 형식·Kafka header는 지금과 같다.
 - `service.name`은 `telemetry-gateway`·`telemetry-ingest`로 고정한다. `spring.application.name`은 바꾸지 않는다.
 - `deployment.environment.name`은 `PULSEMETRY_OBSERVABILITY_ENVIRONMENT`를 쓴다.
 - `OTEL_*` 환경변수 매핑은 끈다. 설정 출처를 위 표 하나로 둔다.

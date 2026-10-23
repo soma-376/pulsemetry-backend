@@ -104,6 +104,10 @@ class ConsumerTracingTest : AbstractIngestIntegrationTest() {
 		assertThat(exhausted).contains("trace_id=$TRACE_ID span_id=${recover.spanId}")
 		val transient = output.all.lines().filter { it.contains("event=telemetry_transient_failure messageId=${failing.messageId}") }
 		assertThat(transient).hasSize(4).allMatch { it.contains("trace_id=$TRACE_ID") }
+		// sampled 시도마다 완료 한 줄을 그 시도의 span 안에서 남긴다.
+		val completed = output.all.lines().filter { it.contains("event=platform_trace_completed stage=ingest") && it.contains("trace_id=$TRACE_ID") }
+		assertThat(completed).hasSize(4).allMatch { it.contains("outcome=transient_failed") }
+		assertThat(completed.map { Regex("span_id=([0-9a-f]{16})").find(it)!!.groupValues[1] }).containsExactlyInAnyOrderElementsOf(attempts.map { it.spanId })
 
 		val garbage = output.all.lines().single { it.contains("event=telemetry_permanent_failure") && it.contains("offset=${garbageAt.offset()}") }
 		assertThat(Regex("""trace_id=([0-9a-f]{32})""").find(garbage)!!.groupValues[1]).isNotEqualTo(TRACE_ID)

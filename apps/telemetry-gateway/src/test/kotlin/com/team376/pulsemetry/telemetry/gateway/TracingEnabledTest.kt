@@ -65,7 +65,7 @@ class TracingEnabledTest : AbstractGatewayIntegrationTest() {
 
 	@Test
 	@DisplayName("Kafka record 에는 발행 span 문맥의 traceparent 하나만 실린다 — 요청 span 의 자식이고 신원·payload 속성은 없다")
-	fun publishCarriesTraceparentOnly() {
+	fun publishCarriesTraceparentOnly(output: CapturedOutput) {
 		val tenantId = UUID.randomUUID()
 		assertThat(post(token(tenantId)).statusCode()).isEqualTo(200)
 
@@ -85,6 +85,26 @@ class TracingEnabledTest : AbstractGatewayIntegrationTest() {
 		assertThat(producer.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("acknowledged")
 		assertThat(producer.attributes.asMap().keys.map { it.key }).doesNotContain("tenant_id", "installation_id", "authorization")
 		assertThat(producer.attributes.asMap().values.map { it.toString() }).noneMatch { it.contains(tenantId.toString()) }
+
+		// sampled 요청은 요청 span 안에서 완료 한 줄을 남긴다.
+		val completed = output.all.lines().single { it.contains("event=platform_trace_completed stage=gateway") }
+		assertThat(completed).contains("signal=logs status=200 outcome=accepted").contains("trace_id=${server.traceId} span_id=${server.spanId}")
+	}
+
+	@Test
+	@DisplayName("토큰·본문·header 의 카나리아 문자열이 span 이름·속성·event 에 남지 않는다")
+	fun canaryNeverInSpans() {
+		val canary = "CANARYTR" + UUID.randomUUID().toString().replace("-", "")
+		post("$canary.$canary.$canary")
+		val good = token()
+		val builder = HttpRequest.newBuilder(URI.create("http://localhost:$port/v1/logs"))
+			.header("Content-Type", "application/json").header("Authorization", "Bearer $good").header("X-Canary", canary)
+			.POST(HttpRequest.BodyPublishers.ofString("""{"resourceLogs":[],"secret":"$canary"}"""))
+		assertThat(http.send(builder.build(), HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(200)
+
+		val spans = TestSpans.await { spans -> spans.count { it.kind == SpanKind.SERVER } >= 2 && spans.any { it.kind == SpanKind.PRODUCER } }
+		val text = spans.flatMap { span -> span.attributes.asMap().values.map { it.toString() } + span.name + span.events.flatMap { e -> e.attributes.asMap().values.map { it.toString() } + e.name } }
+		assertThat(text).noneMatch { it.contains(canary) || it.contains(good) }
 	}
 
 	@Test
