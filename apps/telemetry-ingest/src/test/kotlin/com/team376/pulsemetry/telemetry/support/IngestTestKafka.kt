@@ -101,6 +101,13 @@ object IngestTestKafka {
 	fun send(key: String, value: ByteArray?): RecordMetadata =
 		producer.send(ProducerRecord(TOPIC, key, value)).get(10, TimeUnit.SECONDS)
 
+	/** Gateway 가 플랫폼 trace 를 켰을 때처럼 header 를 붙여 발행한다(ADR 0069). 같은 이름을 여러 번 줄 수 있다. */
+	fun publish(message: AcceptedTelemetry, headers: List<Pair<String, ByteArray>>): RecordMetadata {
+		val record = ProducerRecord(TOPIC, TelemetryRecordKey.of(message.auth.tenantId, message.auth.installationId), TelemetryEnvelopeCodec.encode(message))
+		headers.forEach { (name, value) -> record.headers().add(name, value) }
+		return producer.send(record).get(10, TimeUnit.SECONDS)
+	}
+
 	/** group 이 그 partition 에 확정한 다음 offset. 없으면 -1. */
 	fun committed(partition: Int): Long = admin().use { admin ->
 		admin.listConsumerGroupOffsets(GROUP).partitionsToOffsetAndMetadata().get(10, TimeUnit.SECONDS)[TopicPartition(TOPIC, partition)]?.offset() ?: -1

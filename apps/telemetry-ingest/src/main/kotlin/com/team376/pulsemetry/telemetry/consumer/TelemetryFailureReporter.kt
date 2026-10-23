@@ -23,10 +23,16 @@ import org.springframework.kafka.listener.RetryListener
  *
  * 둘 다 예외 메시지 원문을 남기지 않는다. 원인은 클래스 이름뿐이다.
  *
+ * 두 로그는 listener 의 span 이 닫힌 뒤에 난다. 플랫폼 trace 를 켜면 record header 로 같은 trace 의 짧은 span 을 열어 그 안에서 남긴다(ADR 0069).
+ *
  * 두 counter 는 생성 때 0 으로 노출한다. Prometheus `increase()` 는 처음 보인 series 의 첫 값을 증가로 세지 않으므로, 첫 실패에
  * counter 를 만들면 단발 소진·commit 실패가 경보와 대시보드에서 0 이 된다. stage 는 [RETRY_EXHAUSTED_STAGES] 전부다.
  */
-class TelemetryFailureReporter(private val maxAttempts: Int, private val observer: TelemetryObserver = TelemetryObserver.NONE) : RetryListener {
+class TelemetryFailureReporter(
+	private val maxAttempts: Int,
+	private val tracing: RecordTracing = RecordTracing(),
+	private val observer: TelemetryObserver = TelemetryObserver.NONE,
+) : RetryListener {
 
 	val recoverer: ConsumerRecordRecoverer = ConsumerRecordRecoverer { record, exception -> recover(record, exception) }
 
@@ -38,14 +44,17 @@ class TelemetryFailureReporter(private val maxAttempts: Int, private val observe
 	private fun recover(record: ConsumerRecord<*, *>, exception: Exception?) {
 		try {
 			val failure = transientOf(exception)
-			observer.observe(TelemetryMetric.PIPELINE_RETRY_EXHAUSTED, 1.0, "stage" to (failure?.stage ?: stageOf(exception)))
-			log.error(
-				TelemetryLogEvent.RETRY_EXHAUSTED.format(
-					"messageId" to failure?.messageId, "topic" to record.topic(), "partition" to record.partition(), "offset" to record.offset(),
-					"stage" to (failure?.stage ?: stageOf(exception)), "reason" to reasonOf(exception), "attempt" to maxAttempts,
-					"cause" to (failure?.causeType ?: TelemetryLogEvent.causeOf(rootOf(exception))),
-				),
-			)
+			val stage = failure?.stage ?: stageOf(exception)
+			observer.observe(TelemetryMetric.PIPELINE_RETRY_EXHAUSTED, 1.0, "stage" to stage)
+			tracing.around(record, "telemetry recover", "retry_exhausted", stage) {
+				log.error(
+					TelemetryLogEvent.RETRY_EXHAUSTED.format(
+						"messageId" to failure?.messageId, "topic" to record.topic(), "partition" to record.partition(), "offset" to record.offset(),
+						"stage" to stage, "reason" to reasonOf(exception), "attempt" to maxAttempts,
+						"cause" to (failure?.causeType ?: TelemetryLogEvent.causeOf(rootOf(exception))),
+					),
+				)
+			}
 		} catch (_: Throwable) {
 			// 로그가 실패해도 offset 확정을 막지 않는다.
 		}
@@ -58,12 +67,15 @@ class TelemetryFailureReporter(private val maxAttempts: Int, private val observe
 			if (isCommitFailure(root)) observer.observe(TelemetryMetric.PIPELINE_COMMIT_FAILURES)
 			else observer.observe(TelemetryMetric.PIPELINE_FAILURES, 1.0, "stage" to stageOf(ex), "reason" to reasonOf(ex))
 			val event = if (isCommitFailure(root)) TelemetryLogEvent.COMMIT_FAILED else TelemetryLogEvent.TRANSIENT_FAILURE
-			log.warn(
-				event.format(
-					"messageId" to null, "topic" to record.topic(), "partition" to record.partition(), "offset" to record.offset(),
-					"stage" to stageOf(ex), "reason" to reasonOf(ex), "attempt" to deliveryAttempt, "cause" to TelemetryLogEvent.causeOf(root),
-				),
-			)
+			val outcome = if (isCommitFailure(root)) "commit_failed" else "transient_failed"
+			tracing.around(record, "telemetry delivery failure", outcome, stageOf(ex)) {
+				log.warn(
+					event.format(
+						"messageId" to null, "topic" to record.topic(), "partition" to record.partition(), "offset" to record.offset(),
+						"stage" to stageOf(ex), "reason" to reasonOf(ex), "attempt" to deliveryAttempt, "cause" to TelemetryLogEvent.causeOf(root),
+					),
+				)
+			}
 		} catch (_: Throwable) {
 			// 로그 실패로 재시도 흐름을 바꾸지 않는다.
 		}

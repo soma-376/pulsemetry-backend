@@ -9,6 +9,7 @@ import com.team376.pulsemetry.telemetry.ingress.TelemetryLogEvent
 import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
 import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import com.team376.pulsemetry.telemetry.observability.observe
+import io.micrometer.tracing.Span
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.slf4j.LoggerFactory
 import org.springframework.kafka.listener.MessageListener
@@ -42,54 +43,67 @@ class TelemetryTransientException(
  *
  * 로그는 [TelemetryLogEvent] 한 줄이다. 메시지 ID·topic·partition·offset·단계·사유·시도 횟수만 남기고 payload·토큰·예외 메시지 원문은 남기지 않는다.
  * message ID 를 읽을 수 없으면(잘못된 envelope) topic·partition·offset 으로 식별한다.
+ *
+ * 플랫폼 trace 를 켜면 시도마다 consumer span 하나를 열고 그 안에서 처리·로그를 한다(ADR 0069). 결과는 span 의 `pulsemetry.outcome` 이다.
  */
 class TelemetryRecordListener(
 	private val process: ProcessTelemetry,
 	private val observer: TelemetryObserver = TelemetryObserver.NONE,
 	private val clock: Clock = Clock.systemUTC(),
+	private val tracing: RecordTracing = RecordTracing(),
 ) : MessageListener<ByteArray, ByteArray> {
 
 	/** 값이 null 인 record(tombstone)도 올 수 있다 — codec 이 잘못된 envelope 로 확정한다. */
 	override fun onMessage(record: ConsumerRecord<ByteArray, ByteArray>) {
 		var signal = "unknown"
 		var outcome = "transient_failed"
+		val attempt = deliveryAttempt(record)
+		val span = tracing.start(record, "telemetry process", attempt)
 		observer.observe(TelemetryMetric.PIPELINE_INFLIGHT)
 		try {
-			val attempt = deliveryAttempt(record)
-			val message = try {
-				TelemetryEnvelopeCodec.decode(record.value())
-			} catch (e: InvalidEnvelopeException) {
-				outcome = "permanent_rejected"
-				return permanent(record, null, "envelope", e.defect, attempt)
-			}
-			signal = message.payload.signal.name.lowercase()
-			fun age() = Duration.between(message.acceptedAt, clock.instant()).let { it.seconds + it.nano / 1e9 }
-			observer.observe(TelemetryMetric.PIPELINE_ACCEPTED_TO_ATTEMPT_START, age(), "signal" to signal)
-			try {
-				process.execute(message)
-				outcome = "completed"
-				observer.observe(TelemetryMetric.PIPELINE_ACCEPTED_TO_COMPLETION, age(), "signal" to signal)
-			} catch (e: TelemetryCredentialRejectedException) {
-				outcome = "permanent_rejected"
-				permanent(record, message.messageId, "authorize", e.code, attempt)
-			} catch (e: OtlpPayloadException) {
-				outcome = "permanent_rejected"
-				permanent(record, message.messageId, "decode", e.reason, attempt)
-			} catch (e: PermanentIngestException) {
-				outcome = "permanent_rejected"
-				permanent(record, message.messageId, "pipeline", "pipeline_rejected", attempt)
-			} catch (e: TelemetryStageFailure) {
-				throw transient(record, message.messageId, e.stage, e.cause, attempt)
-			} catch (e: Exception) {
-				throw transient(record, message.messageId, "process", e, attempt)
+			tracing.scope(span).use {
+				handle(record, attempt, span) { signal = it }.also { outcome = it }
 			}
 		} finally {
+			span.tag("pulsemetry.signal", signal).tag("pulsemetry.outcome", outcome).end()
 			observer.observe(TelemetryMetric.PIPELINE_ATTEMPTS, 1.0, "signal" to signal, "outcome" to outcome)
 			observer.observe(TelemetryMetric.PIPELINE_INFLIGHT, -1.0)
 		}
 	}
 
-	private fun permanent(record: ConsumerRecord<*, *>, messageId: UUID?, stage: String, reason: String, attempt: Int) {
+	/** 처리 결과(`completed`·`permanent_rejected`)를 돌려준다. 일시 실패는 [TelemetryTransientException] 을 던진다. */
+	private fun handle(record: ConsumerRecord<ByteArray, ByteArray>, attempt: Int, span: Span, decoded: (String) -> Unit): String {
+		val message = try {
+			TelemetryEnvelopeCodec.decode(record.value())
+		} catch (e: InvalidEnvelopeException) {
+			permanent(record, null, "envelope", e.defect, attempt, span)
+			return "permanent_rejected"
+		}
+		val signal = message.payload.signal.name.lowercase()
+		decoded(signal)
+		span.tag("pulsemetry.message_id", message.messageId.toString())
+		fun age() = Duration.between(message.acceptedAt, clock.instant()).let { it.seconds + it.nano / 1e9 }
+		observer.observe(TelemetryMetric.PIPELINE_ACCEPTED_TO_ATTEMPT_START, age(), "signal" to signal)
+		try {
+			process.execute(message)
+			observer.observe(TelemetryMetric.PIPELINE_ACCEPTED_TO_COMPLETION, age(), "signal" to signal)
+			return "completed"
+		} catch (e: TelemetryCredentialRejectedException) {
+			permanent(record, message.messageId, "authorize", e.code, attempt, span)
+		} catch (e: OtlpPayloadException) {
+			permanent(record, message.messageId, "decode", e.reason, attempt, span)
+		} catch (e: PermanentIngestException) {
+			permanent(record, message.messageId, "pipeline", "pipeline_rejected", attempt, span)
+		} catch (e: TelemetryStageFailure) {
+			throw transient(record, message.messageId, e.stage, e.cause, attempt, span)
+		} catch (e: Exception) {
+			throw transient(record, message.messageId, "process", e, attempt, span)
+		}
+		return "permanent_rejected"
+	}
+
+	private fun permanent(record: ConsumerRecord<*, *>, messageId: UUID?, stage: String, reason: String, attempt: Int, span: Span) {
+		span.tag("pulsemetry.stage", stage).tag("pulsemetry.reason", reason)
 		observer.observe(TelemetryMetric.PIPELINE_FAILURES, 1.0, "stage" to stage, "reason" to reason)
 		log.warn(
 			TelemetryLogEvent.PERMANENT_FAILURE.format(
@@ -99,9 +113,11 @@ class TelemetryRecordListener(
 		)
 	}
 
-	private fun transient(record: ConsumerRecord<*, *>, messageId: UUID?, stage: String, cause: Throwable?, attempt: Int): TelemetryTransientException {
+	private fun transient(record: ConsumerRecord<*, *>, messageId: UUID?, stage: String, cause: Throwable?, attempt: Int, span: Span): TelemetryTransientException {
 		observer.observe(TelemetryMetric.PIPELINE_FAILURES, 1.0, "stage" to stage, "reason" to "unavailable")
 		val causeType = TelemetryLogEvent.causeOf(cause)
+		// 원본 예외를 span 에 넘기지 않는다 — 메시지에 payload·SQL 이 섞일 수 있다. 클래스 이름만 남긴다.
+		span.tag("pulsemetry.stage", stage).tag("error", causeType)
 		log.warn(
 			TelemetryLogEvent.TRANSIENT_FAILURE.format(
 				"messageId" to messageId, "topic" to record.topic(), "partition" to record.partition(), "offset" to record.offset(),
