@@ -36,6 +36,16 @@ protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }
 spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
 micrometer-core = { module = "io.micrometer:micrometer-core" }
 micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus" }
+# 플랫폼 trace (ADR 0069). starter(spring-boot-starter-opentelemetry)는 OTLP metrics registry까지 끌어와 쓰지 않는다.
+# 앱만 tracing 모듈을 의존하고, 라이브러리는 Observation API(micrometer-observation)만 쓴다.
+micrometer-observation = { module = "io.micrometer:micrometer-observation" }
+spring-boot-micrometer-tracing-opentelemetry = { module = "org.springframework.boot:spring-boot-micrometer-tracing-opentelemetry" }
+micrometer-tracing-bridge-otel = { module = "io.micrometer:micrometer-tracing-bridge-otel" }
+opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp" }
+# OTLP exporter의 기본 전송(okhttp) 대신 JDK HttpClient 전송을 쓴다. 앱에 HTTP 클라이언트 런타임을 하나 더 들이지 않는다.
+opentelemetry-exporter-sender-jdk = { module = "io.opentelemetry:opentelemetry-exporter-sender-jdk" }
+spring-boot-micrometer-tracing-test = { module = "org.springframework.boot:spring-boot-micrometer-tracing-test" }
+opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing" }
 kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect" }
 kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }

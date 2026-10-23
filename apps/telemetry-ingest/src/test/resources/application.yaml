@@ -40,6 +40,24 @@ pulsemetry:
 management:
   server:
     port: 0
+  # main과 같은 trace 설정이다(ADR 0069). Boot 테스트는 @AutoConfigureTracing 없이는 export를 끈다.
+  tracing:
+    export:
+      enabled: false
+    propagation:
+      consume: w3c
+      produce: w3c
+    baggage:
+      enabled: false
+  opentelemetry:
+    map-environment-variables: false
+  logging:
+    export:
+      otlp:
+        enabled: false
+  observations:
+    enable:
+      spring.security: false
   endpoints:
     web:
       exposure:
@@ -57,3 +75,7 @@ server:
   tomcat:
     mbeanregistry:
       enabled: true
+
+logging:
+  pattern:
+    correlation: "%replace(trace_id=%X{traceId} span_id=%X{spanId} ){'^trace_id= span_id= $', ''}"

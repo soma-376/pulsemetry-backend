@@ -92,6 +92,26 @@ NOTE: Picked up JDK_JAVA_OPTIONS: -Xlog:gc,safepoint:stderr:utctime,level,tags
 - `gc*`(하위 태그 전부)·debug 수준은 켜지 않는다. 앱 로그와 같은 stderr라 Fluent Bit이 그대로 수집한다.
 - calibration부터 비교시험 전체가 같은 옵션과 `PULSEMETRY_OBSERVABILITY_ENABLED` 값을 쓴다.
 
+## 플랫폼 trace (ADR 0069)
+
+기본은 꺼져 있다. 켜면 Gateway·ingest가 플랫폼 자체 span을 OTLP/HTTP로 Collector에 보낸다. 고객 OTLP의 trace는 읽지 않는다.
+
+| 환경변수 | 의미 | 기본 |
+|---|---|---|
+| `PULSEMETRY_TRACING_ENABLED` | trace 생성·전파·내보내기 | `false` |
+| `PULSEMETRY_TRACING_OTLP_TRACES_ENDPOINT` | `/v1/traces`까지 쓴 전체 URL. 켰는데 비어 있으면 기동하지 않는다 | 없음 |
+| `PULSEMETRY_TRACING_SAMPLE_PROBABILITY` | root sampling 비율(parent-based) | `0.1` |
+| `PULSEMETRY_TRACING_CLUSTER` | resource `k8s.cluster.name` | 없음 |
+| `POD_NAMESPACE`, `POD_NAME` | resource `k8s.namespace.name`·`k8s.pod.name` (Downward API) | 없음 |
+
+- `service.name`은 `telemetry-gateway`·`telemetry-ingest`로 고정이다. `deployment.environment.name`은 `PULSEMETRY_OBSERVABILITY_ENVIRONMENT`다.
+- `OTEL_*` 환경변수는 읽지 않는다. OTLP 로그·지표 내보내기와 Prometheus exemplar는 켜지 않는다. 지표는 기존 9404 scrape 그대로다.
+- 공개 요청의 `traceparent`·`tracestate`·`baggage`·B3 header는 서버 observation 전에 지운다. 요청은 언제나 새 플랫폼 root다.
+- health(`/api/v1/healthz`)·관리(`/actuator/**`) 요청과 Spring Security 내부 단계는 span을 만들지 않는다.
+- 활성 span 안의 로그에만 `trace_id=<32 hex> span_id=<16 hex>`가 붙는다. 기존 `event=<code>` 형식은 그대로다.
+- 전송은 비동기 batch(queue 2048, timeout 10초)다. Collector 장애·queue 초과 때 span을 버리고 업무 응답·Kafka ack·commit은 기다리지 않는다.
+  trace가 없다는 것만으로 처리 실패를 판단하지 않는다.
+
 ## 독립 smoke 실행
 
 `scripts/observability-smoke/smoke.py`는 Python3 표준 라이브러리만 쓰고 미완성 k6 runner와 독립적이다. 실행자는 **유효한 telemetry JWT**, 그 JWT의 tenant/installation UUID, retention 범위 안 현재 source time, 접근 가능한 Gateway·각 metrics·ClickHouse endpoint를 준비한다. 인증/시드는 기존 [로컬 Kafka E2E](telemetry-kafka-e2e.md)를 따른다. 이 도구는 토큰·tenant를 발급하거나 인프라를 배포하지 않는다. JWT 파일은 제한된 권한으로 만들고 저장소 밖에 둔다.
