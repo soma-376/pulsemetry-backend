@@ -126,6 +126,7 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 
 		val record = recordsFor(tenantId).single()
 		assertThat(record.key()).isEqualTo("$tenantId:$installationId")
+		// 플랫폼 trace 를 끈 기본 설정이라 header 가 없다. 켜면 traceparent 하나뿐이다(ADR 0069, TracingEnabledTest).
 		assertThat(record.headers().toArray()).isEmpty()
 		val envelope = TelemetryEnvelopeCodec.decode(record.value())
 		assertThat(envelope.auth.credentialId).isEqualTo(credentialId)

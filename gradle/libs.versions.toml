@@ -37,8 +37,8 @@ spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-
 micrometer-core = { module = "io.micrometer:micrometer-core" }
 micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus" }
 # 플랫폼 trace (ADR 0069). starter(spring-boot-starter-opentelemetry)는 OTLP metrics registry까지 끌어와 쓰지 않는다.
-# 앱만 tracing 모듈을 의존하고, 라이브러리는 Observation API(micrometer-observation)만 쓴다.
-micrometer-observation = { module = "io.micrometer:micrometer-observation" }
+# 앱만 tracing 모듈을 의존하고, 라이브러리는 Tracer API(micrometer-tracing)만 쓴다.
+micrometer-tracing = { module = "io.micrometer:micrometer-tracing" }
 spring-boot-micrometer-tracing-opentelemetry = { module = "org.springframework.boot:spring-boot-micrometer-tracing-opentelemetry" }
 micrometer-tracing-bridge-otel = { module = "io.micrometer:micrometer-tracing-bridge-otel" }
 opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp" }

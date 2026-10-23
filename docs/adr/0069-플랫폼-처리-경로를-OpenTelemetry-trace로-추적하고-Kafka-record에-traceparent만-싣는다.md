@@ -43,7 +43,9 @@ endpoint·서비스 이름·sampling·속성 허용목록은 backend와 infra가
   - 의존성: `spring-boot-micrometer-tracing-opentelemetry`, `micrometer-tracing-bridge-otel`, `opentelemetry-exporter-otlp`.
   - `spring-boot-starter-opentelemetry`는 쓰지 않는다. OTLP metrics registry까지 끌어와 기존 Prometheus 지표 경로와 겹친다.
   - Java agent는 붙이지 않는다.
-- 라이브러리는 Micrometer Observation API만 쓴다. 기본은 `ObservationRegistry.NOOP`이다(ADR 0011).
+- 수동 span(Kafka 발행·처리 시도·ClickHouse 요청)은 Micrometer Tracing의 `Tracer`·`Propagator`로 만든다. 라이브러리는 이 API만 의존하고
+  기본은 `Tracer.NOOP`이다(ADR 0011). Observation API는 같은 이름의 Timer를 함께 만들어 기존 `pulsemetry_*` 지표와 겹치고
+  `PULSEMETRY_OBSERVABILITY_ENABLED`로 끄지 못하므로 수동 span에 쓰지 않는다. HTTP 서버 span은 Boot의 서버 observation을 그대로 쓴다.
 
 ### 설정 계약
 

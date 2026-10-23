@@ -60,8 +60,32 @@ class TracingEnabledTest : AbstractGatewayIntegrationTest() {
 		return http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
 	}
 
-	private fun token(): String =
-		GatewayTestKafka.KEY.issuer().issue(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), Instant.now()).token
+	private fun token(tenantId: UUID = UUID.randomUUID()): String =
+		GatewayTestKafka.KEY.issuer().issue(UUID.randomUUID(), tenantId, UUID.randomUUID(), Instant.now()).token
+
+	@Test
+	@DisplayName("Kafka record 에는 발행 span 문맥의 traceparent 하나만 실린다 — 요청 span 의 자식이고 신원·payload 속성은 없다")
+	fun publishCarriesTraceparentOnly() {
+		val tenantId = UUID.randomUUID()
+		assertThat(post(token(tenantId)).statusCode()).isEqualTo(200)
+
+		val record = GatewayTestKafka.records(GatewayTestKafka.shared.bootstrapServers).single { it.key().startsWith("$tenantId:") }
+		assertThat(record.headers().map { it.key() }).containsExactly("traceparent")
+		val traceparent = String(record.headers().lastHeader("traceparent").value(), Charsets.US_ASCII)
+		assertThat(traceparent).matches("00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}")
+		// flags 의 sampled 비트(0x01)만 본다. OTel 은 W3C Level 2 의 random 비트(0x02)도 켠다.
+		assertThat(traceparent.takeLast(2).toInt(16) and 1).isEqualTo(1)
+
+		val spans = TestSpans.await { spans -> spans.any { it.kind == SpanKind.SERVER } && spans.any { it.kind == SpanKind.PRODUCER } }
+		val server = spans.single { it.kind == SpanKind.SERVER }
+		val producer = spans.single { it.kind == SpanKind.PRODUCER }
+		assertThat(producer.parentSpanId).isEqualTo(server.spanId)
+		assertThat(traceparent).startsWith("00-${producer.traceId}-${producer.spanId}-")
+		assertThat(producer.attributes.get(AttributeKey.stringKey("messaging.destination.name"))).isEqualTo(GatewayTestKafka.TOPIC)
+		assertThat(producer.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("acknowledged")
+		assertThat(producer.attributes.asMap().keys.map { it.key }).doesNotContain("tenant_id", "installation_id", "authorization")
+		assertThat(producer.attributes.asMap().values.map { it.toString() }).noneMatch { it.contains(tenantId.toString()) }
+	}
 
 	@Test
 	@DisplayName("공개 요청의 traceparent 는 부모가 되지 않는다 — 서버 span 은 새 root 이고 resource 는 고정 이름이다")
