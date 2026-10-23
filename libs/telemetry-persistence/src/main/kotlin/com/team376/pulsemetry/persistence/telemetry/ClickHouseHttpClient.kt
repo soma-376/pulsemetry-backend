@@ -1,8 +1,11 @@
 package com.team376.pulsemetry.persistence.telemetry
 
+import com.team376.pulsemetry.telemetry.observability.PlatformTracing
 import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
 import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import com.team376.pulsemetry.telemetry.observability.observe
+import io.micrometer.tracing.Span
+import io.micrometer.tracing.Tracer
 import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
@@ -30,6 +33,11 @@ import java.time.Duration
  *
  * 자격 증명을 보내지 않는다. 현행 배포의 ClickHouse `default` 유저에는 비밀번호가 없고
  * 접근 통제를 보안 그룹이 맡는다(infra ADR-0019). 그 전제가 바뀌면 여기에 헤더가 붙는다.
+ *
+ * ## 플랫폼 trace
+ *
+ * 호출마다 client span 하나를 만든다(ADR 0069). 기본 [Tracer.NOOP] 이면 아무것도 하지 않는다. 속성은 operation·table·outcome 과
+ * 실패의 예외 클래스 이름뿐이다. **URL 을 싣지 않는다** — query string 에 SQL 과 `param_*` 값이 들어 있다. 예외 메시지도 싣지 않는다.
  */
 public class ClickHouseHttpClient(
 	private val baseUrl: String,
@@ -39,6 +47,7 @@ public class ClickHouseHttpClient(
 	private val httpClient: HttpClient =
 		HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER).build(),
 	private val observer: TelemetryObserver = TelemetryObserver.NONE,
+	private val tracer: Tracer = Tracer.NOOP,
 ) {
 
 	/**
@@ -68,17 +77,37 @@ public class ClickHouseHttpClient(
 	): String {
 		val started = System.nanoTime()
 		var outcome = "transient_error"
+		val span = clientSpan(operation, table)
 		try {
 			return request(query, body, params, queryId).also { outcome = "success" }
 		} catch (failure: TelemetrySinkRejectedException) {
 			outcome = "permanent_error"
+			span.tag("error", failure.javaClass.simpleName)
+			throw failure
+		} catch (failure: RuntimeException) {
+			span.tag("error", failure.javaClass.simpleName)
 			throw failure
 		} finally {
+			span.tag("pulsemetry.outcome", outcome).end()
 			val tags = arrayOf("operation" to operation, "table" to table, "outcome" to outcome)
 			observer.observe(TelemetryMetric.CLICKHOUSE_REQUESTS, 1.0, *tags)
 			observer.observe(TelemetryMetric.CLICKHOUSE_REQUEST_DURATION, (System.nanoTime() - started) / 1e9, *tags)
 		}
 	}
+
+	/** 현재 문맥(ingest 처리 span)의 자식 client span. trace 구현이 실패해도 호출을 막지 않는다. */
+	private fun clientSpan(operation: String, table: String): Span = runCatching {
+		val op = PlatformTracing.clickHouseOperation(operation)
+		val target = PlatformTracing.clickHouseTable(table)
+		tracer.spanBuilder()
+			.name("clickhouse $op $target")
+			.kind(Span.Kind.CLIENT)
+			.remoteServiceName("clickhouse")
+			.tag("db.system.name", "clickhouse")
+			.tag("pulsemetry.operation", op)
+			.tag("pulsemetry.table", target)
+			.start()
+	}.getOrDefault(Span.NOOP)
 
 	/** 입력 행 수이며 서버 fence 뒤의 실제 저장 행 수가 아니다. 재시도도 매번 센다. */
 	internal fun rowsSubmitted(table: String, count: Int) {

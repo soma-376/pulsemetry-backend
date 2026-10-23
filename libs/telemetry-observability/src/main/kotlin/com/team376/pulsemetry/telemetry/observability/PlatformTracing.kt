@@ -30,6 +30,15 @@ public object PlatformTracing {
 
     public fun isInboundTraceHeader(name: String): Boolean = name.lowercase() in INBOUND_TRACE_HEADERS
 
+    /** ClickHouse 호출의 operation·table 허용목록. 지표 label과 span 속성이 같은 목록을 쓴다(ADR 0068·0069). 밖의 값은 `other`다. */
+    public val CLICKHOUSE_OPERATIONS: Set<String> = setOf("insert", "select", "delete", "schema", "other")
+    public val CLICKHOUSE_TABLES: Set<String> =
+        setOf("telemetry_events", "telemetry_metric_points", "telemetry_ingest_ledger", "telemetry_retention_fence")
+
+    public fun clickHouseOperation(value: String?): String = value.takeIf { it in CLICKHOUSE_OPERATIONS } ?: "other"
+
+    public fun clickHouseTable(value: String?): String = value.takeIf { it in CLICKHOUSE_TABLES } ?: "other"
+
     /** 켜져 있는데 endpoint가 비어 있으면 기동하지 않는다. 조용히 span을 버리는 배포를 막는다. */
     public fun requireEndpoint(enabled: Boolean, endpoint: String?) {
         require(!enabled || !endpoint.isNullOrBlank()) {

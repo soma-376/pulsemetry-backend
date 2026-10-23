@@ -25,6 +25,8 @@ import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.context.annotation.Import
 import org.springframework.test.context.TestPropertySource
 import java.time.Duration
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -57,12 +59,17 @@ class ConsumerTracingTest : AbstractIngestIntegrationTest() {
 	fun cleanUp() = data.clear()
 
 	@Test
-	@DisplayName("record header 의 traceparent 가 처리 span 의 부모가 되고 결과가 completed 다")
+	@DisplayName("record header 의 traceparent 가 처리 span 의 부모가 되고 결과가 completed 다 — ClickHouse 쓰기는 그 자식 client span 이다")
 	fun recordJoinsGatewayTrace() {
-		val message = IngestTestKafka.accepted(data.seedJwt(), LOG_BODY)
+		val message = IngestTestKafka.accepted(data.seedJwt(), smokeLog(Instant.now().truncatedTo(ChronoUnit.MICROS)))
 		awaitCommitted(IngestTestKafka.publish(message, listOf("traceparent" to TRACEPARENT.toByteArray())))
 
-		val consumer = TestSpans.await { spans -> spans.any { it.kind == SpanKind.CONSUMER } }.single { it.kind == SpanKind.CONSUMER }
+		val spans = TestSpans.await { spans -> spans.any { it.kind == SpanKind.CONSUMER } }
+		val consumer = spans.single { it.kind == SpanKind.CONSUMER }
+		val clickhouse = spans.filter { it.kind == SpanKind.CLIENT && it.traceId == TRACE_ID }
+		assertThat(clickhouse.map { it.name }).contains("clickhouse insert telemetry_events")
+		assertThat(clickhouse).allMatch { it.parentSpanId == consumer.spanId }
+		assertThat(clickhouse.flatMap { it.attributes.asMap().values }.map { it.toString() }).noneMatch { it.contains("INSERT") || it.contains("query=") }
 		assertThat(consumer.traceId).isEqualTo(TRACE_ID)
 		assertThat(consumer.parentSpanId).isEqualTo(PARENT_ID)
 		assertThat(consumer.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("completed")
@@ -126,6 +133,13 @@ class ConsumerTracingTest : AbstractIngestIntegrationTest() {
 			Thread.sleep(100)
 		}
 		throw AssertionError("offset ${metadata.partition()}@${metadata.offset()} 가 $timeout 안에 확정되지 않았다")
+	}
+
+	/** 독립 smoke 와 같은 Claude Code api_request 원문. 시각만 [at] 으로 바꾼다(TelemetryKafkaConsumerTest 와 같은 자료). */
+	private fun smokeLog(at: Instant): ByteArray {
+		val template = javaClass.getResourceAsStream("/observability-smoke-log.json")!!.bufferedReader().use { it.readText() }
+		return template.replace("2026-10-21T15:00:00+00:00", at.toString())
+			.replace("1792594800000000000", (at.epochSecond * 1_000_000_000 + at.nano).toString()).toByteArray()
 	}
 
 	@Suppress("UNCHECKED_CAST")

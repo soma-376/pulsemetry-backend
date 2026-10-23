@@ -6,6 +6,8 @@ import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
 import com.team376.pulsemetry.persistence.telemetry.TelemetryMetricPointsSink
 import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import com.team376.pulsemetry.telemetry.pipeline.ClickHouseSchema
+import io.micrometer.tracing.Tracer
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 
@@ -14,13 +16,15 @@ import org.springframework.context.annotation.Configuration
 class ClickHouseConfig {
 
 	@Bean
-	fun clickHouseHttpClient(properties: TelemetryIngestProperties, observer: TelemetryObserver): ClickHouseHttpClient {
+	fun clickHouseHttpClient(properties: TelemetryIngestProperties, observer: TelemetryObserver, tracer: ObjectProvider<Tracer>): ClickHouseHttpClient {
 		val clickhouse = properties.telemetry.clickhouse
 		return ClickHouseHttpClient(
 			baseUrl = clickhouse.url,
 			database = clickhouse.database,
 			timeout = clickhouse.timeout,
 			observer = observer,
+			// 플랫폼 trace(ADR 0069). 끄면 NOOP 이다.
+			tracer = tracer.getIfAvailable { Tracer.NOOP },
 		)
 	}
 
