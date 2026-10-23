@@ -67,7 +67,7 @@ Observer 기본값은 no-op이며 `.observe`가 계측 RuntimeException을 격�
 
 기존 `TelemetryLogEvent`의 `event=<code>`와 필드 구조는 보존한다. JVM/Spring 기동·graceful shutdown·Kafka 재시도 로그도 보존한다. CH 스키마 시작/재적용 실패, RDB 인증 조회 장애, ops 백필 실패에는 component·reason·exception class·제한된 cause/stack frame을 남긴다. `SafeDiagnostic`은 exception message와 suppressed 원문을 제외하고 cause depth 8, 각 stack 8, 전체 4096자로 제한한다. payload·Bearer·자격증명 canary가 로그·metric tag에 새지 않는 테스트를 둔다.
 
-이 로그의 목적은 서비스 기동·종료·의존성 실패 원인을 좁히는 것이다. trace ID, 새 message context, envelope header/schema 변경은 없다. MSK broker 로그, ClickHouse system 로그, GC/safepoint stderr, OOMKilled·exit code·restart·Kubernetes Event는 Infra의 CloudWatch 수집과 함께 확인한다. heap dump·stack dump를 자동 강제 생성하지 않는다. 앱 로그가 없는 SIGKILL/OOM도 플랫폼 증거로 판단한다.
+이 로그의 목적은 서비스 기동·종료·의존성 실패 원인을 좁히는 것이다. envelope schema는 바꾸지 않는다. 플랫폼 trace(ADR 0069, Proposed)를 켜면 Kafka record에 `traceparent` header 하나가 붙고, 활성 span 안의 로그에 `trace_id`·`span_id`가 붙는다. MSK broker 로그, ClickHouse system 로그, GC/safepoint stderr, OOMKilled·exit code·restart·Kubernetes Event는 Infra의 CloudWatch 수집과 함께 확인한다. heap dump·stack dump를 자동 강제 생성하지 않는다. 앱 로그가 없는 SIGKILL/OOM도 플랫폼 증거로 판단한다.
 
 ### GC·safepoint 로그 (Infra 인계)
 
