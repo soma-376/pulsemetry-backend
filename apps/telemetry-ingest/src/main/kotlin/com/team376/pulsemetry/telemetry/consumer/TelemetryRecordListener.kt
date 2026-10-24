@@ -117,6 +117,7 @@ class TelemetryRecordListener(
 
 	private fun permanent(record: ConsumerRecord<*, *>, messageId: UUID?, stage: String, reason: String, attempt: Int, span: Span) {
 		span.tag("pulsemetry.stage", stage).tag("pulsemetry.reason", reason)
+		tracing.fail(span, reason)
 		observer.observe(TelemetryMetric.PIPELINE_FAILURES, 1.0, "stage" to stage, "reason" to reason)
 		log.warn(
 			TelemetryLogEvent.PERMANENT_FAILURE.format(
@@ -130,7 +131,8 @@ class TelemetryRecordListener(
 		observer.observe(TelemetryMetric.PIPELINE_FAILURES, 1.0, "stage" to stage, "reason" to "unavailable")
 		val causeType = TelemetryLogEvent.causeOf(cause)
 		// 원본 예외를 span 에 넘기지 않는다 — 메시지에 payload·SQL 이 섞일 수 있다. 클래스 이름만 남긴다.
-		span.tag("pulsemetry.stage", stage).tag("error", causeType)
+		span.tag("pulsemetry.stage", stage)
+		tracing.fail(span, causeType)
 		log.warn(
 			TelemetryLogEvent.TRANSIENT_FAILURE.format(
 				"messageId" to messageId, "topic" to record.topic(), "partition" to record.partition(), "offset" to record.offset(),

@@ -61,6 +61,8 @@ class KafkaTelemetryPublisher(
 			reason = failure.reason
 			throw failure
 		} finally {
+			// 실패는 reason 코드로만 분류하고 ERROR 로 표시한다. 원본 예외는 span 에 넘기지 않는다(ADR 0069).
+			if (outcome != "acknowledged") runCatching { span.tag(PlatformTracing.ERROR_TYPE, reason).error(PlatformTracing.SPAN_FAILURE) }
 			span.tag("pulsemetry.outcome", outcome).tag("pulsemetry.reason", reason).end()
 			observer.observe(TelemetryMetric.GATEWAY_PUBLISH, 1.0, "signal" to signal, "outcome" to outcome, "reason" to reason)
 			observer.observe(TelemetryMetric.GATEWAY_PUBLISH_DURATION, (System.nanoTime() - started) / 1e9, "signal" to signal, "outcome" to outcome)

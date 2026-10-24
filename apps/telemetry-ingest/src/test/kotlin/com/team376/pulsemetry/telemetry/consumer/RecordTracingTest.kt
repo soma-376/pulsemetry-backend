@@ -5,6 +5,7 @@ import io.micrometer.tracing.otel.bridge.OtelPropagator
 import io.micrometer.tracing.otel.bridge.OtelTracer
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.trace.SpanKind
+import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
 import io.opentelemetry.context.propagation.ContextPropagators
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter
@@ -92,8 +93,26 @@ class RecordTracingTest {
         assertThat(span.parentSpanId).isEqualTo(PARENT_ID)
         assertThat(span.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("retry_exhausted")
         assertThat(span.attributes.get(AttributeKey.stringKey("pulsemetry.stage"))).isEqualTo("process")
+        // around 는 실패 경로에서만 부른다 — ERROR status 이고 분류는 outcome 이다.
+        assertThat(span.status.statusCode).isEqualTo(StatusCode.ERROR)
+        assertThat(span.attributes.get(AttributeKey.stringKey("error.type"))).isEqualTo("retry_exhausted")
         // 다음 record 로 문맥이 새지 않는다.
         assertThat(io.opentelemetry.api.trace.Span.current().spanContext.isValid).isFalse()
+    }
+
+    @Test
+    fun failMarksErrorWithoutTheOriginalException() {
+        val span = tracing.start(record(VALID.toByteArray()), "telemetry process", 1)
+        tracing.fail(span, "TelemetrySinkUnavailableException")
+        span.end()
+        val finished = exporter.finishedSpanItems.single()
+        assertThat(finished.status.statusCode).isEqualTo(StatusCode.ERROR)
+        assertThat(finished.status.description).isEmpty()
+        assertThat(finished.attributes.get(AttributeKey.stringKey("error.type"))).isEqualTo("TelemetrySinkUnavailableException")
+        // 표식 이벤트 하나에 메시지 속성이 없고 stack frame 도 없다.
+        val event = finished.events.single()
+        assertThat(event.attributes.get(AttributeKey.stringKey("exception.message"))).isNull()
+        assertThat(event.attributes.get(AttributeKey.stringKey("exception.stacktrace")).orEmpty()).doesNotContain("\tat ")
     }
 
     @Test
@@ -101,7 +120,7 @@ class RecordTracingTest {
         val noop = RecordTracing()
         val record = record(VALID.toByteArray())
         noop.around(record, "telemetry recover", "retry_exhausted", "process") { }
-        noop.start(record, "telemetry process", 1).end()
+        noop.start(record, "telemetry process", 1).also { noop.fail(it, "x") }.end()
         assertThat(record.headers().headers("traceparent")).hasSize(1)
         assertThat(exporter.finishedSpanItems).isEmpty()
     }

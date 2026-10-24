@@ -39,6 +39,18 @@ public object PlatformTracing {
 
     public fun clickHouseTable(value: String?): String = value.takeIf { it in CLICKHOUSE_TABLES } ?: "other"
 
+    /** 실패 span의 분류 속성(OpenTelemetry `error.type`). 값은 예외 단순 이름이나 reason·outcome 코드뿐이다. */
+    public const val ERROR_TYPE: String = "error.type"
+
+    /**
+     * 실패 span을 ERROR status로 표시할 때 `span.error(...)`에 넘기는 표식이다.
+     * 원본 예외를 넘기면 bridge가 메시지를 status 설명에, 메시지·stack을 exception 이벤트에 싣는다 — SQL·payload가 섞일 수 있다.
+     * 이 표식은 메시지와 stack이 없어 status는 ERROR, 설명은 비고, 이벤트에는 표식 이름만 남는다. 분류는 [ERROR_TYPE]으로 본다.
+     */
+    public val SPAN_FAILURE: Throwable = SpanFailure()
+
+    private class SpanFailure : RuntimeException(null, null, false, false)
+
     /** 켜져 있는데 endpoint가 비어 있으면 기동하지 않는다. 조용히 span을 버리는 배포를 막는다. */
     public fun requireEndpoint(enabled: Boolean, endpoint: String?) {
         require(!enabled || !endpoint.isNullOrBlank()) {

@@ -13,6 +13,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord
  * W3C propagator 가 버린다. header 가 있든 없든 처리 결과는 같다. Gateway 의 header 확장 전후 record 가 섞여도 소비는 그대로 돈다.
  *
  * 속성은 topic·partition·offset·시도 횟수와 처리 결과뿐이다. 신원·payload·예외 메시지를 싣지 않는다.
+ * 실패한 시도는 status ERROR 이고 분류는 `error.type`(reason·예외 클래스 이름·outcome 코드)이다.
  */
 class RecordTracing(private val tracer: Tracer = Tracer.NOOP, private val propagator: Propagator = Propagator.NOOP) {
 
@@ -42,6 +43,11 @@ class RecordTracing(private val tracer: Tracer = Tracer.NOOP, private val propag
 			.start()
 	}
 
+	/** 실패 span 을 ERROR 로 표시한다. 원본 예외 대신 메시지·stack 없는 표식을 넘긴다 — status 설명과 이벤트에 원문이 실리지 않는다. */
+	fun fail(span: Span, errorType: String) {
+		runCatching { span.tag(PlatformTracing.ERROR_TYPE, errorType).error(PlatformTracing.SPAN_FAILURE) }
+	}
+
 	/** sampled 된 span 인가. 끄거나 sampling 에서 빠진 요청은 false 다. */
 	fun sampled(span: Span): Boolean = runCatching { span.context().sampled() == true }.getOrDefault(false)
 
@@ -50,6 +56,7 @@ class RecordTracing(private val tracer: Tracer = Tracer.NOOP, private val propag
 
 	/**
 	 * listener scope 밖에서 나는 로그(재시도 소진·commit 실패)를 그 record 의 trace 에 잇는다. 짧은 span 을 열어 [log] 를 부르고 닫는다.
+	 * 부르는 곳은 실패 경로뿐이라 span 은 ERROR 이고 `error.type` 은 [outcome] 이다.
 	 * span 이나 로그가 실패해도 호출자의 offset 판정을 바꾸지 않는다 — 호출자가 예외를 삼킨다.
 	 */
 	fun around(record: ConsumerRecord<*, *>, name: String, outcome: String, stage: String, log: () -> Unit) {
@@ -57,6 +64,7 @@ class RecordTracing(private val tracer: Tracer = Tracer.NOOP, private val propag
 		try {
 			scope(span).use { log() }
 		} finally {
+			fail(span, outcome)
 			span.tag("pulsemetry.outcome", outcome).tag("pulsemetry.stage", stage).end()
 		}
 	}

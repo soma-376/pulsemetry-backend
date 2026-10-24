@@ -37,7 +37,8 @@ import java.time.Duration
  * ## 플랫폼 trace
  *
  * 호출마다 client span 하나를 만든다(ADR 0069). 기본 [Tracer.NOOP] 이면 아무것도 하지 않는다. 속성은 operation·table·outcome 과
- * 실패의 예외 클래스 이름뿐이다. **URL 을 싣지 않는다** — query string 에 SQL 과 `param_*` 값이 들어 있다. 예외 메시지도 싣지 않는다.
+ * 실패의 예외 클래스 이름(`error.type`)뿐이다. 실패 span 은 status ERROR 이고 설명은 비운다.
+ * **URL 을 싣지 않는다** — query string 에 SQL 과 `param_*` 값이 들어 있다. 예외 메시지도 싣지 않는다.
  */
 public class ClickHouseHttpClient(
 	private val baseUrl: String,
@@ -82,10 +83,10 @@ public class ClickHouseHttpClient(
 			return request(query, body, params, queryId).also { outcome = "success" }
 		} catch (failure: TelemetrySinkRejectedException) {
 			outcome = "permanent_error"
-			span.tag("error", failure.javaClass.simpleName)
+			failed(span, failure)
 			throw failure
 		} catch (failure: RuntimeException) {
-			span.tag("error", failure.javaClass.simpleName)
+			failed(span, failure)
 			throw failure
 		} finally {
 			span.tag("pulsemetry.outcome", outcome).end()
@@ -108,6 +109,11 @@ public class ClickHouseHttpClient(
 			.tag("pulsemetry.table", target)
 			.start()
 	}.getOrDefault(Span.NOOP)
+
+	/** 실패 span 을 ERROR 로 표시한다. 분류는 예외 단순 이름뿐이고 원본 예외는 넘기지 않는다(ADR 0069). */
+	private fun failed(span: Span, failure: RuntimeException) {
+		runCatching { span.tag(PlatformTracing.ERROR_TYPE, failure.javaClass.simpleName).error(PlatformTracing.SPAN_FAILURE) }
+	}
 
 	/** 입력 행 수이며 서버 fence 뒤의 실제 저장 행 수가 아니다. 재시도도 매번 센다. */
 	internal fun rowsSubmitted(table: String, count: Int) {

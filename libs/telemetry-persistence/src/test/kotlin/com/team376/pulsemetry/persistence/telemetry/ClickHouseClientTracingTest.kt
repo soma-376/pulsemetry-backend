@@ -5,6 +5,7 @@ import io.micrometer.tracing.otel.bridge.OtelCurrentTraceContext
 import io.micrometer.tracing.otel.bridge.OtelTracer
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.trace.SpanKind
+import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter
 import io.opentelemetry.sdk.trace.SdkTracerProvider
 import io.opentelemetry.sdk.trace.data.SpanData
@@ -59,7 +60,9 @@ class ClickHouseClientTracingTest {
 			table = table,
 		)
 
-	private fun SpanData.text(): String = (attributes.asMap().values.map { it.toString() } + name + events.map { it.name }).joinToString()
+	private fun SpanData.text(): String =
+		(attributes.asMap().values.map { it.toString() } + name + status.description +
+			events.flatMap { e -> e.attributes.asMap().values.map { it.toString() } + e.name }).joinToString()
 
 	@Test
 	@DisplayName("성공 호출은 operation·table·outcome 만 가진 client span 이고 현재 span 의 자식이다")
@@ -75,11 +78,12 @@ class ClickHouseClientTracingTest {
 		assertThat(span.attributes.get(AttributeKey.stringKey("pulsemetry.operation"))).isEqualTo("select")
 		assertThat(span.attributes.get(AttributeKey.stringKey("pulsemetry.table"))).isEqualTo("telemetry_events")
 		assertThat(span.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("success")
+		assertThat(span.status.statusCode).isNotEqualTo(StatusCode.ERROR)
 		assertThat(span.text()).doesNotContain("SELECT", "CANARY", "query=", "param_", "127.0.0.1")
 	}
 
 	@Test
-	@DisplayName("4xx 는 permanent_error, 5xx 는 transient_error 이고 오류는 예외 클래스 이름만 남는다")
+	@DisplayName("4xx 는 permanent_error, 5xx 는 transient_error 이고 ERROR status 에 예외 클래스 이름만 남는다")
 	fun failuresKeepOnlyClassNames() {
 		status = 404
 		assertThatThrownBy { execute(operation = "insert") }.isInstanceOf(TelemetrySinkRejectedException::class.java)
@@ -88,12 +92,19 @@ class ClickHouseClientTracingTest {
 
 		val (rejected, unavailable) = exporter.finishedSpanItems
 		assertThat(rejected.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("permanent_error")
-		assertThat(rejected.attributes.get(AttributeKey.stringKey("error"))).isEqualTo("TelemetrySinkRejectedException")
+		assertThat(rejected.attributes.get(AttributeKey.stringKey("error.type"))).isEqualTo("TelemetrySinkRejectedException")
 		assertThat(unavailable.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("transient_error")
-		assertThat(unavailable.attributes.get(AttributeKey.stringKey("error"))).isEqualTo("TelemetrySinkUnavailableException")
+		assertThat(unavailable.attributes.get(AttributeKey.stringKey("error.type"))).isEqualTo("TelemetrySinkUnavailableException")
 		for (span in exporter.finishedSpanItems) {
+			// Tempo 의 status = error 검색에 잡히고, 설명은 비어 있다.
+			assertThat(span.status.statusCode).isEqualTo(StatusCode.ERROR)
+			assertThat(span.status.description).isEmpty()
 			assertThat(span.text()).doesNotContain("CANARY", "secret_table", "DB::Exception")
-			assertThat(span.events).isEmpty()
+			// 이벤트는 표식 하나뿐이다 — 메시지 속성이 없고 stack frame 이 없다.
+			val event = span.events.single()
+			assertThat(event.name).isEqualTo("exception")
+			assertThat(event.attributes.get(AttributeKey.stringKey("exception.message"))).isNull()
+			assertThat(event.attributes.get(AttributeKey.stringKey("exception.stacktrace")).orEmpty()).doesNotContain("\tat ")
 		}
 	}
 

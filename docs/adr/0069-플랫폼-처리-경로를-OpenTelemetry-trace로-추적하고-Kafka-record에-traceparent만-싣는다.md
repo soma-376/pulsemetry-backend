@@ -86,7 +86,10 @@ endpoint·서비스 이름·sampling·속성 허용목록은 backend와 infra가
   - Kafka: `messaging.system`, `messaging.destination.name`, partition, offset, 시도 횟수.
   - ClickHouse: `db.system.name`, `pulsemetry.operation`, `pulsemetry.table`, `pulsemetry.outcome`.
 - 다음은 싣지 않는다: Bearer·자격 증명, payload, tenant·installation·member ID, URL query, SQL과 파라미터, 원본 예외 메시지.
-- 실패는 예외 클래스 이름만 `error` 속성으로 남긴다. 원본 예외를 observation에 넘기지 않는다.
+- 실패한 span은 status ERROR로 표시하고 설명은 비운다. Tempo의 `status = error` 검색이 실패를 찾는 근거다.
+  - 분류는 `error.type` 속성 하나다. 값은 예외 클래스 이름·reason·outcome 코드뿐이다.
+  - 원본 예외를 span에 넘기지 않는다. bridge의 `span.error(예외)`는 메시지를 status 설명에, 메시지·stack을 exception 이벤트에 싣는다.
+    메시지·stack이 없는 표식(`PlatformTracing.SPAN_FAILURE`)만 넘긴다.
 
 ### 로그
 

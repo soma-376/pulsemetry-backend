@@ -9,6 +9,7 @@ import com.team376.pulsemetry.telemetry.support.IngestTestKafka
 import com.team376.pulsemetry.telemetry.support.TestSpans
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.trace.SpanKind
+import io.opentelemetry.api.trace.StatusCode
 import org.apache.kafka.clients.producer.RecordMetadata
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
@@ -73,6 +74,7 @@ class ConsumerTracingTest : AbstractIngestIntegrationTest() {
 		assertThat(consumer.traceId).isEqualTo(TRACE_ID)
 		assertThat(consumer.parentSpanId).isEqualTo(PARENT_ID)
 		assertThat(consumer.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("completed")
+		assertThat(consumer.status.statusCode).isNotEqualTo(StatusCode.ERROR)
 		assertThat(consumer.attributes.get(AttributeKey.stringKey("pulsemetry.message_id"))).isEqualTo(message.messageId.toString())
 		assertThat(consumer.resource.attributes.get(AttributeKey.stringKey("service.name"))).isEqualTo("telemetry-ingest")
 	}
@@ -95,10 +97,19 @@ class ConsumerTracingTest : AbstractIngestIntegrationTest() {
 		assertThat(attempts.map { it.spanId }.toSet()).hasSize(4)
 		assertThat(attempts.map { it.parentSpanId }.toSet()).containsExactly(PARENT_ID)
 		assertThat(attempts.map { it.attributes.get(AttributeKey.stringKey("pulsemetry.outcome")) }.toSet()).containsExactly("transient_failed")
-		assertThat(attempts.map { it.attributes.get(AttributeKey.stringKey("error")) }.toSet()).containsExactly("TelemetrySinkUnavailableException")
+		assertThat(attempts.map { it.attributes.get(AttributeKey.stringKey("error.type")) }.toSet()).containsExactly("TelemetrySinkUnavailableException")
 		val recover = spans.single { it.name == "telemetry recover" }
 		assertThat(recover.traceId).isEqualTo(TRACE_ID)
 		assertThat(recover.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("retry_exhausted")
+		assertThat(recover.attributes.get(AttributeKey.stringKey("error.type"))).isEqualTo("retry_exhausted")
+		// 실패 시도·재시도 소진·영구 거부는 모두 ERROR status 이고 설명은 비어 있다 — Tempo 의 status = error 검색에 잡힌다.
+		val rejected = spans.single { it.name == "telemetry process" && it.traceId != TRACE_ID }
+		assertThat(rejected.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("permanent_rejected")
+		assertThat(rejected.attributes.get(AttributeKey.stringKey("error.type"))).isNotBlank()
+		for (failed in attempts + recover + rejected) {
+			assertThat(failed.status.statusCode).isEqualTo(StatusCode.ERROR)
+			assertThat(failed.status.description).isEmpty()
+		}
 
 		val exhausted = output.all.lines().single { it.contains("event=telemetry_retry_exhausted messageId=${failing.messageId}") }
 		assertThat(exhausted).contains("trace_id=$TRACE_ID span_id=${recover.spanId}")
@@ -114,7 +125,11 @@ class ConsumerTracingTest : AbstractIngestIntegrationTest() {
 		assertThat(output.all).doesNotContain("trace_id= span_id=")
 		// 원본 예외 메시지는 span 에도 없다.
 		assertThat(spans.flatMap { it.attributes.asMap().values }.map { it.toString() }).noneMatch { it.contains("simulated clickhouse outage") }
-		assertThat(spans.flatMap { it.events }).isEmpty()
+		// 이벤트는 ERROR 표식뿐이다 — 메시지 속성과 stack frame 이 없다.
+		val events = spans.flatMap { it.events }
+		assertThat(events).isNotEmpty().allMatch { it.name == "exception" }
+		assertThat(events.flatMap { it.attributes.asMap().values }.map { it.toString() }).noneMatch { it.contains("simulated clickhouse outage") || it.contains("\tat ") }
+		assertThat(events.map { it.attributes.get(AttributeKey.stringKey("exception.message")) }).containsOnlyNulls()
 	}
 
 	/** [messageId] 의 처리만 계속 일시 실패시킨다. 나머지는 실제 수집 코어를 지난다. */
