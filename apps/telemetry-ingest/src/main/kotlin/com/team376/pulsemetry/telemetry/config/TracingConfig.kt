@@ -5,13 +5,21 @@ import io.micrometer.observation.ObservationPredicate
 import io.micrometer.tracing.Tracer
 import io.micrometer.tracing.propagation.Propagator
 import io.opentelemetry.api.common.Attributes
+import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.resources.Resource
+import io.opentelemetry.sdk.trace.data.DelegatingSpanData
+import io.opentelemetry.sdk.trace.data.EventData
+import io.opentelemetry.sdk.trace.data.SpanData
+import io.opentelemetry.sdk.trace.data.StatusData
+import io.opentelemetry.sdk.trace.export.SpanExporter
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletRequestWrapper
 import jakarta.servlet.http.HttpServletResponse
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.micrometer.tracing.opentelemetry.autoconfigure.SdkTracerProviderBuilderCustomizer
+import org.springframework.boot.micrometer.tracing.opentelemetry.autoconfigure.SpanExporters
 import org.springframework.boot.web.servlet.FilterRegistrationBean
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -26,6 +34,7 @@ import java.util.Enumeration
  * 플랫폼 trace 조립(ADR 0069). 기본은 꺼져 있다(`PULSEMETRY_TRACING_ENABLED`). 켜면 OTLP/HTTP로 Collector에 보낸다.
  *
  * - resource의 `service.name`은 `telemetry-ingest`로 고정하고 Kubernetes 값은 있을 때만 붙인다.
+ * - 내보내는 span에서 예외 메시지·stack과 status 설명을 지운다([ScrubbedSpanExporter]).
  * - health·관리 경로는 span을 만들지 않는다. Spring Security observation은 `application.yaml`에서 끈다.
  * - 공개 요청(http·dual 모드의 OTLP 경로)의 trace header는 서버 observation보다 먼저 지운다 — 요청은 언제나 새 플랫폼 root다.
  */
@@ -56,6 +65,15 @@ class TracingConfig(private val environment: Environment) {
         builder.addResource(platformResource(environment, PlatformTracing.INGEST_SERVICE))
     }
 
+    /**
+     * 내보내는 모든 span 에서 예외 원문을 지운다. Boot 의 서버 observation 은 미처리 예외를 `span.error(예외)`로 넘겨
+     * 메시지를 status 설명에, 메시지·stack 을 exception 이벤트에 싣는다 — Collector 의 attributes 처리기는 이벤트를 보지 않는다.
+     * Boot 의 기본 `SpanExporters`(@ConditionalOnMissingBean)를 대신해 등록된 exporter 를 모두 감싼다.
+     */
+    @Bean
+    fun platformSpanExporters(exporters: ObjectProvider<SpanExporter>): SpanExporters =
+        SpanExporters.of(exporters.orderedStream().map { ScrubbedSpanExporter(it) }.toList())
+
     @Bean
     fun platformTracePaths(): ObservationPredicate = ObservationPredicate { _, context ->
         context !is ServerRequestObservationContext || context.carrier?.requestURI?.let(PlatformTracing::tracesServerPath) != false
@@ -77,6 +95,35 @@ internal fun platformResource(environment: Environment, serviceName: String): Re
         pod = environment.getProperty("pulsemetry.tracing.pod"),
     )
     return Resource.create(Attributes.builder().apply { attributes.forEach { (key, value) -> put(key, value) } }.build())
+}
+
+/**
+ * exception 이벤트의 메시지·stack 속성과 status 설명을 지우고 [delegate] 로 넘긴다(ADR 0069).
+ * 이벤트 이름·`exception.type`·다른 속성과 status code 는 둔다 — ERROR 검색과 분류는 그대로다.
+ */
+class ScrubbedSpanExporter(private val delegate: SpanExporter) : SpanExporter by delegate {
+
+    override fun export(spans: Collection<SpanData>): CompletableResultCode = delegate.export(spans.map(::scrub))
+
+    internal companion object {
+        private val DROPPED = setOf("exception.message", "exception.stacktrace")
+
+        private fun EventData.dirty(): Boolean = attributes.asMap().keys.any { it.key in DROPPED }
+
+        fun scrub(span: SpanData): SpanData {
+            if (span.status.description.isEmpty() && span.events.none { it.dirty() }) return span
+            val status = StatusData.create(span.status.statusCode, "")
+            val events = span.events.map { event ->
+                if (!event.dirty()) event
+                else EventData.create(event.epochNanos, event.name, event.attributes.toBuilder().removeIf { it.key in DROPPED }.build(), event.totalAttributeCount)
+            }
+            return object : DelegatingSpanData(span) {
+                override fun getStatus(): StatusData = status
+
+                override fun getEvents(): List<EventData> = events
+            }
+        }
+    }
 }
 
 /** 공개 요청의 trace header를 숨긴다. 다른 header와 본문은 그대로다. */

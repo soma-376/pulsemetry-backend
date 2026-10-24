@@ -90,6 +90,9 @@ endpoint·서비스 이름·sampling·속성 허용목록은 backend와 infra가
   - 분류는 `error.type` 속성 하나다. 값은 예외 클래스 이름·reason·outcome 코드뿐이다.
   - 원본 예외를 span에 넘기지 않는다. bridge의 `span.error(예외)`는 메시지를 status 설명에, 메시지·stack을 exception 이벤트에 싣는다.
     메시지·stack이 없는 표식(`PlatformTracing.SPAN_FAILURE`)만 넘긴다.
+- 내보내기 직전에 모든 span의 exception 이벤트에서 `exception.message`·`exception.stacktrace`를, status에서 설명을 지운다.
+  Boot 서버 observation은 미처리 예외를 원본 그대로 `span.error`에 넘기고, Collector의 attributes 처리기는 이벤트 속성을 보지 않는다.
+  두 앱의 `TracingConfig`가 Boot의 `SpanExporters`를 대신해 exporter를 감싼다(`ScrubbedSpanExporter`).
 
 ### 로그
 
