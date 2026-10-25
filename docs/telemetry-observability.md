@@ -113,6 +113,8 @@ NOTE: Picked up JDK_JAVA_OPTIONS: -Xlog:gc,safepoint:stderr:utctime,level,tags
   내보내기 직전에 모든 span의 exception 이벤트 원문과 status 설명을 한 번 더 지운다(서버 observation의 미처리 예외 포함).
 - 활성 span 안의 로그에만 `trace_id=<32 hex> span_id=<16 hex>`가 붙는다. 기존 `event=<code>` 형식은 그대로다.
 - sampled 요청·record는 span 안에서 `event=platform_trace_completed stage=gateway|ingest … outcome=…` 한 줄을 남긴다. 로그에서 trace로 넘어가는 기준점이며 경보 대상이 아니다.
+- ingest가 record의 `traceparent`를 쓰지 못해(중복·길이·형식) 새 root로 시작하면 그 처리 span 안에서 `event=platform_trace_context_replaced … reason=… newTraceparent=…`를 남긴다.
+  Gateway trace와 끊긴 이유를 찾는 진단 로그다. sampling과 무관하고 경보 대상이 아니다. header 누락은 남기지 않고, 수신 값 원문 대신 header 개수·바이트 수만 싣는다.
 - 끄면(기본) 앱이 `Tracer`·`Propagator`를 NOOP으로 둔다. span·로그 trace 필드·완료 로그·Kafka header가 없다. `management.tracing.export.enabled=false`만으로는 span과 MDC가 남는다.
 - 전송은 비동기 batch(queue 2048, timeout 10초)다. Collector 장애·queue 초과 때 span을 버리고 업무 응답·Kafka ack·commit은 기다리지 않는다.
   trace가 없다는 것만으로 처리 실패를 판단하지 않는다.

@@ -81,12 +81,33 @@ public object PlatformTracing {
         path != "/api/v1/healthz" && path != "/actuator" && !path.startsWith("/actuator/")
 
     /**
-     * Kafka record header에서 부모 문맥으로 쓸 `traceparent`를 고른다. 정확히 하나이고 길이가 맞을 때만 돌려준다.
-     * 없음·중복·과대 길이는 `null`이다 — 호출자는 새 root로 처리한다. 형식 검사는 W3C propagator가 한 번 더 한다.
+     * Kafka record header의 `traceparent` 판정. [TraceparentHeader.value]가 있으면 부모로 쓰고, 없으면 호출자가 새 root로 시작한다.
+     * 정확히 하나이고 55자 W3C 형식(소문자 hex, 0이 아닌 ID, 판 `ff` 아님)일 때만 쓴다. 판정은 여기서 끝낸다 — propagator에는 통과한 값만 넘긴다.
      */
-    public fun singleTraceparent(values: List<ByteArray>): String? {
-        val value = values.singleOrNull() ?: return null
-        if (value.size != TRACEPARENT_LENGTH) return null
-        return value.toString(Charsets.US_ASCII)
+    public fun traceparentHeader(values: List<ByteArray>): TraceparentHeader {
+        val value = values.singleOrNull()
+        val defect = when {
+            values.isEmpty() -> null
+            value == null -> "duplicate"
+            value.size != TRACEPARENT_LENGTH -> "length"
+            !TRACEPARENT_FORMAT.matches(value.toString(Charsets.US_ASCII)) -> "format"
+            else -> null
+        }
+        val accepted = if (defect == null) value?.toString(Charsets.US_ASCII) else null
+        return TraceparentHeader(accepted, defect, values.size, values.sumOf { it.size })
     }
+
+    private val TRACEPARENT_FORMAT = Regex("(?!ff)[0-9a-f]{2}-(?!0{32})[0-9a-f]{32}-(?!0{16})[0-9a-f]{16}-[0-9a-f]{2}")
+
+    /**
+     * [value]는 부모로 쓸 값이다. [defect]는 header가 있는데 버린 사유(`duplicate`·`length`·`format`)다.
+     * header가 없으면 둘 다 `null`이다 — trace를 끈 Gateway와 header 확장 전 record에서는 정상이다.
+     * [headerCount]·[receivedBytes]는 진단용 크기다. 수신 값 원문은 로그에 싣지 않는다(임의 바이트가 올 수 있다).
+     */
+    public data class TraceparentHeader(
+        public val value: String?,
+        public val defect: String?,
+        public val headerCount: Int,
+        public val receivedBytes: Int,
+    )
 }

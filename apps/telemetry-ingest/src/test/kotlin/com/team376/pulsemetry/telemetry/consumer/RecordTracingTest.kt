@@ -1,8 +1,11 @@
 package com.team376.pulsemetry.telemetry.consumer
 
+import io.micrometer.tracing.TraceContext
 import io.micrometer.tracing.otel.bridge.OtelCurrentTraceContext
 import io.micrometer.tracing.otel.bridge.OtelPropagator
 import io.micrometer.tracing.otel.bridge.OtelTracer
+import io.micrometer.tracing.propagation.Propagator
+import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.trace.SpanKind
 import io.opentelemetry.api.trace.StatusCode
@@ -20,18 +23,22 @@ import org.apache.kafka.common.record.TimestampType
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
+import org.springframework.boot.test.system.CapturedOutput
+import org.springframework.boot.test.system.OutputCaptureExtension
 import java.util.Optional
 
 /** record header 로 처리 span 의 부모를 고르는 규칙(ADR 0069). 실제 OTel SDK 위의 Micrometer bridge 로 본다. */
+@ExtendWith(OutputCaptureExtension::class)
 class RecordTracingTest {
 
     private val exporter = InMemorySpanExporter.create()
     private val provider = SdkTracerProvider.builder().setSampler(Sampler.alwaysOn()).addSpanProcessor(SimpleSpanProcessor.create(exporter)).build()
     private val otel = provider.get("test")
-    private val tracing = RecordTracing(
-        OtelTracer(otel, OtelCurrentTraceContext()) { },
-        OtelPropagator(ContextPropagators.create(W3CTraceContextPropagator.getInstance()), otel),
-    )
+    private val propagator = OtelPropagator(ContextPropagators.create(W3CTraceContextPropagator.getInstance()), otel)
+    private val tracing = tracing(otel)
+
+    private fun tracing(otel: Tracer, propagator: Propagator = this.propagator) = RecordTracing(OtelTracer(otel, OtelCurrentTraceContext()) { }, propagator)
 
     @AfterEach
     fun close() = provider.close()
@@ -115,6 +122,70 @@ class RecordTracingTest {
         assertThat(event.attributes.get(AttributeKey.stringKey("exception.stacktrace")).orEmpty()).doesNotContain("\tat ")
     }
 
+    /** 처리 시도처럼 span 을 열고 그 scope 안에서 진단을 부른다. */
+    private fun attempt(tracing: RecordTracing, record: ConsumerRecord<ByteArray, ByteArray>, attempt: Int = 1): io.micrometer.tracing.Span {
+        val span = tracing.start(record, "telemetry process", attempt)
+        tracing.scope(span).use { tracing.reportReplacedParent(record, span, attempt) }
+        span.end()
+        return span
+    }
+
+    private fun replacedLines(output: CapturedOutput) = output.all.lines().filter { it.contains("event=platform_trace_context_replaced") }
+
+    @Test
+    fun corruptHeaderIsReportedWithTheContextOfTheRealSpan(output: CapturedOutput) {
+        listOf(
+            record(VALID.toByteArray(), VALID.toByteArray(), offset = 11) to "reason=duplicate headerCount=2 receivedBytes=110",
+            record(OVERSIZED_CANARY, offset = 12) to "reason=length headerCount=1 receivedBytes=${OVERSIZED_CANARY.size}",
+            record(MALFORMED_CANARY, offset = 13) to "reason=format headerCount=1 receivedBytes=55",
+        ).forEach { (record, expected) ->
+            attempt(tracing, record, attempt = 2)
+            val span = exporter.finishedSpanItems.last()
+            assertThat(span.parentSpanContext.isValid).isFalse()
+            val line = replacedLines(output).single { it.contains("offset=${record.offset()} ") }
+            assertThat(line).contains(
+                "topic=ingress partition=2 offset=${record.offset()} attempt=2 $expected newTraceparent=00-${span.traceId}-${span.spanId}-${span.spanContext.traceFlags.asHex()}",
+            )
+        }
+        // 수신 값 원문은 남기지 않는다. record header 도 그대로다.
+        assertThat(output.all).doesNotContain("canary")
+    }
+
+    @Test
+    fun unsampledNewRootIsStillReported(output: CapturedOutput) {
+        SdkTracerProvider.builder().setSampler(Sampler.alwaysOff()).addSpanProcessor(SimpleSpanProcessor.create(exporter)).build().use { unsampled ->
+            val otel = unsampled.get("test")
+            val span = attempt(tracing(otel, OtelPropagator(ContextPropagators.create(W3CTraceContextPropagator.getInstance()), otel)), record(MALFORMED_CANARY))
+            // sampling 에서 빠진 span 도 isNoop 이 참이다 — trace 를 껐는지 판단하는 데 쓰지 않는다.
+            assertThat(span.isNoop).isTrue()
+            val flags = Regex("newTraceparent=00-${span.context().traceId()}-${span.context().spanId()}-([0-9a-f]{2})").find(replacedLines(output).single())!!.groupValues[1]
+            // sampled 비트(0x01)만 꺼져 있다. 나머지 flag 는 SDK 가 정한 그대로다 — 손으로 조립하지 않는 이유다.
+            assertThat(flags.toInt(16) and 0x01).isZero()
+        }
+        assertThat(exporter.finishedSpanItems).isEmpty()
+    }
+
+    @Test
+    fun missingOrValidHeaderAndTracingOffAreNotReported(output: CapturedOutput) {
+        attempt(tracing, record())
+        attempt(tracing, record(VALID.toByteArray()))
+        // trace 를 끄면(NOOP) 손상된 header 도 남기지 않는다.
+        attempt(RecordTracing(), record(MALFORMED_CANARY))
+        assertThat(replacedLines(output)).isEmpty()
+    }
+
+    @Test
+    fun reportFailureDoesNotEscape(output: CapturedOutput) {
+        val broken = object : Propagator by propagator {
+            override fun <C : Any> inject(context: TraceContext, carrier: C?, setter: Propagator.Setter<C>) {
+                throw IllegalStateException("simulated")
+            }
+        }
+        attempt(tracing(otel, broken), record(MALFORMED_CANARY))
+        assertThat(exporter.finishedSpanItems).hasSize(1)
+        assertThat(replacedLines(output)).isEmpty()
+    }
+
     @Test
     fun noopTracingNeverTouchesTheRecord() {
         val noop = RecordTracing()
@@ -129,5 +200,7 @@ class RecordTracingTest {
         const val TRACE_ID = "0af7651916cd43dd8448eb211c80319c"
         const val PARENT_ID = "b7ad6b7169203331"
         const val VALID = "00-$TRACE_ID-$PARENT_ID-01"
+        val MALFORMED_CANARY = "00-${"canary".padEnd(32, '0')}-$PARENT_ID-01".toByteArray()
+        val OVERSIZED_CANARY = "$VALID-canary".toByteArray()
     }
 }

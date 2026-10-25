@@ -102,6 +102,11 @@ endpoint·서비스 이름·sampling·속성 허용목록은 backend와 infra가
 - sampled 요청은 Gateway와 ingest에서 완료 로그를 한 줄씩 남긴다:
   `event=platform_trace_completed stage=gateway|ingest outcome=<값>`.
   payload·신원은 넣지 않는다. CloudWatch 실패 event 다섯 종의 term과 겹치지 않는다.
+- ingest가 손상된 `traceparent`(중복·길이·형식) 때문에 새 root로 시작하면 그 처리 span 안에서 한 줄을 남긴다:
+  `event=platform_trace_context_replaced topic partition offset attempt reason headerCount receivedBytes newTraceparent`.
+  - sampling과 무관하게 시도마다 남긴다. header가 없으면 남기지 않는다(trace를 끈 Gateway·header 확장 전 record에서 정상이다).
+  - 수신 값 원문은 남기지 않는다. 임의 바이트가 올 수 있고 문자 정제만으로 민감 내용이 사라지지 않는다.
+  - `newTraceparent`는 실제 span을 W3C로 직렬화한 값이다. record header는 바꾸지 않는다.
 
 ## Alternatives Considered
 
@@ -125,7 +130,7 @@ endpoint·서비스 이름·sampling·속성 허용목록은 backend와 infra가
 - 앱 의존성과 span 생성·전송의 CPU·메모리 비용이 는다.
 - Kafka record에 header 하나가 붙는다. header를 단언하던 시험과 문서를 함께 고친다.
 - sampling 10%라 대부분 요청에는 trace가 없다. Collector 장애·queue 초과 때 span이 사라진다. trace 부재를 처리 실패로 해석하지 않는다.
-- `platform_trace_completed` 로그는 sampled 요청 수만큼 는다.
+- `platform_trace_completed` 로그는 sampled 요청 수만큼 는다. `platform_trace_context_replaced`는 손상된 header가 있는 처리 시도마다 한 줄이다.
 - 허브 계약 반영 전까지 계약이 두 ADR에 나뉘어 있다.
 
 ## Follow-up

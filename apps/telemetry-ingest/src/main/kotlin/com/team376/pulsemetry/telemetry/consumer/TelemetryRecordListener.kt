@@ -45,6 +45,7 @@ class TelemetryTransientException(
  * message ID 를 읽을 수 없으면(잘못된 envelope) topic·partition·offset 으로 식별한다.
  *
  * 플랫폼 trace 를 켜면 시도마다 consumer span 하나를 열고 그 안에서 처리·로그를 한다(ADR 0069). 결과는 span 의 `pulsemetry.outcome` 이다.
+ * header 가 손상돼 새 root 로 시작한 시도는 그 span 안에서 `platform_trace_context_replaced` 한 줄을 먼저 남긴다([RecordTracing.reportReplacedParent]).
  */
 class TelemetryRecordListener(
 	private val process: ProcessTelemetry,
@@ -62,6 +63,7 @@ class TelemetryRecordListener(
 		observer.observe(TelemetryMetric.PIPELINE_INFLIGHT)
 		try {
 			tracing.scope(span).use {
+				tracing.reportReplacedParent(record, span, attempt)
 				try {
 					handle(record, attempt, span) { signal = it }.also { outcome = it }
 				} finally {

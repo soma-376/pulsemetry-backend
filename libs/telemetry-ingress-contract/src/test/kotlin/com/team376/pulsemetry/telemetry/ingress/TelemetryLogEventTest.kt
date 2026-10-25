@@ -13,6 +13,7 @@ class TelemetryLogEventTest {
 		assertThat(TelemetryLogEvent.entries.map { it.code }).containsExactly(
 			"telemetry_gateway_rejected", "telemetry_publish_failed", "telemetry_permanent_failure",
 			"telemetry_transient_failure", "telemetry_retry_exhausted", "telemetry_commit_failed", "platform_trace_completed",
+			"platform_trace_context_replaced",
 		)
 	}
 

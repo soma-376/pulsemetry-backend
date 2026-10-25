@@ -145,6 +145,24 @@ class ConsumerTracingTest : AbstractIngestIntegrationTest() {
 	}
 
 	@Test
+	@DisplayName("손상된 traceparent 는 새 root 로 처리하고 그 처리 span 안에서 사유와 새 문맥을 한 줄 남긴다 — 수신 값 원문은 남기지 않는다")
+	fun corruptTraceparentIsReportedInTheNewRoot(output: CapturedOutput) {
+		val message = IngestTestKafka.accepted(data.seedJwt(), smokeLog(Instant.now().truncatedTo(ChronoUnit.MICROS)))
+		val at = IngestTestKafka.publish(message, listOf("traceparent" to CORRUPT_TRACEPARENT.toByteArray()))
+		awaitCommitted(at)
+
+		val consumer = TestSpans.await { spans -> spans.any { it.kind == SpanKind.CONSUMER } }.single { it.kind == SpanKind.CONSUMER }
+		assertThat(consumer.parentSpanContext.isValid).isFalse()
+		assertThat(consumer.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("completed")
+		val line = output.all.lines().single { it.contains("event=platform_trace_context_replaced") }
+		assertThat(line)
+			.contains("partition=${at.partition()} offset=${at.offset()} attempt=1 reason=format headerCount=1 receivedBytes=55")
+			.contains("newTraceparent=00-${consumer.traceId}-${consumer.spanId}-${consumer.spanContext.traceFlags.asHex()}")
+			.contains("trace_id=${consumer.traceId} span_id=${consumer.spanId}")
+		assertThat(output.all).doesNotContain("tpcanary")
+	}
+
+	@Test
 	@DisplayName("trace 를 켜도 health 요청은 서버 span 을 만들지 않고 http.server.requests 지표는 남는다")
 	fun healthIsNotTracedButMeasured() {
 		val http = HttpClient.newHttpClient()
@@ -194,6 +212,8 @@ class ConsumerTracingTest : AbstractIngestIntegrationTest() {
 		const val TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736"
 		const val PARENT_ID = "00f067aa0ba902b7"
 		const val TRACEPARENT = "00-$TRACE_ID-$PARENT_ID-01"
+		/** 길이는 맞고 trace ID 자리에 hex 가 아닌 표식이 든 값. 로그에 표식이 보이면 원문이 샌 것이다. */
+		val CORRUPT_TRACEPARENT = "00-${"tpcanary".padEnd(32, '0')}-$PARENT_ID-01"
 		val LOG_BODY: ByteArray = """{"resourceLogs":[]}""".toByteArray()
 	}
 }

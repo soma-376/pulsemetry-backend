@@ -45,12 +45,33 @@ class PlatformTracingTest {
     }
 
     @Test
-    fun onlyOneWellSizedTraceparentIsUsed() {
+    fun onlyOneWellFormedTraceparentIsUsed() {
         val valid = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-        assertThat(PlatformTracing.singleTraceparent(listOf(valid.toByteArray()))).isEqualTo(valid)
-        assertThat(PlatformTracing.singleTraceparent(emptyList())).isNull()
-        assertThat(PlatformTracing.singleTraceparent(listOf(valid.toByteArray(), valid.toByteArray()))).isNull()
-        assertThat(PlatformTracing.singleTraceparent(listOf((valid + "-extra").toByteArray()))).isNull()
-        assertThat(PlatformTracing.singleTraceparent(listOf(ByteArray(64 * 1024)))).isNull()
+        assertThat(PlatformTracing.traceparentHeader(listOf(valid.toByteArray())))
+            .isEqualTo(PlatformTracing.TraceparentHeader(valid, null, 1, 55))
+        // header 없음은 사유가 없다 — trace 를 끈 Gateway·이전 record 의 정상 상태다.
+        assertThat(PlatformTracing.traceparentHeader(emptyList())).isEqualTo(PlatformTracing.TraceparentHeader(null, null, 0, 0))
+        assertThat(PlatformTracing.traceparentHeader(listOf(valid.toByteArray(), valid.toByteArray())))
+            .isEqualTo(PlatformTracing.TraceparentHeader(null, "duplicate", 2, 110))
+        assertThat(PlatformTracing.traceparentHeader(listOf((valid + "-extra").toByteArray())).defect).isEqualTo("length")
+        assertThat(PlatformTracing.traceparentHeader(listOf(ByteArray(0))).defect).isEqualTo("length")
+        assertThat(PlatformTracing.traceparentHeader(listOf(ByteArray(64 * 1024))))
+            .isEqualTo(PlatformTracing.TraceparentHeader(null, "length", 1, 64 * 1024))
+    }
+
+    @Test
+    fun malformedTraceparentOfTheRightLengthIsAFormatDefect() {
+        listOf(
+            "00-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-b7ad6b7169203331-01",
+            "00-00000000000000000000000000000000-b7ad6b7169203331-01",
+            "00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01",
+            "00-0AF7651916CD43DD8448EB211C80319C-b7ad6b7169203331-01",
+            "ff-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            "00_0af7651916cd43dd8448eb211c80319c_b7ad6b7169203331_01",
+        ).forEach {
+            assertThat(it).hasSize(PlatformTracing.TRACEPARENT_LENGTH)
+            assertThat(PlatformTracing.traceparentHeader(listOf(it.toByteArray()))).describedAs(it)
+                .isEqualTo(PlatformTracing.TraceparentHeader(null, "format", 1, 55))
+        }
     }
 }
