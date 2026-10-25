@@ -108,6 +108,7 @@ NOTE: Picked up JDK_JAVA_OPTIONS: -Xlog:gc,safepoint:stderr:utctime,level,tags
 - `OTEL_*` 환경변수는 읽지 않는다. OTLP 로그·지표 내보내기와 Prometheus exemplar는 켜지 않는다. 지표는 기존 9404 scrape 그대로다.
 - 공개 요청의 `traceparent`·`tracestate`·`baggage`·B3 header는 서버 observation 전에 지운다. 요청은 언제나 새 플랫폼 root다.
 - health(`/api/v1/healthz`)·관리(`/actuator/**`) 요청과 Spring Security 내부 단계는 span을 만들지 않는다.
+  span만 뺀다. observation은 그대로라 health 요청의 `http_server_requests_seconds_*` 지표는 trace를 켜든 끄든 남는다.
 - 실패한 span은 status ERROR이고 분류는 `error.type`(예외 클래스 이름·reason·outcome 코드)이다. 설명과 예외 메시지·stack은 싣지 않는다.
   내보내기 직전에 모든 span의 exception 이벤트 원문과 status 설명을 한 번 더 지운다(서버 observation의 미처리 예외 포함).
 - 활성 span 안의 로그에만 `trace_id=<32 hex> span_id=<16 hex>`가 붙는다. 기존 `event=<code>` 형식은 그대로다.

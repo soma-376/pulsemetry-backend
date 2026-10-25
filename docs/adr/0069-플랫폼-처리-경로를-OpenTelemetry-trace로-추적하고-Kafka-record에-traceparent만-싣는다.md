@@ -31,7 +31,7 @@ endpoint·서비스 이름·sampling·속성 허용목록은 backend와 infra가
 
 - Gateway와 ingest만 계측한다. enrollment·dashboard는 제외한다.
 - span 네 종류를 만든다.
-  - 업무 포트의 HTTP 서버 요청. health와 actuator 요청은 만들지 않는다.
+  - 업무 포트의 HTTP 서버 요청. health와 actuator 요청은 span을 만들지 않는다. 그 요청의 `http.server.requests` 지표는 그대로 남긴다.
   - Gateway의 Kafka 발행(producer).
   - ingest의 record 처리 시도(consumer). 재시도마다 새 span이다.
   - ClickHouse 요청(client).

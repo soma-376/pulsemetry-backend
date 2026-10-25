@@ -20,11 +20,17 @@ import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.ArgumentMatchers
 import org.mockito.Mockito.doAnswer
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.micrometer.tracing.test.autoconfigure.AutoConfigureTracing
 import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
+import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.context.annotation.Import
 import org.springframework.test.context.TestPropertySource
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -49,6 +55,12 @@ class ConsumerTracingTest : AbstractIngestIntegrationTest() {
 
 	@Autowired
 	private lateinit var data: IngestTestData
+
+	@LocalServerPort
+	private var port: Int = 0
+
+	@Value("\${local.management.port}")
+	private var managementPort: Int = 0
 
 	@BeforeEach
 	fun reset() {
@@ -130,6 +142,17 @@ class ConsumerTracingTest : AbstractIngestIntegrationTest() {
 		assertThat(events).isNotEmpty().allMatch { it.name == "exception" }
 		assertThat(events.flatMap { it.attributes.asMap().values }.map { it.toString() }).noneMatch { it.contains("simulated clickhouse outage") || it.contains("\tat ") }
 		assertThat(events.map { it.attributes.get(AttributeKey.stringKey("exception.message")) }).containsOnlyNulls()
+	}
+
+	@Test
+	@DisplayName("trace 를 켜도 health 요청은 서버 span 을 만들지 않고 http.server.requests 지표는 남는다")
+	fun healthIsNotTracedButMeasured() {
+		val http = HttpClient.newHttpClient()
+		val health = http.send(HttpRequest.newBuilder(URI.create("http://localhost:$port/api/v1/healthz")).GET().build(), HttpResponse.BodyHandlers.ofString())
+		assertThat(health.statusCode()).isEqualTo(200)
+		assertThat(TestSpans.await(Duration.ofMillis(500)) { false }.filter { it.kind == SpanKind.SERVER }).isEmpty()
+		val scrape = http.send(HttpRequest.newBuilder(URI.create("http://localhost:$managementPort/actuator/prometheus")).GET().build(), HttpResponse.BodyHandlers.ofString())
+		assertThat(scrape.body()).containsPattern("""http_server_requests_seconds_count\{[^}]*uri="/api/v1/healthz"""")
 	}
 
 	/** [messageId] 의 처리만 계속 일시 실패시킨다. 나머지는 실제 수집 코어를 지난다. */

@@ -42,6 +42,13 @@ class MetricsEndpointTest : AbstractIngestIntegrationTest() {
     }
 
     @Test
+    fun healthRequestsKeepHttpServerMetrics() {
+        // trace를 꺼도(기본) health 경로의 http.server.requests 지표가 남는다. trace는 span만 뺀다(ADR 0069).
+        assertThat(get(port, "/api/v1/healthz").statusCode()).isEqualTo(200)
+        assertThat(get(managementPort, "/actuator/prometheus").body()).containsPattern("""http_server_requests_seconds_count\{[^}]*uri="/api/v1/healthz"""")
+    }
+
+    @Test
     fun businessPortActuatorIsTheContractNotFound() {
         for ((method, path) in listOf("GET" to "/actuator", "GET" to "/actuator/prometheus", "POST" to "/actuator/prometheus")) {
             val response = send(port, method, path)

@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.micrometer.tracing.test.autoconfigure.AutoConfigureTracing
 import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
@@ -45,6 +46,9 @@ class TracingEnabledTest : AbstractGatewayIntegrationTest() {
 
 	@LocalServerPort
 	private var port: Int = 0
+
+	@Value("\${local.management.port}")
+	private var managementPort: Int = 0
 
 	private val http: HttpClient = HttpClient.newHttpClient()
 
@@ -129,14 +133,19 @@ class TracingEnabledTest : AbstractGatewayIntegrationTest() {
 	}
 
 	@Test
-	@DisplayName("health 요청은 span 을 만들지 않는다")
-	fun healthIsNotTraced() {
+	@DisplayName("health 요청은 span 을 만들지 않지만 http.server.requests 지표는 남는다")
+	fun healthIsNotTracedButMeasured() {
 		val health = http.send(
 			HttpRequest.newBuilder(URI.create("http://localhost:$port/api/v1/healthz")).GET().build(),
 			HttpResponse.BodyHandlers.ofString(),
 		)
 		assertThat(health.statusCode()).isEqualTo(200)
 		assertThat(TestSpans.await(Duration.ofMillis(500)) { false }).isEmpty()
+		val scrape = http.send(
+			HttpRequest.newBuilder(URI.create("http://localhost:$managementPort/actuator/prometheus")).GET().build(),
+			HttpResponse.BodyHandlers.ofString(),
+		)
+		assertThat(scrape.body()).containsPattern("""http_server_requests_seconds_count\{[^}]*uri="/api/v1/healthz"""")
 	}
 
 	@Test

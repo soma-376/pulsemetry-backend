@@ -1,8 +1,9 @@
 package com.team376.pulsemetry.telemetry.config
 
 import com.team376.pulsemetry.telemetry.observability.PlatformTracing
-import io.micrometer.observation.ObservationPredicate
+import io.micrometer.observation.Observation
 import io.micrometer.tracing.Tracer
+import io.micrometer.tracing.handler.TracingObservationHandler
 import io.micrometer.tracing.propagation.Propagator
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.sdk.common.CompletableResultCode
@@ -24,6 +25,7 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.Ordered
+import org.springframework.core.annotation.Order
 import org.springframework.core.env.Environment
 import org.springframework.http.server.observation.ServerRequestObservationContext
 import org.springframework.web.filter.OncePerRequestFilter
@@ -35,7 +37,7 @@ import java.util.Enumeration
  *
  * - resource의 `service.name`은 `telemetry-ingest`로 고정하고 Kubernetes 값은 있을 때만 붙인다.
  * - 내보내는 span에서 예외 메시지·stack과 status 설명을 지운다([ScrubbedSpanExporter]).
- * - health·관리 경로는 span을 만들지 않는다. Spring Security observation은 `application.yaml`에서 끈다.
+ * - health·관리 경로는 span을 만들지 않는다. observation은 남겨 `http.server.requests` 지표는 tracing on/off와 관계없이 그대로다. Spring Security observation은 `application.yaml`에서 끈다.
  * - 공개 요청(http·dual 모드의 OTLP 경로)의 trace header는 서버 observation보다 먼저 지운다 — 요청은 언제나 새 플랫폼 root다.
  */
 @Configuration(proxyBeanMethods = false)
@@ -74,10 +76,13 @@ class TracingConfig(private val environment: Environment) {
     fun platformSpanExporters(exporters: ObjectProvider<SpanExporter>): SpanExporters =
         SpanExporters.of(exporters.orderedStream().map { ScrubbedSpanExporter(it) }.toList())
 
+    /**
+     * health·관리 경로의 span만 뺀다. ObservationPredicate로 막으면 observation 자체가 없어져 지표까지 사라진다.
+     * tracing handler 묶음은 먼저 맞는 handler 하나만 쓰므로(Receiver 1000·Sender 2000·Default 마지막), 그보다 앞에 둔다.
+     */
     @Bean
-    fun platformTracePaths(): ObservationPredicate = ObservationPredicate { _, context ->
-        context !is ServerRequestObservationContext || context.carrier?.requestURI?.let(PlatformTracing::tracesServerPath) != false
-    }
+    @Order(Ordered.HIGHEST_PRECEDENCE)
+    fun untracedServerPaths(): UntracedServerPathHandler = UntracedServerPathHandler()
 
     /** 서버 observation filter(`HIGHEST_PRECEDENCE + 1`)와 Security 체인보다 앞에 둔다. */
     @Bean
@@ -124,6 +129,34 @@ class ScrubbedSpanExporter(private val delegate: SpanExporter) : SpanExporter by
             }
         }
     }
+}
+
+/**
+ * health·관리 경로의 서버 요청을 맡아 span을 만들지 않는 tracing handler다. 다른 handler는 이 요청을 보지 않는다.
+ * 지표 handler(TracingAwareMeterObservationHandler)는 TracingContext를 반드시 꺼내므로 span 없는 빈 문맥만 넣는다.
+ */
+class UntracedServerPathHandler : TracingObservationHandler<ServerRequestObservationContext> {
+
+    override fun supportsContext(context: Observation.Context): Boolean =
+        context is ServerRequestObservationContext && context.carrier?.requestURI?.let(PlatformTracing::tracesServerPath) == false
+
+    override fun onStart(context: ServerRequestObservationContext) {
+        getTracingContext(context)
+    }
+
+    override fun onStop(context: ServerRequestObservationContext) = Unit
+
+    override fun onError(context: ServerRequestObservationContext) = Unit
+
+    override fun onEvent(event: Observation.Event, context: ServerRequestObservationContext) = Unit
+
+    override fun onScopeOpened(context: ServerRequestObservationContext) = Unit
+
+    override fun onScopeClosed(context: ServerRequestObservationContext) = Unit
+
+    override fun onScopeReset(context: ServerRequestObservationContext) = Unit
+
+    override fun getTracer(): Tracer = Tracer.NOOP
 }
 
 /** 공개 요청의 trace header를 숨긴다. 다른 header와 본문은 그대로다. */
