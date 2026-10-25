@@ -9,6 +9,13 @@ dependencies {
 	implementation(project(":libs:telemetry-observability"))
 	implementation(libs.spring.boot.starter.actuator)
 	implementation(libs.micrometer.registry.prometheus)
+	// 플랫폼 trace(ADR 0069). 기본은 꺼져 있고(PULSEMETRY_TRACING_ENABLED) OTLP/HTTP로만 보낸다.
+	implementation(libs.spring.boot.micrometer.tracing.opentelemetry)
+	implementation(libs.micrometer.tracing.bridge.otel)
+	implementation(libs.opentelemetry.exporter.otlp) {
+		exclude(group = "io.opentelemetry", module = "opentelemetry-exporter-sender-okhttp")
+	}
+	runtimeOnly(libs.opentelemetry.exporter.sender.jdk)
 	// 적재 모듈이 api() 로 보강·변환 모듈을 함께 끌어온다 (ADR 0014).
 	implementation(project(":libs:telemetry-persistence"))
 	// 수집 운영 기록의 RDS 쪽(tenant 생애 요약·백필) — ADR 0021. DDL 은 enrollment-api 가 적용하고 이 앱은 쓰기만 한다.
@@ -39,6 +46,8 @@ dependencies {
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
 	// telemetry JWT 키쌍·위조 토큰을 테스트마다 만든다.
 	testImplementation(testFixtures(project(":libs:telemetry-auth")))
+	testImplementation(libs.spring.boot.micrometer.tracing.test)
+	testImplementation(libs.opentelemetry.sdk.testing)
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.postgresql)
 	// ClickHouse 는 GenericContainer 로 띄운다 — 전용 모듈은 JDBC 드라이버를 요구한다.

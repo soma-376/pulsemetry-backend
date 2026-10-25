@@ -9,6 +9,8 @@ plugins {
 dependencies {
 	// Observer가 공개 생성자 계약에 나타난다. Boot starter는 끌지 않는다.
 	api(project(":libs:telemetry-observability"))
+	// 플랫폼 trace의 client span(ADR 0069). Tracer가 공개 생성자 계약에 나타난다. Boot starter·OTel SDK는 끌지 않는다.
+	api(libs.micrometer.tracing)
 	// 적재 대상 타입. insert(events: List<EnrichedEvent>, …) 가 이 모듈의 공개 시그니처다 (ADR 0014).
 	// 어댑터의 관측 타입은 이 간선을 타고 전이로 따라온다.
 	api(project(":libs:telemetry-enricher"))
@@ -19,6 +21,8 @@ dependencies {
 	// 계약이다(허브 ADR 0006). 신규 런타임 의존은 없다.
 
 	testImplementation(libs.spring.boot.starter.test)
+	testImplementation(libs.micrometer.tracing.bridge.otel)
+	testImplementation(libs.opentelemetry.sdk.testing)
 	// 적재 테스트는 실제 ClickHouse 로만 돈다 — ReplacingMergeTree 의 FINAL dedup 이 판정 대상이다.
 	// GenericContainer 로 띄운다. 전용 모듈은 JDBC 드라이버를 요구하는데 이 모듈은 HTTP 로만 말한다.
 	testImplementation(libs.testcontainers)

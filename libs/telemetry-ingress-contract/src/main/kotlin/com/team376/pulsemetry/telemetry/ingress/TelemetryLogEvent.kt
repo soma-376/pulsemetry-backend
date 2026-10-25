@@ -29,6 +29,18 @@ public enum class TelemetryLogEvent(public val code: String) {
 
 	/** offset commit 이 실패했다. 그 record 는 다시 처리된다. */
 	COMMIT_FAILED("telemetry_commit_failed"),
+
+	/**
+	 * 플랫폼 trace 로 sampled 된 요청·record 의 처리가 끝났다(ADR 0069). 활성 span 안에서 한 줄 남겨 로그 → trace 이동의 기준점이 된다.
+	 * 경보 대상이 아니다. 실패 코드 다섯과 term 이 겹치지 않도록 `telemetry_` 접두사를 쓰지 않는다.
+	 */
+	PLATFORM_TRACE_COMPLETED("platform_trace_completed"),
+
+	/**
+	 * Consumer 가 record 의 `traceparent` header 가 손상돼(중복·길이·형식) 부모 없이 새 trace 로 처리를 시작했다(ADR 0069).
+	 * Gateway trace 와 끊긴 이유를 찾는 진단 로그다. sampling 과 무관하게 시도마다 남고 경보 대상이 아니다. header 가 없으면 남기지 않는다.
+	 */
+	PLATFORM_TRACE_CONTEXT_REPLACED("platform_trace_context_replaced"),
 	;
 
 	/** 값이 null 이면 `-` 다. 순서는 넘긴 순서 그대로다. */

@@ -2,6 +2,7 @@ package com.team376.pulsemetry.telemetry.config
 
 import com.team376.pulsemetry.telemetry.collector.OtlpProcessor
 import com.team376.pulsemetry.telemetry.consumer.ProcessTelemetry
+import com.team376.pulsemetry.telemetry.consumer.RecordTracing
 import com.team376.pulsemetry.telemetry.consumer.TelemetryFailureReporter
 import com.team376.pulsemetry.telemetry.consumer.TelemetryRecordListener
 import com.team376.pulsemetry.telemetry.consumer.TelemetryRetryBackOff
@@ -9,9 +10,12 @@ import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
 import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.tracing.Tracer
+import io.micrometer.tracing.propagation.Propagator
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory
@@ -51,9 +55,14 @@ class KafkaConsumerConfig {
 			addListener(MicrometerConsumerListener(registry))
 		}
 
+	/** 플랫폼 trace(ADR 0069). 끄면 Boot 가 NOOP 을 주거나 빈이 없다 — 어느 쪽이든 span 을 만들지 않는다. */
 	@Bean
-	fun telemetryFailureReporter(properties: TelemetryIngestProperties, observer: TelemetryObserver): TelemetryFailureReporter =
-		TelemetryFailureReporter(maxAttempts = properties.telemetry.kafka.consumer.retryIntervals.size + 1, observer = observer)
+	fun recordTracing(tracer: ObjectProvider<Tracer>, propagator: ObjectProvider<Propagator>): RecordTracing =
+		RecordTracing(tracer.getIfAvailable { Tracer.NOOP }, propagator.getIfAvailable { Propagator.NOOP })
+
+	@Bean
+	fun telemetryFailureReporter(properties: TelemetryIngestProperties, observer: TelemetryObserver, tracing: RecordTracing): TelemetryFailureReporter =
+		TelemetryFailureReporter(maxAttempts = properties.telemetry.kafka.consumer.retryIntervals.size + 1, observer = observer, tracing = tracing)
 
 	@Bean
 	fun telemetryErrorHandler(reporter: TelemetryFailureReporter, properties: TelemetryIngestProperties): DefaultErrorHandler =
@@ -72,12 +81,13 @@ class KafkaConsumerConfig {
 		observer: TelemetryObserver,
 		registry: MeterRegistry,
 		clock: Clock,
+		tracing: RecordTracing,
 	): ConcurrentMessageListenerContainer<ByteArray, ByteArray> {
 		val kafka = properties.telemetry.kafka
 		val consumer = kafka.consumer
 		val containerProperties = ContainerProperties(kafka.topic).apply {
 			setAckMode(ContainerProperties.AckMode.RECORD)
-			setMessageListener(TelemetryRecordListener(process, observer, clock))
+			setMessageListener(TelemetryRecordListener(process, observer, clock, tracing))
 			setStopImmediate(true)
 			setShutdownTimeout(consumer.shutdownTimeout.toMillis())
 			setAuthExceptionRetryInterval(consumer.authExceptionRetryInterval)

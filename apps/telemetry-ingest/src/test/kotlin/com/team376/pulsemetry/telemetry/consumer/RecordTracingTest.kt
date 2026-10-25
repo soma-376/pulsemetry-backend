@@ -1,0 +1,206 @@
+package com.team376.pulsemetry.telemetry.consumer
+
+import io.micrometer.tracing.TraceContext
+import io.micrometer.tracing.otel.bridge.OtelCurrentTraceContext
+import io.micrometer.tracing.otel.bridge.OtelPropagator
+import io.micrometer.tracing.otel.bridge.OtelTracer
+import io.micrometer.tracing.propagation.Propagator
+import io.opentelemetry.api.trace.Tracer
+import io.opentelemetry.api.common.AttributeKey
+import io.opentelemetry.api.trace.SpanKind
+import io.opentelemetry.api.trace.StatusCode
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator
+import io.opentelemetry.context.propagation.ContextPropagators
+import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter
+import io.opentelemetry.sdk.trace.SdkTracerProvider
+import io.opentelemetry.sdk.trace.data.SpanData
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor
+import io.opentelemetry.sdk.trace.samplers.Sampler
+import org.apache.kafka.clients.consumer.ConsumerRecord
+import org.apache.kafka.common.header.internals.RecordHeader
+import org.apache.kafka.common.header.internals.RecordHeaders
+import org.apache.kafka.common.record.TimestampType
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
+import org.springframework.boot.test.system.CapturedOutput
+import org.springframework.boot.test.system.OutputCaptureExtension
+import java.util.Optional
+
+/** record header 로 처리 span 의 부모를 고르는 규칙(ADR 0069). 실제 OTel SDK 위의 Micrometer bridge 로 본다. */
+@ExtendWith(OutputCaptureExtension::class)
+class RecordTracingTest {
+
+    private val exporter = InMemorySpanExporter.create()
+    private val provider = SdkTracerProvider.builder().setSampler(Sampler.alwaysOn()).addSpanProcessor(SimpleSpanProcessor.create(exporter)).build()
+    private val otel = provider.get("test")
+    private val propagator = OtelPropagator(ContextPropagators.create(W3CTraceContextPropagator.getInstance()), otel)
+    private val tracing = tracing(otel)
+
+    private fun tracing(otel: Tracer, propagator: Propagator = this.propagator) = RecordTracing(OtelTracer(otel, OtelCurrentTraceContext()) { }, propagator)
+
+    @AfterEach
+    fun close() = provider.close()
+
+    private fun record(vararg traceparents: ByteArray, offset: Long = 7): ConsumerRecord<ByteArray, ByteArray> {
+        val headers = RecordHeaders(traceparents.map { RecordHeader("traceparent", it) })
+        return ConsumerRecord("ingress", 2, offset, -1L, TimestampType.CREATE_TIME, 0, 0, ByteArray(0), ByteArray(0), headers, Optional.empty())
+    }
+
+    private fun finish(record: ConsumerRecord<ByteArray, ByteArray>, attempt: Int = 1): SpanData {
+        tracing.start(record, "telemetry process", attempt).end()
+        return exporter.finishedSpanItems.last()
+    }
+
+    @Test
+    fun validHeaderBecomesParent() {
+        val span = finish(record(VALID.toByteArray()))
+        assertThat(span.kind).isEqualTo(SpanKind.CONSUMER)
+        assertThat(span.traceId).isEqualTo(TRACE_ID)
+        assertThat(span.parentSpanId).isEqualTo(PARENT_ID)
+        assertThat(span.attributes.get(AttributeKey.stringKey("messaging.destination.name"))).isEqualTo("ingress")
+        assertThat(span.attributes.get(AttributeKey.stringKey("messaging.destination.partition.id"))).isEqualTo("2")
+        assertThat(span.attributes.get(AttributeKey.stringKey("messaging.kafka.offset"))).isEqualTo("7")
+        assertThat(span.attributes.get(AttributeKey.stringKey("pulsemetry.attempt"))).isEqualTo("1")
+    }
+
+    @Test
+    fun missingDuplicateOversizedOrMalformedHeaderStartsNewRoot() {
+        listOf(
+            record(),
+            record(VALID.toByteArray(), VALID.toByteArray()),
+            record((VALID + "-00").toByteArray()),
+            record(ByteArray(64 * 1024) { 'a'.code.toByte() }),
+            record("00-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-b7ad6b7169203331-01".toByteArray()),
+            record("00-00000000000000000000000000000000-b7ad6b7169203331-01".toByteArray()),
+        ).forEach { record ->
+            val span = finish(record)
+            assertThat(span.parentSpanContext.isValid).describedAs(record.headers().toString()).isFalse()
+            assertThat(span.traceId).isNotEqualTo(TRACE_ID)
+        }
+    }
+
+    @Test
+    fun everyAttemptIsANewSpanUnderTheSameParent() {
+        val spans = (1..4).map { finish(record(VALID.toByteArray()), it) }
+        assertThat(spans.map { it.spanId }.toSet()).hasSize(4)
+        assertThat(spans.map { it.parentSpanId }.toSet()).containsExactly(PARENT_ID)
+        assertThat(spans.map { it.attributes.get(AttributeKey.stringKey("pulsemetry.attempt")) }).containsExactly("1", "2", "3", "4")
+    }
+
+    @Test
+    fun aroundJoinsTheRecordTraceAndClosesTheScope() {
+        var currentInside: String? = null
+        tracing.around(record(VALID.toByteArray()), "telemetry recover", "retry_exhausted", "process") {
+            currentInside = io.opentelemetry.api.trace.Span.current().spanContext.traceId
+        }
+        val span = exporter.finishedSpanItems.single()
+        assertThat(currentInside).isEqualTo(TRACE_ID)
+        assertThat(span.parentSpanId).isEqualTo(PARENT_ID)
+        assertThat(span.attributes.get(AttributeKey.stringKey("pulsemetry.outcome"))).isEqualTo("retry_exhausted")
+        assertThat(span.attributes.get(AttributeKey.stringKey("pulsemetry.stage"))).isEqualTo("process")
+        // around 는 실패 경로에서만 부른다 — ERROR status 이고 분류는 outcome 이다.
+        assertThat(span.status.statusCode).isEqualTo(StatusCode.ERROR)
+        assertThat(span.attributes.get(AttributeKey.stringKey("error.type"))).isEqualTo("retry_exhausted")
+        // 다음 record 로 문맥이 새지 않는다.
+        assertThat(io.opentelemetry.api.trace.Span.current().spanContext.isValid).isFalse()
+    }
+
+    @Test
+    fun failMarksErrorWithoutTheOriginalException() {
+        val span = tracing.start(record(VALID.toByteArray()), "telemetry process", 1)
+        tracing.fail(span, "TelemetrySinkUnavailableException")
+        span.end()
+        val finished = exporter.finishedSpanItems.single()
+        assertThat(finished.status.statusCode).isEqualTo(StatusCode.ERROR)
+        assertThat(finished.status.description).isEmpty()
+        assertThat(finished.attributes.get(AttributeKey.stringKey("error.type"))).isEqualTo("TelemetrySinkUnavailableException")
+        // 표식 이벤트 하나에 메시지 속성이 없고 stack frame 도 없다.
+        val event = finished.events.single()
+        assertThat(event.attributes.get(AttributeKey.stringKey("exception.message"))).isNull()
+        assertThat(event.attributes.get(AttributeKey.stringKey("exception.stacktrace")).orEmpty()).doesNotContain("\tat ")
+    }
+
+    /** 처리 시도처럼 span 을 열고 그 scope 안에서 진단을 부른다. */
+    private fun attempt(tracing: RecordTracing, record: ConsumerRecord<ByteArray, ByteArray>, attempt: Int = 1): io.micrometer.tracing.Span {
+        val span = tracing.start(record, "telemetry process", attempt)
+        tracing.scope(span).use { tracing.reportReplacedParent(record, span, attempt) }
+        span.end()
+        return span
+    }
+
+    private fun replacedLines(output: CapturedOutput) = output.all.lines().filter { it.contains("event=platform_trace_context_replaced") }
+
+    @Test
+    fun corruptHeaderIsReportedWithTheContextOfTheRealSpan(output: CapturedOutput) {
+        listOf(
+            record(VALID.toByteArray(), VALID.toByteArray(), offset = 11) to "reason=duplicate headerCount=2 receivedBytes=110",
+            record(OVERSIZED_CANARY, offset = 12) to "reason=length headerCount=1 receivedBytes=${OVERSIZED_CANARY.size}",
+            record(MALFORMED_CANARY, offset = 13) to "reason=format headerCount=1 receivedBytes=55",
+        ).forEach { (record, expected) ->
+            attempt(tracing, record, attempt = 2)
+            val span = exporter.finishedSpanItems.last()
+            assertThat(span.parentSpanContext.isValid).isFalse()
+            val line = replacedLines(output).single { it.contains("offset=${record.offset()} ") }
+            assertThat(line).contains(
+                "topic=ingress partition=2 offset=${record.offset()} attempt=2 $expected newTraceparent=00-${span.traceId}-${span.spanId}-${span.spanContext.traceFlags.asHex()}",
+            )
+        }
+        // 수신 값 원문은 남기지 않는다. record header 도 그대로다.
+        assertThat(output.all).doesNotContain("canary")
+    }
+
+    @Test
+    fun unsampledNewRootIsStillReported(output: CapturedOutput) {
+        SdkTracerProvider.builder().setSampler(Sampler.alwaysOff()).addSpanProcessor(SimpleSpanProcessor.create(exporter)).build().use { unsampled ->
+            val otel = unsampled.get("test")
+            val span = attempt(tracing(otel, OtelPropagator(ContextPropagators.create(W3CTraceContextPropagator.getInstance()), otel)), record(MALFORMED_CANARY))
+            // sampling 에서 빠진 span 도 isNoop 이 참이다 — trace 를 껐는지 판단하는 데 쓰지 않는다.
+            assertThat(span.isNoop).isTrue()
+            val flags = Regex("newTraceparent=00-${span.context().traceId()}-${span.context().spanId()}-([0-9a-f]{2})").find(replacedLines(output).single())!!.groupValues[1]
+            // sampled 비트(0x01)만 꺼져 있다. 나머지 flag 는 SDK 가 정한 그대로다 — 손으로 조립하지 않는 이유다.
+            assertThat(flags.toInt(16) and 0x01).isZero()
+        }
+        assertThat(exporter.finishedSpanItems).isEmpty()
+    }
+
+    @Test
+    fun missingOrValidHeaderAndTracingOffAreNotReported(output: CapturedOutput) {
+        attempt(tracing, record())
+        attempt(tracing, record(VALID.toByteArray()))
+        // trace 를 끄면(NOOP) 손상된 header 도 남기지 않는다.
+        attempt(RecordTracing(), record(MALFORMED_CANARY))
+        assertThat(replacedLines(output)).isEmpty()
+    }
+
+    @Test
+    fun reportFailureDoesNotEscape(output: CapturedOutput) {
+        val broken = object : Propagator by propagator {
+            override fun <C : Any> inject(context: TraceContext, carrier: C?, setter: Propagator.Setter<C>) {
+                throw IllegalStateException("simulated")
+            }
+        }
+        attempt(tracing(otel, broken), record(MALFORMED_CANARY))
+        assertThat(exporter.finishedSpanItems).hasSize(1)
+        assertThat(replacedLines(output)).isEmpty()
+    }
+
+    @Test
+    fun noopTracingNeverTouchesTheRecord() {
+        val noop = RecordTracing()
+        val record = record(VALID.toByteArray())
+        noop.around(record, "telemetry recover", "retry_exhausted", "process") { }
+        noop.start(record, "telemetry process", 1).also { noop.fail(it, "x") }.end()
+        assertThat(record.headers().headers("traceparent")).hasSize(1)
+        assertThat(exporter.finishedSpanItems).isEmpty()
+    }
+
+    private companion object {
+        const val TRACE_ID = "0af7651916cd43dd8448eb211c80319c"
+        const val PARENT_ID = "b7ad6b7169203331"
+        const val VALID = "00-$TRACE_ID-$PARENT_ID-01"
+        val MALFORMED_CANARY = "00-${"canary".padEnd(32, '0')}-$PARENT_ID-01".toByteArray()
+        val OVERSIZED_CANARY = "$VALID-canary".toByteArray()
+    }
+}

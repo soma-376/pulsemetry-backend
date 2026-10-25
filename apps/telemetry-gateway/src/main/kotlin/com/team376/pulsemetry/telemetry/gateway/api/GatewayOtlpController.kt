@@ -20,6 +20,7 @@ import com.team376.pulsemetry.telemetry.otlp.OtlpHttpResponse
 import com.team376.pulsemetry.telemetry.otlp.OtlpMediaType
 import com.team376.pulsemetry.telemetry.otlp.OtlpResponses
 import com.team376.pulsemetry.telemetry.otlp.OtlpSignal
+import io.micrometer.tracing.Tracer
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.slf4j.LoggerFactory
@@ -61,6 +62,7 @@ class GatewayOtlpController(
 	private val clock: Clock,
 	properties: TelemetryGatewayProperties,
 	private val observer: TelemetryObserver = TelemetryObserver.NONE,
+	private val tracer: Tracer = Tracer.NOOP,
 ) {
 
 	private val maxRequestBytes = properties.telemetry.gateway.maxRequestBytes
@@ -84,6 +86,16 @@ class GatewayOtlpController(
 			observer.observe(TelemetryMetric.GATEWAY_REQUESTS, 1.0, "signal" to signal, "status" to status, "outcome" to outcome)
 			observer.observe(TelemetryMetric.GATEWAY_REQUEST_DURATION, (System.nanoTime() - started) / 1e9, "signal" to signal, "status" to status)
 			observer.observe(TelemetryMetric.GATEWAY_INFLIGHT, -1.0)
+			traceCompleted(signal, status, outcome)
+		}
+	}
+
+	/** sampled 요청은 요청 span 안에서 완료 한 줄을 남긴다(ADR 0069). 로그 실패가 응답을 바꾸지 않는다. */
+	private fun traceCompleted(signal: String, status: String, outcome: String) {
+		runCatching {
+			if (tracer.currentSpan()?.context()?.sampled() == true) {
+				log.info(TelemetryLogEvent.PLATFORM_TRACE_COMPLETED.format("stage" to "gateway", "signal" to signal, "status" to status, "outcome" to outcome))
+			}
 		}
 	}
 

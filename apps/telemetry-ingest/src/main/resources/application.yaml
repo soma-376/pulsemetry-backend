@@ -10,6 +10,9 @@ server:
 spring:
   application:
     name: pulsemetry-telemetry-ingest
+  autoconfigure:
+    # Prometheus exemplar에 trace ID를 싣지 않는다(ADR 0069). 지표 노출 형식을 바꾸지 않는다.
+    exclude: org.springframework.boot.micrometer.tracing.autoconfigure.prometheus.PrometheusExemplarsAutoConfiguration
   lifecycle:
     # 종료 단계 하나의 상한. Kafka 컨테이너의 종료 대기(45초)보다 길고 Pod 종료 유예(90초) 안이다 (ADR 0066 Decision 11).
     timeout-per-shutdown-phase: 50s
@@ -49,6 +52,13 @@ pulsemetry:
   # listener 기동 상태(pulsemetry_pipeline_listener_running)는 요청마다 기록하지 않는 상태 gauge 라 양쪽 모두 남긴다.
   observability:
     enabled: ${PULSEMETRY_OBSERVABILITY_ENABLED:true}
+
+  # 플랫폼 trace resource 값(ADR 0069). 비어 있으면 그 속성을 넣지 않는다. namespace·pod는 Downward API가 준다.
+  tracing:
+    environment: ${PULSEMETRY_OBSERVABILITY_ENVIRONMENT:local}
+    cluster: ${PULSEMETRY_TRACING_CLUSTER:}
+    namespace: ${POD_NAMESPACE:}
+    pod: ${POD_NAME:}
 
   # telemetry JWT 공개키 (ADR 0065) — pulsemetry.telemetry-jwt.public-key-files. kid → X.509 PEM 경로 맵이다.
   # 비어 있으면 HTTP 경로는 ptt_ 만 받고 JWT 모양은 401 이다. 배포는 SPRING_APPLICATION_JSON 으로 넣는다:
@@ -96,6 +106,39 @@ pulsemetry:
 management:
   server:
     port: ${MANAGEMENT_SERVER_PORT:9404}
+  # 플랫폼 trace(ADR 0069). 기본은 끔이다. 켜면 OTLP/HTTP(`/v1/traces`까지 쓴 전체 URL)로 Collector에 보낸다.
+  # 전송은 비동기 batch이고 queue가 차거나 Collector가 죽으면 span을 버린다 — 업무 응답·ack·commit은 기다리지 않는다.
+  tracing:
+    export:
+      enabled: ${PULSEMETRY_TRACING_ENABLED:false}
+    sampling:
+      # parent-based. 합성·소량 E2E 기간에만 1.0으로 올린다.
+      probability: ${PULSEMETRY_TRACING_SAMPLE_PROBABILITY:0.1}
+    # W3C traceparent만 주고받는다. baggage·B3는 쓰지 않는다.
+    propagation:
+      consume: w3c
+      produce: w3c
+    baggage:
+      enabled: false
+  opentelemetry:
+    # OTEL_* 환경변수가 설정을 바꾸지 않게 한다. 출처는 위 PULSEMETRY_TRACING_* 하나다.
+    map-environment-variables: false
+    tracing:
+      export:
+        max-queue-size: 2048
+        timeout: 10s
+        otlp:
+          endpoint: ${PULSEMETRY_TRACING_OTLP_TRACES_ENDPOINT:}
+          timeout: 10s
+  # 로그는 stdout → Fluent Bit 경로를 유지한다. OTLP 로그 내보내기를 켜지 않는다.
+  logging:
+    export:
+      otlp:
+        enabled: false
+  observations:
+    enable:
+      # Security filter chain의 내부 span·지표는 쓰지 않는다. 업무 요청 span 하나에 하위 span이 줄줄이 붙는다.
+      spring.security: false
   endpoints:
     web:
       exposure:
@@ -108,3 +151,9 @@ management:
       application: ${spring.application.name}
       service: ingest
       environment: ${PULSEMETRY_OBSERVABILITY_ENVIRONMENT:local}
+
+# 활성 span 안의 로그에만 trace_id·span_id를 붙인다(ADR 0069). span이 없으면 두 필드를 지운다.
+# 평문 형식과 event=<code>는 그대로다.
+logging:
+  pattern:
+    correlation: "%replace(trace_id=%X{traceId} span_id=%X{spanId} ){'^trace_id= span_id= $', ''}"

@@ -126,6 +126,7 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 
 		val record = recordsFor(tenantId).single()
 		assertThat(record.key()).isEqualTo("$tenantId:$installationId")
+		// 플랫폼 trace 를 끈 기본 설정이라 header 가 없다. 켜면 traceparent 하나뿐이다(ADR 0069, TracingEnabledTest).
 		assertThat(record.headers().toArray()).isEmpty()
 		val envelope = TelemetryEnvelopeCodec.decode(record.value())
 		assertThat(envelope.auth.credentialId).isEqualTo(credentialId)
@@ -278,6 +279,8 @@ class GatewayAcceptanceTest : AbstractGatewayIntegrationTest() {
 		post(good, "{}".toByteArray(), contentEncoding = canary)
 
 		assertThat(output.all).doesNotContain(canary).doesNotContain(good)
+		// 플랫폼 trace 를 끈 기본 설정에는 완료 로그와 trace 필드가 없다(ADR 0069).
+		assertThat(output.all).doesNotContain("platform_trace_completed").doesNotContain("trace_id=")
 		assertThat(registry.meters.flatMap { it.id.tags }.joinToString()).doesNotContain(canary).doesNotContain(good)
 	}
 

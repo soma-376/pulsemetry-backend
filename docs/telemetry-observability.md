@@ -67,7 +67,7 @@ Observer 기본값은 no-op이며 `.observe`가 계측 RuntimeException을 격�
 
 기존 `TelemetryLogEvent`의 `event=<code>`와 필드 구조는 보존한다. JVM/Spring 기동·graceful shutdown·Kafka 재시도 로그도 보존한다. CH 스키마 시작/재적용 실패, RDB 인증 조회 장애, ops 백필 실패에는 component·reason·exception class·제한된 cause/stack frame을 남긴다. `SafeDiagnostic`은 exception message와 suppressed 원문을 제외하고 cause depth 8, 각 stack 8, 전체 4096자로 제한한다. payload·Bearer·자격증명 canary가 로그·metric tag에 새지 않는 테스트를 둔다.
 
-이 로그의 목적은 서비스 기동·종료·의존성 실패 원인을 좁히는 것이다. trace ID, 새 message context, envelope header/schema 변경은 없다. MSK broker 로그, ClickHouse system 로그, GC/safepoint stderr, OOMKilled·exit code·restart·Kubernetes Event는 Infra의 CloudWatch 수집과 함께 확인한다. heap dump·stack dump를 자동 강제 생성하지 않는다. 앱 로그가 없는 SIGKILL/OOM도 플랫폼 증거로 판단한다.
+이 로그의 목적은 서비스 기동·종료·의존성 실패 원인을 좁히는 것이다. envelope schema는 바꾸지 않는다. 플랫폼 trace(ADR 0069, Proposed)를 켜면 Kafka record에 `traceparent` header 하나가 붙고, 활성 span 안의 로그에 `trace_id`·`span_id`가 붙는다. MSK broker 로그, ClickHouse system 로그, GC/safepoint stderr, OOMKilled·exit code·restart·Kubernetes Event는 Infra의 CloudWatch 수집과 함께 확인한다. heap dump·stack dump를 자동 강제 생성하지 않는다. 앱 로그가 없는 SIGKILL/OOM도 플랫폼 증거로 판단한다.
 
 ### GC·safepoint 로그 (Infra 인계)
 
@@ -91,6 +91,33 @@ NOTE: Picked up JDK_JAVA_OPTIONS: -Xlog:gc,safepoint:stderr:utctime,level,tags
 - 첫 `Using <GC>` 줄로 collector를 확인한다. CPU·메모리가 작은 컨테이너에서는 JVM이 G1 대신 Serial을 고를 수 있다.
 - `gc*`(하위 태그 전부)·debug 수준은 켜지 않는다. 앱 로그와 같은 stderr라 Fluent Bit이 그대로 수집한다.
 - calibration부터 비교시험 전체가 같은 옵션과 `PULSEMETRY_OBSERVABILITY_ENABLED` 값을 쓴다.
+
+## 플랫폼 trace (ADR 0069)
+
+기본은 꺼져 있다. 켜면 Gateway·ingest가 플랫폼 자체 span을 OTLP/HTTP로 Collector에 보낸다. 고객 OTLP의 trace는 읽지 않는다.
+
+| 환경변수 | 의미 | 기본 |
+|---|---|---|
+| `PULSEMETRY_TRACING_ENABLED` | trace 생성·전파·내보내기 | `false` |
+| `PULSEMETRY_TRACING_OTLP_TRACES_ENDPOINT` | `/v1/traces`까지 쓴 전체 URL. 켰는데 비어 있으면 기동하지 않는다 | 없음 |
+| `PULSEMETRY_TRACING_SAMPLE_PROBABILITY` | root sampling 비율(parent-based) | `0.1` |
+| `PULSEMETRY_TRACING_CLUSTER` | resource `k8s.cluster.name` | 없음 |
+| `POD_NAMESPACE`, `POD_NAME` | resource `k8s.namespace.name`·`k8s.pod.name` (Downward API) | 없음 |
+
+- `service.name`은 `telemetry-gateway`·`telemetry-ingest`로 고정이다. `deployment.environment.name`은 `PULSEMETRY_OBSERVABILITY_ENVIRONMENT`다.
+- `OTEL_*` 환경변수는 읽지 않는다. OTLP 로그·지표 내보내기와 Prometheus exemplar는 켜지 않는다. 지표는 기존 9404 scrape 그대로다.
+- 공개 요청의 `traceparent`·`tracestate`·`baggage`·B3 header는 서버 observation 전에 지운다. 요청은 언제나 새 플랫폼 root다.
+- health(`/api/v1/healthz`)·관리(`/actuator/**`) 요청과 Spring Security 내부 단계는 span을 만들지 않는다.
+  span만 뺀다. observation은 그대로라 health 요청의 `http_server_requests_seconds_*` 지표는 trace를 켜든 끄든 남는다.
+- 실패한 span은 status ERROR이고 분류는 `error.type`(예외 클래스 이름·reason·outcome 코드)이다. 설명과 예외 메시지·stack은 싣지 않는다.
+  내보내기 직전에 모든 span의 exception 이벤트 원문과 status 설명을 한 번 더 지운다(서버 observation의 미처리 예외 포함).
+- 활성 span 안의 로그에만 `trace_id=<32 hex> span_id=<16 hex>`가 붙는다. 기존 `event=<code>` 형식은 그대로다.
+- sampled 요청·record는 span 안에서 `event=platform_trace_completed stage=gateway|ingest … outcome=…` 한 줄을 남긴다. 로그에서 trace로 넘어가는 기준점이며 경보 대상이 아니다.
+- ingest가 record의 `traceparent`를 쓰지 못해(중복·길이·형식) 새 root로 시작하면 그 처리 span 안에서 `event=platform_trace_context_replaced … reason=… newTraceparent=…`를 남긴다.
+  Gateway trace와 끊긴 이유를 찾는 진단 로그다. sampling과 무관하고 경보 대상이 아니다. header 누락은 남기지 않고, 수신 값 원문 대신 header 개수·바이트 수만 싣는다.
+- 끄면(기본) 앱이 `Tracer`·`Propagator`를 NOOP으로 둔다. span·로그 trace 필드·완료 로그·Kafka header가 없다. `management.tracing.export.enabled=false`만으로는 span과 MDC가 남는다.
+- 전송은 비동기 batch(queue 2048, timeout 10초)다. Collector 장애·queue 초과 때 span을 버리고 업무 응답·Kafka ack·commit은 기다리지 않는다.
+  trace가 없다는 것만으로 처리 실패를 판단하지 않는다.
 
 ## 독립 smoke 실행
 

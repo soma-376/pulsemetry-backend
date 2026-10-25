@@ -8,6 +8,13 @@ dependencies {
 	implementation(project(":libs:telemetry-observability"))
 	implementation(libs.spring.boot.starter.actuator)
 	implementation(libs.micrometer.registry.prometheus)
+	// 플랫폼 trace(ADR 0069). 기본은 꺼져 있고(PULSEMETRY_TRACING_ENABLED) OTLP/HTTP로만 보낸다.
+	implementation(libs.spring.boot.micrometer.tracing.opentelemetry)
+	implementation(libs.micrometer.tracing.bridge.otel)
+	implementation(libs.opentelemetry.exporter.otlp) {
+		exclude(group = "io.opentelemetry", module = "opentelemetry-exporter-sender-okhttp")
+	}
+	runtimeOnly(libs.opentelemetry.exporter.sender.jdk)
 	implementation(project(":libs:telemetry-auth"))
 	// envelope·codec·Kafka 접속 설정·로그 이벤트. OTLP/HTTP 표면(:libs:telemetry-otlp-http)을 api() 로 함께 끌어온다.
 	implementation(project(":libs:telemetry-ingress-contract"))
@@ -21,6 +28,8 @@ dependencies {
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
 	testImplementation(testFixtures(project(":libs:telemetry-auth")))
+	testImplementation(libs.spring.boot.micrometer.tracing.test)
+	testImplementation(libs.opentelemetry.sdk.testing)
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.kafka)
 	testImplementation(libs.testcontainers.junit.jupiter)

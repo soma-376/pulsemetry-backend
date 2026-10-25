@@ -6,11 +6,14 @@ import com.team376.pulsemetry.telemetry.gateway.publish.KafkaTelemetryPublisher
 import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics
+import io.micrometer.tracing.Tracer
+import io.micrometer.tracing.propagation.Propagator
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerConfig
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import org.apache.kafka.common.serialization.StringSerializer
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import java.time.Clock
@@ -37,7 +40,14 @@ class GatewayConfig {
 	 * 종료는 Spring 이 웹 서버의 graceful 종료를 끝낸 뒤 [KafkaTelemetryPublisher.close] 로 한다.
 	 */
 	@Bean(destroyMethod = "close")
-	fun telemetryPublisher(properties: TelemetryGatewayProperties, clock: Clock, observer: TelemetryObserver, registry: MeterRegistry): KafkaTelemetryPublisher {
+	fun telemetryPublisher(
+		properties: TelemetryGatewayProperties,
+		clock: Clock,
+		observer: TelemetryObserver,
+		registry: MeterRegistry,
+		tracer: ObjectProvider<Tracer>,
+		propagator: ObjectProvider<Propagator>,
+	): KafkaTelemetryPublisher {
 		val kafka = properties.telemetry.kafka
 		log.info("telemetry ingress producer: {} topic={}", kafka.connection(), kafka.topic)
 		val producer = KafkaProducer(producerProperties(properties), StringSerializer(), ByteArraySerializer())
@@ -49,6 +59,9 @@ class GatewayConfig {
 			closeTimeout = kafka.producer.closeTimeout,
 			observer = observer,
 			clientMetrics = clientMetrics,
+			// trace 를 끄면 Boot 가 NOOP 을 주거나 빈이 없다 — 어느 쪽이든 header 를 붙이지 않는다(ADR 0069).
+			tracer = tracer.getIfAvailable { Tracer.NOOP },
+			propagator = propagator.getIfAvailable { Propagator.NOOP },
 		)
 	}
 

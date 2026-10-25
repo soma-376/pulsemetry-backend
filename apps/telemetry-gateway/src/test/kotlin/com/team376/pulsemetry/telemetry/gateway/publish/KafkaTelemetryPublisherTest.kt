@@ -11,6 +11,15 @@ import com.team376.pulsemetry.telemetry.otlp.OtlpMediaType
 import com.team376.pulsemetry.telemetry.otlp.OtlpSignal
 import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import io.micrometer.tracing.otel.bridge.OtelCurrentTraceContext
+import io.micrometer.tracing.otel.bridge.OtelTracer
+import io.opentelemetry.api.common.AttributeKey
+import io.opentelemetry.api.trace.SpanKind
+import io.opentelemetry.api.trace.StatusCode
+import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter
+import io.opentelemetry.sdk.trace.SdkTracerProvider
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor
+import io.opentelemetry.sdk.trace.samplers.Sampler
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import org.apache.kafka.common.serialization.StringSerializer
@@ -131,5 +140,26 @@ class KafkaTelemetryPublisherTest {
 				.isInstanceOfSatisfying(TelemetryPublishException::class.java) { assertThat(it.reason).isEqualTo("deadline_exceeded") }
 		}
 		assertThat(registry.get("pulsemetry.gateway.publish").tags("outcome", "failed", "reason", "deadline_exceeded").counter().count()).isEqualTo(1.0)
+	}
+
+	@Test
+	@DisplayName("실패한 발행 span 은 ERROR status 이고 분류는 reason 코드뿐이다 — 설명과 예외 메시지가 없다(ADR 0069)")
+	fun failedPublishSpanIsError() {
+		val exporter = InMemorySpanExporter.create()
+		val provider = SdkTracerProvider.builder().setSampler(Sampler.alwaysOn()).addSpanProcessor(SimpleSpanProcessor.create(exporter)).build()
+		val props = properties(TelemetryGatewayProperties.Kafka(bootstrapServers = "127.0.0.1:1"))
+		provider.use {
+			KafkaTelemetryPublisher(
+				KafkaProducer(GatewayConfig.producerProperties(props), StringSerializer(), ByteArraySerializer()),
+				"t", Clock.systemUTC(), Duration.ZERO, tracer = OtelTracer(provider.get("test"), OtelCurrentTraceContext()) { },
+			).use { publisher ->
+				assertThatThrownBy { publisher.publish(message(), Instant.now().minusMillis(1)) }.isInstanceOf(TelemetryPublishException::class.java)
+			}
+			val span = exporter.finishedSpanItems.single { it.kind == SpanKind.PRODUCER }
+			assertThat(span.status.statusCode).isEqualTo(StatusCode.ERROR)
+			assertThat(span.status.description).isEmpty()
+			assertThat(span.attributes.get(AttributeKey.stringKey("error.type"))).isEqualTo("deadline_exceeded")
+			assertThat(span.events.map { it.attributes.get(AttributeKey.stringKey("exception.message")) }).containsOnlyNulls()
+		}
 	}
 }

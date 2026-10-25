@@ -23,7 +23,7 @@ class TelemetryFailureReporterTest {
     @Test
     fun failureCountersAreExposedAtZeroBeforeTheFirstFailure() {
         PrometheusMeterRegistry(PrometheusConfig.DEFAULT).let { registry ->
-            val reporter = TelemetryFailureReporter(4, MicrometerTelemetryObserver(registry, gauges = emptySet()))
+            val reporter = TelemetryFailureReporter(4, observer = MicrometerTelemetryObserver(registry, gauges = emptySet()))
             val before = registry.scrape()
             assertThat(before).contains("pulsemetry_pipeline_commit_failures_total 0.0")
             for (stage in RETRY_EXHAUSTED_STAGES) assertThat(before).contains("""pulsemetry_pipeline_retry_exhausted_total{stage="$stage"} 0.0""")
