@@ -33,6 +33,8 @@ MAX_BYTES = 4 * 1024 * 1024
 RECONCILE_COLUMNS = 16
 RECONCILE_LOG_BYTES = 4096
 MONITOR_MAX_AGE = 45
+SUMMARY_LATENCY_MODE = "server_summary_elapsed_fixed_limit_v1"
+SUMMARY_PROBE_SQL_SHA = hashlib.sha256(b"SELECT count() FROM system.parts WHERE active").hexdigest()
 PG_TABLES = {
     "enrollment.tenants", "enrollment.members", "enrollment.teams",
     "enrollment.team_memberships", "enrollment.manifests",
@@ -319,10 +321,13 @@ class Target:
         raw = read_regular(self.path, 65536)
         self.sha = sha256(raw)
         self.data = d = decode(raw)
-        require(set(d) <= {"schemaVersion", "environment", "targetId", "postgres", "clickhouse", "monitorFile"}, "target에 알 수 없는 필드 또는 비밀 원문이 있습니다.")
+        require(set(d) <= {"schemaVersion", "environment", "targetId", "postgres", "clickhouse", "monitorFile", "monitorLatency"}, "target에 알 수 없는 필드 또는 비밀 원문이 있습니다.")
         require(d.get("schemaVersion") == 1 and d.get("environment") in ("local", "dev"), "local/dev 대상만 허용합니다.")
         require(d["environment"] == artifact.manifest["environment"], "artifact와 대상 환경이 다릅니다.")
         require(re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", d.get("targetId", "")), "targetId가 유효하지 않습니다.")
+        if "monitorLatency" in d:
+            monitor_latency_policy(d["monitorLatency"])
+            require(d.get("monitorFile"), "지연 측정 방식을 선택하려면 monitorFile이 필요합니다.")
         pg, ch = d["postgres"], d["clickhouse"]
         require(set(pg) <= {"host", "hostaddr", "port", "dbname", "user", "sslmode", "sslrootcert", "passwordEnv", "psql"}, "PostgreSQL 대상에 비밀 원문 또는 알 수 없는 필드가 있습니다.")
         require(set(ch) <= {"url", "database", "username", "passwordEnv"}, "ClickHouse 대상에 비밀 원문 또는 알 수 없는 필드가 있습니다.")
@@ -541,7 +546,118 @@ def pressure_check(sample, now, expected=None):
     return fixed
 
 
-def monitor_check(path, now=None, require_pressure=False, expected_pressure=None):
+def monitor_number(value, name, positive=False):
+    require(type(value) in (int, float, Decimal), "지연 관측 수치가 아닙니다: " + name)
+    result = Decimal(str(value))
+    require(result.is_finite() and (result > 0 if positive else result >= 0),
+            "지연 관측 수치가 유효하지 않습니다: " + name)
+    return result
+
+
+def monitor_latency_policy(policy):
+    require(isinstance(policy, dict) and set(policy) == {"mode", "staticLimitMs"}
+            and policy["mode"] == SUMMARY_LATENCY_MODE, "대상의 지연 측정 방식이 유효하지 않습니다.")
+    return monitor_number(policy["staticLimitMs"], "staticLimitMs", positive=True)
+
+
+def summary_latency_check(sample, policy, now, pressure):
+    """서버 baseline을 만들지 않고 대상에 고정한 HTTP 요약 시간 상한을 검증한다."""
+    cap = monitor_latency_policy(policy)
+    require(sample.get("latencyMode") == policy["mode"], "대상과 관측의 지연 측정 방식이 다릅니다.")
+    require(not ({"readLatencyMs", "baselineReadLatencyMs", "serverBaselineMs"} & set(sample)),
+            "HTTP 요약 관측에 기존 baseline 필드를 혼합할 수 없습니다.")
+    require(sample.get("measurement") == "http_response_summary_elapsed_ns"
+            and sample.get("aggregation") == "median_of_5" and sample.get("waitEndOfQuery") is True,
+            "HTTP 요약 측정 계약이 없습니다.")
+    require(sample.get("clickhouseErrorCount") == 0 and type(sample.get("clickhouseErrorCount")) is int
+            and sample.get("stopReasons") == [], "ClickHouse 오류 또는 중단 사유가 있습니다.")
+    require(sample.get("baselineRecalibrated") is False and sample.get("clientBaselineUsedAsServerBaseline") is False,
+            "기존 왕복 지연 기준을 서버 baseline으로 바꿀 수 없습니다.")
+    observed, valid = instant(sample["observedAt"]), instant(sample["validUntil"])
+    require(observed <= now + 2 and now < valid and valid == observed + 40,
+            "HTTP 요약 관측의 40초 유효 시간이 지났습니다.")
+    evidence = sample["latencyEvidence"]
+    require(isinstance(evidence, dict) and evidence.get("measurement") == sample["measurement"]
+            and evidence.get("aggregation") == sample["aggregation"] and evidence.get("httpWaitEndOfQuery") is True,
+            "HTTP 요약 원시 관측 계약이 없습니다.")
+    require(monitor_number(sample["proposedServerElapsedLimitMs"], "상한", True) == cap
+            and monitor_number(evidence["proposedServerElapsedLimitMs"], "원시 상한", True) == cap,
+            "대상과 관측의 HTTP 요약 시간 상한이 다릅니다.")
+    require(instant(evidence["windowStartedAt"]) == observed, "관측 창의 시작 시각이 다릅니다.")
+    completed = instant(evidence["windowCompletedAt"])
+    require(observed <= completed <= now + 2 and completed < valid
+            and monitor_number(evidence["windowElapsedSeconds"], "관측 기간") < 40, "관측 창이 유효하지 않습니다.")
+    raw = evidence["rawProbes"]
+    require(isinstance(raw, list) and len(raw) == 5, "성공한 원시 관측 다섯 개가 필요합니다.")
+    server_values, client_values, query_ids = [], [], set()
+    previous = observed
+    for index, probe in enumerate(raw):
+        require(isinstance(probe, dict) and probe.get("ok") is True and type(probe.get("index")) is int
+                and probe["index"] == index, "원시 관측이 실패했거나 순서가 다릅니다.")
+        begin, end = instant(probe["startedAt"]), instant(probe["completedAt"])
+        require(previous <= begin <= end <= completed, "원시 관측 시각이 유효하지 않습니다.")
+        if index:
+            require(monitor_number(probe["startIntervalSeconds"], "probe 시작 간격") >= Decimal("0.2"),
+                    "probe 시작 간격이 0.2초보다 짧습니다.")
+        else:
+            require(probe.get("startIntervalSeconds") is None, "첫 probe 간격은 없어야 합니다.")
+        previous = end
+        require(probe.get("httpStatus") == 200 and probe.get("httpWaitEndOfQuery") is True
+                and type(probe.get("summaryHeaderCount")) is int and probe["summaryHeaderCount"] == 1
+                and probe.get("requestSettings") == {"wait_end_of_query": 1, "send_progress_in_http_headers": 0}
+                and all(type(v) is int for v in probe["requestSettings"].values())
+                and probe.get("probeSqlSha256") == SUMMARY_PROBE_SQL_SHA, "probe HTTP 요청·응답 계약이 다릅니다.")
+        require(type(probe.get("responseBytes")) is int and 1 <= probe["responseBytes"] <= 1024,
+                "probe 응답 크기가 유효하지 않습니다.")
+        query_id = probe.get("queryId")
+        require(isinstance(query_id, str) and 1 <= len(query_id) <= 256 and query_id not in query_ids,
+                "probe query ID가 없거나 중복됩니다.")
+        query_ids.add(query_id)
+        require(isinstance(probe.get("summaryRaw"), str) and len(probe["summaryRaw"]) <= 8192,
+                "HTTP 요약 원문이 없습니다.")
+        summary = decode(probe["summaryRaw"])
+        require(isinstance(summary, dict) and summary == probe.get("summary"), "HTTP 요약 원문과 파싱 값이 다릅니다.")
+        ns = summary.get("elapsed_ns")
+        require((type(ns) is int or isinstance(ns, str) and re.fullmatch(r"[0-9]+", ns))
+                and 0 < int(ns) <= 2 ** 64 - 1, "HTTP 요약 elapsed_ns가 유효하지 않습니다.")
+        require(probe.get("serverElapsedNs") == str(int(ns)), "원시 elapsed_ns가 다릅니다.")
+        server = Decimal(int(ns)) / 1_000_000
+        require(monitor_number(probe["serverElapsedMs"], "서버 요약 시간", True) == server,
+                "elapsed_ns와 서버 요약 ms가 다릅니다.")
+        server_values.append(server)
+        client_values.append(monitor_number(probe["clientElapsedMs"], "왕복 시간"))
+        for side in ("before", "after"):
+            guard = probe[side]
+            stamp = instant(guard["observedAt"])
+            require(observed <= stamp <= completed and stamp < valid and now - stamp < 40, "probe 자원 관측이 오래되었습니다.")
+            require(stamp <= begin if side == "before" else stamp >= end, "probe 전후 자원 관측 순서가 다릅니다.")
+            # 기존 압력 계약을 그대로 재사용하여 counter 증가·감소와 기준 교체를 거부한다.
+            pressure_check({"observedAt": guard["observedAt"], "pressureGuard": {
+                "schemaVersion": 1, "identity": guard["identity"], "baseline": pressure["baseline"],
+                "memoryEvents": guard["memoryEvents"], "latched": False}}, now, pressure)
+            used = monitor_number(guard["memoryWorkingSetBytes"], "probe working set")
+            limit = monitor_number(guard["memoryLimitBytes"], "probe memory limit", True)
+            require(limit == sample["memoryLimitBytes"], "probe memory limit이 변경되었습니다.")
+            if used / limit >= Decimal("0.75"):
+                raise Paused("ClickHouse 메모리 75% 중지선에 도달했습니다.")
+            require(type(guard.get("observedClickhouseErrorCount")) is int
+                    and type(guard.get("acceptedPriorReadonlyErrorCount")) is int
+                    and guard["observedClickhouseErrorCount"] == guard["acceptedPriorReadonlyErrorCount"] >= 0,
+                    "probe에 새 ClickHouse 오류가 있습니다.")
+    require(evidence["rawServerElapsedMs"] == server_values and evidence["rawClientElapsedMs"] == client_values,
+            "원시 지연 목록이 probe와 다릅니다.")
+    server_median, client_median = sorted(server_values)[2], sorted(client_values)[2]
+    for holder in (sample, evidence):
+        require(monitor_number(holder["serverElapsedMedianMs"], "서버 중앙값", True) == server_median
+                and monitor_number(holder["clientElapsedMedianMs"], "왕복 중앙값") == client_median,
+                "재계산한 원시 중앙값과 관측이 다릅니다.")
+    if server_median >= cap:
+        raise Paused("HTTP 응답 요약 시간의 고정 상한에 도달했습니다.")
+    return {"latencyMode": SUMMARY_LATENCY_MODE, "serverElapsedMedianMs": server_median,
+            "staticLimitMs": cap, "clientElapsedMedianMs": client_median}
+
+
+def monitor_check(path, now=None, require_pressure=False, expected_pressure=None, latency_policy=None):
     sample = decode(read_regular(Path(path), 65536))
     now = Decimal(str(time.time() if now is None else now))
     age = now - instant(sample["observedAt"])
@@ -549,14 +665,27 @@ def monitor_check(path, now=None, require_pressure=False, expected_pressure=None
     if "validUntil" in sample:
         require(now <= instant(sample["validUntil"]), "부하 관측 원본 지표의 유효 시간이 지났습니다.")
     used, limit = Decimal(str(sample["memoryWorkingSetBytes"])), Decimal(str(sample["memoryLimitBytes"]))
-    latency, baseline = Decimal(str(sample["readLatencyMs"])), Decimal(str(sample["baselineReadLatencyMs"]))
-    require(used >= 0 and limit > 0 and latency >= 0 and baseline > 0, "부하 관측 값이 유효하지 않습니다.")
-    pressure = pressure_check(sample, now, expected_pressure) if require_pressure or "pressureGuard" in sample else None
+    require(used.is_finite() and limit.is_finite() and used >= 0 and limit > 0, "부하 관측 값이 유효하지 않습니다.")
+    pressure = pressure_check(sample, now, expected_pressure) if require_pressure or "pressureGuard" in sample or latency_policy is not None else None
     if used / limit >= Decimal("0.75"):
         raise Paused("ClickHouse 메모리 75% 중지선에 도달했습니다.")
-    if latency >= baseline * 2:
-        raise Paused("기준 조회 지연의 2배 중지선에 도달했습니다.")
-    return {"memoryWorkingSetBytes": int(used), "memoryLimitBytes": int(limit), "readLatencyMs": latency,
+    if latency_policy is None:
+        require(not ({"latencyMode", "serverElapsedMedianMs", "proposedServerElapsedLimitMs", "serverBaselineMs"} & set(sample))
+                and sample.get("measurement") != "http_response_summary_elapsed_ns"
+                and not (isinstance(sample.get("latencyEvidence"), dict)
+                         and sample["latencyEvidence"].get("measurement") == "http_response_summary_elapsed_ns"),
+                "기존 대상은 HTTP 요약 지연 관측으로 자동 전환할 수 없습니다.")
+        latency, baseline = Decimal(str(sample["readLatencyMs"])), Decimal(str(sample["baselineReadLatencyMs"]))
+        require(latency.is_finite() and baseline.is_finite() and latency >= 0 and baseline > 0, "부하 관측 값이 유효하지 않습니다.")
+        if latency >= baseline * 2:
+            raise Paused("기준 조회 지연의 2배 중지선에 도달했습니다.")
+        metrics = {"readLatencyMs": latency}
+    else:
+        try:
+            metrics = summary_latency_check(sample, latency_policy, now, pressure)
+        except (KeyError, TypeError, ValueError, ArithmeticError) as error:
+            raise SeedError("HTTP 요약 지연 관측 필드가 없거나 유효하지 않습니다.") from error
+    return {"memoryWorkingSetBytes": int(used), "memoryLimitBytes": int(limit), **metrics,
             **({"pressureBaseline": pressure} if pressure is not None else {})}
 
 
@@ -708,7 +837,8 @@ class Runner:
                 raise PressurePaused("이 실행의 cgroup 압력 중단이 latch되어 있습니다. 기준을 재설정해 우회할 수 없습니다.")
             try:
                 sample = monitor_check(path, require_pressure=True,
-                        expected_pressure=self.state.get("pressureBaseline") if self.state is not None else None)
+                        expected_pressure=self.state.get("pressureBaseline") if self.state is not None else None,
+                        latency_policy=self.target.data.get("monitorLatency"))
                 if self.state is not None:
                     fixed = sample["pressureBaseline"]
                     if "pressureBaseline" in self.state and self.state["pressureBaseline"] != fixed:

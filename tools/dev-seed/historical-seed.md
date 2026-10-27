@@ -147,6 +147,41 @@ dev의 `monitorFile`은 별도 관측 프로세스가 45초보다 짧은 주기�
 - dev에서 압력 계약·identity·카운터가 없는 기존 monitor는 거부한다. local에서도 `monitorFile`을 지정하면
   같은 규칙을 적용한다. 관측 파일 생략은 격리된 local 기능 테스트에만 사용한다.
 
+### 명시적으로 선택하는 HTTP 응답 요약 지연
+
+[허브 ADR 0024 (Proposed)](https://github.com/soma-376/docs/blob/1f15f9ec83e6f2ff085eb640f809d6e728749eb4/adr/0024-dev-seed-http-summary-latency.md)의
+검토용 모드다. 코드·로컬 검증만으로 dev 적용이 승인되지는 않는다. 미지정 target은 위의 기존 왕복 지연
+기준을 유지한다. 새 방식은 target의 다음 필드를 명시하고 그 target SHA를 실행 상태에 고정해야 한다.
+
+```json
+"monitorLatency": {
+  "mode": "server_summary_elapsed_fixed_limit_v1",
+  "staticLimitMs": 58.816084000000046
+}
+```
+
+관측에는 동일한 `latencyMode`와 `proposedServerElapsedLimitMs`, `waitEndOfQuery: true`가 필요하다.
+`measurement`는 `http_response_summary_elapsed_ns`, `aggregation`은 `median_of_5`다.
+기존 `readLatencyMs`·`baselineReadLatencyMs` 또는 `serverBaselineMs`를 함께 발행하면 거부한다.
+이 값은 새로 제안하는 절대 상한이며, 기존 왕복 baseline을 서버 baseline으로 환산한 값이 아니다.
+
+`latencyEvidence.rawProbes`에는 동일한 `SELECT count() FROM system.parts WHERE active` 요청 다섯 개의
+서로 다른 query ID, 성공 여부, 요청 시작 간격(0.2초 이상), 시작·완료 시각과 전후 자원·오류 관측을 보존한다.
+각 요청은 `wait_end_of_query=1`, `send_progress_in_http_headers=0`, HTTP 200, 요약 헤더 하나와
+1024바이트 이하 정상 count 본문을 확인해야 한다. 관측기는 원문 `summaryRaw`, 파싱한 `summary`,
+`serverElapsedNs`, `serverElapsedMs`, 전체 왕복 `clientElapsedMs`, `summaryHeaderCount`,
+`requestSettings`, `probeSqlSha256`, `responseBytes`를 기록한다. 헤더 누락·중복, 본문/HTTP 오류와
+timeout은 개별 요청에서 즉시 중단하고 실패값을 중앙값에서 제외하지 않는다.
+
+소비자는 원문 JSON을 다시 파싱하여 elapsed_ns와 ms, 원시 목록과 양쪽 중앙값을 대조한다.
+`serverElapsedMedianMs`가 target 상한 이상이면 중단한다. `clientElapsedMedianMs`는 진단값으로 보존한다.
+`observedAt`은 창의 원래 시작 시각이며 `validUntil`은 그로부터 40초다. 발행 시각으로 만료를 늘리지 않는다.
+메모리 75%, 원래 identity·압박 카운터와 기준, 오류 중단 조건은 각 요청 전후에도 적용한다.
+
+HTTP 요약 elapsed는 서버의 응답 준비 구간을 포함하지만 순수 SQL·CPU 시간은 아니다. 최종 본문 전송과
+전체 왕복 지연을 보호하는 상한도 아니다. 관측기는 원본 중단 기록을 보존하고 오류 시 영구 중단을 유지해야
+하며, 새 정상 관측만으로 중단을 해제하면 안 된다. 검증용 target/state 복사본을 운영 원본과 구분한다.
+
 ## 재개와 보존
 
 `state-dir`은 0700, checkpoint는 0600으로 보관한다. 파일 잠금과 동일 DB tenant의 PostgreSQL 세션 advisory
