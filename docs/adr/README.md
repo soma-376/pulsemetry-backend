@@ -74,6 +74,8 @@
 | 0068 | [수집 운영 계측은 전송 계약과 분리하고 앱에서 조립한다](0068-수집-운영-계측은-전송-계약과-분리하고-앱에서-조립한다.md) | Accepted |
 | 0069 | [플랫폼 처리 경로를 OpenTelemetry trace로 추적하고 Kafka record에 traceparent만 싣는다](0069-플랫폼-처리-경로를-OpenTelemetry-trace로-추적하고-Kafka-record에-traceparent만-싣는다.md) | Proposed |
 
+PROJ-266은 ADR 0038·0055·0056에 공개 설치 페이지 링크의 query 예외와 코드 없는 SSO 링크의 경계를 반영한다.
+
 Status 열은 각 ADR Status 줄의 **첫 토큰**만 싣는다. 부분 대체·부연은 해당 파일에서 확인한다.
 Status 첫 토큰이 바뀌는 커밋에서는 이 표도 같은 커밋에서 갱신한다.
 

@@ -35,6 +35,7 @@ private const val INSTALL_BASE = "https://get.pulsemetry.example.com"
         "pulsemetry.management.onboarding-otlp-endpoint=https://ingest.example.test",
         "pulsemetry.management.response-encryption-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         "pulsemetry.management.invitation-accept-url=$ACCEPT_URL",
+        "pulsemetry.management.installation-page-url=https://app.example.test/install",
         "pulsemetry.user-auth.allowed-origins=http://localhost:3000",
         "pulsemetry.mail.enabled=true", "pulsemetry.mail.provider=smtp", "pulsemetry.mail.from=no-reply@example.test", "pulsemetry.mail.encryption-key=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
         "pulsemetry.mail.dispatch-interval=PT24H", "pulsemetry.mail.retry-interval=PT5M", "pulsemetry.mail.max-attempts=3", "pulsemetry.mail.send-timeout=PT5S",
@@ -101,7 +102,7 @@ class InstallationInvitationApiTest : AbstractUserAuthApiTest() {
         val message = MailpitServer.received().single { MailpitServer.recipients(it) == listOf("laptop@example.test") }
         assertThat(message.path("Subject").asString()).isEqualTo("Pulsemetry 설치 코드").doesNotContain(code)
         val text = MailpitServer.text(message)
-        assertThat(text).contains("테스트 조직", "설치 코드: $code", "curl -fsSL '$INSTALL_BASE/unix?code=$code' | sh", "irm '$INSTALL_BASE/windows?code=$code' | iex",
+        assertThat(text).contains("테스트 조직", "설치 코드: $code", "https://app.example.test/install?code=$code", "curl -fsSL '$INSTALL_BASE/unix?code=$code' | sh", "irm '$INSTALL_BASE/windows?code=$code' | iex",
             "로그인에는 쓸 수 없습니다")
         assertThat(text).doesNotContain(ACCEPT_URL, "#code=", "계정 만들기\n")
 
@@ -129,7 +130,7 @@ class InstallationInvitationApiTest : AbstractUserAuthApiTest() {
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.invitations WHERE id=:id AND revoked_at IS NULL").param("id", signupOpen).query(Int::class.java).single()).isEqualTo(1)
 
         assertThat(dispatcher.runOnce()).isEqualTo(1)
-        assertThat(MailpitServer.text(MailpitServer.received().single())).contains(second.path("code").asString()).doesNotContain(first.path("code").asString())
+        assertThat(MailpitServer.text(MailpitServer.received().single())).contains("https://app.example.test/install?code=${second.path("code").asString()}").doesNotContain(first.path("code").asString())
         val revoked = enrollWith(first.path("code").asString())
         assertThat(revoked.statusCode()).isEqualTo(409)
         assertThat(json(revoked).path("error").asString()).isEqualTo("invitation_revoked")

@@ -27,16 +27,23 @@ object MailDeliveryView {
 
 /**
  * 초대 메일 (ADR 0038). 초대 하나에 메일 하나다 — 중복 방지 키가 초대 ID 다.
- * 코드는 본문에만 싣는다. 수락 링크에는 fragment 로 붙여 서버 접근 로그와 Referer 에 남지 않게 한다.
+ * 코드는 본문과 공개 설치 페이지 query 에만 싣는다. SSO 로그인 주소에는 붙이지 않는다(ADR 0038·0056).
  * 설치 명령의 주소는 기존 부트스트랩 명령과 같은 형태다(ADR 0005).
  * 본문은 그 코드에 남은 용도만 안내한다(ADR 0055) — 가입이 닫힌 코드에 계정 만들기 링크를, 설치를 마친 코드에 설치 명령을 싣지 않는다.
  */
-class InvitationMailer(private val outbox: MailOutbox, acceptUrl: String, installBaseUrl: String) {
+class InvitationMailer(private val outbox: MailOutbox, acceptUrl: String, installBaseUrl: String, installationPageUrl: String) {
     private val acceptUrl = acceptUrl.trim().also {
         val uri = runCatching { URI(it) }.getOrNull()
         require(uri != null && uri.scheme in setOf("http", "https") && !uri.host.isNullOrEmpty() && uri.fragment == null) { "초대 수락 주소는 fragment 없는 http(s) 주소여야 한다" }
     }
     private val installBaseUrl = installBaseUrl.trimEnd('/')
+    private val installationPageUrl = installationPageUrl.trim().also {
+        val uri = runCatching { URI(it) }.getOrNull()
+        require(uri != null && uri.scheme in setOf("http", "https") && !uri.host.isNullOrEmpty() &&
+            uri.rawQuery == null && uri.rawFragment == null && uri.rawUserInfo == null) {
+            "pulsemetry.management.installation-page-url 은 query·fragment·userinfo 없는 http(s) 주소여야 한다"
+        }
+    }
 
     /**
      * 호출자의 트랜잭션 안에서 적재한다. 같은 초대로 다시 부르면 기존 메일의 상태를 돌려준다.
@@ -51,6 +58,7 @@ class InvitationMailer(private val outbox: MailOutbox, acceptUrl: String, instal
                 else "$organization 에서 Pulsemetry 초대 코드를 보냈습니다.")
             add("${if (installOnly) "설치 코드" else "초대 코드"}: $code\n유효 기간: ${SEOUL.format(expiresAt)} (한국 시간)까지")
             if (signup) add("회사 SSO 로그인\n$acceptUrl")
+            if (install) add("설치 페이지 — OS별 설치 명령을 확인하세요.\n$installationPageUrl?code=$code")
             if (install) add("CLI 설치 — 터미널에 붙여넣습니다.\nmacOS·Linux: curl -fsSL '$installBaseUrl/unix?code=$code' | sh\nWindows: irm '$installBaseUrl/windows?code=$code' | iex")
             add(when {
                 signup && install -> "회사 계정으로 SSO 로그인하세요. 이 코드는 CLI 설치에 한 번 쓸 수 있으며 로그인에는 사용하지 않습니다."

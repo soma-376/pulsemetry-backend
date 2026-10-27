@@ -165,7 +165,8 @@ DB 장애 시에는 503과 함께 `status=degraded`, `checks.database=down`을 �
 | `pulsemetry.mail.retry-interval` | 없음 | 일시 실패 뒤 다시 시도하기까지의 간격 |
 | `pulsemetry.mail.max-attempts` | 없음 | 한 메일의 최대 시도 횟수(1 이상) |
 | `pulsemetry.mail.send-timeout` | 없음 | 한 번의 발송 제한 시간. SMTP는 연결·읽기·쓰기 각각, SES는 자격 증명 조회와 API 호출을 합친 발송 한 번의 상한(SDK는 한 번만 시도하고 재시도는 outbox가 한다. 기한 안에 자격 증명을 얻지 못하면 SES에 묻지 않고 실패한다). 선점 임대는 이 값의 네 배다 |
-| `pulsemetry.management.invitation-accept-url` | 없음 | 초대 메일의 수락 링크가 가리키는 프론트 주소(fragment 없는 http(s) 주소). 관리 기능과 메일을 **함께 켜면 필수** — 비면 기동 실패 |
+| `pulsemetry.management.invitation-accept-url` | 없음 | 코드 없는 회사 SSO 로그인 주소(fragment 없는 http(s) 주소). 관리 기능과 메일을 **함께 켜면 필수** |
+| `pulsemetry.management.installation-page-url` | 없음 | 공개 설치 페이지 주소(query·fragment·userinfo 없는 http(s) 주소). 관리 기능과 메일을 **함께 켜면 필수**. `PULSEMETRY_INSTALLATION_PAGE_URL`로 주입하며 dev는 `https://dev.pulsemetry.co.kr/install` |
 | `pulsemetry.inquiries.notification-recipient` | 없음 | 접수된 문의를 알릴 담당자 주소. 문의 접수와 메일을 **함께 켜면 필수** — 비면 기동 실패 |
 | `pulsemetry.inquiries.enabled` | `false` | 도입 문의 접수(§2.2)를 켠다. 켜면 아래 네 값이 **모두 필요하다 — 하나라도 비면 기동 실패** |
 | `pulsemetry.inquiries.duplicate-window` | 없음 | 같은 회사·이메일의 재전송을 같은 접수로 보는 시간(ISO-8601 기간, 예: `PT10M`) |

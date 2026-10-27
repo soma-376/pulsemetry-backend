@@ -36,6 +36,7 @@ import java.util.UUID
         "pulsemetry.management.onboarding-otlp-endpoint=https://ingest.example.test",
         "pulsemetry.management.response-encryption-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         "pulsemetry.management.invitation-accept-url=https://app.example.test/invite",
+        "pulsemetry.management.installation-page-url=https://app.example.test/install",
         "pulsemetry.user-auth.allowed-origins=http://localhost:3000",
         "pulsemetry.mail.enabled=true", "pulsemetry.mail.provider=smtp", "pulsemetry.mail.from=no-reply@example.test", "pulsemetry.mail.encryption-key=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
         "pulsemetry.mail.dispatch-interval=PT24H", "pulsemetry.mail.retry-interval=PT5M", "pulsemetry.mail.max-attempts=3", "pulsemetry.mail.send-timeout=PT5S",

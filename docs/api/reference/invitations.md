@@ -56,7 +56,7 @@
 초대는 최대 100명, role은 `admin`·`member`, `teamId`는 UUID 또는 null이다.
 발급 결과의 `status`는 코드 발급만 말한다. **발급은 발송이 아니다** — 초대 메일의 상태는 `delivery`가 따로 말한다(ADR 0038).
 메일 기능(`pulsemetry.mail.enabled`)이 켜져 있으면 발급과 같은 트랜잭션에서 초대 메일을 outbox에 적재하고(`delivery.status=queued`), 발송 작업이 설정된 발송 구현(로컬 SMTP·배포 SES)으로 보낸다(ADR 0037 · 0058).
-메일에는 조직 이름·설치 코드·만료 시각, 회사 SSO 로그인 주소(`pulsemetry.management.invitation-accept-url`), 설치 명령([기존 §2.1](../../enrollment-server-spec.md#21-post-v1invitations-요청응답)의 `install_commands`와 같은 형태)이 담긴다. 로그인 주소와 제목에는 코드가 없다.
+메일에는 조직 이름·설치 코드·만료 시각, 회사 SSO 로그인 주소(`pulsemetry.management.invitation-accept-url`), 공개 설치 페이지(`pulsemetry.management.installation-page-url`에 `?code=<정규화 코드>`를 붙인 주소), 설치 명령([기존 §2.1](../../enrollment-server-spec.md#21-post-v1invitations-요청응답)의 `install_commands`와 같은 형태)이 담긴다. 설치 권한이 남은 메일에만 페이지 링크·명령을 싣는다. 로그인 주소와 제목에는 코드가 없다. 링크 클릭은 설치 권한을 소비하지 않는다(ADR 0038의 PROJ-266 개정).
 SSO 통합 후 메일의 로그인 안내는 회사 로그인 주소만 사용하며 초대 코드를 붙이지 않는다. 다음 가입 관련 필드는 과거 이력 호환용이다.
 메일은 그 코드에 남은 용도만 안내한다(ADR 0055) — 가입 권한이 없으면 수락 링크를, 설치를 마쳤으면 설치 명령을 싣지 않는다. 가입 권한이 없는 코드의 메일 제목은 `Pulsemetry 설치 코드`다.
 메일 기능이 꺼져 있으면 `delivery`는 `{status:"not_sent", reason:"mail_disabled"}`다. **적재되지 않은 메일을 `queued`로 내지 않는다.** 그때는 `issued`의 코드를 관리자가 직접 전달한다.
