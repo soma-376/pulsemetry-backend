@@ -1,0 +1,13 @@
+{
+  "repository": "soma-376/telemetryctl",
+  "tag": "v0.1.0-rc.2",
+  "sha256": {
+    "SHA256SUMS": "05f5fa10e323c10abf970cc898633e2c9feaacba420d076b65cb5e1083d42f86",
+    "pulsemetry_cli_darwin_amd64": "bbb0218a6bbf60e7eefb6b58745113ff4802833b48755e1df0d9b97a7fa3629e",
+    "pulsemetry_cli_darwin_arm64": "aabe64693bb7a8d3cf8984ee11ae3ba189af3a82fb5a514879be443100267d5a",
+    "pulsemetry_cli_linux_amd64": "72deac4a2802a22bb70016c28bced0bd5466301740521b380ff1737f76e3af17",
+    "pulsemetry_cli_linux_arm64": "6d0f18c704bce427cdfff7ba973ea7cbe5ddf0435336dc06b4735bb0d09b3b26",
+    "pulsemetry_cli_windows_amd64.exe": "a7b54add57c8eb8428f0ea1fe9dc26859dbec0a96cbcf33769e33e5f171a10a9",
+    "pulsemetry_cli_windows_arm64.exe": "1d55046fc0928723014d24469d80cfa135ad8fc19d6993f7daf563e2790ef406"
+  }
+}
