@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
 import java.util.UUID
 
@@ -14,6 +15,7 @@ interface InvitationRepository : JpaRepository<Invitation, UUID> {
 	 * 소비·폐기가 **실패한 이유**와 부트스트랩의 읽기 전용 사전 상태를 확인하는 조회다(ADR 0005).
 	 * 이 결과를 보고 UPDATE 를 결정하지 마라 — 그러면 SELECT-then-UPDATE 경합이 생긴다 (PLAN.md A6).
 	 */
+	@Transactional(readOnly = true)
 	fun findByCodeHash(codeHash: String): Invitation?
 
 	/**

@@ -14,12 +14,12 @@
 
 ## 로컬 검증
 
-원격 telemetryctl 기본 브랜치의 `contracts`를 `PULSEMETRY_CONTRACTS_DIR`로 공급한다. Java 25·Docker·`sh`·PowerShell 7의 `pwsh`가 필요하다. PowerShell이 없으면 오류 실행 테스트는 실패하며 건너뛰지 않는다. GitHub Ubuntu runner의 PowerShell과 같은 실행 경로를 사용한다.
+원격 telemetryctl 기본 브랜치의 `contracts`를 `PULSEMETRY_CONTRACTS_DIR`로 공급한다. 누락·형식 오류는 DB 연결 전에 거절하며 읽기 전용 트랜잭션은 repository 조회에서 시작한다. Java 25·Docker·`sh`·PowerShell 7의 `pwsh`가 필요하다. PowerShell이 없으면 오류 실행 테스트는 실패하며 건너뛰지 않는다. GitHub Ubuntu runner의 PowerShell과 같은 실행 경로를 사용한다.
 
 ```sh
 ./gradlew :apps:enrollment-api:test --tests '*Bootstrap*' --tests '*EnrollApiTest'
 ```
 
-`BootstrapApiTest`는 실제 PostgreSQL·HTTP로 상태별 응답을 받고 sh와 PowerShell에 입력해 stderr·종료 코드 1·작업 디렉터리의 파일 미생성을 확인한다. 응답에 바이너리 요청·다운로드·enroll 명령이 없고 DB 설치 행도 늘지 않는지 확인한다. 테스트 전용 DB의 테이블을 잠시 숨겨 실제 HTTP 5xx를 확인한 뒤 finally에서 원래 이름으로 되돌린다. 조회 후 동시 enroll 8개는 하나만 201이어야 한다. `EnrollApiTest`는 기존 네 키 응답과 원자적 소비 계약을 함께 검증한다.
+`BootstrapApiTest`는 실제 PostgreSQL·HTTP로 상태별 응답을 받고 sh와 PowerShell에 입력해 stderr·종료 코드 1·작업 디렉터리의 파일 미생성을 확인한다. 응답에 바이너리 요청·다운로드·enroll 명령이 없고 DB 설치 행도 늘지 않는지 확인한다. 테스트 전용 DB의 테이블을 잠시 숨겨 실제 HTTP 5xx를 확인한 뒤 finally에서 원래 이름으로 되돌린다. 조회 후 동시 enroll 8개는 하나만 201이어야 한다. `BootstrapDatabaseUnavailableApiTest`는 실제 Spring 프록시의 DataSource 연결 획득을 실패시켜 형식 오류는 DB 연결 0회로 HTTP 200, 정상 형식은 HTTP 5xx가 되는지 확인한다. `EnrollApiTest`는 기존 네 키 응답과 원자적 소비 계약을 함께 검증한다.
 
 로컬 결과는 dev 실제 검증 증거가 아니다. WAF 미적용·리뷰 대기·실제 수신함 미확인 중 하나라도 남으면 해당 티켓을 완료로 전환하지 않는다.

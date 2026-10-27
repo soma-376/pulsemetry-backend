@@ -150,7 +150,7 @@ class BootstrapApiTest {
 		assertThat(body).doesNotContain("systemctl --user enable --now pulsemetry")
 	}
 
-	// ── 코드 탐색 오라클 방지 ────────────────────────────────────────────────
+	// ── 미존재 코드 사전 거절 ────────────────────────────────────────────────
 
 	@Test
 	@DisplayName("DB 에 없는 코드는 HTTP 200 실패 스크립트이며 다운로드하지 않는다")
