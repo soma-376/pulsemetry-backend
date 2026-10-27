@@ -747,6 +747,180 @@ class PressureGuardTests(unittest.TestCase):
             with self.assertRaisesRegex(seed.SeedError, "압력 관측 계약"): seed.Runner.monitor(runner)
 
 
+class SummaryLatencyTests(unittest.TestCase):
+    policy = {"mode": seed.SUMMARY_LATENCY_MODE, "staticLimitMs": Decimal("58.816084000000046")}
+    now = seed.instant("2026-05-01T00:00:05Z")
+
+    def sample(self, servers=(1, 2, 3, 4, 5), clients=(10, 20, 30, 40, 50)):
+        value = pressure_sample()
+        value.pop("readLatencyMs"); value.pop("baselineReadLatencyMs")
+        value.update(observedAt="2026-05-01T00:00:00Z", validUntil="2026-05-01T00:00:40Z",
+                     latencyMode=seed.SUMMARY_LATENCY_MODE, measurement="http_response_summary_elapsed_ns",
+                     aggregation="median_of_5", waitEndOfQuery=True, clickhouseErrorCount=0, stopReasons=[],
+                     baselineRecalibrated=False, clientBaselineUsedAsServerBaseline=False,
+                     proposedServerElapsedLimitMs=self.policy["staticLimitMs"],
+                     serverElapsedMedianMs=sorted(servers)[2], clientElapsedMedianMs=sorted(clients)[2])
+        probes = []
+        for index, (server, client) in enumerate(zip(servers, clients)):
+            guard = {"observedAt": "2026-05-01T00:00:0" + str(index) + "Z", "identity": value["pressureGuard"]["identity"],
+                     "memoryEvents": value["pressureGuard"]["memoryEvents"], "memoryWorkingSetBytes": 500,
+                     "memoryCurrentBytes": 600, "memoryLimitBytes": 2000,
+                     "observedClickhouseErrorCount": 0, "acceptedPriorReadonlyErrorCount": 0}
+            ns = str(int(Decimal(str(server)) * 1_000_000))
+            summary = {"elapsed_ns": ns}
+            probes.append({"index": index, "startedAt": "2026-05-01T00:00:0" + str(index) + "Z",
+                           "completedAt": "2026-05-01T00:00:0" + str(index) + "Z",
+                           "startIntervalSeconds": None if index == 0 else 1, "ok": True,
+                           "before": copy.deepcopy(guard), "after": copy.deepcopy(guard),
+                           "httpStatus": 200, "httpWaitEndOfQuery": True, "summaryHeaderCount": 1,
+                           "requestSettings": {"wait_end_of_query": 1, "send_progress_in_http_headers": 0},
+                           "probeSqlSha256": seed.SUMMARY_PROBE_SQL_SHA,
+                           "responseBytes": 4, "queryId": "probe-" + str(index),
+                           "summaryRaw": seed.encode(summary), "summary": summary,
+                           "serverElapsedNs": ns, "serverElapsedMs": server, "clientElapsedMs": client})
+        value["latencyEvidence"] = {"windowStartedAt": value["observedAt"],
+                "windowCompletedAt": "2026-05-01T00:00:04Z", "windowElapsedSeconds": 4,
+                "measurement": value["measurement"], "aggregation": "median_of_5", "httpWaitEndOfQuery": True,
+                "proposedServerElapsedLimitMs": self.policy["staticLimitMs"], "rawProbes": probes,
+                "rawServerElapsedMs": list(servers), "rawClientElapsedMs": list(clients),
+                "serverElapsedMedianMs": sorted(servers)[2], "clientElapsedMedianMs": sorted(clients)[2]}
+        return value
+
+    def check(self, value, policy=None, now=None):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitor.json"; path.write_text(seed.encode(value))
+            return seed.monitor_check(path, self.now if now is None else now, require_pressure=True,
+                                      latency_policy=self.policy if policy is None else policy)
+
+    def test_server_median_uses_raw_five_and_client_delay_is_only_diagnostic(self):
+        result = self.check(self.sample((1, 2, 3, 4, 200), (1000, 2000, 3000, 4000, 5000)))
+        self.assertEqual(result["serverElapsedMedianMs"], 3)
+        self.assertEqual(result["clientElapsedMedianMs"], 3000)
+        self.assertNotIn("readLatencyMs", result)
+        self.assertNotIn("baselineReadLatencyMs", result)
+        self.assertEqual(result["pressureBaseline"]["baseline"]["memoryEvents"]["max"], 17)
+
+    def test_three_slow_values_and_exact_cap_stop(self):
+        for servers, cap in (((1, 2, 60, 61, 62), self.policy["staticLimitMs"]), ((1, 2, 3, 4, 5), 3)):
+            with self.subTest(servers=servers), self.assertRaises(seed.Paused):
+                sample = self.sample(servers)
+                sample["proposedServerElapsedLimitMs"] = cap
+                sample["latencyEvidence"]["proposedServerElapsedLimitMs"] = cap
+                self.check(sample, {"mode": seed.SUMMARY_LATENCY_MODE, "staticLimitMs": cap})
+
+    def test_legacy_target_cannot_silently_accept_new_or_mixed_sample(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitor.json"
+            for mixed in (False, True):
+                sample = self.sample()
+                if mixed: sample.update(readLatencyMs=0, baselineReadLatencyMs=1)
+                path.write_text(seed.encode(sample))
+                with self.subTest(mixed=mixed), self.assertRaisesRegex(seed.SeedError, "자동 전환"):
+                    seed.monitor_check(path, self.now)
+                if mixed:
+                    with self.assertRaisesRegex(seed.SeedError, "혼합"): self.check(sample)
+
+    def test_mode_threshold_and_legacy_sample_must_match_target(self):
+        for changed in ("mode", "cap", "legacy", "target_mode", "target_cap", "target_extra"):
+            with self.subTest(changed=changed), self.assertRaises(seed.SeedError):
+                sample, policy = self.sample(), copy.deepcopy(self.policy)
+                if changed == "mode": sample["latencyMode"] = "unknown"
+                elif changed == "cap": sample["proposedServerElapsedLimitMs"] = 100
+                elif changed == "legacy": sample = pressure_sample(); sample["observedAt"] = "2026-05-01T00:00:00Z"
+                elif changed == "target_mode": policy["mode"] = "unknown"
+                elif changed == "target_cap": policy["staticLimitMs"] = 0
+                else: policy["baselineReadLatencyMs"] = 1
+                self.check(sample, policy)
+
+    def test_raw_missing_failure_duplicate_identity_and_median_tampering_stop(self):
+        for changed in ("missing", "failed", "query_id", "median", "raw_list", "ns", "ms", "zero", "negative",
+                        "summary_missing", "summary_duplicate", "summary_json", "summary_parse", "nan", "infinite"):
+            with self.subTest(changed=changed), self.assertRaises(seed.SeedError):
+                sample = self.sample(); evidence = sample["latencyEvidence"]; probe = evidence["rawProbes"][0]
+                if changed == "missing": evidence["rawProbes"].pop()
+                elif changed == "failed": probe["ok"] = False
+                elif changed == "query_id": probe["queryId"] = "probe-1"
+                elif changed == "median": sample["serverElapsedMedianMs"] = 1
+                elif changed == "raw_list": evidence["rawClientElapsedMs"][0] = 0
+                elif changed == "ns": probe["serverElapsedNs"] = "2"
+                elif changed == "ms": probe["serverElapsedMs"] = 2
+                elif changed == "zero": probe["summaryRaw"] = '{"elapsed_ns":"0"}'; probe["summary"] = {"elapsed_ns": "0"}
+                elif changed == "negative": probe["summaryRaw"] = '{"elapsed_ns":"-1"}'; probe["summary"] = {"elapsed_ns": "-1"}
+                elif changed == "summary_missing": del probe["summaryRaw"]
+                elif changed == "summary_duplicate": probe["summaryRaw"] = '{"elapsed_ns":"1","elapsed_ns":"2"}'
+                elif changed == "summary_json": probe["summaryRaw"] = 'not-json'
+                elif changed == "summary_parse": probe["summary"] = {"elapsed_ns": "2"}
+                elif changed == "nan": probe["summaryRaw"] = '{"elapsed_ns":NaN}'
+                else: probe["clientElapsedMs"] = "Infinity"
+                self.check(sample)
+
+    def test_request_and_response_contract_is_mandatory(self):
+        for key, bad in (("summaryHeaderCount", 0), ("summaryHeaderCount", 2), ("httpStatus", 500),
+                         ("httpWaitEndOfQuery", False), ("requestSettings", {"wait_end_of_query": 1}),
+                         ("requestSettings", {"wait_end_of_query": True, "send_progress_in_http_headers": False}),
+                         ("probeSqlSha256", "0" * 64), ("responseBytes", 1025), ("startIntervalSeconds", Decimal("0.19"))):
+            with self.subTest(key=key, bad=bad), self.assertRaises(seed.SeedError):
+                sample = self.sample(); sample["latencyEvidence"]["rawProbes"][1][key] = bad
+                self.check(sample)
+        sample = self.sample(); sample["waitEndOfQuery"] = False
+        with self.assertRaises(seed.SeedError): self.check(sample)
+
+    def test_freshness_is_original_window_40_seconds_not_publication(self):
+        for changed in ("expired", "extended", "future", "old_guard", "duration", "error", "before_order", "after_order"):
+            with self.subTest(changed=changed), self.assertRaises(seed.SeedError):
+                sample = self.sample(); now = self.now
+                if changed == "expired": now += 35
+                elif changed == "extended": sample["validUntil"] = "2026-05-01T00:00:45Z"
+                elif changed == "future": sample["latencyEvidence"]["windowCompletedAt"] = "2026-05-01T00:00:30Z"
+                elif changed == "old_guard": sample["latencyEvidence"]["rawProbes"][0]["before"]["observedAt"] = "2026-04-30T23:59:59Z"
+                elif changed == "duration": sample["latencyEvidence"]["windowElapsedSeconds"] = 40
+                elif changed == "error": sample["clickhouseErrorCount"] = 1
+                elif changed == "before_order": sample["latencyEvidence"]["rawProbes"][0]["before"]["observedAt"] = "2026-05-01T00:00:01Z"
+                else: sample["latencyEvidence"]["rawProbes"][1]["after"]["observedAt"] = "2026-05-01T00:00:00Z"
+                self.check(sample, now=now)
+
+    def test_pressure_and_memory_guards_remain_active_for_every_raw_probe(self):
+        for changed in ("max", "oom", "oom_kill", "decreased", "memory", "identity", "new_error"):
+            with self.subTest(changed=changed), self.assertRaises(seed.SeedError):
+                sample = self.sample(); guard = sample["latencyEvidence"]["rawProbes"][2]["after"]
+                if changed in ("max", "oom", "oom_kill"): guard["memoryEvents"][changed] += 1
+                elif changed == "decreased": guard["memoryEvents"]["max"] -= 1
+                elif changed == "memory": guard["memoryWorkingSetBytes"] = 1500
+                elif changed == "identity": guard["identity"]["containerId"] = "new-container"
+                else: guard["observedClickhouseErrorCount"] = 1
+                self.check(sample)
+
+    def test_target_explicit_opt_in_is_hashed_and_requires_monitor(self):
+        data = {"schemaVersion": 1, "environment": "local", "targetId": "local-seed", "monitorFile": "/tmp/monitor.json",
+                "postgres": {"host": "localhost", "port": 5432, "dbname": "seed", "user": "seed", "sslmode": "disable"},
+                "clickhouse": {"url": "http://127.0.0.1:8123", "database": "default"}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "target.json"; path.write_text(seed.encode(data))
+            artifact = SimpleNamespace(manifest={"environment": "local"})
+            original = seed.Target(path, artifact).sha
+            data["monitorLatency"] = self.policy; path.write_text(seed.encode(data))
+            self.assertNotEqual(seed.Target(path, artifact).sha, original)
+            for invalid in (None, {}, {"mode": "unknown", "staticLimitMs": 1},
+                            {"mode": seed.SUMMARY_LATENCY_MODE, "staticLimitMs": True}):
+                data["monitorLatency"] = invalid; path.write_text(seed.encode(data))
+                with self.subTest(invalid=invalid), self.assertRaises(seed.SeedError): seed.Target(path, artifact)
+            data["monitorLatency"] = self.policy; del data["monitorFile"]; path.write_text(seed.encode(data))
+            with self.assertRaises(seed.SeedError): seed.Target(path, artifact)
+
+    def test_runner_passes_target_policy_and_preserves_pressure_latch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitor.json"; sample = self.sample(); path.write_text(seed.encode(sample))
+            runner = MemoryRunner([event("a")]); runner.target.data = {"environment": "local", "monitorFile": str(path), "monitorLatency": self.policy}
+            with mock.patch.object(seed.time, "time", return_value=float(self.now)):
+                result = seed.Runner.monitor(runner)
+                self.assertEqual(result["serverElapsedMedianMs"], 3)
+                sample["pressureGuard"]["memoryEvents"]["max"] += 1; path.write_text(seed.encode(sample))
+                with self.assertRaises(seed.PressurePaused): seed.Runner.monitor(runner)
+                self.assertTrue(runner.state["pressureStopLatched"])
+                path.write_text(seed.encode(self.sample()))
+                with self.assertRaises(seed.PressurePaused): seed.Runner.monitor(runner)
+
+
 class VerificationLoggingTests(unittest.TestCase):
     def test_request_only_cut_preserves_logging_and_normal_queries_are_unchanged(self):
         ch = seed.ClickHouse({"url": "http://127.0.0.1:8123", "database": "default"})
