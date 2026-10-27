@@ -11,7 +11,7 @@ import java.util.UUID
 interface InvitationRepository : JpaRepository<Invitation, UUID> {
 
 	/**
-	 * 소비·폐기가 **실패한 이유**를 알아내기 위한 조회다.
+	 * 소비·폐기가 **실패한 이유**와 부트스트랩의 읽기 전용 사전 상태를 확인하는 조회다(ADR 0005).
 	 * 이 결과를 보고 UPDATE 를 결정하지 마라 — 그러면 SELECT-then-UPDATE 경합이 생긴다 (PLAN.md A6).
 	 */
 	fun findByCodeHash(codeHash: String): Invitation?

@@ -52,6 +52,6 @@ object InvitationCode {
 		return hyphenated.takeIf { REGEX.matches(it) }
 	}
 
-	/** 이미 정규 형식인지만 본다. DB 조회 없이 형식만 검사할 때 쓴다 (코드 탐색 오라클 방지). */
+	/** 이미 정규 형식인지만 본다. 스크립트에 넣기 직전 화이트리스트를 다시 검사할 때 쓴다. */
 	fun matches(value: String?): Boolean = value != null && REGEX.matches(value)
 }

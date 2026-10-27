@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.enrollment.service
 
 import com.team376.pulsemetry.enrollment.config.PulsemetryProperties
+import com.team376.pulsemetry.enrollment.error.EnrollmentException
 import com.team376.pulsemetry.enrollment.secret.InvitationCode
 import org.springframework.core.io.ClassPathResource
 import org.springframework.stereotype.Component
@@ -26,6 +27,13 @@ class BootstrapScripts(
 	fun windows(code: String): String = render(windowsTemplate, code)
 
 	fun unix(code: String): String = render(unixTemplate, code)
+
+    /** 고정 오류 문구만 삽입한다. 입력 코드·다운로드·파일 생성·enroll 명령은 들어가지 않는다. */
+    fun unixFailure(error: EnrollmentException): String =
+        "#!/bin/sh\nprintf '%s\\n' '${error.message.replace("'", "'\"'\"'")}' >&2\nexit 1\n"
+
+    fun windowsFailure(error: EnrollmentException): String =
+        "[Console]::Error.WriteLine('${error.message.replace("'", "''")}')\nexit 1\n"
 
 	/**
 	 * 코드를 스크립트에 끼워 넣는다.

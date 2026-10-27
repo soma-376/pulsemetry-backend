@@ -337,9 +337,10 @@ ADR 0004 가 요구한 기록처다 — 스키마가 설계도(`rdb-schema/dbdia
 
 ### `GET /windows`, `GET /unix`
 
-- `code` 를 **정규식으로만** 검증한다. 위반이면 400 `invalid_request`.
-- **DB 를 조회하지 않는다.** 형식만 맞으면 코드가 실제로 존재하든 아니든 같은 스크립트를 준다.
-  인증 없는 공개 엔드포인트가 코드의 유효성을 알려 주면 코드 탐색 오라클이 된다.
+- `code`를 `InvitationCode.normalize`로 정규화·형식 검사한 뒤 SHA-256 해시로 초대 상태를 읽기 전용 조회한다. 코드를 소비하거나 설치·구성원 상태를 바꾸지 않는다.
+- 미사용·미취소·미만료인 코드에만 다운로드 스크립트를 준다. 최종 `POST /api/v1/enroll`은 기존 조건부 UPDATE로 재검증·소비한다.
+- 누락·형식 오류·미존재·사용·취소·만료는 각각 고정 문구를 stderr로 출력하고 1로 종료하는 Unix/PowerShell 스크립트다. HTTP 200 `text/plain`이며 입력 코드를 재출력하지 않는다. DB 장애는 5xx이고 다운로드 스크립트가 아니다.
+- 공개 전에 `/unix`·`/windows`·`/api/v1/enroll`의 WAF 등록 그룹 합산 IP당 300회/300초를 적용한다. WAF 차단은 HTTP 429 + `Retry-After: 60`이며 앱 limiter는 추가하지 않는다. HTTP 오류와 `curl … | sh`의 최종 파이프 종료 코드는 구분한다.
 - 검증을 통과한 코드만 스크립트에 삽입한다. 정규식이 허용하는 32자에는 셸·PowerShell 메타문자가
   없으므로 **이스케이프하지 않는다** — 화이트리스트가 방어선이다.
 - `Content-Type: text/plain;charset=UTF-8`, `Cache-Control: no-store`.
