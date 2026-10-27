@@ -106,18 +106,17 @@ class SeedScenarioTest {
         assertEquals(date.minusDays(27).toString(), fixture.path("usage").path("startDate").asString())
         assertEquals(date.toString(), fixture.path("usage").path("endDate").asString())
         assertEquals(a.summary()["period_events"], fixture.path("usage").path("eventCount").asInt())
-        // 신규 설치도 적용/미적용 상태를 섞고 두 번째 설치는 확인된 판이 없다.
+        // 모든 설치의 적용 판을 확인할 수 있고 새 판의 적용/미적용 상태는 섞여 있다.
         assertEquals(2, fixture.path("policyRollout").path("desiredVersion").asInt())
         assertEquals(78, fixture.path("policyRollout").path("applied").asInt())
-        assertEquals(100, fixture.path("policyRollout").path("eligible").asInt())
-        assertEquals(1, fixture.path("policyRollout").path("unknown").asInt())
+        assertEquals(99, fixture.path("policyRollout").path("eligible").asInt())
+        assertEquals(0, fixture.path("policyRollout").path("unknown").asInt())
         assertEquals(21, fixture.path("policyRollout").path("outdated").asInt())
         assertEquals(2, fixture.path("onboarding").path("policy").path("version").asInt())
         val notifiable = fixture.path("installations").toList().filter { it.path("canNotify").asBoolean() }.map { it.path("installationId").asString() }
-        assertEquals(((9..11).toList() + ((14..49).toList() + (54..106)).filter { it % 5 == 0 }).map { id("A/installation/$it") } + id("A/installation/2/secondary"), notifiable)
+        assertEquals(((9..11).toList() + ((14..49).toList() + (54..106)).filter { it % 5 == 0 }).map { id("A/installation/$it") }, notifiable)
         val reported = fixture.path("installations").toList().associate { it.path("installationId").asString() to it.path("lastHeartbeatAt") }
         assertTrue(A_ACTIVE_MEMBER_INDICES.filter { it >= 2 }.all { reported.getValue(id("A/installation/$it")).asString() == "2026-09-28T09:00:00Z" })
-        assertTrue(reported.getValue(id("A/installation/2/secondary")).isNull)
         val serialized = encode(fixture)
         for (secret in listOf("password_hash", "development_password", "code_hash", "invitation_codes", "client_secret")) {
             assertFalse(serialized.contains(secret))
@@ -309,7 +308,7 @@ class SeedScenarioTest {
 
     @Test fun `초대는 대기 만료 사용됨 상태가 있다`() {
         val invitations = a.rows.getValue("enrollment.invitations")
-        assertEquals(100, invitations.count { it["used_at"] != null })
+        assertEquals(99, invitations.count { it["used_at"] != null })
         assertEquals(6, invitations.count { it["used_at"] == null })
         assertEquals(setOf("pending", "expired", "pending50", "expired51", "pending52", "expired53"), a.invitationCodes.keys)
         assertTrue(a.invitationCodes.values.all { Regex("^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$").matches(it) })
@@ -354,25 +353,23 @@ class SeedScenarioTest {
         assertEquals(listOf(id("A/member/9")), activeMembers.filter { it["id"] !in assignedMembers }.map { it["id"] })
     }
 
-    @Test fun `A의 두 번째 설치는 동일 구성원이며 수신과 적용 이력을 꾸미지 않는다`() {
+    @Test fun `A의 모든 설치는 구성원별 한 대이고 과거 수신과 적용 이력이 있다`() {
         val installations = a.rows.getValue("enrollment.installations")
-        assertEquals(100, installations.size)
+        assertEquals(99, installations.size)
         assertEquals(99, installations.map { it["member_id"] }.distinct().size)
         assertEquals(setOf("windows", "macos", "linux"), installations.map { it["platform"] }.toSet())
-        val secondary = installations.single { it["id"] == id("A/installation/2/secondary") }
-        assertEquals(id("A/member/2"), secondary["member_id"])
-        assertNull(secondary["last_seen_at"])
-        assertFalse(a.ledger.any { it["installation_id"] == secondary["id"] })
+        assertEquals(installations.map { it["id"] }.toSet(), a.ledger.map { it["installation_id"] }.toSet())
         val fixture = json.readTree(encode(frontendFixture(a)))
-        assertTrue(fixture.path("installations").single { it.path("installationId").asString() == secondary["id"] }
-            .path("appliedPolicyVersion").isNull)
+        assertEquals(99, fixture.path("installations").size())
+        assertTrue(fixture.path("installations").all { !it.path("appliedPolicyVersion").isNull })
     }
 
-    @Test fun `A의 주 설치는 기준 시각까지 손실 없이 수집했다고 보고했고 보고한 적 없는 설치와 C는 그대로 둔다`() {
+    @Test fun `A의 모든 설치는 기준 시각까지 손실 없이 수집했다고 보고했고 C는 보고 근거가 없다`() {
         val installations = a.rows.getValue("enrollment.installations").associateBy { it["id"] }
         val heartbeats = a.rows.getValue("enrollment.installation_heartbeats")
         val segments = a.rows.getValue("enrollment.installation_collection_segments")
         val primaries = A_ACTIVE_MEMBER_INDICES.filter { it >= 2 }.map { id("A/installation/$it") }
+        assertEquals(installations.keys, primaries.toSet())
         assertEquals(primaries, heartbeats.map { it["installation_id"] })
         assertEquals(primaries, segments.map { it["installation_id"] })
         // 기준 시각은 기준일의 서울 18시다. 당일 수신도 보고보다 앞선다.
@@ -402,8 +399,7 @@ class SeedScenarioTest {
         }
         assertEquals(99, heartbeats.map { it["run_id"] }.distinct().size)
         assertTrue(heartbeats.all { Regex("[0-9a-f]{32}").matches(it["run_id"].toString()) })
-        // 두 번째 설치는 보고한 적이 없다. C는 설치 보고라는 근거가 없는 조직으로 남긴다(수집 상태 확인 불가).
-        assertNull(installations.getValue(id("A/installation/2/secondary"))["last_seen_at"])
+        // C는 설치 보고라는 근거가 없는 조직으로 남긴다(수집 상태 확인 불가).
         for (table in listOf("enrollment.installation_heartbeats", "enrollment.installation_collection_segments")) {
             assertFalse(c.rows.containsKey(table))
             assertFalse(b.rows.containsKey(table))
@@ -422,10 +418,10 @@ class SeedScenarioTest {
         fun others(manifest: JsonNode) = manifest.path("privacy").properties().filter { it.key != "collect_tool_details" }.map { it.key to it.value.asBoolean() }
         assertEquals(others(v1), others(v2))
         assertEquals(listOf(false, false), listOf(v2.at("/privacy/collect_user_prompts"), v2.at("/privacy/collect_assistant_responses")).map { it.asBoolean() })
-        // 새 판의 적용 확인은 적용한 설치에만 있다. 두 번째 설치는 새 판으로 등록했으나 적용을 보고하지 않았다.
+        // 새 판의 적용 확인은 적용한 설치에만 있다.
         val onV2 = a.rows.getValue("enrollment.installation_manifest_assignments").filter { it["manifest_id"] == id("A/manifest/2") }
         assertEquals(((2..8).toList() + ((14..49).toList() + (54..106)).filter { it % 5 != 0 }).map { id("A/installation/$it") }, onV2.filter { it["applied_at"] != null }.map { it["installation_id"] })
-        assertEquals(listOf(id("A/installation/2/secondary")), onV2.filter { it["applied_at"] == null }.map { it["installation_id"] })
+        assertTrue(onV2.all { it["applied_at"] != null })
         assertTrue(onV2.filter { it["applied_at"] != null }.all { it["applied_at"].toString() >= "2026-09-20T15:00:00Z" })
         // C는 판 하나만 있다.
         assertEquals(listOf(1 to true), c.rows.getValue("enrollment.manifests").map { it["version"] to it["is_active"] })

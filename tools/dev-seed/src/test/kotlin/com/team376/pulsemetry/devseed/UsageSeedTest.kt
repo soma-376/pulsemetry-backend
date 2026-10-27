@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.devseed
 
 import com.team376.pulsemetry.telemetry.adapter.observation.*
+import com.team376.pulsemetry.telemetry.adapter.observation.semantics.*
 import org.junit.jupiter.api.TestInstance
 import java.math.BigDecimal
 import java.time.Instant
@@ -8,7 +9,6 @@ import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-import kotlin.test.assertNull
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class UsageSeedTest {
@@ -16,7 +16,7 @@ class UsageSeedTest {
     private val data = scenario("A", date)
     private fun source(row: Row) = Instant.parse(row["source_time"].toString())
 
-    @Test fun `180일 5만에서 8만 건 범위와 과거 전용 사용자 및 미관측 설치를 구분한다`() {
+    @Test fun `180일 5만에서 8만 건 범위와 과거 전용 사용자 및 사용량 없는 수신을 구분한다`() {
         val start = date.minusDays(179).atStartOfDay(seoul).toInstant()
         val previousStart = date.minusDays(55).atStartOfDay(seoul).toInstant()
         val split = date.minusDays(27).atStartOfDay(seoul).toInstant()
@@ -36,7 +36,6 @@ class UsageSeedTest {
         assertEquals(setOf("claude_code", "codex"), data.events.map { it["product"] }.toSet())
         assertTrue(data.events.none { it["member_id"] == id("A/member/10") })
         assertEquals(0, data.ledger.single { it["installation_id"] == id("A/installation/10") }["record_count"])
-        assertTrue(data.ledger.none { it["installation_id"] == id("A/installation/2/secondary") })
     }
 
     @Test fun `다른 요일 연말과 윤년 기준일에도 목표 분량을 유지한다`() {
@@ -182,17 +181,65 @@ class UsageSeedTest {
             fun n(key: String) = (row.getValue(key) as Number).toLong()
             val input = n("tokens_input")
             val read = n("tokens_cache_read")
-            // Codex 합성 프로파일의 cache write는 해당 없음이며 원본 값은 null이다(ADR 0020 §4).
-            val created = (row["tokens_cache_create"] as? Number)?.toLong() ?: 0L
+            val created = n("tokens_cache_create")
             val uncached = n("tokens_input_uncached")
             assertEquals(uncached + read + created + n("tokens_output"), n("tokens_total_derived"))
             if (row["product"] == "codex") {
-                assertEquals(uncached + read, input)
-                assertNull(row["tokens_cache_create"])
+                assertEquals(uncached + read + created, input)
+                assertEquals(0L, created)
             } else assertEquals(uncached, input)
             assertTrue(n("ttft_ns") < n("duration_ns"))
             assertEquals(64, row["observation_id"].toString().length)
             assertEquals(64, row["analysis_hash"].toString().length)
+        }
+    }
+
+    @Test fun `현재와 이전 기간의 두 도구 토큰은 canonical 성분으로 빠짐없이 합산된다`() {
+        // ADR 0061의 호환 집합과 명시적 보고 성분을 오라클로 쓴다. 누락을 0으로 대체하지 않는다.
+        val profiles = mapOf(
+            "claude_code" to Pair("claude-code-exclusive-v1", InputSemantics.EXCLUSIVE_CACHE),
+            "codex" to Pair("codex-responses-inclusive-v1", InputSemantics.INCLUSIVE_CACHE),
+        )
+        val base = data.events.first()
+        val envelope = ObservationEnvelope(
+            tenantId = base["tenant_id"].toString(), installationId = base["installation_id"].toString(),
+            observationId = base["observation_id"].toString(), analysisHash = base["analysis_hash"].toString(),
+            identityVersion = "seed-v5", sourceIdentityKind = SourceIdentityKind.NATIVE_ID,
+            mappingStatus = MappingStatus.MAPPED, sourceTime = EpochNanos.of(source(base)),
+            sourceTimeOrigin = SourceTimeOrigin.OTLP_EVENT, receivedTime = EpochNanos.of(Instant.parse(base["received_time"].toString())),
+            signal = ObservationSignal.LOG, product = Product.CLAUDE_CODE, surface = Surface.UNKNOWN,
+            mappingVersion = "seed-v5", usageRole = UsageRole.PRIMARY, usageScope = UsageScope.RESPONSE,
+            workloadKind = WorkloadKind.MAIN, maskingVersion = "seed-v5", metadataJson = "{}",
+        )
+        val currentStart = date.minusDays(27).atStartOfDay(seoul).toInstant()
+        val previousStart = date.minusDays(55).atStartOfDay(seoul).toInstant()
+        val periods = listOf(
+            data.events.filter { source(it) >= currentStart },
+            data.events.filter { source(it) >= previousStart && source(it) < currentStart },
+        )
+        for (period in periods) {
+            assertEquals(profiles.keys, period.map { it["product"] }.toSet())
+            var canonicalTotal = 0L
+            for (row in period) {
+                fun n(key: String) = (row.getValue(key) as Number).toLong()
+                val product = Product.entries.single { it.wire == row["product"] }
+                val (profileId, inputSemantics) = profiles.getValue(row["product"].toString())
+                val semantics = SemanticsProfile(profileId, inputSemantics, OutputSemantics.INCLUSIVE_REASONING_TOOL,
+                    CacheWriteStatus.REPORTED, SemanticsScope(product, "합성 보고", "합성", "네 토큰 성분 명시"),
+                    "docs/adr/0061-Codex-완료-응답은-포함형-토큰-의미로-정규화하고-검증된-두-프로파일만-합산한다.md")
+                val derived = TokenDerivation.apply(EventObservation(envelope.copy(product = product), EventType.MODEL_RESPONSE_USAGE,
+                    tokensInput = n("tokens_input"), tokensOutput = n("tokens_output"),
+                    tokensCacheRead = n("tokens_cache_read"), tokensCacheCreate = n("tokens_cache_create")), semantics)
+                assertEquals(derived.semanticsProfile, row["semantics_profile"])
+                assertEquals(derived.inputSemantics.wire, row["input_semantics"])
+                assertEquals(derived.outputSemantics.wire, row["output_semantics"])
+                assertEquals(derived.tokensInputUncached, n("tokens_input_uncached"))
+                assertEquals(derived.tokensTotalDerived, n("tokens_total_derived"))
+                assertTrue(derived.envelope.qualityFlags.isEmpty())
+                canonicalTotal += n("tokens_input_uncached") + n("tokens_output") + n("tokens_cache_read") + n("tokens_cache_create")
+            }
+            assertEquals(canonicalTotal, period.sumOf { (it["tokens_total_derived"] as Number).toLong() })
+            assertTrue(canonicalTotal > 0)
         }
     }
 

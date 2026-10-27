@@ -6,6 +6,8 @@ Accepted — ADR 0027의 서버 자동 시드·공유 코어 분리, ADR 0004·0
 
 [ADR 0032](0032-온보딩-완료는-조직에-저장하고-시드는-ABC만-유지한다.md)가 일부 결정을 대체한다. 기본 설치 조직 시드를 제거하고 A/B/C만 유지한다. Docker 실행과 인증 키 준비는 유지한다.
 
+[허브 ADR 0023](https://github.com/soma-376/docs/blob/main/adr/0023-dev-historical-dashboard-dataset.md)가 별도의 과거 화면 데이터 파일 생성과 local/dev 명시적 적재 경로를 추가한다. 이 문서의 기존 Compose 초기화·적재·reset 명령은 계속 Docker와 고정 로컬 DB로 제한한다.
+
 ## Context
 
 개발 DB 준비를 Docker로 통일한다. 서버와 도구가 시드 코어를 공유할 필요가 없어졌으며,

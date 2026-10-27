@@ -8,6 +8,10 @@ import java.nio.file.Path
 
 /** Docker Compose의 초기화와 수동 관리 명령을 한 진입점에서 실행한다(ADR 0031). */
 fun main(args: Array<String>) {
+    if (args.firstOrNull() == "historical-plan") {
+        runHistoricalPlan(args)
+        return
+    }
     if (args.firstOrNull() == "configure-oidc") {
         runTenantOidc(args, System.getenv())
         return
