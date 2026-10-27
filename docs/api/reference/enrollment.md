@@ -110,7 +110,7 @@ enroll 요청의 `platform` 은 클라이언트가 `runtime.GOOS` 를 그대로 
 `POST /api/v1/enroll` 은 입력을 정규화한다: 앞뒤 공백 제거 → 대문자 → 하이픈이 없으면 4자마다 삽입.
 그러고도 정규식을 만족하지 못하면 400 `invalid_request` 다.
 
-`GET /windows`·`GET /unix` 는 **정규화하지 않고** 정규식 검증만 한다([기존 §6.1](../../enrollment-server-spec.md#61-get-windows-get-unix) 참조).
+`GET /windows`·`GET /unix`도 같은 정규화를 적용한 뒤 초대 상태를 읽기 전용으로 검증한다. 실패는 입력 코드를 포함하지 않는 HTTP 200 오류 스크립트이며, 최종 소비는 enroll에서 수행한다([부트스트랩 규칙](#부트스트랩-스크립트와-바이너리) 참조).
 
 ### 소비
 
