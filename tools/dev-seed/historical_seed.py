@@ -339,9 +339,13 @@ class Target:
                 require(re.fullmatch(r"[A-Z_][A-Z0-9_]*", settings["passwordEnv"]), "비밀번호 환경변수 이름이 유효하지 않습니다.")
         if d["environment"] == "dev":
             require(pg["sslmode"] == "verify-full" and pg.get("sslrootcert"), "dev PostgreSQL은 CA와 verify-full이 필수입니다.")
+            require(url.scheme == "https" or url.hostname in ("localhost", "127.0.0.1", "::1"),
+                    "dev ClickHouse는 HTTPS 또는 loopback 터널만 허용합니다.")
             require(d.get("monitorFile"), "dev에는 신선한 부하 관측 파일이 필요합니다.")
         else:
             require(pg["host"] in ("localhost", "127.0.0.1", "::1") and url.hostname in ("localhost", "127.0.0.1", "::1"), "local 대상은 loopback만 허용합니다.")
+            require("hostaddr" not in pg or pg["hostaddr"] in ("127.0.0.1", "::1"),
+                    "local PostgreSQL hostaddr도 loopback만 허용합니다.")
 
 
 class Postgres:

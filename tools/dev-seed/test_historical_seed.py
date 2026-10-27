@@ -648,6 +648,43 @@ class MonitorAndTargetTests(unittest.TestCase):
             with self.assertRaisesRegex(seed.SeedError, "비밀 원문"):
                 seed.Target(path, SimpleNamespace(manifest={"environment": "dev"}))
 
+    def test_local_hostaddr_cannot_override_loopback_boundary(self):
+        data = {"schemaVersion": 1, "environment": "local", "targetId": "local-seed",
+                "postgres": {"host": "localhost", "port": 5432, "dbname": "seed", "user": "seed", "sslmode": "disable"},
+                "clickhouse": {"url": "http://127.0.0.1:8123", "database": "default"}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "target.json"
+            for address in (None, "127.0.0.1", "::1", "192.0.2.1", "2001:db8::1", "db.example.test", ""):
+                with self.subTest(hostaddr=address):
+                    candidate = copy.deepcopy(data)
+                    if address is not None:
+                        candidate["postgres"]["hostaddr"] = address
+                    path.write_text(seed.encode(candidate))
+                    if address in (None, "127.0.0.1", "::1"):
+                        seed.Target(path, SimpleNamespace(manifest={"environment": "local"}))
+                    else:
+                        with self.assertRaisesRegex(seed.SeedError, "hostaddr"):
+                            seed.Target(path, SimpleNamespace(manifest={"environment": "local"}))
+
+    def test_dev_clickhouse_requires_tls_or_loopback_tunnel(self):
+        data = {"schemaVersion": 1, "environment": "dev", "targetId": "dev-seed", "monitorFile": "/tmp/monitor.json",
+                "postgres": {"host": "db.example.test", "hostaddr": "127.0.0.1", "port": 15432,
+                             "dbname": "seed", "user": "seed", "sslmode": "verify-full", "sslrootcert": "/tmp/ca.pem"},
+                "clickhouse": {"url": "", "database": "default"}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "target.json"
+            for url in ("https://ch.example.test", "http://localhost:8123", "http://127.0.0.1:18123",
+                        "http://[::1]:8123", "http://ch.example.test:8123", "http://192.0.2.1:8123"):
+                with self.subTest(url=url):
+                    candidate = copy.deepcopy(data)
+                    candidate["clickhouse"]["url"] = url
+                    path.write_text(seed.encode(candidate))
+                    if url in ("http://ch.example.test:8123", "http://192.0.2.1:8123"):
+                        with self.assertRaisesRegex(seed.SeedError, "HTTPS 또는 loopback"):
+                            seed.Target(path, SimpleNamespace(manifest={"environment": "dev"}))
+                    else:
+                        seed.Target(path, SimpleNamespace(manifest={"environment": "dev"}))
+
 
 def pressure_sample():
     sample = MonitorAndTargetTests().sample(observedAt=seed.now_iso())

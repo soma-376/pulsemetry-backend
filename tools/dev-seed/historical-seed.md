@@ -68,7 +68,9 @@ dev는 기존 Cognito A 공개 연결을 사용한다. local 모의 IdP는 `--oi
 
 비밀번호 원문·Cognito client secret은 JSON이나 명령 인자에 넣지 않는다. `passwordEnv` 대신 기존
 `PGPASSFILE`을 사용할 수도 있다. local 대상은 PostgreSQL/ClickHouse 모두 loopback이어야 하며
-`sslmode=disable`을 허용한다. dev는 원래 RDS hostname을 검증하는 `verify-full`과 CA가 필수다.
+`sslmode=disable`을 허용한다. PostgreSQL `hostaddr`를 지정할 때도 loopback IP여야 한다.
+dev PostgreSQL은 원래 RDS hostname을 검증하는 `verify-full`과 CA가 필수이며,
+dev ClickHouse는 HTTPS 또는 loopback 터널 주소만 허용한다.
 
 ## 순서
 
