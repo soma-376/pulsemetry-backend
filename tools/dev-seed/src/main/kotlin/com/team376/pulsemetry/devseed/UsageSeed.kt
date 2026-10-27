@@ -27,14 +27,27 @@ internal val seedModels = mapOf(
 internal data class SeedUsage(val events: List<Row>, val ledger: List<Row>)
 
 internal const val A_USAGE_DAYS = 180
+// 토큰 의미 보정은 관측 신원을 바꾸지 않고 정규화 결과의 판만 올린다(ADR 0020 §3).
+private const val A_USAGE_NORMALIZER_REV = 2
 
-private fun noise(key: String, bound: Int) = (hash(key).take(8).toLong(16) % bound).toInt()
+internal fun noise(key: String, bound: Int) = (hash(key).take(8).toLong(16) % bound).toInt()
 
 internal data class SeedSessionPlan(
     val date: LocalDate, val memberIndex: Int, val slot: Int, val calls: Int,
     val marker: String = "daily", val start: Instant? = null,
+    val keyNamespace: String = "A/usage-v5",
 ) {
-    val key = "A/usage-v5/$date/$memberIndex/$slot/$marker"
+    val key = "$keyNamespace/$date/$memberIndex/$slot/$marker"
+}
+
+/** A의 기본값과 신원은 그대로 두고 독립 데이터셋만 명시적 명단·신원 공간을 넘긴다. */
+internal data class SeedUsageContext(
+    val namespace: String,
+    val scenario: String,
+    val memberTeams: Map<Int, Int>,
+    val teamCount: Int,
+) {
+    fun identity(key: String) = id("$namespace/$key")
 }
 
 /** 행을 직렬화하기 전에 사용 일정을 정한다. 기준일을 바꿔도 같은 실제 날짜의 슬롯·요청 신원은 유지한다. */
@@ -93,7 +106,8 @@ internal fun usageSessionPlan(asOf: LocalDate): List<SeedSessionPlan> = buildLis
 private data class SeedMembership(val team: String, val joined: Instant, val left: Instant?)
 
 /** A의 180일·약 7만 건 사용 기록. 실수 난수·현재 시각 없이 기준일과 의미 있는 키로 재현한다. */
-internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>, sessions: List<SeedSessionPlan> = usageSessionPlan(asOf)): SeedUsage {
+internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>, sessions: List<SeedSessionPlan> = usageSessionPlan(asOf),
+    context: SeedUsageContext? = null): SeedUsage {
     val events = mutableListOf<Row>()
     val ledger = mutableListOf<Row>()
     val memberships = rows.getValue("enrollment.team_memberships").groupBy { it["member_id"] }.mapValues { (_, entries) ->
@@ -101,14 +115,20 @@ internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>, sessio
             it["left_at"]?.toString()?.let(Instant::parse)) }
     }
     val base = asOf.atStartOfDay(seoul)
-    val tenant = id("A")
-    val members = A_ACTIVE_MEMBER_INDICES.filter { it >= 2 }.associateWith { id("A/member/$it") }
-    val installations = A_ACTIVE_MEMBER_INDICES.filter { it >= 2 }.associateWith { id("A/installation/$it") }
-    val teamIndices = A_TEAM_NAMES.indices.associateBy { id("A/team/$it") }
+    val namespace = context?.namespace ?: "A"
+    val tenant = id(namespace)
+    val memberIndices = context?.memberTeams?.keys?.filter { it >= 2 } ?: A_ACTIVE_MEMBER_INDICES.filter { it >= 2 }
+    val members = memberIndices.associateWith { id("$namespace/member/$it") }
+    val installations = memberIndices.associateWith { id("$namespace/installation/$it") }
+    val teamIndices = (0 until (context?.teamCount ?: A_TEAM_NAMES.size)).associateBy { id("$namespace/team/$it") }
+    fun usageId(key: String) = context?.identity(key) ?: id(key)
     fun session(plan: SeedSessionPlan) {
         val (date, index, slot, calls, marker, start) = plan
         val key = plan.key
         val product = when {
+            context != null -> if (context.memberTeams.getValue(index) % 10 in 0..1) {
+                if ((index + slot) % 2 == 0) "claude_code" else "codex"
+            } else if (context.memberTeams.getValue(index) % 2 == 0) "claude_code" else "codex"
             index == 2 || index == 6 -> if (slot % 2 == 0) "claude_code" else "codex"
             index >= 54 -> if (requireNotNull(aTeamIndex(index)) % 2 == 0) "claude_code" else "codex"
             else -> if (index % 2 == 0) "claude_code" else "codex"
@@ -125,7 +145,7 @@ internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>, sessio
         val received = times.last().plusSeconds(30).plusNanos(slot.toLong())
         val activeTeams = memberships[member].orEmpty().filter { it.joined <= startAt && (it.left == null || startAt < it.left) }
             .map { it.team }.sorted()
-        val teamIndex = activeTeams.singleOrNull()?.let(teamIndices::get)
+        val teamIndex = activeTeams.singleOrNull()?.let(teamIndices::get)?.let { if (context == null) it else it % 10 }
         val premiumPercent = teamIndex?.let { listOf(40, 20, 10, 5, 20, 30, 15, 55, 25, 5)[it] } ?: 15
         val economicalPercent = teamIndex?.let { listOf(5, 15, 40, 60, 30, 10, 25, 5, 20, 65)[it] } ?: 30
         // 비용 급증은 정책 변경·최근 수집 상태와 분리된 과거 한 주에만 둔다.
@@ -135,7 +155,7 @@ internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>, sessio
             if (it < premiumPercent) 1 else if (it < premiumPercent + economicalPercent) 2 else 0
         }
         val model = seedModels.getValue(product)[modelIndex]
-        val sessionId = id(key)
+        val sessionId = usageId(key)
         val cachePercent = when {
             index in setOf(2, 6) -> 80
             index in setOf(3, 7) -> 55
@@ -145,7 +165,7 @@ internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>, sessio
         }
         val enrichment = encode(linkedMapOf("ai_analysis" to emptyMap<String, Any>(), "github" to emptyMap<String, Any>(),
             "jira" to emptyMap<String, Any>(), "org" to mapOf("team_ids" to activeTeams)))
-        val metadata = encode(mapOf("synthetic" to true, "seedScenario" to "A", "seedRevision" to 5,
+        val metadata = encode(mapOf("synthetic" to true, "seedScenario" to (context?.scenario ?: "A"), "seedRevision" to 6,
             "case" to if (costSpike) "cost_spike" else marker))
         for ((turn, time) in times.withIndex()) {
             val observationKey = "$key/turn/$turn"
@@ -161,7 +181,8 @@ internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>, sessio
             val row = linkedMapOf<String, Any?>(
                 "tenant_id" to tenant, "installation_id" to installation,
                 "observation_id" to hash(encode(listOf("seed-v5", tenant, installation, "log", service, time.toString(), observationKey))),
-                "row_version" to ((1L shl 32) or 1L), "normalizer_rev" to 1, "schema_version" to 1, "identity_version" to "seed-v5",
+                "row_version" to ((A_USAGE_NORMALIZER_REV.toLong() shl 32) or 1L), "normalizer_rev" to A_USAGE_NORMALIZER_REV,
+                "schema_version" to 1, "identity_version" to "seed-v5",
                 "source_identity_kind" to "native_id", "source_identity_namespace" to "pulsemetry.dev-seed",
                 "native_observation_id" to observationKey, "record_status" to "active", "exclusion_reason" to null,
                 "mapping_status" to "mapped", "quality_flags" to emptyList<String>(),
@@ -178,17 +199,19 @@ internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>, sessio
                 "enrichment_json" to enrichment,
                 "event_type" to "model.response.usage", "operation" to "responses", "end_time" to time.plusNanos(duration).toString(),
                 "duration_ns" to duration, "ttft_ns" to 200_000_000L + noise("$observationKey/ttft", 1800) * 1_000_000L,
-                "ttft_scope" to "request", "turn_id" to id("$key/turn/$turn"),
+                "ttft_scope" to "request", "turn_id" to usageId("$key/turn/$turn"),
                 "turn_id_namespace" to if (exclusive) "claude_code.prompt" else "codex.turn",
-                "request_id" to id("$observationKey/request"),
+                "request_id" to usageId("$observationKey/request"),
                 "request_id_namespace" to if (exclusive) "claude_code.request" else "codex.upstream_request",
                 "response_id" to null, "response_id_namespace" to null,
-                "tokens_input" to if (exclusive) uncached else uncached + read, "tokens_output" to output,
-                "tokens_cache_read" to read, "tokens_cache_create" to if (exclusive) created else null, "tokens_input_uncached" to uncached,
+                // A는 네 성분을 모두 보고한 정상 합성 관측이다. Codex의 생성 캐시 0도 명시적 보고값이며,
+                // 실제 미보고 null을 0으로 추정하는 정규화 규칙을 만들지 않는다(ADR 0061).
+                "tokens_input" to if (exclusive) uncached else uncached + read + created, "tokens_output" to output,
+                "tokens_cache_read" to read, "tokens_cache_create" to created, "tokens_input_uncached" to uncached,
                 "tokens_total_derived" to uncached + read + created + output,
                 "input_semantics" to if (exclusive) "exclusive_cache" else "inclusive_cache",
                 "output_semantics" to "inclusive_reasoning_tool",
-                "semantics_profile" to if (exclusive) "seed-claude-exclusive-v5" else "seed-codex-inclusive-v5",
+                "semantics_profile" to if (exclusive) "claude-code-exclusive-v1" else "codex-responses-inclusive-v1",
                 "cost_reported_usd" to null, "cost_estimated_usd" to model.cost(uncached, output, read, created),
                 "reported_cost_basis" to "unknown", "pricing_version" to "seed-synthetic-v5", "success" to true, "http_status" to 200,
                 "error_type" to "none", "attempt" to 1,
@@ -207,12 +230,12 @@ internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>, sessio
             events.add(row)
         }
         ledger.add(linkedMapOf("tenant_id" to tenant, "installation_id" to installation, "received_time" to received.toString(),
-            "receipt_id" to id("$key/receipt"), "signal" to "logs", "product" to product,
+            "receipt_id" to usageId("$key/receipt"), "signal" to "logs", "product" to product,
             "source_time_min" to times.first().toString(), "source_time_max" to times.last().toString(),
             "record_count" to calls, "rejected_count" to 0, "archive_ref" to null, "masking_version" to "seed-v5"))
     }
     sessions.forEach(::session)
-    ledger.add(linkedMapOf("tenant_id" to id("A"), "installation_id" to id("A/installation/10"),
+    if (context == null) ledger.add(linkedMapOf("tenant_id" to id("A"), "installation_id" to id("A/installation/10"),
         "received_time" to base.plusHours(17).plusMinutes(30).toInstant().toString(), "receipt_id" to id("A/usage-v5/$asOf/empty-receipt"),
         "signal" to "logs", "product" to "claude_code", "source_time_min" to null, "source_time_max" to null,
         "record_count" to 0, "rejected_count" to 0, "archive_ref" to null, "masking_version" to "seed-v5"))

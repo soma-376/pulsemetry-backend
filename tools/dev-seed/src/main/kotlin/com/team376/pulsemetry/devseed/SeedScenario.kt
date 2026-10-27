@@ -136,7 +136,11 @@ fun scenario(name: String, asOf: LocalDate, otlpEndpoint: String = DEFAULT_OTLP_
     return data.copy(otlpEndpoint = otlpEndpoint, defaultEndpointFingerprint = data.copy(rows = canonicalRows).fingerprint)
 }
 
-private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedData {
+/** 독립 과거 데이터셋은 A의 정책·좌석 예시만 재사용하고 180일 관측을 불필요하게 만들지 않는다. */
+internal fun historicalOrganizationTemplate(asOf: LocalDate, endpoint: String): SeedData =
+    generate("A", asOf, endpoint, includeUsage = false)
+
+private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String, includeUsage: Boolean = true): SeedData {
     if (name == "B") return emptyOrganization("B", "신규 조직", asOf)
     if (name == "D") return emptyOrganization("D", "빈 조직(온보딩 시험)", asOf)
     if (name == "E") return enrollmentOrganization(asOf, otlpEndpoint)
@@ -276,21 +280,6 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
                 "assigned_at" to at(-7, (index % 12 + 1).toLong()), "applied_at" to at(-7, (index % 12 + 1).toLong()))
         }
     }
-    if (name == "A") {
-        // 같은 사람의 두 설치를 사람 두 명으로 집계하지 않는지 확인할 기준이다.
-        // 아직 신호와 적용 보고가 없는 설치이며, 기존 ClickHouse 이벤트에는 추가하지 않는다.
-        val secondary = id("$name/installation/2/secondary")
-        val invite = id("$name/invitation/2/secondary")
-        add("enrollment.invitations", "id" to invite, "tenant_id" to tenant, "target_member_id" to member(2),
-            "created_by_member_id" to member(0), "code_hash" to hash("seed-A-secondary-device-invitation"),
-            "used_at" to at(-3), "expires_at" to at(30), "created_at" to at(-3))
-        add("enrollment.installations", "id" to secondary, "tenant_id" to tenant, "member_id" to member(2),
-            "invitation_id" to invite, "hostname" to "seed-a-2-secondary", "platform" to "macos", "architecture" to "arm64",
-            "client_version" to "seed-v1", "status" to "active", "last_seen_at" to null,
-            "created_at" to at(-3), "updated_at" to at(-3))
-        add("enrollment.installation_manifest_assignments", "installation_id" to secondary, "manifest_id" to activeManifestId,
-            "assigned_at" to at(-3), "applied_at" to null)
-    }
     fun receipt(index: Int, whenAt: String, product: String, recordCount: Int = 1) {
         ledger.add(linkedMapOf("tenant_id" to tenant, "installation_id" to installation(index), "received_time" to whenAt,
             "receipt_id" to id("$name/receipt/$index/$whenAt/$product"), "signal" to "logs", "product" to product,
@@ -348,9 +337,11 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
         receipt(index, whenAt, product)
     }
     if (name == "A") {
-        val usage = detailedUsage(asOf, rows)
-        events.addAll(usage.events)
-        ledger.addAll(usage.ledger)
+        if (includeUsage) {
+            val usage = detailedUsage(asOf, rows)
+            events.addAll(usage.events)
+            ledger.addAll(usage.ledger)
+        }
         // 기존 기간 약정 호환성 검증용. 위 managed_vendors의 좌석 계약과 연결하거나 합산하지 않는다.
         listOf("anthropic" to 1200, "openai" to 0).forEach { (vendor, amount) ->
             val contract = id("$name/contract/$vendor")
@@ -373,9 +364,9 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String): SeedD
     }
     rows["enrollment.installations"]?.replaceAll { row -> row + ("last_seen_at" to ledger.filter { it["installation_id"] == row["id"] }.maxOfOrNull { it["received_time"].toString() }) }
     if (name == "A") {
-        // 설치 보고(ADR 0040·0041). A의 주 설치는 등록한 뒤로 끊김·손실 없이 수집하다가 기준 시각에 마지막으로 보고했다.
+        // 설치 보고(ADR 0040·0041). A의 모든 설치는 등록한 뒤로 끊김·손실 없이 수집하다가 기준 시각에 마지막으로 보고했다.
         // 시드에는 살아 있는 데몬이 없으므로 조회 시점의 상태는 "보고가 끊긴 지 얼마나 됐는가"로 정해진다 — 정상이라고 꾸미지 않는다.
-        // 두 번째 설치와 C에는 보고를 넣지 않는다(보고한 적 없는 설치 · 근거가 없는 조직).
+        // C에는 보고를 넣지 않는다(근거가 없는 조직).
         val reportedAt = aSnapshotTime(asOf).toString()
         installedIndices.forEach { index ->
             val receipts = ledger.filter { it["installation_id"] == installation(index) }.map { it["received_time"].toString() }
