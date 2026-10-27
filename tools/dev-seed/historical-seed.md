@@ -149,8 +149,8 @@ dev의 `monitorFile`은 별도 관측 프로세스가 45초보다 짧은 주기�
 
 ### 명시적으로 선택하는 HTTP 응답 요약 지연
 
-[허브 ADR 0024 (Proposed)](https://github.com/soma-376/docs/blob/1f15f9ec83e6f2ff085eb640f809d6e728749eb4/adr/0024-dev-seed-http-summary-latency.md)의
-검토용 모드다. 코드·로컬 검증만으로 dev 적용이 승인되지는 않는다. 미지정 target은 위의 기존 왕복 지연
+[허브 ADR 0024 (Accepted)](https://github.com/soma-376/docs/blob/main/adr/0024-dev-seed-http-summary-latency.md)에
+따라 명시적으로 선택하는 모드다. dev 적용 확인은 실행별로 기록한다. 미지정 target은 위의 기존 왕복 지연
 기준을 유지한다. 새 방식은 target의 다음 필드를 명시하고 그 target SHA를 실행 상태에 고정해야 한다.
 
 ```json
@@ -163,7 +163,7 @@ dev의 `monitorFile`은 별도 관측 프로세스가 45초보다 짧은 주기�
 관측에는 동일한 `latencyMode`와 `proposedServerElapsedLimitMs`, `waitEndOfQuery: true`가 필요하다.
 `measurement`는 `http_response_summary_elapsed_ns`, `aggregation`은 `median_of_5`다.
 기존 `readLatencyMs`·`baselineReadLatencyMs` 또는 `serverBaselineMs`를 함께 발행하면 거부한다.
-이 값은 새로 제안하는 절대 상한이며, 기존 왕복 baseline을 서버 baseline으로 환산한 값이 아니다.
+이 값은 실행에 고정하는 절대 상한이며, 기존 왕복 baseline을 서버 baseline으로 환산한 값이 아니다.
 
 `latencyEvidence.rawProbes`에는 동일한 `SELECT count() FROM system.parts WHERE active` 요청 다섯 개의
 서로 다른 query ID, 성공 여부, 요청 시작 간격(0.2초 이상), 시작·완료 시각과 전후 자원·오류 관측을 보존한다.
