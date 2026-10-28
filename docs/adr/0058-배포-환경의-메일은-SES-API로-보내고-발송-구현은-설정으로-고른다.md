@@ -7,7 +7,9 @@ outbox 적재·하나씩 선점·임대·상태 전이·중복 방지 키·본�
 [ADR 0038](0038-초대-메일은-코드를-본문과-링크의-fragment에만-싣고-발송-상태를-발급과-따로-낸다.md)·[ADR 0043](0043-설치-업데이트-안내는-구성원에게-보내는-메일이고-결과는-발송-결과다.md)의 "SMTP 서버가 받았다"는 "설정된 메일 공급자가 받았다"로 읽는다.
 
 dev 실행 환경은 [허브 ADR 0023](../../../docs/adr/0023-dev-backend-eks-only.md)에 따라 EKS다.
-메일용 권한·설정·비밀 공급과 실제 SES 발송은 여전히 후속 인프라 작업이며, 아래 ECS 자격 증명 모의 시험은 SDK 동작의 재현 근거다.
+메일용 권한·설정·비밀 공급은 infra ADR 0043·0047로 구현·적용됐으며, 실제 dev 검증 범위는
+[`mail-operations.md` §8](../mail-operations.md#8-dev-검증-기록--2026-10-28)에 따로 기록한다.
+아래 Context는 결정 당시 배경이고 ECS 자격 증명 모의 시험은 SDK 동작의 재현 근거다.
 
 ## Context
 
@@ -43,7 +45,7 @@ SDK가 스스로 재시도하거나 자격 증명 조회를 기한 없이 기다
   `X-Pulsemetry-Mail-Id` 헤더에 outbox 메일 ID 를 싣는다 — 받은 쪽이 재전송을 알아보는 용도이고 SES 의 중복 방지 키가 아니다.
   configuration set 이름은 설정(`pulsemetry.mail.ses.configuration-set`)으로 받는다. 비어 있으면 요청에서 뺀다. 이름을 지어내거나 SES 리소스를 만들지 않는다. 태그는 싣지 않는다.
 - **자격 증명은 SDK 기본 공급자 체인이다.** 배포에서는 enrollment-api 전용 workload IAM 역할의 임시 자격 증명을 사용한다.
-  dev EKS는 enrollment-api 서비스계정의 Pod Identity 역할에 SES 권한을 준비해야 한다. 현재 SES 권한·설정 공급이 완료됐다는 뜻은 아니다. 정적 AWS 키 설정을 두지 않는다.
+  dev EKS는 enrollment-api 서비스계정의 Pod Identity 역할로 SES 권한을 공급한다. 실제 dev 적용 범위는 `mail-operations.md` §8을 따르며 prod 준비·sandbox 해제·반송/신고 운영은 별도다. 정적 AWS 키 설정을 두지 않는다.
   리전은 필수 설정 `pulsemetry.mail.ses.region`이고 다른 AWS 설정에서 추론하지 않는다. 클라이언트는 발송 구현 하나가 갖고 컨텍스트가 닫힐 때 함께 닫는다.
   만들 때 AWS 에 말하지 않는다 — 설정 검증은 형식만 본다. 메일이 꺼져 있으면 클라이언트를 만들지 않는다.
 - **SDK는 한 번만 시도한다. 재시도는 outbox 가 갖는다.**
@@ -149,10 +151,10 @@ SDK가 스스로 재시도하거나 자격 증명 조회를 기한 없이 기다
 ## Follow-up
 - **완료** — AWS SDK BOM 을 MSK IAM 라이브러리 기준 2.51.2 로 올렸다(PROJ-245). 2.51.x 도 자격 증명 조회가 끝날 때까지 호출이 돌아오지 않아
   임대를 넘기는 것은 같고, 달라진 것은 그 뒤 SES 에 보내지 않고 호출 시간 초과로 끝낸다는 점이다. 결정은 그대로이고 재현 조건 테스트가 새 판의 동작을 고정한다.
-- 배포 환경 준비 — 리전·발신 도메인과 주소·DKIM·DMARC·sandbox 해제·enrollment-api 전용 workload IAM 역할 권한·환경 변수와 비밀 주입(`docs/mail-operations.md` §2·§3). 인프라 작업이다.
-  현재 infra `lib/dev/runtime-input.cjs`는 `managementEnabled`·`mailEnabled`의 true를 거부한다. dev EKS에서 메일을 켜려면
-  Pod Identity 역할의 SES 권한과 메일 설정·outbox 키 공급을 먼저 구현·검증해야 한다. 단순히 runtime 입력을 true로 바꾸는 절차가 아니다.
-- 실제 SES 로 보내는 smoke 확인(`docs/mail-operations.md` §5). 이 결정의 코드 검증은 실제 발송을 포함하지 않는다.
+- dev 공급 구현·적용 완료 — 리전·발신 도메인과 주소·enrollment 전용 Pod Identity 권한·환경 설정·고정 버전 키 파일은 infra ADR 0043·0047이 소유한다.
+  활성화 시 runtime 입력 검증과 필수 키 파일 검사를 유지한다. prod 준비·sandbox 해제·반송/신고 운영은 이 완료 범위에 포함하지 않는다.
+- 지정 수신함의 실제 초대·재발급 메일, 설치 페이지와 Linux ARM64의 게시 CLI 등록, 초대 상태·동시 등록·이미지 복구를 확인했다. 실제 범위와 미검증 항목은 `docs/mail-operations.md` §8을 따른다.
+  이 결정의 코드 검증 자체가 실제 발송·수신 증거라는 뜻은 아니다.
 - 반송·신고 이벤트 소비와 접수 ID 의 영속화 — 필요해지면 `sent`와 비동기 반송의 관계를 제품 계약부터 정한다.
 - 발송량과 SES 한도가 정해지면 재시도 간격·최대 시도·발송 주기를 다시 본다. 인스턴스가 여럿이면 초당 합계가 늘어난다 — 한도를 넘으면 속도 제한을 설계한다.
 - 무중단 공급자 전환이 필요해지면 업무 적재와 발송 선점을 따로 멈추는 제어를 설계한다(지금 `pulsemetry.mail.enabled=false`는 적재까지 멈춘다).
