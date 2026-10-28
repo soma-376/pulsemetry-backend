@@ -6,14 +6,25 @@
 # arm64 이미지를 만들 때도 Gradle 빌드는 러너의 네이티브 아키텍처에서 그대로 돌면 된다.
 # QEMU 에뮬레이션 위에서 Gradle 을 돌리면 빌드가 몇 배로 느려진다.
 #
-#   docker buildx build --platform linux/arm64 --target enrollment-api --build-context telemetry-contracts=../telemetryctl/contracts -t <repo>:<tag> --load .
+#   python3 scripts/releases/telemetryctl_release.py download /tmp/telemetryctl-binaries
+#   docker buildx build --platform linux/arm64 --target enrollment-api --build-context telemetry-contracts=../telemetryctl/contracts --build-context telemetry-binaries=/tmp/telemetryctl-binaries -t <repo>:<tag> --load .
 #   docker buildx build --platform linux/arm64 --target telemetry-ingest -t <repo>:<tag> --load .
 #   docker buildx build --platform linux/arm64 --target telemetry-gateway -t <repo>:<tag> --load .
 #   docker buildx build --platform linux/arm64 --target dashboard-api -t <repo>:<tag> --load .
 #   docker buildx build --platform linux/arm64 --target retention-worker -t <repo>:<tag> --load .
 #
-# enrollment-api 만 named context `telemetry-contracts`(telemetryctl 의 contracts 디렉터리)를 요구한다 —
-# manifest 재동기화가 원본 스키마를 jar 에 넣어 검증하기 때문이다(ADR 0019). 다른 target 은 필요 없다.
+# enrollment-api 만 named context `telemetry-contracts`(계약 원본)와 `telemetry-binaries`(검증한 게시 릴리스)를 요구한다.
+# 다른 target 은 두 context를 사용하지 않는다. CLI는 재빌드하지 않는다(ADR 0053, PROJ-146).
+
+FROM --platform=$BUILDPLATFORM python:3.13-slim AS telemetry-binaries-verified
+
+COPY config/telemetryctl-release.json /supply/config/telemetryctl-release.json
+COPY scripts/releases/telemetryctl_release.py /supply/scripts/releases/telemetryctl_release.py
+COPY --from=telemetry-binaries / /binaries/
+# CI 다운로드 검증에 더해 실제 이미지 입력도 검증한다. 누락·변조·다른 릴리스는 빌드를 실패시킨다.
+RUN python /supply/scripts/releases/telemetryctl_release.py verify /binaries \
+    && chmod 755 /binaries /binaries/* \
+    && chmod 644 /binaries/*/*
 
 FROM --platform=$BUILDPLATFORM eclipse-temurin:25-jdk AS build-base
 
@@ -217,9 +228,8 @@ COPY --from=enrollment-api-build --chown=pulsemetry:pulsemetry /extracted/spring
 COPY --from=enrollment-api-build --chown=pulsemetry:pulsemetry /extracted/snapshot-dependencies/ ./
 COPY --from=enrollment-api-build --chown=pulsemetry:pulsemetry /extracted/application/ ./
 
-# GET /bin/{filename} 이 읽는 디렉터리. 기본값 './binaries' 는 상대경로라 작업 디렉터리에 따라 흔들리므로
-# 절대경로로 고정한다. 비어 있으면 /bin/* 요청이 404 가 된다 — 바이너리를 채우는 것은 배포 쪽 몫이다.
-RUN mkdir -p /app/binaries && chown pulsemetry:pulsemetry /app/binaries
+# 원격 릴리스의 원래 파일명·SHA256SUMS를 유지한다. 기존 versioned 매핑이 공개 /bin 경로를 제공한다.
+COPY --from=telemetry-binaries-verified --chown=pulsemetry:pulsemetry /binaries/ /app/binaries/
 ENV PULSEMETRY_BINARIES_DIR=/app/binaries
 
 USER pulsemetry

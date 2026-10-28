@@ -45,6 +45,9 @@ jobs:
       - name: Test dev image publication
         run: python3 .github/tests/test_deploy_dev.py
 
+      - name: Test published CLI supply
+        run: python3 -m unittest discover -s scripts/releases -p 'test_*.py'
+
       # 계약 테스트는 telemetryctl의 스키마 파일 원본을 읽는다.
       # 복사본을 backend에 두면 원본과 갈라질 수 있으므로 직접 체크아웃한다.
       - name: Checkout telemetryctl (계약 원천)
@@ -154,6 +157,13 @@ jobs:
           path: telemetryctl
           persist-credentials: false
 
+      # 공개 저장소의 명시 태그만 조회한다. contents:read의 기본 토큰은 API 조회에만 쓰며
+      # CDN 다운로드나 Docker build context에 넘기지 않는다.
+      - name: Download and verify published telemetryctl CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/releases/telemetryctl_release.py download binaries
+
       # 장기 액세스 키를 쓰지 않는다(인프라 ADR-0024). 신뢰 정책이 develop ref를
       # StringEquals로 고정하므로 이 잡에 environment를 붙이지 않는다.
       - name: Configure AWS credentials (OIDC)
@@ -182,6 +192,7 @@ jobs:
           target: enrollment-api
           build-contexts: |
             telemetry-contracts=./telemetryctl/contracts
+            telemetry-binaries=./binaries
           platforms: linux/arm64
           provenance: false
           push: true
@@ -189,6 +200,25 @@ jobs:
             ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_ENROLLMENT_API }}:sha-${{ github.sha }}
           cache-from: type=gha,scope=enrollment-api
           cache-to: type=gha,mode=max,scope=enrollment-api
+
+      - name: Report enrollment image and CLI release
+        env:
+          ENROLLMENT_IMAGE_DIGEST: ${{ steps.build-enrollment.outputs.digest }}
+        run: |
+          if [[ ! "$ENROLLMENT_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo '::error::enrollment-api 이미지 digest를 확인할 수 없다.'
+            exit 1
+          fi
+          {
+            echo '### enrollment-api 이미지와 게시 CLI'
+            echo
+            echo "- 이미지 digest: \`$ENROLLMENT_IMAGE_DIGEST\`"
+            echo "- backend 커밋: \`$GITHUB_SHA\`"
+            echo '- 아래 고정 릴리스의 CLI 6종과 SHA256SUMS를 포함한다. EKS 배포·실제 설치 검증은 별도다.'
+            echo '```json'
+            cat config/telemetryctl-release.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build and push telemetry-ingest
         id: build-ingest

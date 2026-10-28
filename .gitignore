@@ -44,3 +44,4 @@ out/
 # FileArchiveWriter 가 쓰는 원본 아카이브. 배포는 S3 다 (ADR 0012).
 /archive/
 /apps/*/archive/
+/binaries/

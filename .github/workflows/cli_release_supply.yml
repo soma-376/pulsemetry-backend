@@ -1,0 +1,64 @@
+name: Published CLI supply
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify published CLI assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Test fail-closed supply
+        run: python3 -m unittest discover -s scripts/releases -p 'test_*.py'
+      - name: Download published CLI assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/releases/telemetryctl_release.py download binaries
+      - name: Verify image input and runtime permissions
+        run: |
+          docker build --target telemetry-binaries-verified --build-context telemetry-binaries=./binaries -t telemetry-binaries-verified .
+          docker run --rm --user 10001:10001 telemetry-binaries-verified python /supply/scripts/releases/telemetryctl_release.py verify /binaries
+      - name: Check native Linux CLI
+        run: |
+          file binaries/*/pulsemetry_cli_*
+          binaries/*/pulsemetry_cli_linux_amd64 --version
+
+  native-cli:
+    name: Published CLI (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: darwin_amd64, runner: macos-15-intel}
+          - {platform: darwin_arm64, runner: macos-15}
+          - {platform: linux_arm64, runner: ubuntu-24.04-arm}
+          - {platform: windows_amd64.exe, runner: windows-2025}
+          - {platform: windows_arm64.exe, runner: windows-11-arm}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Download and verify published CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/releases/telemetryctl_release.py download binaries
+      - name: Check native CLI version
+        env:
+          CLI_PLATFORM: ${{ matrix.platform }}
+        shell: python
+        run: |
+          import json, os, pathlib, subprocess
+          lock = json.loads(pathlib.Path('config/telemetryctl-release.json').read_text())
+          executable = pathlib.Path('binaries') / lock['tag'] / ('pulsemetry_cli_' + os.environ['CLI_PLATFORM'])
+          version = subprocess.check_output([str(executable.resolve()), '--version'], text=True, timeout=30).strip()
+          assert version == 'pulsemetry ' + lock['tag'][1:], version
+          print(version)
