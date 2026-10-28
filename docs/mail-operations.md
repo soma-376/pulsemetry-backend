@@ -242,7 +242,7 @@ CLI를 재빌드하거나 패치하지 않았다. 게시 CLI의 성공 처리와
 중단됐다. 제품 변경 없이 도구의 정확한 GET `/unix`·`/windows`만 `text/plain`으로 수정했다. 원본 상태·실패
 응답의 해시와 DB 범위를 대조하여 최초 읽기 외 부수효과가 없음을 확인하고 한정 재개했다. 원래 phase와
 실패 응답은 보존했으며, 08:48 UTC에 다섯 상태·조회·재발급 후 이전 코드 검증을 마치고 실제 재발급 메일을
-기다리는 checkpoint에 도달했다. 08:52:49 UTC에 새 메일·페이지를 확인한 뒤 경쟁 enroll을 실행하여
+기다리는 checkpoint에 도달했다. 08:52~08:53 UTC에 새 메일·페이지를 확인한 뒤 경쟁 enroll을 실행하여
 08:53:57 UTC에 1×201·7×409를 확인했고, used 코드의 거부까지 08:53:58 UTC에 완료했다.
 근거는 `proj267-reissue-mail-receipt.json`과 `proj268-state-and-concurrency-evidence.json`이다.
 
