@@ -224,7 +224,7 @@ FROM enrollment.mail_outbox GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
 | 초대 상태 검증(PROJ-268) | missing·malformed·unknown·used·revoked·expired의 고정 오류 스크립트를 실제 sh/PowerShell로 실행. 세 초대에서 각각 4회 사전 조회 후 DB 비소비 확인. 조회 뒤 취소는 최종 enroll 409, 만료는 410. 재발급 뒤 이전 코드는 두 스크립트와 최종 enroll에서 revoked/409로 거부 | 오류 스크립트의 네트워크 요청 수를 패킷으로 계측하지 않음 |
 | 동시 등록(PROJ-268) | 실제 재발급 메일 수신 확인 후 조회한 같은 코드로 8개 enroll을 동시에 호출하여 201 한 건·409 일곱 건과 설치 증가 1 확인. 소비 뒤 두 오류 스크립트와 최종 enroll 409 확인 | HTTP 상태 직접 관측은 이 API 경쟁 시험의 증거이며 앞선 CLI 응답 직접 관측과 구분 |
 | 이미지 복구(PROJ-146·268) | enrollment 이미지 교체만으로 `57c8d58` 복구(Helm revision 16)→`32c9cb2` 재적용(revision 17). 두 단계 Ready·ALB 정상, 이미지 외 설정과 다른 release 보존. 각 단계 독립 18 GET 확인 | 과거 Helm revision 전체를 되돌리는 복구는 수행하지 않음 |
-| 재발급 메일(PROJ-267) | 지정 Gmail 받은편지함에서 17:48 KST 재발급 메일을 실제 확인. 새 코드와 이전 코드의 차이, outbox ID 헤더, 발신·수신 일치, DKIM·SPF, 실제 링크로 연 세 OS 명령 일치 확인 | 문의·설치 업데이트 안내의 실제 SES 수신, 반송·신고 피드백은 미검증 |
+| 재발급 메일(PROJ-267) | 지정 Gmail 받은편지함의 수신 표시가 17:48 KST(분 단위)인 메일을 17:52:49 KST(08:52:49 UTC)에 실제 확인. 새 코드와 이전 코드의 차이, outbox ID 헤더, 발신·수신 일치, DKIM·SPF, 실제 링크로 연 세 OS 명령 일치 확인 | 문의·설치 업데이트 안내의 실제 SES 수신, 반송·신고 피드백은 미검증 |
 
 실제 CLI 등록은 2026-10-28 08:32:57 UTC에 확인했다. backend 이미지 digest는
 `sha256:b9d769be7b1c6f65d4d59035b8c004d6c2425b4c7a57046db0cbd9b5701dad2b`,

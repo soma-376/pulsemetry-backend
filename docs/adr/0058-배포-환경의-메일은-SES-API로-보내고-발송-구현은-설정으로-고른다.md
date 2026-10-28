@@ -45,7 +45,7 @@ SDK가 스스로 재시도하거나 자격 증명 조회를 기한 없이 기다
   `X-Pulsemetry-Mail-Id` 헤더에 outbox 메일 ID 를 싣는다 — 받은 쪽이 재전송을 알아보는 용도이고 SES 의 중복 방지 키가 아니다.
   configuration set 이름은 설정(`pulsemetry.mail.ses.configuration-set`)으로 받는다. 비어 있으면 요청에서 뺀다. 이름을 지어내거나 SES 리소스를 만들지 않는다. 태그는 싣지 않는다.
 - **자격 증명은 SDK 기본 공급자 체인이다.** 배포에서는 enrollment-api 전용 workload IAM 역할의 임시 자격 증명을 사용한다.
-  dev EKS는 enrollment-api 서비스계정의 Pod Identity 역할에 SES 권한을 준비해야 한다. 현재 SES 권한·설정 공급이 완료됐다는 뜻은 아니다. 정적 AWS 키 설정을 두지 않는다.
+  dev EKS는 enrollment-api 서비스계정의 Pod Identity 역할로 SES 권한을 공급한다. 실제 dev 적용 범위는 `mail-operations.md` §8을 따르며 prod 준비·sandbox 해제·반송/신고 운영은 별도다. 정적 AWS 키 설정을 두지 않는다.
   리전은 필수 설정 `pulsemetry.mail.ses.region`이고 다른 AWS 설정에서 추론하지 않는다. 클라이언트는 발송 구현 하나가 갖고 컨텍스트가 닫힐 때 함께 닫는다.
   만들 때 AWS 에 말하지 않는다 — 설정 검증은 형식만 본다. 메일이 꺼져 있으면 클라이언트를 만들지 않는다.
 - **SDK는 한 번만 시도한다. 재시도는 outbox 가 갖는다.**
