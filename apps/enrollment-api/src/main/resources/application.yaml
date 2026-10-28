@@ -70,6 +70,7 @@ pulsemetry:
     onboarding-otlp-endpoint: ${PULSEMETRY_ONBOARDING_OTLP_ENDPOINT:}
     # 초대 메일의 수락 링크가 가리키는 프론트 주소. 메일을 같이 켜면 필요하다.
     invitation-accept-url: ${PULSEMETRY_INVITATION_ACCEPT_URL:}
+    installation-page-url: ${PULSEMETRY_INSTALLATION_PAGE_URL:}
   # 벤더 연결(ADR 0048). 켜면 관리 기능도 켜야 하고 자격증명 키가 필요하다 — 비어 있으면 기동이 실패한다.
   # 키 목록은 키 ID → Base64 32바이트 맵이다: pulsemetry.vendor-connections.credential-keys.<키 ID>
   # (환경 변수로는 PULSEMETRY_VENDORCONNECTIONS_CREDENTIALKEYS_<키 ID>). 옛 키는 그 키로 암호화된 연결이 남아 있는 동안 둔다.

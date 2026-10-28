@@ -23,6 +23,7 @@ import java.net.http.HttpResponse
 import java.util.UUID
 
 private const val ACCEPT_URL = "https://app.example.test/invite"
+private const val INSTALL_PAGE = "https://app.example.test/install"
 private const val STAFF = "sales@example.test"
 /** 테스트 JVM 의 `pulsemetry.public-base-url` (build.gradle.kts). 설치 명령이 이 주소로 만들어진다. */
 private const val INSTALL_BASE = "https://get.pulsemetry.example.com"
@@ -36,6 +37,7 @@ private const val INSTALL_BASE = "https://get.pulsemetry.example.com"
         "pulsemetry.management.onboarding-otlp-endpoint=https://ingest.example.test",
         "pulsemetry.management.response-encryption-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         "pulsemetry.management.invitation-accept-url=$ACCEPT_URL",
+        "pulsemetry.management.installation-page-url=https://app.example.test/install",
         "pulsemetry.user-auth.allowed-origins=http://localhost:3000",
         "pulsemetry.inquiries.enabled=true", "pulsemetry.inquiries.duplicate-window=PT10M", "pulsemetry.inquiries.rate-limit.requests=20",
         "pulsemetry.inquiries.rate-limit.window=PT1M", "pulsemetry.inquiries.allowed-origins=http://localhost:3000",
@@ -90,12 +92,12 @@ class InvitationMailApiTest : AbstractUserAuthApiTest() {
         assertThat(dispatcher.runOnce()).isEqualTo(1)
         val message = mailsTo("new@example.test").single()
         val code = issued.path("code").asString()
-        // 제목에는 코드가 없다. 코드는 본문에만, 수락 링크에는 fragment 로만 실린다.
+        // 제목·SSO 링크에는 코드가 없고 설치 페이지 query 에만 붙인다.
         assertThat(message.path("Subject").asString()).isEqualTo("Pulsemetry 초대 코드").doesNotContain(code)
         val text = MailpitServer.text(message)
-        assertThat(text).contains("테스트 조직", "초대 코드: $code", ACCEPT_URL,
+        assertThat(text).contains("테스트 조직", "초대 코드: $code", ACCEPT_URL, "$INSTALL_PAGE?code=$code",
             "curl -fsSL '$INSTALL_BASE/unix?code=$code' | sh", "irm '$INSTALL_BASE/windows?code=$code' | iex", "2026-09-12 21:00 (한국 시간)까지")
-        assertThat(text).doesNotContain("$ACCEPT_URL?code=")
+        assertThat(text).doesNotContain("$ACCEPT_URL?code=", "$ACCEPT_URL#code=")
 
         val sent = listed(issued.path("invitationId").asString())
         assertThat(listOf(sent.path("status").asString(), sent.path("sentAt").asString(), sent.path("lastAttemptAt").asString(), sent.path("attempts").asInt()))
@@ -132,7 +134,7 @@ class InvitationMailApiTest : AbstractUserAuthApiTest() {
         assertThat(listed(issued.path("invitationId").asString()).path("status").asString()).isEqualTo("cancelled")
         assertThat(dispatcher.runOnce()).isEqualTo(1)
         val text = MailpitServer.text(mailsTo("renew@example.test").single())
-        assertThat(text).contains("초대 코드: ${renewed.path("code").asString()}").doesNotContain(issued.path("code").asString())
+        assertThat(text).contains("초대 코드: ${renewed.path("code").asString()}", "$INSTALL_PAGE?code=${renewed.path("code").asString()}").doesNotContain(issued.path("code").asString())
         assertThat(listed(renewed.path("invitationId").asString()).path("status").asString()).isEqualTo("sent")
         // 옛 코드는 죽었고 메일로 받은 새 코드만 쓸 수 있다.
         assertThat(install("renew@example.test", issued.path("code").asString())).isEqualTo(409)
@@ -220,15 +222,31 @@ class InvitationMailApiTest : AbstractUserAuthApiTest() {
     @Test fun `메일과 함께 켠 기능은 수락 주소와 통지 주소가 없으면 기동하지 않는다`() {
         val config = MailConfig()
         val server = PulsemetryProperties(INSTALL_BASE, PulsemetryProperties.Admin("test-admin-token"), "test-token-hash-secret")
-        config.invitationMailer(outbox, ManagementProperties().apply { invitationAcceptUrl = ACCEPT_URL }, server)
+        config.invitationMailer(outbox, ManagementProperties().apply { invitationAcceptUrl = ACCEPT_URL; installationPageUrl = INSTALL_PAGE }, server)
         config.inquiryNotifier(outbox, InquiryProperties().apply { notificationRecipient = STAFF })
         assertThatThrownBy { config.invitationMailer(outbox, ManagementProperties(), server) }.hasMessageContaining("pulsemetry.management.invitation-accept-url")
-        // 코드를 fragment 로 붙이므로 주소에 fragment 가 이미 있으면 안 된다.
+        assertThatThrownBy { config.invitationMailer(outbox, ManagementProperties().apply { invitationAcceptUrl = ACCEPT_URL }, server) }
+            .hasMessageContaining("pulsemetry.management.installation-page-url")
+        for (bad in listOf("app.example.test/install", "ftp://app.example.test/install", "$INSTALL_PAGE?code=existing", "$INSTALL_PAGE#section", "https://user@app.example.test/install")) {
+            assertThatThrownBy { config.invitationMailer(outbox, ManagementProperties().apply { invitationAcceptUrl = ACCEPT_URL; installationPageUrl = bad }, server) }
+                .hasMessageContaining("pulsemetry.management.installation-page-url")
+        }
+        // 로그인 주소의 기존 유효성 검사를 유지한다.
         for (bad in listOf("app.example.test/invite", "ftp://app.example.test/invite", "$ACCEPT_URL#section")) {
-            assertThatThrownBy { config.invitationMailer(outbox, ManagementProperties().apply { invitationAcceptUrl = bad }, server) }.isInstanceOf(IllegalArgumentException::class.java)
+            assertThatThrownBy { config.invitationMailer(outbox, ManagementProperties().apply { invitationAcceptUrl = bad; installationPageUrl = INSTALL_PAGE }, server) }.isInstanceOf(IllegalArgumentException::class.java)
         }
         assertThatThrownBy { config.inquiryNotifier(outbox, InquiryProperties()) }.hasMessageContaining("pulsemetry.inquiries.notification-recipient")
         assertThatThrownBy { config.inquiryNotifier(outbox, InquiryProperties().apply { notificationRecipient = "not an address" }) }.hasMessageContaining("pulsemetry.inquiries.notification-recipient")
+    }
+
+    @Test fun `설치 완료 안내에는 설치 페이지와 명령을 싣지 않는다`() {
+        val mailer = com.team376.pulsemetry.persistence.enrollment.mail.InvitationMailer(outbox, ACCEPT_URL, INSTALL_BASE, INSTALL_PAGE)
+        val code = InvitationCode.generate()
+        mailer.enqueue(UUID.randomUUID(), "테스트 조직", "completed@example.test", code, clock.now.plusSeconds(3600), signup = true, install = false)
+        assertThat(dispatcher.runOnce()).isEqualTo(1)
+        val message = mailsTo("completed@example.test").single()
+        assertThat(MailpitServer.text(message)).contains(ACCEPT_URL, "설치는 이미 마쳤습니다").doesNotContain(INSTALL_PAGE, "/unix?code=", "/windows?code=", "$ACCEPT_URL?code=", "$ACCEPT_URL#code=")
+        assertThat(message.path("Subject").asString()).doesNotContain(code)
     }
 
     companion object {

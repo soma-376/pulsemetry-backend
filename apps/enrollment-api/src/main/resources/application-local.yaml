@@ -32,6 +32,7 @@ pulsemetry:
     enabled: true
     onboarding-otlp-endpoint: ${PULSEMETRY_ONBOARDING_OTLP_ENDPOINT:http://localhost:4316}
     invitation-accept-url: ${PULSEMETRY_INVITATION_ACCEPT_URL:http://localhost:3000/login}
+    installation-page-url: ${PULSEMETRY_INSTALLATION_PAGE_URL:http://localhost:3000/install}
   # Compose의 메일 수신 컨테이너(Mailpit)로 보낸다. 받은 메일은 http://localhost:8025 에서 본다.
   # 암호화 키는 Compose가 만든 local-auth.properties에 있다. 계정은 수신 컨테이너가 아무 값이나 받는다.
   mail:

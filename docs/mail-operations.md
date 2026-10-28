@@ -45,7 +45,7 @@ dev 백엔드의 실행·배포 경계는 [허브 ADR 0023](../../docs/adr/0023-
 - SDK 의 호출 제한은 자격 증명 조회를 기다리는 시간을 끊지 못한다(ECS 자격 증명 엔드포인트는 연결·읽기 1초에 다섯 번까지 재시도한다. SDK 2.51.x 는 조회가 끝난 뒤 시간 초과로 끝내고 2.40.x 는 그대로 보냈다). 로컬 테스트는 이 조건을 재현할 뿐 dev ECS 실행을 전제하지 않는다. 발송 구현은 조회를 전용 스레드에서 `send-timeout` 기한까지만 기다리고
   남은 시간만 SES 호출에 준다. 기한을 넘기면 SES 에 묻지 않고 `ses_credentials_unavailable`로 실패하고, 조회는 뒤에서 이어져 다음 시도가 그 결과를 쓴다.
   SES 가 메일을 받을 수 있는 시각은 선점 뒤 `send-timeout` 안이므로 임대(네 배)를 넘긴 중복 발송은 생기지 않는다. `send-timeout`은 자격 증명 첫 조회(프로세스 시작 직후)에 걸리는 시간도 감안해 정한다.
-- 업무별로 함께 켜야 하는 설정이 있다 — 초대·설치 안내는 `pulsemetry.management.enabled`와 `PULSEMETRY_INVITATION_ACCEPT_URL`, 문의 통지는 `pulsemetry.inquiries.enabled`와 `PULSEMETRY_INQUIRIES_NOTIFICATION_RECIPIENT`(명세 §8).
+- 업무별로 함께 켜야 하는 설정이 있다 — 초대·설치 안내는 `pulsemetry.management.enabled`와 `PULSEMETRY_INVITATION_ACCEPT_URL`(코드 없는 SSO 주소)·`PULSEMETRY_INSTALLATION_PAGE_URL`(query·fragment·userinfo 없는 공개 설치 페이지 주소), 문의 통지는 `pulsemetry.inquiries.enabled`와 `PULSEMETRY_INQUIRIES_NOTIFICATION_RECIPIENT`(명세 §8).
 - `PULSEMETRY_MAIL_ENABLED=false`는 **일시 정지가 아니다.** 꺼진 동안 생긴 업무 메일은 적재되지 않는다(발송 상태 `not_sent`/`mail_disabled`).
 - local 프로필은 `smtp`(Compose 의 Mailpit `localhost:1025`, 화면 `localhost:8025`)로 켠다. local 값(5초·1분·3회·10초)은 운영 권장값이 아니다.
 - SDK·HTTP 클라이언트 로거(`software.amazon.awssdk`, `org.apache.http`)를 DEBUG·wire 로 올리지 않는다. 요청 본문 — 초대 코드가 든 메일 본문 — 이 로그에 남는다.
@@ -171,7 +171,7 @@ FROM enrollment.mail_outbox GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
 2. 지정한 테스트 수신자에게 초대를 발급한다. `delivery.status`가 `queued`인지 본다.
 3. 발송 주기 뒤 `event=mail_provider_accepted`의 `mail_id`·`provider_message_id`를 확인하고, 같은 `mail_id`에 `메일을 보냈다`가 있는지 본다.
 4. outbox 의 그 메일이 `sent`이고 `encrypted_body`가 NULL 인지, 목록(§12)의 `delivery.status`가 `sent`인지 본다.
-5. 받은 메일에서 한글 제목·본문, SSO 로그인 주소(코드 없음), 설치 명령, `X-Pulsemetry-Mail-Id` 헤더를 확인한다. 헤더의 DKIM·DMARC 결과가 pass 인지 본다.
+5. 받은 메일에서 한글 제목·본문, SSO 로그인 주소(코드 없음), `/install?code=…` 페이지 링크와 해당 페이지의 OS별 설치 명령, 원시 설치 명령, `X-Pulsemetry-Mail-Id` 헤더를 확인한다. 헤더의 DKIM·DMARC 결과가 pass 인지 본다.
 6. 재발급·문의 통지·설치 업데이트 안내도 같은 방법으로 한 번씩 확인한다. 설치 안내 작업의 `succeeded`가 정책 적용과 다르다는 것을 확인한다.
 7. 실패 경로 하나 — sandbox 의 미검증 수신자 등 — 가 `message_rejected`/`ses_message_rejected`로 영구 실패하는지 본다.
 8. 반송 simulator(`bounce@simulator.amazonses.com`)로 보낸 메일이 outbox 에서는 `sent`이고 반송은 피드백 경로(§3.7)로만 보이는지 확인한다.

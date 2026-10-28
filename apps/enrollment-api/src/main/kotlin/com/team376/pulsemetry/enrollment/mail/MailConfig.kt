@@ -146,7 +146,8 @@ class MailConfig {
     @ConditionalOnProperty(prefix = "pulsemetry.management", name = ["enabled"], havingValue = "true")
     fun invitationMailer(outbox: MailOutbox, management: ManagementProperties, server: PulsemetryProperties): InvitationMailer {
         require(management.invitationAcceptUrl.isNotBlank()) { "pulsemetry.management.invitation-accept-url 가 비어 있다" }
-        return InvitationMailer(outbox, management.invitationAcceptUrl, server.baseUrl())
+        require(management.installationPageUrl.isNotBlank()) { "pulsemetry.management.installation-page-url 가 비어 있다" }
+        return InvitationMailer(outbox, management.invitationAcceptUrl, server.baseUrl(), management.installationPageUrl)
     }
 
     /** 문의 접수와 메일을 함께 켠 배포에서만 담당자에게 통지한다. */
