@@ -5,8 +5,9 @@
 [ADR 0058](adr/0058-배포-환경의-메일은-SES-API로-보내고-발송-구현은-설정으로-고른다.md)(발송 구현 선택·SES)이 정한다. API의 발송 상태는 [초대 API 공통 규칙](api/reference/invitations.md)이 정한다.
 dev 백엔드의 실행·배포 경계는 [허브 ADR 0023](../../docs/adr/0023-dev-backend-eks-only.md), 실제 설치는 [infra EKS 수동 배포 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다.
 
-> **검증 상태.** 이 저장소의 코드는 로컬·CI 에서 AWS 계정 없이 검증했다 — SMTP 는 메일 수신 컨테이너(Mailpit)로, SES 는 실제 SDK 를 로컬 HTTP 모의 서버에 붙여서다.
-> **실제 SES 발송 증거는 없다.** dev EKS의 기본 runtime 공급 코드는 있지만 메일 활성화에 필요한 설정·암호화 키·SES 권한 공급은 미구현이다(§3). CI 성공을 실제 발송 확인으로 읽지 않는다 — 실제 확인은 §5 다.
+> **검증 상태.** 로컬·CI 테스트는 AWS 계정 없이 실행한다 — SMTP는 Mailpit, SES는 실제 SDK와 로컬 HTTP 모의 서버를 사용한다(§7).
+> dev EKS의 설정·암호화 키·SES 권한 공급은 구현·적용됐고 지정 수신함의 실제 초대 메일·공개 설치 페이지·Linux ARM64 CLI 등록을 확인했다.
+> 초대 상태·동시 등록·이미지 복구까지 확인한 범위와 한계는 §8에 기록한다. CI 성공이나 SES 접수 ID·outbox `sent`만으로 실제 수신·설치 성공을 판단하지 않는다.
 
 ## 1. 보장하는 것과 보장하지 않는 것
 
@@ -52,10 +53,12 @@ dev 백엔드의 실행·배포 경계는 [허브 ADR 0023](../../docs/adr/0023-
 
 ## 3. 배포 준비 조건 — 인프라 작업에 넘기는 것
 
-이 절의 실행은 인프라 작업의 몫이다. PROJ-251은 backend 문서를 정리하며 인프라 코드를 바꾸지 않는다.
-현재 로컬 infra 코드의 [runtime 입력 검사](../../infra/lib/dev/runtime-input.cjs)는 `managementEnabled` 또는 `mailEnabled`가 true이면 추가 Secret 공급 미구현으로 거부한다.
-[값 생성기](../../infra/scripts/eks-values.mjs)는 두 플래그를 enrollment·dashboard에 전달하지만 현재 허용값은 false뿐이다.
-[enrollment Pod Identity 역할](../../infra/lib/dev/eks-runtime.ts)과 기본 CSI 파일 공급은 구현됐으나 SES 발송 권한·메일 및 문의 설정·관리 응답과 메일 암호화 키 공급은 없다. SES identity·발송 인프라와 아래 준비 조건은 후속 작업이며, 이 소스 확인은 실제 AWS 상태 확인이 아니다.
+이 절의 실행은 인프라 작업의 몫이다. dev 공급은 [infra ADR 0043](https://github.com/soma-376/infra/blob/develop/docs/adr/0043-dev-invitation-mail-via-ses-and-csi.md),
+SES 권한은 [infra ADR 0047](https://github.com/soma-376/infra/blob/develop/docs/adr/0047-dev-ses-fixed-sender-identity-authorization.md)을 따른다.
+[runtime 입력 검사](../../infra/lib/dev/runtime-input.cjs)는 관리·메일 활성화 시 필요한 URL·키 VersionId·SES 설정을 검증한다.
+[값 생성기](../../infra/scripts/eks-values.mjs)는 enrollment에 설정과 고정 버전 CSI 파일을 공급하고,
+[Pod Identity 역할](../../infra/lib/dev/eks-runtime.ts)은 enrollment에만 두 암호화 키 읽기와 SES 발송 권한을 준다.
+메일·관리 공급 구현과 문의 통지 활성화·피드백 운영·실제 수신 검증은 별개다. 배포별 적용 결과는 §8처럼 따로 기록한다.
 prod 는 다른 앱 구성이므로 dev 설정을 옮긴 것으로 prod 준비를 끝냈다고 하지 않는다.
 
 ### 3.1 계정·리전·발신 identity
@@ -73,23 +76,22 @@ prod 는 다른 앱 구성이므로 dev 설정을 옮긴 것으로 prod 준비�
 ### 3.3 최소 권한
 
 - **enrollment-api의 Pod Identity 역할에만** `ses:SendEmail`을 준다. EKS 노드 역할·다른 workload 역할에 메일 권한을 주지 않는다. `ses:*`와 정적 AWS 키를 쓰지 않는다.
-- 리소스는 발신 identity 와(쓰면) configuration set 의 ARN 으로 좁히고 발신 주소를 조건으로 묶는다. 예시 — 값은 확정 뒤 채운다.
+- 현재 dev는 실행 계정·`ap-northeast-2`의 `identity/*`에 정확한 발신 주소 조건을 건 단일 statement를 사용한다.
+  이 정책은 수신 주소 allowlist가 아니다. 실제 검증은 사용자가 지정한 수신함만 사용하며 개인 주소·수신 identity ARN을 정책·저장소·공유 기록에 넣지 않는다.
+  configuration set·태그 변경·identity 생성·`SendRawEmail` 권한은 포함하지 않는다. 다음 예시의 계정은 배포 시 조립한다.
 
 ```json
 {
   "Effect": "Allow",
   "Action": "ses:SendEmail",
-  "Resource": [
-    "arn:aws:ses:<region>:<account>:identity/<domain>",
-    "arn:aws:ses:<region>:<account>:configuration-set/<configuration-set>"
-  ],
-  "Condition": { "StringEquals": { "ses:FromAddress": "<PULSEMETRY_MAIL_FROM>" } }
+  "Resource": "arn:aws:ses:ap-northeast-2:<account>:identity/*",
+  "Condition": { "StringEquals": { "ses:FromAddress": "no-reply@pulsemetry.co.kr" } }
 }
 ```
 
 ### 3.4 설정과 비밀
 
-- 비밀이 아닌 공통·SES 설정(§2)은 EKS workload 설정으로, outbox 키(`PULSEMETRY_MAIL_ENCRYPTION_KEY`)는 Secrets Manager → Pod Identity·ASCP/CSI → runtime 파일로 공급하도록 준비한다. 현재 chart에 메일 키 공급은 없으므로 Secret 참조·읽기 권한·필수 파일 검사를 추가한 뒤 활성화한다. 키 값을 일반 environment·Helm values·output 에 두지 않는다. 기존 outbox가 있으면 같은 키를 유지한다.
+- 비밀이 아닌 공통·SES 설정(§2)은 EKS workload 설정으로, outbox 키(`PULSEMETRY_MAIL_ENCRYPTION_KEY`)는 Secrets Manager → Pod Identity·ASCP/CSI → runtime 파일로 공급한다. dev는 관리 응답 키와 메일 키를 독립 원본의 고정 VersionId로 읽고 필수 파일 검사를 거친다. 키 값을 일반 environment·Helm values·output 에 두지 않는다. 기존 outbox가 있으면 같은 키를 유지한다.
 - token hash·관리 응답·벤더 자격증명 키를 재사용하지 않는다 — 용도가 다른 비밀은 키를 나눈다(ADR 0037 대안 E).
 - 메일 전용 Secret 원본·보존 책임과 enrollment만의 읽기 권한을 infra에서 정한다. 기존 DB·HMAC·관리자 토큰·JWT·OIDC 공급에 메일 키가 포함됐다고 가정하지 않는다.
 - `PULSEMETRY_MAIL_PROVIDER`·`PULSEMETRY_MAIL_SES_REGION`은 새 필수값이다. 메일을 켠 배포 설정에 함께 넣는다.
@@ -168,9 +170,9 @@ FROM enrollment.mail_outbox GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
 §3 의 준비가 끝난 뒤 별도 단계로 한다. 이 저장소의 테스트로 대신하지 않는다.
 
 1. 대상 리전에 identity 와(쓰면) configuration set 이 있고, 같은 리전으로 `PULSEMETRY_MAIL_SES_REGION`을 줬는지 확인한다. sandbox 면 수신자를 검증했거나 mailbox simulator(`success@simulator.amazonses.com`)를 쓴다.
-2. 지정한 테스트 수신자에게 초대를 발급한다. `delivery.status`가 `queued`인지 본다.
+2. 정상 사용자 인증으로 `POST /api/v1/organizations/{id}/invitations/batch`를 호출해 지정한 테스트 수신자에게 초대를 발급한다. `delivery.status`가 `queued`인지 본다. 메일을 적재하지 않는 정적 관리자 API 키 경로로 대체하지 않는다.
 3. 발송 주기 뒤 `event=mail_provider_accepted`의 `mail_id`·`provider_message_id`를 확인하고, 같은 `mail_id`에 `메일을 보냈다`가 있는지 본다.
-4. outbox 의 그 메일이 `sent`이고 `encrypted_body`가 NULL 인지, 목록(§12)의 `delivery.status`가 `sent`인지 본다.
+4. outbox 의 그 메일이 `sent`이고 `encrypted_body`가 NULL 인지, [초대 목록 API](api/reference/invitations.md)의 `delivery.status`가 `sent`인지 본다.
 5. 받은 메일에서 한글 제목·본문, SSO 로그인 주소(코드 없음), `/install?code=…` 페이지 링크와 해당 페이지의 OS별 설치 명령, 원시 설치 명령, `X-Pulsemetry-Mail-Id` 헤더를 확인한다. 헤더의 DKIM·DMARC 결과가 pass 인지 본다.
 6. 재발급·문의 통지·설치 업데이트 안내도 같은 방법으로 한 번씩 확인한다. 설치 안내 작업의 `succeeded`가 정책 적용과 다르다는 것을 확인한다.
 7. 실패 경로 하나 — sandbox 의 미검증 수신자 등 — 가 `message_rejected`/`ses_message_rejected`로 영구 실패하는지 본다.
@@ -204,3 +206,47 @@ FROM enrollment.mail_outbox GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
 ./gradlew :apps:enrollment-api:test --tests '*MailDispatchTest' --tests '*SesMail*' --tests '*InvitationMailApiTest' --tests '*InstallationInvitationApiTest' --tests '*InstallationNotificationApiTest'
 ./gradlew :apps:enrollment-api:test :libs:enrollment-persistence:test
 ```
+
+## 8. dev 검증 기록 — 2026-10-28
+
+다음은 지정 테스트 수신함과 dev 환경에서 확인한 범위다. 모의 테스트(§7), 공급자 접수, 실제 수신,
+설치·enroll을 각각 구분한다. [PROJ-267](https://team376.atlassian.net/browse/PROJ-267)의 비밀 없는 검증 기록과
+관련 티켓에 PR·배포 버전·검증 식별자를 연결하며, 원문 메일·명령·초대 코드·토큰은 공개 문서에 싣지 않는다.
+
+| 항목 | 확인한 범위 | 범위의 한계 |
+|---|---|---|
+| dev 메일 공급 | 관리·메일 설정, 고정 버전 키 파일, enrollment 전용 SES 권한 적용. [infra PR 72](https://github.com/soma-376/infra/pull/72)의 고정 FromAddress 정책 사용 | prod 적용·SES sandbox 해제 |
+| 실제 초대 수신·페이지(PROJ-266) | 정상 관리 API로 생성한 초대의 SES 권한 실패 기록을 보존하고 정상 재발급 후 지정 Gmail 수신 확인. 원문 `X-Pulsemetry-Mail-Id`·SES 접수 ID 대조, DKIM·SPF 확인. 코드 없는 SSO 링크·원시 명령·공개 `/install`의 세 OS 명령 확인 | 다른 메일 업무의 실제 수신은 아래 항목으로 분리 |
+| 최초 요청 멱등성(PROJ-267) | 최초 정상 batch 요청의 같은 키·본문을 한 번 재전송하여 같은 초대·코드 응답, 초대·outbox 증가 0 확인. 원래 실패 outbox를 보존 | 캐시 응답의 queued와 현재 발송 상태는 별개 |
+| WAF 선행 검증(PROJ-269) | 세 등록 경로 혼합 550건에서 차단, 429·`Retry-After: 60`, 다른 출발지의 요청 통과, 유효 enroll 차단 중 DB 비소비·설치 증가 0, 세 경로 복구와 `EnrollmentRateBlock` 로그 확인 | 모든 출발지·부하 패턴을 검증한 것은 아님 |
+| 원격 CLI 공급(PROJ-146) | `v0.1.0-rc.2`의 게시 CLI 6종·`SHA256SUMS` 공급. 기존 dev backend `57c8d58`의 이미지 복구와 최종 `32c9cb2` 재적용에서 각각 공개 파일 6종의 해시·실행 형식 및 업데이트 확인 12건 대조 | 여섯 OS·아키텍처 전체의 실제 설치 성공을 뜻하지 않음 |
+| 실제 설치(PROJ-267) | [backend PR 48](https://github.com/soma-376/pulsemetry-backend/pull/48)의 `32c9cb2` 이미지에서 수신 메일·페이지의 명령을 새 Linux ARM64 환경으로 실행. 게시 CLI `0.1.0-rc.2` 해시 일치, 명령 종료 0, 초대 소비·구성원 활성·설치 1건 증가 확인 | 다른 OS·아키텍처의 실제 설치는 미검증. 이 CLI 호출의 HTTP 201은 직접 관측하지 않음 |
+| 초대 상태 검증(PROJ-268) | missing·malformed·unknown·used·revoked·expired의 고정 오류 스크립트를 실제 sh/PowerShell로 실행. 세 초대에서 각각 4회 사전 조회 후 DB 비소비 확인. 조회 뒤 취소는 최종 enroll 409, 만료는 410. 재발급 뒤 이전 코드는 두 스크립트와 최종 enroll에서 revoked/409로 거부 | 오류 스크립트의 네트워크 요청 수를 패킷으로 계측하지 않음 |
+| 동시 등록(PROJ-268) | 실제 재발급 메일 수신 확인 후 조회한 같은 코드로 8개 enroll을 동시에 호출하여 201 한 건·409 일곱 건과 설치 증가 1 확인. 소비 뒤 두 오류 스크립트와 최종 enroll 409 확인 | HTTP 상태 직접 관측은 이 API 경쟁 시험의 증거이며 앞선 CLI 응답 직접 관측과 구분 |
+| 이미지 복구(PROJ-146·268) | enrollment 이미지 교체만으로 `57c8d58` 복구(Helm revision 16)→`32c9cb2` 재적용(revision 17). 두 단계 Ready·ALB 정상, 이미지 외 설정과 다른 release 보존. 각 단계 독립 18 GET 확인 | 과거 Helm revision 전체를 되돌리는 복구는 수행하지 않음 |
+| 재발급 메일(PROJ-267) | 지정 Gmail 받은편지함에서 17:48 KST 재발급 메일을 실제 확인. 새 코드와 이전 코드의 차이, outbox ID 헤더, 발신·수신 일치, DKIM·SPF, 실제 링크로 연 세 OS 명령 일치 확인 | 문의·설치 업데이트 안내의 실제 SES 수신, 반송·신고 피드백은 미검증 |
+
+실제 CLI 등록은 2026-10-28 08:32:57 UTC에 확인했다. backend 이미지 digest는
+`sha256:b9d769be7b1c6f65d4d59035b8c004d6c2425b4c7a57046db0cbd9b5701dad2b`,
+다운로드한 Linux ARM64 CLI의 SHA-256은 `6d0f18c704bce427cdfff7ba973ea7cbe5ddf0435336dc06b4735bb0d09b3b26`이다.
+CLI를 재빌드하거나 패치하지 않았다. 게시 CLI의 성공 처리와 로컬 설치 상태·DB 결과를 대조하여 enroll 성공을
+확인했으며, HTTP 응답 상태나 패킷을 직접 계측하지 않았으므로 `201`을 관측했다고 기록하지 않는다.
+
+이미지 복구의 18 GET은 08:36:39 UTC, 최종 재적용의 18 GET은 08:39:37 UTC에 완료했다.
+최종 enrollment Helm revision은 17이며, 08:43:04 UTC 합본 기록은 키·메일·WAF 설정 보존과
+다른 release 불변, SES domain·DKIM 및 앱 상태를 함께 확인한다. 이전 `proj146-implementation-evidence`의
+05:18 UTC `dev.deployed=false`는 당시 구현 검증 범위의 역사 기록으로 보존하고, 현재 dev 공급 판단은
+`cli-dev-6739-rollback.json`·`cli-dev-b9d-final.json`과 `proj268-image-rollback-restore.json`의 후속 증거를 따른다.
+
+상태 검증의 최초 요청은 검증 도구가 설치 스크립트에도 `Accept: application/json`을 지정하여 406으로
+중단됐다. 제품 변경 없이 도구의 정확한 GET `/unix`·`/windows`만 `text/plain`으로 수정했다. 원본 상태·실패
+응답의 해시와 DB 범위를 대조하여 최초 읽기 외 부수효과가 없음을 확인하고 한정 재개했다. 원래 phase와
+실패 응답은 보존했으며, 08:48 UTC에 다섯 상태·조회·재발급 후 이전 코드 검증을 마치고 실제 재발급 메일을
+기다리는 checkpoint에 도달했다. 08:52:49 UTC에 새 메일·페이지를 확인한 뒤 경쟁 enroll을 실행하여
+08:53:57 UTC에 1×201·7×409를 확인했고, used 코드의 거부까지 08:53:58 UTC에 완료했다.
+근거는 `proj267-reissue-mail-receipt.json`과 `proj268-state-and-concurrency-evidence.json`이다.
+
+여섯 상태의 오류 스크립트는 받은 바이트가 검토된 고정 오류 소스와 같은지 먼저 확인하고 실제 sh/PowerShell로
+실행했다. 고정 소스에 다운로드·enroll 호출이 없고, 실행 결과 exit 1·정해진 stderr·stdout 없음·작업 디렉터리
+파일 0개·분리한 설치 대상 경로 부재를 확인했다. 패킷 계측으로 요청 0건을 관측한 것은 아니다. PowerShell
+오류 실행은 Windows 네이티브의 정상 설치 성공과 구분하며, 실제 정상 설치의 OS·아키텍처는 Linux ARM64다.
