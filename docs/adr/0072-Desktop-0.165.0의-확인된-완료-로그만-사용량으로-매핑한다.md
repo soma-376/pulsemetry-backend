@@ -48,6 +48,10 @@ Accepted — ADR 0064의 Desktop 버전 제한과 ADR 0061의 완료 토큰 의�
 - 이미 generic으로 저장된 행은 명시적으로 재정규화하지 않는 한 사용량에 포함되지 않는다.
 - Desktop 배포 바이너리 전체와 공개 소스의 동일성을 검증한 것은 아니다.
 
+## Follow-up
+
+- 필수 CI·리뷰 후 immutable 이미지로 dev에 배포하고 새 실제 Codex 사용의 서버 토큰·환산액과 대시보드가 일치하는지 확인한다. 이 작업의 완료 증거는 PROJ-291에 기록한다.
+
 ## Acceptance Criteria
 
 - 정확한 버전·surface·emitter·완료 분기에서 비중복 토큰과 독립 산식의 금액이 일치한다.
