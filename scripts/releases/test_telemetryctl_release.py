@@ -145,7 +145,7 @@ class ReleaseSupplyTest(unittest.TestCase):
 
     def test_repository_lock_is_explicit_and_complete(self):
         lock = supply.load_lock(supply.DEFAULT_LOCK)
-        self.assertEqual(lock["tag"], "v0.1.0-rc.2")
+        self.assertEqual(lock["tag"], "v0.1.0-rc.3")
         path = self.root / "lock.json"
         for invalid in ({**lock, "tag": "latest"}, {**lock, "sha256": {}},
                         {**lock, "repository": "other/repo"}):

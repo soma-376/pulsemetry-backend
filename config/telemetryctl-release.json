@@ -1,19 +1,19 @@
 {
   "repository": "soma-376/telemetryctl",
-  "tag": "v0.1.0-rc.2",
+  "tag": "v0.1.0-rc.3",
   "sha256": {
-    "pulsemetry_cli_darwin_amd64": "bbb0218a6bbf60e7eefb6b58745113ff4802833b48755e1df0d9b97a7fa3629e",
-    "pulsemetry_cli_darwin_arm64": "aabe64693bb7a8d3cf8984ee11ae3ba189af3a82fb5a514879be443100267d5a",
-    "pulsemetry_cli_linux_amd64": "72deac4a2802a22bb70016c28bced0bd5466301740521b380ff1737f76e3af17",
-    "pulsemetry_cli_linux_arm64": "6d0f18c704bce427cdfff7ba973ea7cbe5ddf0435336dc06b4735bb0d09b3b26",
-    "pulsemetry_cli_windows_amd64.exe": "a7b54add57c8eb8428f0ea1fe9dc26859dbec0a96cbcf33769e33e5f171a10a9",
-    "pulsemetry_cli_windows_arm64.exe": "1d55046fc0928723014d24469d80cfa135ad8fc19d6993f7daf563e2790ef406",
-    "pulsemetry_gui_darwin_amd64.dmg": "4eafad90f4476faa62dbfdaff2cb5cc1f5dba64e5a9c4d5f1d182c013787a1d4",
-    "pulsemetry_gui_darwin_arm64.dmg": "067910f6dc8fd0539ee4d50195ffd4acccbf4e46965590ba2ffa3bcc36ef22e3",
-    "pulsemetry_gui_linux_amd64.AppImage": "ae7395e7c40b32dc16bba5ee2cc2fdd335a46e4485e5576c3f95ebf5bf0490e9",
-    "pulsemetry_gui_linux_arm64.AppImage": "42b0207c41d2f0aeb62ad696d6a6727b5548f95fd4ac9859d2a24b32f3bf4ffb",
-    "pulsemetry_gui_windows_amd64.exe": "bed12ee6e6a0d1a8a457c89b7512bfcdc4f2829b9965f0593ad6e56f25626022",
-    "pulsemetry_gui_windows_arm64.exe": "f850e22bd670fe117e39b8f9c913959e997f1b8c942874ca60689262f01c03bb",
-    "SHA256SUMS": "05f5fa10e323c10abf970cc898633e2c9feaacba420d076b65cb5e1083d42f86"
+    "pulsemetry_cli_darwin_amd64": "6e6308e82a4515540a958a94c13e4a7511caebf135eb86b7cf2dceecbc02f26b",
+    "pulsemetry_cli_darwin_arm64": "0d81f5583388f97491434424228edc9d1e7e5910db813d4f275c0a76c92db4da",
+    "pulsemetry_cli_linux_amd64": "d87f6551c80066be1d1c4261fb766afa96f49c696ffeb0c42803e71a3af66aba",
+    "pulsemetry_cli_linux_arm64": "7655a2c9f6d406fd4ac2d2608c17a6d0edc9250d8fe263f42886c43602c83c78",
+    "pulsemetry_cli_windows_amd64.exe": "e5fe596a21a9e15647cfec64e472806f797227985c3a4f1ba0593328d3f7ce42",
+    "pulsemetry_cli_windows_arm64.exe": "3303697b53aff10b7cfaaa8e38107fbfe7fd4849a4f960b95513584eac5c05e1",
+    "pulsemetry_gui_darwin_amd64.dmg": "927129f12fb973cf2628b8ef2cc3f77b20a6b577f328e3e6d39ffe3056d9717b",
+    "pulsemetry_gui_darwin_arm64.dmg": "7043d34999da51b58e0c4150acd006328322a383ce351ccd457c41a35cf41ff5",
+    "pulsemetry_gui_linux_amd64.AppImage": "7ecc4f92bddd007685fbf97e7bf1b316335be1aeaa14c6b80fa6751991b92248",
+    "pulsemetry_gui_linux_arm64.AppImage": "c2d50e99a23552c27a3aebe974f91f2b54323211b4992ebcb0aba61126a3e9d3",
+    "pulsemetry_gui_windows_amd64.exe": "2595f25d4657d4196ecf8e93e002b84e07b508d823de496338b291f2a14c4471",
+    "pulsemetry_gui_windows_arm64.exe": "37d645a05fc735b0ab8bc9e2e6e65dd9ea44033e564557dcbf094e129a02b0d7",
+    "SHA256SUMS": "897672d21fe3ce216f36ee173959ec24d91d78a24de3d3ebdfa2e5520cc392b4"
   }
 }

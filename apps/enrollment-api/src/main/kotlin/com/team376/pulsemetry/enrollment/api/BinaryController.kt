@@ -15,7 +15,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * CLI·GUI 파일 서빙 (허브 ADR 0023, enrollment 계약 §1).
+ * CLI·GUI 파일 서빙 (허브 ADR 0027, enrollment 계약 §1).
  *
  * 방어는 **화이트리스트 하나뿐**이다. 요청한 이름이 [ALLOWED_FILENAMES] 의 12개 중 하나와
  * 정확히 같지 않으면 그 자리에서 404 다.
