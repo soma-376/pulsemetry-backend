@@ -30,6 +30,6 @@ node scripts/import-codeburn-pricing.mjs /path/to/codeburn/package
 
 스크립트는 Codeburn 0.9.24 패키지의 가격 모듈만 `node:vm` 컨텍스트에서 실행한다. vm은 보안 경계가 아니므로 신뢰한 패키지에만 쓴다. CLI·사용자 세션·로그·설정·네트워크에 접근하지 않는다. 번들/보완 표/소스맵/출력 파일의 SHA-256을 명세에 기록한다. Codeburn 자체 `calculateCost`의 고정 실행 결과를 별도 테스트 fixture로 만들어 Kotlin 구현과 전체 행을 대조한다. 직접 확인한 우선 모델은 독립 산식·장문 경계 테스트를 유지한다.
 
-기존 서버 프로세스는 새 바이너리로 재시작해야 변경한 단일 카탈로그을 사용하며 기존 저장 관측은 자동으로 재계산되지 않는다. 저장된 행의 재평가는 [운영 절차](stored-usage-repricing.md)를 따른다.
+기존 서버 프로세스는 새 바이너리로 재시작해야 변경한 단일 카탈로그를 사용하며 기존 저장 관측은 자동으로 재계산되지 않는다. 저장된 행의 재평가는 [운영 절차](stored-usage-repricing.md)를 따른다.
 
 관련 결정: backend [ADR 0071](../adr/0071-서버-환산은-단일-카탈로그를-쓰고-가격판-기록을-제거한다.md), 허브 ADR 0028(`single-reference-price-catalog`).
