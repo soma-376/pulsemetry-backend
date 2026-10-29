@@ -4,9 +4,8 @@ import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
 import java.math.BigDecimal
 import java.time.Instant
 
-/** Codeburn 0.9.24 고정 참조 가격. 실제 모델 동일성·청구액이 아닌 환산 기준이다(ADR 0060). */
+/** Codeburn 0.9.24 출처를 포함한 단일 참조 카탈로그(ADR 0071). 실제 모델 동일성·청구액을 뜻하지 않는다. */
 public object CodeburnReferencePrices {
-	public const val VERSION: String = "codeburn-0.9.24-reference-2026-10-16-v1"
 	public val AS_OF: Instant = Instant.parse("2026-10-16T10:00:00Z")
 	private val referenceTime = EpochNanos(AS_OF.epochSecond * 1_000_000_000L)
 
@@ -15,19 +14,17 @@ public object CodeburnReferencePrices {
 
 	public val ENTRIES: List<Entry> = loadCatalog()
 
-	/** 기존에 직접 검증한 9개 모델의 요율·요청별 장문 정책이 우선이다. 과거 판 자체는 바꾸지 않는다. */
-	public val PROFILE: PricingProfile = PricingProfile(
-		pricingVersion = VERSION,
-		basis = PricingBasis.CURRENT_REFERENCE,
-		requireCacheCreateReported = true,
+	/** 기존에 직접 검증한 9개 모델의 요율·요청별 장문 정책이 우선이다. 요율을 변경하면 코드 리뷰와 배포를 거친다. */
+	public val CATALOG: PricingCatalog = PricingCatalog(
 		prices = buildMap {
 			ENTRIES.forEach { put(it.model, it.price) }
-			CurrentPublicPrices.PROFILE.prices.forEach { put(it.model, it.copy(validFrom = referenceTime)) }
+			CurrentPublicPrices.PRICES.forEach { put(it.model, it) }
 		}.values.toList(),
-		reference = ReferenceValuation(
+	)
+
+	public val REFERENCE: ReferenceValuation = ReferenceValuation(
 			asOf = referenceTime, currency = "USD", serviceTier = "standard", geography = "global",
-			sources = listOf("https://github.com/getagentseal/codeburn/tree/v0.9.24") + CurrentPublicPrices.PROFILE.reference!!.sources,
-		),
+			sources = listOf("https://github.com/getagentseal/codeburn/tree/v0.9.24") + CurrentPublicPrices.REFERENCE.sources,
 	)
 
 	private fun loadCatalog(): List<Entry> {
@@ -44,7 +41,7 @@ public object CodeburnReferencePrices {
 					else -> error("지원하지 않는 Codeburn 모델 종류다: $family")
 				}
 				Entry(model, referenceModel, ModelPrice(
-					model = model, validFrom = referenceTime, validUntil = null,
+					model = model,
 					semanticsProfiles = setOf(semantics),
 					inputUncachedPerMillion = BigDecimal(fields[3]), outputPerMillion = BigDecimal(fields[4]),
 					cacheReadPerMillion = BigDecimal(fields[5]), cacheCreatePerMillion = BigDecimal(fields[6]),

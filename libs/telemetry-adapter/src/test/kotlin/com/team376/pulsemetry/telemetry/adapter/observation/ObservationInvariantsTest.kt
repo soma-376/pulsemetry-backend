@@ -58,9 +58,10 @@ class ObservationInvariantsTest {
 	}
 
 	@Test
-	@DisplayName("추정 비용은 pricing_version 과 함께만 있다")
-	fun estimatedCostNeedsPricingVersion() {
-		assertThatThrownBy { EventObservation(envelope(), EventType.MODEL_RESPONSE_USAGE, costEstimatedUsd = BigDecimal("0.01")) }
+	@DisplayName("추정 비용은 가격판 메타데이터 없이 저장하며 음수는 거부한다")
+	fun estimatedCostDoesNotNeedVersion() {
+		assertThat(EventObservation(envelope(), EventType.MODEL_RESPONSE_USAGE, costEstimatedUsd = BigDecimal("0.01")).costEstimatedUsd).isEqualByComparingTo("0.01")
+		assertThatThrownBy { EventObservation(envelope(), EventType.MODEL_RESPONSE_USAGE, costEstimatedUsd = BigDecimal("-0.01")) }
 			.isInstanceOf(IllegalArgumentException::class.java)
 	}
 
@@ -108,7 +109,7 @@ class ObservationInvariantsTest {
 	fun liveVersioning() {
 		val receivedAt = Instant.parse("2026-01-01T00:00:05.999Z")
 
-		assertThat(RowVersioning.NORMALIZER_REV).isEqualTo(9u)
+		assertThat(RowVersioning.NORMALIZER_REV).isEqualTo(10u)
 		assertThat(RowVersioning.live(receivedAt)).isEqualTo(RowVersioning.of(RowVersioning.NORMALIZER_REV, 1_767_225_605u))
 		assertThat(RowVersioning.live(Instant.ofEpochSecond(0xFFFF_FFFFL), normalizerRev = 2u).rowVersion)
 			.isEqualTo((2uL shl 32) or 0xFFFF_FFFFuL)

@@ -23,7 +23,7 @@ class SeptemberProducerProfilesTest {
 	private val time = 1_788_192_000_123_456_789L
 	private val pipeline = ObservationPipeline(
 		ObservationNormalizer(ProfileRegistry(listOf(ClaudeApiProfile, CodexCompletedProfile))),
-		CurrentPublicPrices.select(CurrentPublicPrices.VERSION),
+		com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage(),
 	)
 	private fun text(key: String, value: String): KeyValue =
 		KeyValue.newBuilder().setKey(key).setValue(AnyValue.newBuilder().setStringValue(value)).build()

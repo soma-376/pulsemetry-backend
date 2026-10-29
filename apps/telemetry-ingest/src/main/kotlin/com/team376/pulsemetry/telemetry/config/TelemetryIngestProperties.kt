@@ -2,7 +2,6 @@ package com.team376.pulsemetry.telemetry.config
 
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestProcessor
-import com.team376.pulsemetry.telemetry.adapter.observation.pricing.CodeburnReferencePrices
 import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaConnection
 import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaSecurity
 import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaTls
@@ -167,8 +166,6 @@ data class TelemetryIngestProperties(
 		 * `kafka` — Consumer 와 health 만(OTLP 경로는 404). 모르는 값이면 기동이 실패한다.
 		 */
 		val mode: IngestMode = IngestMode.HTTP,
-		/** 불변 참조 환산 프로파일 ID. 명시적으로 none을 선택하면 가격을 계산하지 않는다. */
-		val pricingProfile: String = CodeburnReferencePrices.VERSION,
 		/** 압축을 푼 뒤의 상한. 넘으면 수집 모듈이 400 을 낸다. */
 		val maxDecompressedBytes: Long = OtlpIngestProcessor.DEFAULT_MAX_DECOMPRESSED_BYTES,
 		/**

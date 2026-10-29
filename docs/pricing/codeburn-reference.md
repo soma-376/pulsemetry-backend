@@ -1,6 +1,6 @@
 # Codeburn 참조 단가
 
-기본 가격판은 `codeburn-0.9.24-reference-2026-10-16-v1`, 정규화 판은 9다. Codeburn 기준의 토큰 환산이며 실제 사용 모델의 과금 명세나 구독 청구액이 아니다. 개발 중 만든 공시 가격판 v1~v4는 그대로 선택할 수 있다.
+서버는 공식 확인 요율이 우선하는 단일 참조 카탈로그를 사용한다. Codeburn 0.9.24는 출처 자료의 버전이며 선택 가능한 가격판이 아니다. 정규화 규칙 번호는 10이다. 참조 환산이며 실제 사용 모델의 과금 명세나 구독 청구액이 아니다.
 
 ## 반영 범위
 
@@ -9,7 +9,7 @@
 - 입력·출력·cache read·cache write USD/M을 고정 TSV에 저장한다.
 - Codeburn에서 cache write가 비어 있으면 input×1.25, cache read가 비어 있으면 input×0.1을 적용하는 규칙을 가져왔다.
 - 이미지·음성·실시간 등 별도 모달리티 43개와 Batch 전용 42개는 Standard 텍스트 평가에서 제외한다. 모든 후보는 적용 또는 사유 있는 제외로 분류했다.
-- [직접 확인한 9개 모델](current-public-standard.md)은 공식 단가와 장문 요금을 우선한다. Codeburn에 없더라도 지원을 잃지 않는다. 이전 가격판 내용은 수정하지 않는다.
+- [직접 확인한 9개 모델](current-public-standard.md)은 공식 단가와 장문 요금을 우선한다. Codeburn에 없더라도 지원을 잃지 않는다.
 - 임의 모델 prefix 매칭, 사용자 로컬 alias/override, 실행 중 가격 갱신, 미가격을 0원으로 만드는 처리는 사용하지 않는다. 원천 모델명·날짜·토큰은 그대로 둔다.
 
 카탈로그: [`codeburn-0.9.24.tsv`](../../libs/telemetry-adapter/src/main/resources/pricing/codeburn-0.9.24.tsv).
@@ -28,8 +28,8 @@ node scripts/import-codeburn-pricing.mjs /path/to/codeburn/package
 ./gradlew :libs:telemetry-adapter:test :apps:telemetry-ingest:test
 ```
 
-스크립트는 Codeburn 0.9.24 패키지의 가격 모듈만 `node:vm` 컨텍스트에서 실행한다. vm은 보안 경계가 아니므로 신뢰한 패키지에만 쓴다. CLI·사용자 세션·로그·설정·네트워크에 접근하지 않는다. 번들/보완 표/소스맵/출력 파일의 SHA-256을 명세에 기록한다. Codeburn 자체 `calculateCost`의 고정 실행 결과를 별도 테스트 fixture로 만들어 Kotlin 구현과 전체 행을 대조한다. 직접 검증한 v4 우선 모델은 기존 테스트와 프로파일 불변성 검증을 유지한다.
+스크립트는 Codeburn 0.9.24 패키지의 가격 모듈만 `node:vm` 컨텍스트에서 실행한다. vm은 보안 경계가 아니므로 신뢰한 패키지에만 쓴다. CLI·사용자 세션·로그·설정·네트워크에 접근하지 않는다. 번들/보완 표/소스맵/출력 파일의 SHA-256을 명세에 기록한다. Codeburn 자체 `calculateCost`의 고정 실행 결과를 별도 테스트 fixture로 만들어 Kotlin 구현과 전체 행을 대조한다. 직접 확인한 우선 모델은 독립 산식·장문 경계 테스트를 유지한다.
 
-기존 서버 프로세스는 새 바이너리로 재시작해야 새 기본 가격판을 사용하며 기존 저장 관측은 자동으로 재계산되지 않는다. 저장된 행의 재평가는 [운영 절차](stored-usage-repricing.md)를 따른다.
+기존 서버 프로세스는 새 바이너리로 재시작해야 변경한 단일 카탈로그을 사용하며 기존 저장 관측은 자동으로 재계산되지 않는다. 저장된 행의 재평가는 [운영 절차](stored-usage-repricing.md)를 따른다.
 
-관련 결정: backend [ADR 0060](../adr/0060-사용-환산액은-고정된-참조-가격판으로-계산한다.md), 허브 ADR 0008(`current-public-reference-valuation`).
+관련 결정: backend [ADR 0071](../adr/0071-서버-환산은-단일-카탈로그를-쓰고-가격판-기록을-제거한다.md), 허브 ADR 0028(`single-reference-price-catalog`).

@@ -39,9 +39,9 @@ class ObservationColumnsTest {
 	}
 
 	@Test
-	@DisplayName("EventObservation 의 고유 필드 = telemetry_events 의 50–107 컬럼, 순서까지")
+	@DisplayName("EventObservation 의 고유 필드 = telemetry_events 의 가격판을 제외한 고유 컬럼, 순서까지")
 	fun eventObservationMatchesTheEventsTable() {
-		assertThat(EVENTS_DDL).hasSize(107)
+		assertThat(EVENTS_DDL).hasSize(106)
 		assertThat(columnsOf(EventObservation::class) - "envelope")
 			.containsExactlyElementsOf(EVENTS_DDL.drop(ENVELOPE_SIZE))
 	}
@@ -79,7 +79,7 @@ class ObservationColumnsTest {
 			"trace_id", "span_id", "parent_span_id", "span_kind", "span_status_code", "severity_number",
 			"tokens_input", "tokens_output", "tokens_cache_read", "tokens_cache_create", "tokens_reasoning", "tokens_tool",
 			"tokens_total_reported", "tokens_total_derived", "tokens_input_uncached", "input_semantics", "output_semantics", "semantics_profile",
-			"cost_reported_usd", "cost_estimated_usd", "reported_cost_basis", "pricing_version", "success", "http_status",
+			"cost_reported_usd", "cost_estimated_usd", "reported_cost_basis", "success", "http_status",
 			"error_type", "attempt", "tool_name", "tool_namespace", "tool_origin", "tool_action",
 			"mcp_server", "decision", "decision_raw", "decision_source", "decision_scope", "prompt_length",
 			"response_length", "command_name", "stop_reason", "reasoning_effort", "agent_id",

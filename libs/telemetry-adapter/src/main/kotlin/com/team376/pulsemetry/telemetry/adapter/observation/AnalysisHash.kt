@@ -39,6 +39,10 @@ public object AnalysisHash {
 
 	public fun of(observation: MetricPointObservation): String = Canonical.sha256Hex(encode(observation))
 
+	/** 정규화 판 1~9 체크포인트 검증 전용. 새 관측의 해시와 쓰기는 이 경로를 사용하지 않는다(ADR 0071). */
+	public fun ofLegacyPriced(observation: EventObservation, pricingVersion: String?): String =
+		Canonical.sha256Hex(StringBuilder().also { writeObject(it, observation, "pricingVersion" to pricingVersion) }.toString())
+
 	/** hash 를 계산해 봉투에 넣은 사본. */
 	public fun seal(observation: EventObservation): EventObservation =
 		observation.copy(envelope = observation.envelope.copy(analysisHash = of(observation)))
@@ -77,18 +81,19 @@ public object AnalysisHash {
 		}
 	}
 
-	private fun writeObject(out: StringBuilder, value: Any) {
+	private fun writeObject(out: StringBuilder, value: Any, legacy: Pair<String, String?>? = null) {
 		@Suppress("UNCHECKED_CAST")
 		val type = value::class as KClass<Any>
 		val names = type.primaryConstructor!!.parameters.map { it.name!! }.toSet()
-		val properties = type.memberProperties.filter { it.name in names && it.name !in EXCLUDED }.sortedBy { it.name }
+		val properties = type.memberProperties.filter { it.name in names && it.name !in EXCLUDED }
+			.associate { it.name to it.get(value) }.toMutableMap()
+		legacy?.let { properties[it.first] = it.second }
 		out.append('{')
-		properties.forEachIndexed { index, property ->
+		properties.toSortedMap().entries.forEachIndexed { index, (name, v) ->
 			if (index > 0) out.append(',')
-			Canonical.writeString(out, property.name)
+			Canonical.writeString(out, name)
 			out.append(':')
-			val v = property.get(value)
-			when (property.name) {
+			when (name) {
 				"metadataJson" -> writeMetadata(out, v as String)
 				"qualityFlags" -> write(out, (v as List<*>).filter { it !in EXCLUDED_FLAGS })
 				else -> write(out, v)

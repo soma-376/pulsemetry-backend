@@ -213,7 +213,7 @@ internal fun detailedUsage(asOf: LocalDate, rows: Map<String, List<Row>>, sessio
                 "output_semantics" to "inclusive_reasoning_tool",
                 "semantics_profile" to if (exclusive) "claude-code-exclusive-v1" else "codex-responses-inclusive-v1",
                 "cost_reported_usd" to null, "cost_estimated_usd" to model.cost(uncached, output, read, created),
-                "reported_cost_basis" to "unknown", "pricing_version" to "seed-synthetic-v5", "success" to true, "http_status" to 200,
+                "reported_cost_basis" to "unknown", "success" to true, "http_status" to 200,
                 "error_type" to "none", "attempt" to 1,
             )
             // 선택값도 명시해 ClickHouse 기본값을 실제 관측으로 오인하지 않게 한다.

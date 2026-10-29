@@ -1,7 +1,6 @@
 package com.team376.pulsemetry.telemetry.maintenance
 
 import com.team376.pulsemetry.telemetry.adapter.observation.*
-import com.team376.pulsemetry.telemetry.adapter.observation.pricing.CodeburnReferencePrices
 import com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage
 import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
 import tools.jackson.databind.JsonNode
@@ -22,9 +21,9 @@ internal object StoredUsageRepricing {
 	data class Planned(val source: Row, val disposition: Disposition, val reason: Reason, val target: Row?)
 
 	enum class Disposition(val wire: String) {
-		/** 토큰 의미가 있는 이전 판 — 가격만 다시 계산해 현재 판으로 교체한다. 단가가 없으면 null 로 남긴다. */
+		/** 검증된 의미의 행 중 계산 금액이 달라진 행 — 가격만 현재 규칙으로 교체한다. */
 		REPRICE("reprice"),
-		/** 이미 현재 판의 결과다. 쓰지 않는다. */
+		/** 이미 현재 계산 금액과 같다. 정규화 번호가 달라도 쓰지 않는다. */
 		CURRENT("current"),
 		/** 토큰 의미를 믿을 수 없지만 원본 참조가 있다. 원본이 남아 있으면 재정규화로만 고칠 수 있다. */
 		RENORMALIZE("renormalize"),
@@ -42,24 +41,35 @@ internal object StoredUsageRepricing {
 	}
 
 	/**
-	 * 토큰 의미 프로파일을 믿을 수 있는 원천 판. 1 은 develop 에 배포된 판이고 7·8 은 검증 조직의 이전 판이다.
-	 * 세 판 모두 프로파일 ID 와 토큰 유도 규칙이 현재 판과 같다. 2~6 은 로컬 반복 중의 판이라 제외한다.
+	 * 토큰 의미 프로파일을 믿을 수 있는 원천 판. 1·7·8·9는 이전에 사용된 규칙이다.
+	 * 이 규칙들은 프로파일 ID 와 토큰 유도 규칙이 현재 판과 같다. 2~6 은 로컬 반복 중의 판이라 제외한다.
 	 */
-	val SOURCE_REVISIONS: Set<UInt> = setOf(1u, 7u, 8u)
+	val SOURCE_REVISIONS: Set<UInt> = setOf(1u, 7u, 8u, 9u)
 
-	private val pricing = PricingStage(CodeburnReferencePrices.PROFILE)
+	private val pricing = PricingStage()
 	private val models = listOf(ObservationEnvelope::class, EventObservation::class, OrgAttribution::class)
 	private val fields = models.flatMap { type -> type.primaryConstructor!!.parameters.mapNotNull { it.name } }
 		.filter { it != "envelope" }.map(::column).toSet() + setOf("row_version", "normalizer_rev")
 
 	/** 빠진 열을 기본값으로 채우지 않으며, 미지의 열도 버리지 않는다. 64비트 값은 Double을 거치지 않는다. */
 	fun decode(json: JsonNode): Row {
-		stopUnless(json.isObject && json.properties().map { it.key }.toSet() == fields) { "저장 행의 열 집합이 현재 계약과 다르다" }
+		stopUnless(json.isObject && json.properties().map { it.key }.toSet() in setOf(fields, fields + "pricing_version")) { "저장 행의 열 집합이 현재 계약과 다르다" }
 		val envelope = construct(ObservationEnvelope::class, json)
 		val observation = construct(EventObservation::class, json, mapOf("envelope" to envelope))
 		val org = construct(OrgAttribution::class, json)
 		val version = RowVersioning(numberText(json["normalizer_rev"]).toUInt(), numberText(json["row_version"]).toULong())
-		stopUnless(AnalysisHash.of(observation) == envelope.analysisHash) { "저장 행의 정규화 해시가 일치하지 않는다" }
+		val hash = if (version.normalizerRev < 10u) {
+			stopUnless(json.has("pricing_version")) { "구 정규화 행의 호환 열이 없다" }
+			val legacy = json["pricing_version"]
+			stopUnless(legacy.isNull || legacy.isString) { "구 가격판 열의 타입이 다르다" }
+			val name = if (legacy.isNull) null else legacy.asString()
+			stopUnless((observation.costEstimatedUsd == null) == (name == null)) { "구 가격판과 금액의 유무가 다르다" }
+			AnalysisHash.ofLegacyPriced(observation, name)
+		} else {
+			stopUnless(!json.has("pricing_version") || json["pricing_version"].isNull) { "새 관측에는 가격판을 기록하지 않는다" }
+			AnalysisHash.of(observation)
+		}
+		stopUnless(hash == envelope.analysisHash) { "저장 행의 정규화 해시가 일치하지 않는다" }
 		return Row(EnrichedEvent(observation, org), version)
 	}
 
@@ -70,13 +80,8 @@ internal object StoredUsageRepricing {
 		stopUnless(row.version.normalizerRev <= RowVersioning.NORMALIZER_REV) { "현재보다 높은 정규화 판이다" }
 		val priced = AnalysisHash.seal(pricing.apply(source))
 		val pricedReason = if (priced.costEstimatedUsd == null) Reason.PRICE_UNAVAILABLE else Reason.PRICED
-		if (row.version.normalizerRev == RowVersioning.NORMALIZER_REV) {
-			// 저장 Decimal의 고정 scale은 산식의 scale과 달라도 같은 값이다. 봉인 해시는 그 차이를 정규화한다.
-			stopUnless(priced.envelope.analysisHash == source.envelope.analysisHash) { "같은 정규화 판의 결과를 덮어쓸 수 없다" }
-			return Planned(row, Disposition.CURRENT, pricedReason, row)
-		}
 		val unsupported = when {
-			row.version.normalizerRev !in SOURCE_REVISIONS -> Reason.UNSUPPORTED_NORMALIZER_REV
+			row.version.normalizerRev != RowVersioning.NORMALIZER_REV && row.version.normalizerRev !in SOURCE_REVISIONS -> Reason.UNSUPPORTED_NORMALIZER_REV
 			source.semanticsProfile == null -> Reason.SEMANTICS_MISSING
 			else -> null
 		}
@@ -84,6 +89,16 @@ internal object StoredUsageRepricing {
 			val disposition = if (source.envelope.archiveRef == null) Disposition.UNRECOVERABLE else Disposition.RENORMALIZE
 			return Planned(row, disposition, unsupported, null)
 		}
+		// 가격판·정규화 번호 차이만으로 기존 금액을 다시 쓰지 않는다. Decimal scale도 금액 차이가 아니다.
+		val storedCost = source.costEstimatedUsd
+		val currentCost = priced.costEstimatedUsd
+		val sameCost = when {
+			storedCost == null -> currentCost == null
+			currentCost == null -> false
+			else -> storedCost.compareTo(currentCost) == 0
+		}
+		if (sameCost) return Planned(row, Disposition.CURRENT, pricedReason, row)
+		stopUnless(row.version.normalizerRev < RowVersioning.NORMALIZER_REV) { "같은 정규화 판의 결과를 덮어쓸 수 없다" }
 		val target = Row(row.event.copy(observation = priced), RowVersioning.of(RowVersioning.NORMALIZER_REV, row.version.rowVersion.toUInt()))
 		return Planned(row, Disposition.REPRICE, pricedReason, target)
 	}

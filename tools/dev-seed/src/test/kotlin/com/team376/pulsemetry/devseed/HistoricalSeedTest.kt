@@ -215,9 +215,31 @@ class HistoricalSeedTest {
         assertEquals("2026-10-26T00:00:00.000000001Z", receipts.single()["timeMax"])
     }
 
-    @Test fun `기존 A와 C의 전체 콘텐츠 지문은 일반화 전과 같다`() {
+    @Test fun `신규 시드는 가격판을 쓰지 않고 나머지 A와 C 콘텐츠는 보존한다`() {
         val date = LocalDate.parse("2026-10-11")
-        assertEquals("58cb20d3edfda4a51f00976d669b69d0c2f39ab4defbcbcb4401afc54d90fbb2", scenario("A", date).fingerprint)
-        assertEquals("bf75b04fa3d4a25a368706c7c42d45061c015cc444c4dbd1c9a7d3ca5cc53b68", scenario("C", date).fingerprint)
+        val prior = mapOf(
+            "A" to "58cb20d3edfda4a51f00976d669b69d0c2f39ab4defbcbcb4401afc54d90fbb2",
+            "C" to "bf75b04fa3d4a25a368706c7c42d45061c015cc444c4dbd1c9a7d3ca5cc53b68",
+        )
+        for ((name, fingerprint) in prior) {
+            val current = scenario(name, date)
+            assertTrue(current.events.all { "pricing_version" !in it })
+            // 제거한 메타데이터와 그에 의존한 진단 해시만 복원해 기존 지문과 대조한다. 원천·금액 변경은 검출된다.
+            val legacyEvents = current.events.map { event ->
+                buildMap<String, Any?> {
+                    for ((key, value) in event) {
+                        put(key, value)
+                        val detailed = event["mapping_version"] == "seed-v5"
+                        if (key == if (detailed) "reported_cost_basis" else "cost_estimated_usd") {
+                            put("pricing_version", if (detailed) "seed-synthetic-v5" else if (event["product"] == "unknown") null else "seed-synthetic-v1")
+                        }
+                    }
+                }.let { restored ->
+                    if (event["mapping_version"] == "seed-v5") restored + ("analysis_hash" to hash(encode(restored - "analysis_hash"))) else restored
+                }
+            }
+            assertEquals(fingerprint, current.copy(events = legacyEvents).fingerprint)
+            assertNotEquals(fingerprint, current.fingerprint)
+        }
     }
 }

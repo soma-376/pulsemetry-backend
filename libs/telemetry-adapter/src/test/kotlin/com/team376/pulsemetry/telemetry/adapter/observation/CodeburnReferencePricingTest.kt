@@ -9,7 +9,7 @@ import org.junit.jupiter.api.TestFactory
 import java.math.BigDecimal
 
 class CodeburnReferencePricingTest {
-	private val stage = CurrentPublicPrices.select(CodeburnReferencePrices.VERSION)
+	private val stage = com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage()
 	private fun usage(model: String, claude: Boolean = false) = EventObservation(
 		envelope = ObservationEnvelope(
 			tenantId = "test", installationId = "test", observationId = "a".repeat(64), analysisHash = AnalysisHash.PLACEHOLDER,
@@ -37,13 +37,12 @@ class CodeburnReferencePricingTest {
 			lines.drop(1).filter { it.isNotBlank() }.associate { it.split('\t').let { parts -> parts[0] to parts[1] } }
 		}
 		assertThat(expected.keys).containsExactlyInAnyOrderElementsOf(CodeburnReferencePrices.ENTRIES.map { it.model })
-		val legacyModels = CurrentPublicPrices.PROFILE.prices.map { it.model }.toSet()
+		val legacyModels = CurrentPublicPrices.PRICES.map { it.model }.toSet()
 		return CodeburnReferencePrices.ENTRIES.filter { it.model !in legacyModels }.map { entry ->
 			DynamicTest.dynamicTest(entry.model) {
 				val input = usage(entry.model, "claude-code-exclusive-v1" in entry.price.semanticsProfiles)
 				val result = stage.apply(input)
 				assertThat(result.costEstimatedUsd).isEqualByComparingTo(expected.getValue(entry.model))
-				assertThat(result.pricingVersion).isEqualTo(CodeburnReferencePrices.VERSION)
 				assertThat(result.envelope).isEqualTo(input.envelope)
 				assertThat(result.costReportedUsd).isEqualTo(input.costReportedUsd)
 			}
@@ -61,17 +60,16 @@ class CodeburnReferencePricingTest {
 		)
 		assertThat(stage.apply(input).costEstimatedUsd).isEqualByComparingTo("0.0011825")
 		assertThat(stage.apply(input).envelope.model).isEqualTo("codex-auto-review")
-		assertThat(CurrentPublicPrices.select(CurrentPublicPrices.VERSION).apply(input).costEstimatedUsd).isNull()
 	}
 
 	@Test
 	fun allPreviouslyVerifiedPricesAndLongContextRulesRemainIntact() {
-		for (old in CurrentPublicPrices.PROFILE.prices) {
-			val selected = CodeburnReferencePrices.PROFILE.prices.single { it.model == old.model }
-			assertThat(selected.copy(validFrom = old.validFrom)).isEqualTo(old)
+		for (old in CurrentPublicPrices.PRICES) {
+			val selected = CodeburnReferencePrices.CATALOG.prices.single { it.model == old.model }
+			assertThat(selected).isEqualTo(old)
 		}
 		assertThat(CodeburnReferencePrices.ENTRIES).hasSize(315)
-		assertThat(CodeburnReferencePrices.PROFILE.prices.map { it.model }).doesNotHaveDuplicates()
+		assertThat(CodeburnReferencePrices.CATALOG.prices.map { it.model }).doesNotHaveDuplicates()
 	}
 
 	@Test

@@ -13,7 +13,7 @@ import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexCompletedProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexDesktopCompletedProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProfileRegistry
-import com.team376.pulsemetry.telemetry.adapter.observation.pricing.CurrentPublicPrices
+import com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestProcessor
 import com.team376.pulsemetry.telemetry.collector.OtlpProcessor
@@ -50,7 +50,7 @@ class PipelineConfig {
 	fun observationPipeline(properties: TelemetryIngestProperties): ObservationPipeline =
 		ObservationPipeline(
 			ObservationNormalizer(ProfileRegistry(listOf(CodexProfile, CodexCompletedProfile, CodexDesktopCompletedProfile, ClaudeCodeProfile, ClaudeApiProfile))),
-			CurrentPublicPrices.select(properties.telemetry.ingest.pricingProfile),
+			PricingStage(),
 		)
 
 	/**

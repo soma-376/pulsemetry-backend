@@ -4,7 +4,6 @@ import com.team376.pulsemetry.persistence.telemetry.AnalysisWriteBoundary
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
 import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
 import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.adapter.observation.pricing.CodeburnReferencePrices
 import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
 import com.team376.pulsemetry.telemetry.maintenance.StoredUsageSamples.row
 import com.team376.pulsemetry.telemetry.support.AbstractIngestIntegrationTest
@@ -116,7 +115,7 @@ class RepriceStoredUsageApplyTest : AbstractIngestIntegrationTest() {
 		for (id in listOf("a", "b", "c")) {
 			val row = after.getValue(id)
 			assertThat(row["normalizer_rev"].asLong()).isEqualTo(RowVersioning.NORMALIZER_REV.toLong())
-			assertThat(row["pricing_version"].asString()).isEqualTo(CodeburnReferencePrices.VERSION)
+			assertThat(row["pricing_version"].isNull).isTrue()
 			assertThat(row["cost_estimated_usd"].asString().toBigDecimal()).isEqualByComparingTo("0.0011825")
 			// 원래 ingest_seq 를 유지하고 판만 올린다.
 			assertThat(row["row_version"].asString().toULong() and 0xFFFF_FFFFuL)

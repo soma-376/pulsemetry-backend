@@ -9,23 +9,9 @@ import org.junit.jupiter.api.Test
 class TelemetryIngestPropertiesTest {
 
 	@Test
-	@DisplayName("현재 공시 카탈로그 기본 배선과 none은 생성되며 알 수 없는 가격 이름은 기동에서 거절한다")
-	fun pricingProfileWiring() {
-		val properties = TelemetryIngestProperties("test-secret")
-		assertThat(properties.telemetry.ingest.pricingProfile).isEqualTo("codeburn-0.9.24-reference-2026-10-16-v1")
-		assertThat(PipelineConfig().observationPipeline(properties)).isNotNull()
-		val v1 = properties.copy(telemetry = properties.telemetry.copy(ingest = properties.telemetry.ingest.copy(pricingProfile = "public-standard-global-reference-2026-10-16-v1")))
-		assertThat(PipelineConfig().observationPipeline(v1)).isNotNull()
-		val v2 = properties.copy(telemetry = properties.telemetry.copy(ingest = properties.telemetry.ingest.copy(pricingProfile = "public-standard-global-reference-2026-10-16-v2")))
-		assertThat(PipelineConfig().observationPipeline(v2)).isNotNull()
-		val v3 = properties.copy(telemetry = properties.telemetry.copy(ingest = properties.telemetry.ingest.copy(pricingProfile = "public-standard-global-reference-2026-10-16-v3")))
-		assertThat(PipelineConfig().observationPipeline(v3)).isNotNull()
-		val v4 = properties.copy(telemetry = properties.telemetry.copy(ingest = properties.telemetry.ingest.copy(pricingProfile = "public-standard-global-reference-2026-10-16-v4")))
-		assertThat(PipelineConfig().observationPipeline(v4)).isNotNull()
-		val none = properties.copy(telemetry = properties.telemetry.copy(ingest = properties.telemetry.ingest.copy(pricingProfile = "none")))
-		assertThat(PipelineConfig().observationPipeline(none)).isNotNull()
-		val invalid = properties.copy(telemetry = properties.telemetry.copy(ingest = properties.telemetry.ingest.copy(pricingProfile = "unknown")))
-		assertThatThrownBy { PipelineConfig().observationPipeline(invalid) }.isInstanceOf(IllegalArgumentException::class.java)
+	@DisplayName("가격판 설정 없이 단일 참조 카탈로그를 배선한다")
+	fun singleCatalogWiring() {
+		assertThat(PipelineConfig().observationPipeline(TelemetryIngestProperties("test-secret"))).isNotNull()
 	}
 
 	@Test
