@@ -2,6 +2,7 @@ package com.team376.pulsemetry.telemetry.gateway.config
 
 import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaConnection
 import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaSecurity
+import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaTls
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.util.unit.DataSize
 import java.time.Duration
@@ -37,6 +38,7 @@ data class TelemetryGatewayProperties(
 		/** ingress topic. dev 는 `pulsemetry-dev-telemetry-ingress-<stage>` 다(infra 가 공급). */
 		val topic: String = "pulsemetry-local-telemetry-ingress",
 		val iam: Iam = Iam(),
+		val tls: TelemetryKafkaTls = TelemetryKafkaTls(),
 		val producer: Producer = Producer(),
 	) {
 		init {
@@ -49,6 +51,7 @@ data class TelemetryGatewayProperties(
 			iamRoleArn = iam.roleArn,
 			iamSessionName = iam.sessionName,
 			iamStsRegion = iam.stsRegion,
+			tls = tls,
 		)
 	}
 

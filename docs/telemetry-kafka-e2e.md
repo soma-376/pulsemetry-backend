@@ -3,7 +3,7 @@
 **수정하지 않은 telemetryctl 데몬**이 `ptt_` → telemetry JWT 전환과 JWT 만료를 스스로 넘기고, 그 데이터가 Gateway → Kafka → ingest Consumer → ClickHouse 까지
 가는지 로컬에서 끝까지 본다(PROJ-245, [ADR 0065](adr/0065-telemetry-token은-전용-RS256-JWT로-발급하고-telemetry_tokens를-자격-기록으로-유지한다.md)·
 [ADR 0066](adr/0066-OTLP-수신은-Gateway가-JWT만-검증해-Kafka에-접수하고-ingest가-RDB로-다시-검증한다.md)).
-이 문서는 절차와 **한 번의 실행 기록**이다. MSK·IAM·TLS·ALB·EKS 는 이 검증 범위가 아니다(§5).
+§1~5는 절차와 **한 번의 실행 기록**이다. MSK·IAM·TLS·ALB·EKS 는 그 검증 범위가 아니다(§5). 이후 추가한 Strimzi mTLS 접속 검증은 §6에 별도로 기록한다.
 
 ## 1. 구성
 
@@ -125,3 +125,24 @@ SIGTERM 에 Gateway·ingest 모두 `Graceful shutdown complete`(각 약 2초).
   `:apps:telemetry-ingest` 의 Testcontainers Kafka)가 맡는다. 이 E2E 에서는 일으키지 않았다.
 - 처리 중 요청·record 가 있는 상태의 SIGTERM, 부하, 메모리 상한.
 - 로컬 통과는 dev 배포 완료가 아니다.
+
+## 6. Strimzi mTLS 접속 검증 — 2026-10-29 (PROJ-284)
+
+`KafkaMtlsIntegrationTest`는 `quay.io/strimzi/kafka:1.3.0-kafka-4.2.2`
+(digest `sha256:b9b9e37491ce17c1b2722b3668661de91430d9437acf18c5f5bafaef38138652`)로 단일 KRaft broker를 실행한다.
+JDK 25 keytool로 서버·사용자·신뢰하지 않는 CA의 PKCS12 자격을 매번 임시 디렉터리에 만들며 운영 Secret을 사용하지 않는다.
+Kafka client는 기존 4.2.1을 유지한다.
+
+```sh
+./gradlew :apps:telemetry-gateway:test --tests '*KafkaMtlsIntegrationTest'
+```
+
+| 검증 | 결과 |
+|---|---|
+| 실제 Gateway publisher + 공통 mTLS 설정으로 ACK 후 key·envelope 바이트를 수신하고 offset을 명시적으로 commit | 통과 |
+| 다른 CA를 신뢰하는 client | `SslAuthenticationException`으로 거절 |
+| 사용자 인증서 없는 client | `SslAuthenticationException`으로 거절 |
+| 정상 client 구성·발행·수신 로그의 PKCS12 비밀번호·개인키 원문 | 없음 |
+
+이 테스트는 외부 client의 TLS 연결을 검증한다. 3 broker·RF 3·minISR 2, KafkaUser ACL, Kubernetes Secret mount·회전,
+ALB 전환과 ClickHouse 최종 적재는 dev 인수 검증(PROJ-285)에 남는다. 단일 테스트 broker의 내부 controller 통신은 격리된 컨테이너 안 plaintext다.

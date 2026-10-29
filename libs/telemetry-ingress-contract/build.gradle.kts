@@ -3,6 +3,7 @@
 // Kafka 설정은 키 문자열만 만들고 클라이언트는 각 앱이 끈다.
 plugins {
 	`java-library`
+	`java-test-fixtures`
 	// envelope 의 Java 코드를 생성한다. 이 모듈에만 적용한다.
 	alias(libs.plugins.protobuf)
 }

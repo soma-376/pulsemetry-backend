@@ -1,12 +1,13 @@
 package com.team376.pulsemetry.telemetry.ingress
 
 /**
- * Kafka 접속 방식. 환경변수 `PULSEMETRY_KAFKA_SECURITY` 의 값이다(`plaintext`·`iam`).
+ * Kafka 접속 방식. 환경변수 `PULSEMETRY_KAFKA_SECURITY` 의 값이다(`plaintext`·`iam`·`mtls`).
  *
  * - [PLAINTEXT] — 로컬 Compose·테스트. 인증·암호화 없음.
+ * - [MTLS] — Strimzi. TLS + workload별 사용자 인증서, PKCS12 파일(ADR 0070).
  * - [IAM] — MSK. TLS + SASL `AWS_MSK_IAM`, 포트 9098. 자격은 Pod Identity → workload 전용 MSK 역할 assume 이다.
  */
-public enum class TelemetryKafkaSecurity { PLAINTEXT, IAM }
+public enum class TelemetryKafkaSecurity { PLAINTEXT, IAM, MTLS }
 
 /**
  * Gateway(producer)와 ingest(consumer)가 같이 쓰는 Kafka 접속 설정(ADR 0066 Decision 9).
@@ -29,6 +30,7 @@ public class TelemetryKafkaConnection(
 	public val iamRoleArn: String = "",
 	public val iamSessionName: String = "",
 	public val iamStsRegion: String = DEFAULT_STS_REGION,
+	public val tls: TelemetryKafkaTls = TelemetryKafkaTls(),
 ) {
 	init {
 		require(bootstrapServers.isNotBlank()) { "Kafka bootstrap servers(PULSEMETRY_KAFKA_BOOTSTRAP_SERVERS)가 비어 있다" }
@@ -44,12 +46,13 @@ public class TelemetryKafkaConnection(
 		}
 	}
 
-	/** 공통 접속 설정. [clientId] 는 브로커 로그·쿼터의 식별자다. */
+	/** 공통 접속 설정. [clientId] 는 브로커 로그·쿼터의 식별자다. 비밀번호가 담긴 반환 map은 로그로 출력하지 않는다. */
 	public fun clientProperties(clientId: String): Map<String, Any> = buildMap {
 		put("bootstrap.servers", bootstrapServers)
 		put("client.id", clientId)
 		when (security) {
 			TelemetryKafkaSecurity.PLAINTEXT -> put("security.protocol", "PLAINTEXT")
+			TelemetryKafkaSecurity.MTLS -> putAll(tls.clientProperties())
 			TelemetryKafkaSecurity.IAM -> {
 				put("security.protocol", "SASL_SSL")
 				put("sasl.mechanism", IAM_MECHANISM)
