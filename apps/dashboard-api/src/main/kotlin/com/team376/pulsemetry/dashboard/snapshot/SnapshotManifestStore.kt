@@ -49,7 +49,6 @@ class SnapshotManifestStore(
 		val deletedBefore: Instant?,
 		val policyEpoch: Long,
 		val modelResolutionVersion: String,
-		val pricingVersions: List<String>,
 		val status: String,
 		val createdAt: Instant,
 		val readyAt: Instant?,
@@ -110,12 +109,6 @@ class SnapshotManifestStore(
 		true
 	} == true
 
-	fun setPricingVersions(buildId: UUID, versions: List<String>) {
-		cache.sql("UPDATE dashboard_cache.snapshots SET pricing_versions = CAST(:versions AS text[]) WHERE build_id = :build AND status = 'building'")
-			.param("versions", versions.joinToString(",", "{", "}") { "\"" + it.replace("\\", "\\\\").replace("\"", "\\\"") + "\"" })
-			.param("build", buildId)
-			.update()
-	}
 
 	/** `building` 인 build 만 `failed` 로 바꾼다. 이미 공개됐거나 실패한 것은 건드리지 않는다. */
 	fun markFailed(buildId: UUID, reason: String, now: Instant): Boolean =
@@ -215,7 +208,6 @@ class SnapshotManifestStore(
 			deletedBefore = instant(rs, "deleted_before"),
 			policyEpoch = rs.getLong("policy_epoch"),
 			modelResolutionVersion = rs.getString("model_resolution_version"),
-			pricingVersions = (rs.getArray("pricing_versions").array as Array<*>).map { it as String },
 			status = rs.getString("status"),
 			createdAt = instant(rs, "created_at")!!,
 			readyAt = instant(rs, "ready_at"),
@@ -230,7 +222,7 @@ class SnapshotManifestStore(
 
 	companion object {
 		/** 조회 계약의 판. 응답 의미를 바꾸면 올린다 — 다른 판의 snapshot 은 재사용하지 않는다. */
-		const val QUERY_CONTRACT = "dashboard-v6"
+		const val QUERY_CONTRACT = "dashboard-v7"
 
 		/** 합의 전 재사용 범위 — 조직 전체(ADR 0022 §3 의 기본 인가 정책). */
 		const val ACCESS_SCOPE = "organization"

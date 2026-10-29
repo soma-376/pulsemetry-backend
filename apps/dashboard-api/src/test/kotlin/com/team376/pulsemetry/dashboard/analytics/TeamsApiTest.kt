@@ -68,10 +68,10 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 			listOf(1, 2).map { i ->
 				Event(
 					"$tenant-$team-$i", kst("2026-09-0${7 + i}T10:00:00"), teamId = teams.getValue(team), memberId = members.getValue("$team-$i"),
-					sessionId = "$team-session-$i", model = if (i == 1) "model-x" else "model-y", costEstimatedUsd = half, pricingVersion = "v1",
+					sessionId = "$team-session-$i", model = if (i == 1) "model-x" else "model-y", costEstimatedUsd = half, legacyPricingVersion = "v1",
 				)
 			}
-		} + Event("$tenant-unassigned", kst("2026-09-09T10:00:00"), costEstimatedUsd = BigDecimal("5"), pricingVersion = "v1")
+		} + Event("$tenant-unassigned", kst("2026-09-09T10:00:00"), costEstimatedUsd = BigDecimal("5"), legacyPricingVersion = "v1")
 		SourceFixtures.insertEvents(tenant, *events.toTypedArray())
 		return Org(tenant, teams, members)
 	}
@@ -159,8 +159,8 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 		SourceFixtures.insertEvents(
 			org.tenant,
 			Event("${org.tenant}-A-1", kst("2026-09-08T10:00:00"), rowVersion = 2, teamId = teamA, memberId = org.members.getValue("A-1"),
-				sessionId = "A-session-1", model = "model-x", costEstimatedUsd = BigDecimal("999"), pricingVersion = "v1"),
-			Event("${org.tenant}-A-new", kst("2026-09-10T10:00:00"), teamId = teamA, memberId = UUID.randomUUID(), costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"),
+				sessionId = "A-session-1", model = "model-x", costEstimatedUsd = BigDecimal("999"), legacyPricingVersion = "v1"),
+			Event("${org.tenant}-A-new", kst("2026-09-10T10:00:00"), teamId = teamA, memberId = UUID.randomUUID(), costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "v1"),
 		)
 
 		val users = ok(org.tenant, "/analytics/teams/$teamA/users?$week&snapshotId=$snapshotId")
@@ -189,13 +189,14 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 		val bob = SourceFixtures.insertMember(tenant, "bob@example.test")
 		SourceFixtures.insertEvents(
 			tenant,
-			Event("$tenant-a1", kst("2026-09-08T10:00:00"), teamId = team, memberId = alice, model = "model-x", costEstimatedUsd = BigDecimal("3"), pricingVersion = "v1",
+			Event("$tenant-a1", kst("2026-09-08T10:00:00"), teamId = team, memberId = alice, model = "model-x", costEstimatedUsd = BigDecimal("3"), legacyPricingVersion = "legacy-current",
 				tokensInputUncached = 60, tokensCacheRead = 30, tokensCacheCreate = 10),
-			Event("$tenant-a2", kst("2026-09-09T11:00:00"), teamId = team, memberId = alice, model = "model-y", costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"),
+			Event("$tenant-a2", kst("2026-09-09T11:00:00"), teamId = team, memberId = alice, model = "model-y", costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "v1"),
 			// 다른 팀에서의 사용은 이 팀의 마지막 사용이 아니다.
-			Event("$tenant-a3", kst("2026-09-12T10:00:00"), teamId = other, memberId = alice, costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"),
-			Event("$tenant-b1", kst("2026-09-10T10:00:00"), teamId = team, memberId = bob, costEstimatedUsd = BigDecimal("2"), pricingVersion = "v1"),
-			Event("$tenant-anon", kst("2026-09-10T12:00:00"), teamId = team, memberId = null, costEstimatedUsd = BigDecimal("0.5"), pricingVersion = "v1"),
+			Event("$tenant-a3", kst("2026-09-12T10:00:00"), teamId = other, memberId = alice, costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "other-team"),
+			Event("$tenant-b1", kst("2026-09-10T10:00:00"), teamId = team, memberId = bob, costEstimatedUsd = BigDecimal("2"), legacyPricingVersion = "v1"),
+			Event("$tenant-previous", kst("2026-09-01T10:00:00"), teamId = team, memberId = alice, costEstimatedUsd = BigDecimal("99"), legacyPricingVersion = "legacy-previous"),
+			Event("$tenant-anon", kst("2026-09-10T12:00:00"), teamId = team, memberId = null, costEstimatedUsd = BigDecimal("0.5"), legacyPricingVersion = "v1"),
 		)
 
 		val body = ok(tenant, "/analytics/teams/$team/users?$week")
@@ -230,7 +231,7 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 		val costs = listOf("2", "4", "4", "10")
 		SourceFixtures.insertEvents(tenant, *members.mapIndexed { i, member ->
 			Event("$tenant-$i", kst("2026-09-08T10:00:00"), teamId = team, memberId = member,
-				costEstimatedUsd = BigDecimal(costs[i]), pricingVersion = "v1")
+				costEstimatedUsd = BigDecimal(costs[i]), legacyPricingVersion = "v1")
 		}.toTypedArray())
 		val tied = listOf(members[1], members[2]).map(UUID::toString).sorted()
 		for (order in listOf("asc", "desc")) {
@@ -265,7 +266,7 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 			val members = costs.indices.map { SourceFixtures.insertMember(tenant, "user$it@example.test") }
 			SourceFixtures.insertEvents(tenant, *members.mapIndexed { i, member ->
 				Event("$tenant-$i", kst("2026-09-08T10:00:00"), teamId = team, memberId = member,
-					costEstimatedUsd = costs[i]?.let(::BigDecimal), pricingVersion = "v1")
+					costEstimatedUsd = costs[i]?.let(::BigDecimal), legacyPricingVersion = "v1")
 			}.toTypedArray())
 			for (order in listOf("asc", "desc")) {
 				val body = ok(tenant, "/analytics/teams/$team/users?$week&sort=averageDeviation&order=$order")
@@ -287,7 +288,7 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 		val a = SourceFixtures.insertTeam(tenant, "A")
 		val b = SourceFixtures.insertTeam(tenant, "B")
 		fun e(name: String, team: UUID?, model: String, cost: String) =
-			Event("$tenant-$name", kst("2026-09-08T10:00:00"), teamId = team, model = model, costEstimatedUsd = BigDecimal(cost), pricingVersion = "v1")
+			Event("$tenant-$name", kst("2026-09-08T10:00:00"), teamId = team, model = model, costEstimatedUsd = BigDecimal(cost), legacyPricingVersion = "v1")
 		SourceFixtures.insertEvents(
 			tenant,
 			e("a-x", a, "model-x", "4"), e("a-y", a, "model-y", "96"),

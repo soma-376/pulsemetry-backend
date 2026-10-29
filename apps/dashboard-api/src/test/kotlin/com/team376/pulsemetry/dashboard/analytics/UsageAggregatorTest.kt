@@ -55,7 +55,7 @@ class UsageAggregatorTest {
 
 		assertThat(totals.hasUsage).isFalse()
 		assertThat(listOf(totals.activeUsers(), totals.sessionCount(), totals.tokens(totals.output), totals.apiTotal())).containsOnlyNulls()
-		assertThat(totals.equivalentCost(pricingMixed = false)).isNull()
+		assertThat(totals.equivalentCost()).isNull()
 	}
 
 	@Test
@@ -64,18 +64,18 @@ class UsageAggregatorTest {
 		val member = UUID.randomUUID()
 		val team = UUID.randomUUID()
 		val snapshot = snapshot(
-			Event("priced-1", kst("10:00:00"), memberId = member, teamId = team, costEstimatedUsd = BigDecimal("1.25"), pricingVersion = "v1"),
-			Event("priced-2", kst("11:00:00"), memberId = member, teamId = team, costEstimatedUsd = BigDecimal("2.75"), pricingVersion = "v1"),
+			Event("priced-1", kst("10:00:00"), memberId = member, teamId = team, costEstimatedUsd = BigDecimal("1.25"), legacyPricingVersion = "v1"),
+			Event("priced-2", kst("11:00:00"), memberId = member, teamId = team, costEstimatedUsd = BigDecimal("2.75"), legacyPricingVersion = "v1"),
 			Event("unpriced", kst("12:00:00"), memberId = member, teamId = team),
 		)
 
 		val organization = organization(snapshot)
-		assertThat(organization.equivalentCost(pricingMixed = false)).isNull()
+		assertThat(organization.equivalentCost()).isNull()
 		assertThat(organization.tokens(organization.output)).isEqualTo(30)
 		assertThat(organization.apiTotal()).isEqualTo(330)
 		assertThat(organization.activeUsers()).isEqualTo(1)
 		for (axis in listOf(Axis.MODEL, Axis.TEAM, Axis.DAY)) {
-			assertThat(aggregator.totals(snapshot, Side.CURRENT, axis).values.single().equivalentCost(pricingMixed = false)).describedAs(axis.name).isNull()
+			assertThat(aggregator.totals(snapshot, Side.CURRENT, axis).values.single().equivalentCost()).describedAs(axis.name).isNull()
 		}
 	}
 
@@ -83,25 +83,25 @@ class UsageAggregatorTest {
 	@DisplayName("단가가 전부 있으면 금액은 서버 정밀도의 합이다")
 	fun pricedRowsSum() {
 		val snapshot = snapshot(
-			Event("a", kst("10:00:00"), costEstimatedUsd = BigDecimal("0.000000000001"), pricingVersion = "v1"),
-			Event("b", kst("11:00:00"), costEstimatedUsd = BigDecimal("2.5"), pricingVersion = "v1"),
+			Event("a", kst("10:00:00"), costEstimatedUsd = BigDecimal("0.000000000001"), legacyPricingVersion = "v1"),
+			Event("b", kst("11:00:00"), costEstimatedUsd = BigDecimal("2.5"), legacyPricingVersion = "v1"),
 		)
 
-		assertThat(organization(snapshot).equivalentCost(pricingMixed = false)).isEqualByComparingTo("2.500000000001")
-		assertThat(Money.format(organization(snapshot).equivalentCost(pricingMixed = false)!!)).isEqualTo("2.500000000001")
+		assertThat(organization(snapshot).equivalentCost()).isEqualByComparingTo("2.500000000001")
+		assertThat(Money.format(organization(snapshot).equivalentCost()!!)).isEqualTo("2.500000000001")
 	}
 
 	@Test
-	@DisplayName("사례 7 — snapshot 의 가격 판이 둘 이상이면 금액은 없다")
-	fun mixedPricingMakesCostNull() {
+	@DisplayName("과거 가격판이 다른 저장 금액과 새 금액을 합산한다")
+	fun legacyAndNewStoredCostsAreSummed() {
 		val snapshot = snapshot(
-			Event("v3", kst("10:00:00"), costEstimatedUsd = BigDecimal("1"), pricingVersion = "v3"),
-			Event("v4", kst("11:00:00"), costEstimatedUsd = BigDecimal("1"), pricingVersion = "v4"),
+			Event("v3", kst("10:00:00"), costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "v3"),
+			Event("v4", kst("11:00:00"), costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "v4"),
+			Event("new", kst("12:00:00"), costEstimatedUsd = BigDecimal("3")),
 		)
 
-		assertThat(snapshot.pricingVersions).containsExactly("v3", "v4")
-		assertThat(organization(snapshot).equivalentCost(pricingMixed = snapshot.pricingVersions.size > 1)).isNull()
-		assertThat(organization(snapshot).tokens(organization(snapshot).output)).isEqualTo(20)
+		assertThat(organization(snapshot).equivalentCost()).isEqualByComparingTo("5")
+		assertThat(organization(snapshot).tokens(organization(snapshot).output)).isEqualTo(30)
 	}
 
 	@Test
@@ -141,14 +141,14 @@ class UsageAggregatorTest {
 	@DisplayName("사례 9 — 세션 없는 행이 하나라도 있으면 sessionCount 는 없고 비용·토큰은 그대로다")
 	fun sessionlessRowMakesSessionCountNull() {
 		val snapshot = snapshot(
-			Event("s", kst("10:00:00"), sessionId = "a", costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"),
-			Event("none", kst("11:00:00"), sessionId = null, costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"),
+			Event("s", kst("10:00:00"), sessionId = "a", costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "v1"),
+			Event("none", kst("11:00:00"), sessionId = null, costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "v1"),
 		)
 		val totals = organization(snapshot)
 
 		assertThat(totals.sessionCount()).isNull()
 		assertThat(totals.sessionlessRows).isEqualTo(1)
-		assertThat(totals.equivalentCost(pricingMixed = false)).isEqualByComparingTo("2")
+		assertThat(totals.equivalentCost()).isEqualByComparingTo("2")
 		assertThat(totals.tokens(totals.output)).isEqualTo(20)
 	}
 

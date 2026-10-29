@@ -54,7 +54,7 @@ class PeriodCompletenessApiTest : AbstractDashboardApiTest() {
 
 	private fun usage(org: Org, name: String, at: String, cost: String, team: UUID? = org.team) = Event(
 		"${org.tenant}-$name", kst(at), memberId = org.member, teamId = team, sessionId = "session-$name",
-		costEstimatedUsd = BigDecimal(cost), pricingVersion = "v1",
+		costEstimatedUsd = BigDecimal(cost),
 	)
 
 	/** 현재 기간: 9/8 팀 30, 9/9 미배정 20. 비교 기간: 9/1 팀 10. */
@@ -226,7 +226,7 @@ class PeriodCompletenessApiTest : AbstractDashboardApiTest() {
 	fun withoutEvidence() {
 		val tenant = DashboardTestStores.insertTenant()
 		SourceFixtures.setSummary(tenant, firstReceivedAt = kst("2026-08-01T00:00:00"))
-		SourceFixtures.insertEvents(tenant, Event("$tenant-a", kst("2026-09-08T10:00:00"), costEstimatedUsd = BigDecimal("3"), pricingVersion = "v1"))
+		SourceFixtures.insertEvents(tenant, Event("$tenant-a", kst("2026-09-08T10:00:00"), costEstimatedUsd = BigDecimal("3")))
 		val body = ok(tenant, "/analytics/overview?$week")
 		assertThat(body.at("/meta/dataState").asString()).isEqualTo("partial")
 		assertThat(body.at("/meta/currentCoverage/status").asString() to body.at("/meta/currentCoverage/observedDays").asInt()).isEqualTo("partial" to 1)

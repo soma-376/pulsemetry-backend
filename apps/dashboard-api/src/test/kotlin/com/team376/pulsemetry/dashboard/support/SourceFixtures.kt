@@ -42,7 +42,8 @@ object SourceFixtures {
 		val tokensTotalDerived: Long? = 110,
 		val semanticsProfile: String? = "claude-code-exclusive-v1",
 		val costEstimatedUsd: BigDecimal? = null,
-		val pricingVersion: String? = null,
+		/** 구 저장 행 호환 검증용. 신규 수집에는 가격판 필드가 없다. */
+		val legacyPricingVersion: String? = null,
 		val receivedTime: Instant = sourceTime,
 		val qualityFlags: List<String> = emptyList(),
 		/** `usage = false` 인 도구 결과 행의 도구 이름(ADR 0051 미승인 도구). */
@@ -82,7 +83,7 @@ object SourceFixtures {
 				"tokens_total_derived" to event.tokensTotalDerived,
 				"semantics_profile" to event.semanticsProfile,
 				"cost_estimated_usd" to event.costEstimatedUsd,
-				"pricing_version" to event.pricingVersion,
+				"pricing_version" to event.legacyPricingVersion,
 				"quality_flags" to event.qualityFlags,
 				"tool_name" to event.toolName,
 			)

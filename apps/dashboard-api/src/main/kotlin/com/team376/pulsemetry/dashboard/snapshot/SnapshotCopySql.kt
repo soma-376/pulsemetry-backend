@@ -71,7 +71,7 @@ class SnapshotCopySql(
 			    model, ${model.provider} AS provider, ${model.modelId}, {resolution:String},
 			    tokens_input, tokens_output, tokens_cache_read, tokens_cache_create, tokens_input_uncached, tokens_total_derived,
 			    input_semantics, output_semantics, semantics_profile,
-			    cost_reported_usd, reported_cost_basis, cost_estimated_usd, pricing_version,
+			    cost_reported_usd, reported_cost_basis, cost_estimated_usd,
 			    quality_flags, {purge:DateTime('UTC')}
 			FROM `$sourceDatabase`.telemetry_events FINAL
 			WHERE $where
@@ -86,7 +86,7 @@ class SnapshotCopySql(
 			    CAST(NULL AS Nullable(String)), CAST(NULL AS Nullable(String)), '', '',
 			    $NULL_INT, $NULL_INT, $NULL_INT, $NULL_INT, $NULL_INT, $NULL_INT,
 			    '', '', CAST(NULL AS Nullable(String)),
-			    $NULL_DECIMAL, '', $NULL_DECIMAL, CAST(NULL AS Nullable(String)),
+			    $NULL_DECIMAL, '', $NULL_DECIMAL,
 			    CAST([] AS Array(LowCardinality(String))), {purge:DateTime('UTC')}
 			FROM `$sourceDatabase`.telemetry_metric_points FINAL
 			WHERE $where
@@ -139,7 +139,7 @@ class SnapshotCopySql(
 				"model, provider, model_id, model_resolution_version, " +
 				"tokens_input, tokens_output, tokens_cache_read, tokens_cache_create, tokens_input_uncached, tokens_total_derived, " +
 				"input_semantics, output_semantics, semantics_profile, " +
-				"cost_reported_usd, reported_cost_basis, cost_estimated_usd, pricing_version, " +
+				"cost_reported_usd, reported_cost_basis, cost_estimated_usd, " +
 				"quality_flags, purge_after"
 	}
 }

@@ -19,11 +19,11 @@ data class ProductRef(val kind: String?, val displayName: String?)
 object Products {
 
 	/** 제품 축 집계(키 = 카탈로그 제품 ID 또는 매핑 없음)를 카탈로그 순서로, 매핑 없는 관측은 끝에 둔다. 사용량 행이 없는 제품은 넣지 않는다. */
-	fun usages(totals: Map<String, UsageTotals>, mapping: List<SnapshotReferences.Product>, pricingMixed: Boolean): List<ProductUsage> =
+	fun usages(totals: Map<String, UsageTotals>, mapping: List<SnapshotReferences.Product>): List<ProductUsage> =
 		ordered(totals.filterValues { it.hasUsage }.keys, mapping).map { ref ->
 			val group = totals.getValue(ref.kind ?: UsageAggregator.UNMAPPED_PRODUCT)
 			ProductUsage(ref.kind, ref.displayName, group.activeUsers(), group.sessionCount(), group.apiTotal(),
-				group.equivalentCost(pricingMixed)?.let(Money::format))
+				group.equivalentCost()?.let(Money::format))
 		}
 
 	fun refs(keys: Collection<String>, mapping: List<SnapshotReferences.Product>): List<ProductRef> = ordered(keys, mapping)

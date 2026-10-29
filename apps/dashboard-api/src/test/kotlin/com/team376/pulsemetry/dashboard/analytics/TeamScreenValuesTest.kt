@@ -28,7 +28,6 @@ class TeamScreenValuesTest {
 
 	private fun frame(currentComplete: Boolean = true, previousComplete: Boolean = true): AnalyticsFrames.Frame {
 		val snapshot = mock(SnapshotManifestStore.Manifest::class.java)
-		`when`(snapshot.pricingVersions).thenReturn(listOf("v1"))
 		val complete = buildSet { if (currentComplete) add(day); if (previousComplete) add(day.minusDays(7)) }
 		return AnalyticsFrames.Frame(
 			Organization(UUID.randomUUID(), "org", "Asia/Seoul"), period, snapshot, IngestStatusReader.History(null),

@@ -79,7 +79,7 @@ class TeamsService(
 		val data = TeamData.load(frame, aggregator, references)
 
 		val ranked = data.teamIds().sortedWith(
-			compareBy<String, BigDecimal?>(nullsLast(reverseOrder())) { metric(data.current.getValue(listOf(it)), sort, frame.pricingMixed) }
+			compareBy<String, BigDecimal?>(nullsLast(reverseOrder())) { metric(data.current.getValue(listOf(it)), sort) }
 				.thenBy { it },
 		)
 		val result = OffsetPage.of(ranked, page.offset, page.limit)
@@ -119,21 +119,20 @@ class TeamsService(
 		val directory = references.teams(frame.snapshot).associateBy { it.id.toString() }
 
 		val snapshot = frame.snapshot
-		val pricingMixed = frame.pricingMixed
 		val team = if (frame.empty) UsageTotals.EMPTY else aggregator.totals(snapshot, Side.CURRENT, Axis.ORGANIZATION, teamScope).getValue(emptyList())
 		if (key is TeamKey.Team && key.id.toString() !in directory && !team.hasUsage) throw DashboardException(ErrorCode.NOT_FOUND)
 		val members = if (frame.empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.MEMBER, teamScope)
 		val memberModels = if (frame.empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.MEMBER_MODEL, teamScope)
 
 		val identified = members.filterKeys { it.single() != null }.map { (k, v) -> k.single()!! to v }
-		val averageCost = average(identified.map { it.second }, pricingMixed)?.let(Money::format)
+		val averageCost = average(identified.map { it.second })?.let(Money::format)
 		// 평균 대비 = 개인 비용 / 팀 전체 평균 - 1. 양수인 공통 분모이므로 비용 원본으로 비교하면
 		// 비율 반올림으로 동률을 만들지 않는다. 표시 평균이 0이거나 확인 불가이면 모두 비교 불가다.
 		val comparableAverage = averageCost?.toBigDecimal()?.signum() == 1
 		val accounts = references.accounts(snapshot, identified.map { UUID.fromString(it.first) })
 		val allUsers = identified.map { (memberId, totals) ->
 			TeamUser(memberId = memberId, account = accounts[UUID.fromString(memberId)] ?: memberId,
-				usage = TeamScreenValues.user(frame, totals), mainModel = mainModel(memberModels, memberId, pricingMixed),
+				usage = TeamScreenValues.user(frame, totals), mainModel = mainModel(memberModels, memberId),
 				cacheHitRatio = TeamScreenValues.cache(frame, totals), lastUsedAt = totals.lastSourceTime?.toString())
 		}
 		val decimals = if (order == UserOrder.ASC) naturalOrder<BigDecimal>() else reverseOrder<BigDecimal>()
@@ -141,8 +140,8 @@ class TeamsService(
 			UserSort.ACCOUNT -> compareBy<TeamUser, String>(if (order == UserOrder.ASC) naturalOrder() else reverseOrder()) { it.account.lowercase(java.util.Locale.ROOT) }
 			UserSort.LAST_USED -> compareBy<TeamUser, java.time.Instant?>(nullsLast(if (order == UserOrder.ASC) naturalOrder() else reverseOrder())) { it.lastUsedAt?.let(java.time.Instant::parse) }
 			else -> compareBy<TeamUser, BigDecimal?>(nullsLast(decimals)) { user -> when (sort) {
-				UserSort.AVERAGE_DEVIATION -> if (comparableAverage) members.getValue(listOf(user.memberId)).equivalentCost(pricingMixed) else null
-				UserSort.COST -> members.getValue(listOf(user.memberId)).equivalentCost(pricingMixed)
+				UserSort.AVERAGE_DEVIATION -> if (comparableAverage) members.getValue(listOf(user.memberId)).equivalentCost() else null
+				UserSort.COST -> members.getValue(listOf(user.memberId)).equivalentCost()
 				UserSort.SESSION -> user.usage.sessionCount.value?.toBigDecimal()
 				UserSort.TOKEN -> user.usage.totalTokens.value?.toBigDecimal()
 				UserSort.CACHE -> user.cacheHitRatio.value?.toBigDecimal()
@@ -160,30 +159,30 @@ class TeamsService(
 				usage = TeamScreenValues.summary(frame, team),
 				averageEquivalentCostUsd = averageCost,
 				cacheHitRatio = TeamScreenValues.cache(frame, team),
-				unidentifiedEquivalentCostUsd = unidentified?.equivalentCost(pricingMixed)?.let(Money::format),
+				unidentifiedEquivalentCostUsd = unidentified?.equivalentCost()?.let(Money::format),
 			),
 			users = result,
 		)
 	}
 
 	/** 사용자 안에서 금액이 가장 큰 모델(동률 ID 오름차순). 금액을 산출할 수 없으면 없다. */
-	private fun mainModel(memberModels: Map<List<String?>, UsageTotals>, memberId: String, pricingMixed: Boolean): ModelRef? {
-		val candidates = memberModels.filterKeys { it[0] == memberId }.map { (k, v) -> k[1]!! to v.equivalentCost(pricingMixed) }
+	private fun mainModel(memberModels: Map<List<String?>, UsageTotals>, memberId: String): ModelRef? {
+		val candidates = memberModels.filterKeys { it[0] == memberId }.map { (k, v) -> k[1]!! to v.equivalentCost() }
 		if (candidates.isEmpty() || candidates.any { it.second == null }) return null
 		val (modelId, _) = candidates.sortedWith(compareByDescending<Pair<String, BigDecimal?>> { it.second }.thenBy { it.first }).first()
 		return ModelRef(modelId, ModelNames.displayName(modelId))
 	}
 
 	/** 평균 = 식별된 사용자 비용 합 / 식별된 활성 사용자 수. 누구의 금액이든 없으면 없다. */
-	private fun average(users: List<UsageTotals>, pricingMixed: Boolean): BigDecimal? {
+	private fun average(users: List<UsageTotals>): BigDecimal? {
 		if (users.isEmpty()) return null
-		val costs = users.map { it.equivalentCost(pricingMixed) ?: return null }
+		val costs = users.map { it.equivalentCost() ?: return null }
 		return costs.fold(BigDecimal.ZERO, BigDecimal::add).divide(BigDecimal(users.size), 12, RoundingMode.HALF_EVEN)
 	}
 
 	/** 정렬 지표. 비용·토큰·세션을 한 타입으로 비교한다. */
-	private fun metric(totals: UsageTotals, sort: Sort, pricingMixed: Boolean): BigDecimal? = when (sort) {
-		Sort.COST -> totals.equivalentCost(pricingMixed)
+	private fun metric(totals: UsageTotals, sort: Sort): BigDecimal? = when (sort) {
+		Sort.COST -> totals.equivalentCost()
 		Sort.TOKEN -> totals.apiTotal()?.let(::BigDecimal)
 		Sort.SESSION -> totals.sessionCount()?.let(::BigDecimal)
 	}
@@ -204,7 +203,6 @@ class TeamsService(
 		val products: List<SnapshotReferences.Product>,
 		val directory: Map<String, SnapshotReferences.Team>,
 	) {
-		val pricingMixed = frame.pricingMixed
 
 		fun teamIds(): List<String> = current.keys.mapNotNull { it.single() }
 
@@ -240,7 +238,7 @@ class TeamsService(
 					sessions += firstSessions[id to date.toString()] ?: 0
 					TeamScreenValues.point(frame, date, day, if (cumulativeReasons.isEmpty()) sessions else null, cumulativeReasons.toList())
 				},
-				products = Products.usages(teamProducts.filterKeys { it[0] == id }.mapKeys { it.key[1] ?: UsageAggregator.UNMAPPED_PRODUCT }, products, pricingMixed),
+				products = Products.usages(teamProducts.filterKeys { it[0] == id }.mapKeys { it.key[1] ?: UsageAggregator.UNMAPPED_PRODUCT }, products),
 			)
 		}
 
@@ -267,8 +265,8 @@ class TeamsService(
 			val pairs = teamModels.filterKeys { it[0] != null && it[1] == modelId }
 			var count = 0L
 			for ((key, modelTotals) in pairs) {
-				val modelCost = modelTotals.equivalentCost(pricingMixed) ?: return null
-				val teamCost = current[listOf(key[0])]?.equivalentCost(pricingMixed)?.takeIf { it.signum() > 0 } ?: return null
+				val modelCost = modelTotals.equivalentCost() ?: return null
+				val teamCost = current[listOf(key[0])]?.equivalentCost()?.takeIf { it.signum() > 0 } ?: return null
 				if (modelCost.divide(teamCost, 12, RoundingMode.HALF_EVEN) >= THRESHOLD) count++
 			}
 			return count

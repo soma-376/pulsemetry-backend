@@ -297,4 +297,4 @@ type TeamSummaryUsage = TeamUserUsage & { activeUsers:Value<number> };
 
 ## 계산 가능한 관측 부분합 (허브 ADR 0011)
 
-기존 전체 금액·평균·비중·비교의 null 규칙은 유지한다. 별도 `knownEquivalentCostUsd`, `pricedUsageRows`, `unpricedUsageRows`를 반환한다. 개요 summary/trend point와 팀 metrics에서는 부분합이 `Value<string>`, 팀 trend point에서는 nullable USD 문자열이다. 행 수는 해당 범위의 primary 사용 관측 수다. 미가격 행이 있으면 부분합 사유에 `pricing_missing`을 포함한다. 가격 있는 행이 없거나 가격판 혼재면 부분합도 null이며, 완전 관측한 빈 범위만 0이다. 미관측일을 0으로 대체하지 않는다. 부분합은 전체 사용량·실제 청구액이 아니며 평균·비교·알림에 대신 쓰지 않는다.
+기존 전체 금액·평균·비중·비교의 null 규칙은 유지한다. 별도 `knownEquivalentCostUsd`, `pricedUsageRows`, `unpricedUsageRows`를 반환한다. 개요 summary/trend point와 팀 metrics에서는 부분합이 `Value<string>`, 팀 trend point에서는 nullable USD 문자열이다. 행 수는 해당 범위의 primary 사용 관측 수다. 미가격 행이 있으면 부분합 사유에 `pricing_missing`을 포함한다. 가격 있는 행이 없으면 부분합도 null이며, 완전 관측한 빈 범위만 0이다. 미관측일을 0으로 대체하지 않는다. 부분합은 전체 사용량·실제 청구액이 아니며 평균·비교·알림에 대신 쓰지 않는다.

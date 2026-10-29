@@ -152,7 +152,6 @@ type AnalyticsMeta = {
   dayCount: number;
   dataState: "ready" | "partial" | "no_data" | "never_observed";
   currentCoverage: Coverage;
-  pricingVersion: string | null;
   snapshotId: string;
 };
 ```

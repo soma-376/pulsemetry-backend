@@ -7,7 +7,7 @@ import java.time.LocalDate
 /** 팀 화면의 파생값과 비교 판정은 개요와 같은 근거를 사용한다. */
 object TeamScreenValues {
  private fun values(frame: AnalyticsFrames.Frame, totals: UsageTotals, previous: Boolean = false) = OverviewValues.Values(
-  totals, if (previous) frame.previousComplete else frame.currentComplete, frame.pricingMixed,
+  totals, if (previous) frame.previousComplete else frame.currentComplete,
   if (previous) "previous_period_incomplete" else "current_period_incomplete", frame.periodReasons(previous),
  )
  fun metrics(frame: AnalyticsFrames.Frame, totals: UsageTotals, previous: UsageTotals?): TeamMetrics {
@@ -54,7 +54,7 @@ object TeamScreenValues {
   return ScatterModel(model.modelId, model.displayName, model.equivalentCostUsd, model.totalTokens, usingTeamCount, status, reasons)
  }
  fun point(frame: AnalyticsFrames.Frame, date: LocalDate, totals: UsageTotals, cumulativeSessions: Long?, cumulativeReasons: List<String>): TeamTrendPoint {
-  val v = OverviewValues.Values(totals, date in frame.completeDates, frame.pricingMixed, detailReasons = frame.dateReasons(date))
+  val v = OverviewValues.Values(totals, date in frame.completeDates, detailReasons = frame.dateReasons(date))
   val reasons = (v.cost.reasons + v.tokens.reasons + cumulativeReasons).distinct()
   return TeamTrendPoint(date.toString(), frame.observation(date), v.cost.value, v.tokens.value, cumulativeSessions,
    status(listOf(v.cost.value, v.tokens.value, cumulativeSessions), reasons), reasons, v.knownCost.value, v.pricedUsageRows, v.unpricedUsageRows)
