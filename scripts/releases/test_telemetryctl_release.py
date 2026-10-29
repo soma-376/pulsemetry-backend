@@ -22,10 +22,8 @@ class ReleaseSupplyTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.output = self.root / "binaries"
-        self.files = {name: (name + "-published-fixture").encode() for name in supply.CLI_ASSETS}
+        self.files = {name: (name + "-published-fixture").encode() for name in supply.PRODUCT_ASSETS}
         sums = "".join(f"{digest(data)}  {name}\n" for name, data in self.files.items())
-        # GUI 항목이 있어도 필수 CLI 6종 검증은 빠지지 않는다.
-        sums += "0" * 64 + "  pulsemetry_gui_linux_amd64.AppImage\n"
         self.files["SHA256SUMS"] = sums.encode()
         self.lock = {"repository": "soma-376/telemetryctl", "tag": "v0.1.0-rc.2",
                      "sha256": {name: digest(data) for name, data in self.files.items()}}
@@ -61,7 +59,7 @@ class ReleaseSupplyTest(unittest.TestCase):
         download.assert_not_called()
         self.assertFalse(self.output.exists())
 
-    def test_missing_any_of_seven_remote_assets_prevents_download(self):
+    def test_missing_any_product_asset_prevents_download(self):
         for name in supply.ASSETS:
             with self.subTest(name=name):
                 release = copy.deepcopy(self.release)
@@ -147,7 +145,7 @@ class ReleaseSupplyTest(unittest.TestCase):
 
     def test_repository_lock_is_explicit_and_complete(self):
         lock = supply.load_lock(supply.DEFAULT_LOCK)
-        self.assertEqual(lock["tag"], "v0.1.0-rc.2")
+        self.assertEqual(lock["tag"], "v0.1.0-rc.3")
         path = self.root / "lock.json"
         for invalid in ({**lock, "tag": "latest"}, {**lock, "sha256": {}},
                         {**lock, "repository": "other/repo"}):
@@ -158,7 +156,7 @@ class ReleaseSupplyTest(unittest.TestCase):
     def test_deploy_download_precedes_build_and_supplies_only_enrollment(self):
         root = Path(__file__).resolve().parents[2]
         workflow = (root / ".github/workflows/deploy_dev.yml").read_text()
-        self.assertLess(workflow.index("- name: Download and verify published telemetryctl CLI"),
+        self.assertLess(workflow.index("- name: Download and verify published telemetryctl CLI and GUI"),
                         workflow.index("- name: Build and push enrollment-api"))
         self.assertEqual(workflow.count("telemetry-binaries=./binaries"), 1)
         self.assertIn("GH_TOKEN: ${{ github.token }}", workflow)

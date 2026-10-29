@@ -159,7 +159,7 @@ jobs:
 
       # 공개 저장소의 명시 태그만 조회한다. contents:read의 기본 토큰은 API 조회에만 쓰며
       # CDN 다운로드나 Docker build context에 넘기지 않는다.
-      - name: Download and verify published telemetryctl CLI
+      - name: Download and verify published telemetryctl CLI and GUI
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/releases/telemetryctl_release.py download binaries
@@ -214,7 +214,7 @@ jobs:
             echo
             echo "- 이미지 digest: \`$ENROLLMENT_IMAGE_DIGEST\`"
             echo "- backend 커밋: \`$GITHUB_SHA\`"
-            echo '- 아래 고정 릴리스의 CLI 6종과 SHA256SUMS를 포함한다. EKS 배포·실제 설치 검증은 별도다.'
+            echo '- 아래 고정 릴리스의 CLI 6종·GUI 6종과 SHA256SUMS를 포함한다. EKS 배포·실제 설치 검증은 별도다.'
             echo '```json'
             cat config/telemetryctl-release.json
             echo '```'
