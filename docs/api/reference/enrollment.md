@@ -352,12 +352,15 @@ ADR 0004 가 요구한 기록처다 — 스키마가 설계도(`rdb-schema/dbdia
 
 ### `GET /bin/{filename}`
 
-아래 여섯 개와의 **문자열 동등 비교만** 한다.
+아래 CLI 여섯 개와 GUI 여섯 개의 **문자열 동등 비교만** 한다.
 
 ```text
 pulsemetry_windows_amd64.exe   pulsemetry_windows_arm64.exe
 pulsemetry_darwin_amd64        pulsemetry_darwin_arm64
 pulsemetry_linux_amd64         pulsemetry_linux_arm64
+pulsemetry_gui_windows_amd64.exe  pulsemetry_gui_windows_arm64.exe
+pulsemetry_gui_darwin_amd64.dmg   pulsemetry_gui_darwin_arm64.dmg
+pulsemetry_gui_linux_amd64.AppImage  pulsemetry_gui_linux_arm64.AppImage
 ```
 
 목록에 없으면 404.
@@ -369,6 +372,10 @@ pulsemetry_linux_amd64         pulsemetry_linux_arm64
 
 응답 헤더는 `Content-Type: application/octet-stream` 과 함께
 `Content-Disposition: attachment; filename="…"` · `Content-Length` 를 싣는다.
+
+GUI 자산은 릴리스의 같은 파일명에 대응하며 같은 SHA256SUMS 검증을 거친다. GUI 다운로드 표시 이름은
+`Pulsemetry.exe`, `Pulsemetry.dmg`, `Pulsemetry.AppImage`다. 부트스트랩은 등록 성공 뒤 `pulsemetry gui install`을
+실행한다. GUI 실패는 등록·수집 성공을 취소하지 않는다(허브 ADR 0023).
 
 바이너리는 서버 로컬 디렉터리에서 서빙한다. S3·GitHub Releases 리다이렉트를 쓰지 않는다.
 

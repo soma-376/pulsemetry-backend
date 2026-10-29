@@ -101,8 +101,7 @@ HTTP 명세는 [페이지·기능별 API 문서](api/README.md)로 이전했다.
 **범위 밖**: 웹 대시보드 조회 API,
 `uninstall`/`repair`, 데이터 파이프라인.
 설치된 데몬의 주기 보고(heartbeat)는 §4.5가 받는다. 그 값으로 수집 상태와 적용 현황을 판정하는 것은 조회 API의 몫이다.
-telemetryctl 기본 브랜치의 데몬은 등록(§4.2)·토큰 재발급(§4.3)·OTLP 전달·업데이트 확인(§6.3)을 한다. 설치 보고 송신·manifest 재조회(§11.1)·CLI 로그인(§11)은
-데몬 쪽 구현이 없다 — 서버 경로만 있다(ADR 0053).
+telemetryctl은 등록(§4.2)·토큰 재발급(§4.3)·OTLP 전달·업데이트 확인(§6.3)과 시작 직후·매분 설치 보고를 한다. GUI는 실제 적용 판과 서버 최신 판을 비교한다. manifest 재조회(§11.1)·CLI 로그인(§11)·정책 자동 적용은 데몬 쪽 구현이 없다(허브 ADR 0027).
 초대 이메일은 조직 관리 API의 초대(§12·§13.3)가 보낸다. 관리자 키 경로(`POST /api/v1/invitations`)는 메일을 보내지 않고 설치 명령을 응답으로 돌려준다.
 
 ---
@@ -244,10 +243,10 @@ Compose 날짜 생략은 서울 기준 실행일이며, 완료된 시드는 재�
 
 ```sh
 gh release download v0.2.0 --repo soma-376/telemetryctl \
-  --pattern 'pulsemetry_cli_*' --pattern SHA256SUMS --dir "$PULSEMETRY_BINARIES_DIR/v0.2.0"
+  --pattern 'pulsemetry_cli_*' --pattern 'pulsemetry_gui_*' --pattern SHA256SUMS --dir "$PULSEMETRY_BINARIES_DIR/v0.2.0"
 ```
 
-GUI 패키지는 받지 않아도 된다(서빙하지 않는다). 새 릴리스는 새 디렉터리로 받는다 — 판이 가장 높은 디렉터리가 곧 이 서버의 릴리스다.
+GUI 패키지도 같은 릴리스에서 받는다. 새 설치 스크립트는 CLI 등록 후 GUI를 함께 설치한다(허브 ADR 0027). 새 릴리스는 새 디렉터리로 받는다 — 판이 가장 높은 디렉터리가 곧 이 서버의 릴리스다.
 되돌릴 때는 높은 판의 디렉터리를 치운다. 그 릴리스에 없는 아키텍처는 404 가 되며, 그 아키텍처의 사용자는 설치가 실패한다.
 자산의 해시가 `SHA256SUMS`와 다르면 그 대상은 설치(§6.2)도 업데이트 확인(§6.3)도 404다. 설치된 데몬은 업데이트를 "미지원"으로 표시한다.
 
@@ -270,7 +269,7 @@ GUI 패키지는 받지 않아도 된다(서빙하지 않는다). 새 릴리스�
 dev EKS의 enrollment-api·telemetry-ingest와 dashboard-api의 원천 연결은 infra가 준비한 RDS의
 **`controlplane`** 데이터베이스를 사용한다. 발급·OTLP 검증·사용자 세션 조회가 같은 원천을 보도록
 DB 주소·계정·권한을 준비한다. 계약은 [공유 데이터 계약](../../docs/contracts/data-model.md)과
-[허브 ADR 0023 — dev 백엔드 EKS 전용](../../docs/adr/0023-dev-backend-eks-only.md)을 따른다.
+[허브 ADR 0027 — dev 백엔드 EKS 전용](../../docs/adr/0023-dev-backend-eks-only.md)을 따른다.
 
 공유 RDS의 원천 스키마 부트스트랩 주체는 **backend Flyway**다. dev 배포는 다음 순서로 진행한다.
 
@@ -295,7 +294,7 @@ DB 주소·계정·권한을 준비한다. 계약은 [공유 데이터 계약](.
 
 ### 9.5 사용자 JWT 키 공급과 교체
 
-배포 키의 공통 결정은 [허브 ADR 0022](../../docs/adr/0022-user-jwt-key-provisioning.md), dev EKS 적용 범위는 [허브 ADR 0023](../../docs/adr/0023-dev-backend-eks-only.md), 절차와 수락 조건은 [사용자 인증 운영](user-auth-operations.md#최초-공급과-배포-기록)을 따른다. 환경별 고정 ARN의 개인키 PKCS8 PEM과 공개키 키링 Secret을 infra가 고정 VersionId의 파일로 공급한다. dev EKS는 기존 원본과 선택 버전을 유지한다. 이 앱에는 개인키 파일 경로·active-kid·전체 공개키 파일 맵을 함께 전달하고, dashboard에는 같은 공개키만 전달한다. 두 Secret의 최초 등록·검증 전에는 배포 참조를 확정하지 않으며 부분 실패는 같은 키쌍으로 복구한다.
+배포 키의 공통 결정은 [허브 ADR 0022](../../docs/adr/0022-user-jwt-key-provisioning.md), dev EKS 적용 범위는 [허브 ADR 0027](../../docs/adr/0023-dev-backend-eks-only.md), 절차와 수락 조건은 [사용자 인증 운영](user-auth-operations.md#최초-공급과-배포-기록)을 따른다. 환경별 고정 ARN의 개인키 PKCS8 PEM과 공개키 키링 Secret을 infra가 고정 VersionId의 파일로 공급한다. dev EKS는 기존 원본과 선택 버전을 유지한다. 이 앱에는 개인키 파일 경로·active-kid·전체 공개키 파일 맵을 함께 전달하고, dashboard에는 같은 공개키만 전달한다. 두 Secret의 최초 등록·검증 전에는 배포 참조를 확정하지 않으며 부분 실패는 같은 키쌍으로 복구한다.
 
 `UserAuthConfig.userJwt()`와 `UserJwt` 생성자는 실제 파일의 읽기·파싱·RSA 크기와 활성 kid의 modulus 일치를 기동 시 검사한다. 공급자는 별도로 키쌍의 실제 서명/검증·VersionId 대응·앱 UID의 읽기 권한을 확인한다. 키 누락·빈 파일·읽기 불가·잘못된 PEM·키쌍/kid 불일치·등록 부분 실패는 배포 중단 조건이다. 빈 공개키 경로 항목은 앱이 제외하므로 다른 유효 키가 있어도 공급자의 기대 kid 누락 검사는 생략하지 않는다.
 
@@ -392,7 +391,7 @@ psql postgresql://pulsemetry:pulsemetry@localhost:5432/pulsemetry \
 ### 10.2 데몬 → 서버 → 화면 실경로 검증
 
 telemetryctl 기본 브랜치의 데몬이 하는 일(등록 · OTLP 전달 · 업데이트 확인)이 서버를 거쳐 화면까지 이어지는지 한 번에 본다(ADR 0053).
-설치 보고·정책 재조회는 데몬 쪽 구현이 없어 이 검증에 없다 — 그 화면 상태(적용·미적용, 수집 정상·지연)는 서버 통합 테스트와 프론트 목 테스트의 fixture가 맡는다.
+이 기존 검증 절차는 설치 보고·정책 재조회를 포함하지 않는다. 새 데몬의 설치 보고와 GUI 정책 상태는 별도로 검증한다. 정책 자동 적용은 지원하지 않는다.
 
 화면 쪽은 프론트의 `tests/e2e-daemon/installation-report.spec.ts`(`playwright.daemon.config.ts`)다. 데몬 쪽과 **같은 단계 디렉터리**로 걸음을 맞춘다 —
 데몬 쪽이 단계마다 `<단계>.ready`(관찰값 JSON)를 쓰고 화면 쪽이 확인한 뒤 `<단계>.seen`을 쓴다.

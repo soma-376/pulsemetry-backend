@@ -2,12 +2,18 @@
   "repository": "soma-376/telemetryctl",
   "tag": "v0.1.0-rc.2",
   "sha256": {
-    "SHA256SUMS": "05f5fa10e323c10abf970cc898633e2c9feaacba420d076b65cb5e1083d42f86",
     "pulsemetry_cli_darwin_amd64": "bbb0218a6bbf60e7eefb6b58745113ff4802833b48755e1df0d9b97a7fa3629e",
     "pulsemetry_cli_darwin_arm64": "aabe64693bb7a8d3cf8984ee11ae3ba189af3a82fb5a514879be443100267d5a",
     "pulsemetry_cli_linux_amd64": "72deac4a2802a22bb70016c28bced0bd5466301740521b380ff1737f76e3af17",
     "pulsemetry_cli_linux_arm64": "6d0f18c704bce427cdfff7ba973ea7cbe5ddf0435336dc06b4735bb0d09b3b26",
     "pulsemetry_cli_windows_amd64.exe": "a7b54add57c8eb8428f0ea1fe9dc26859dbec0a96cbcf33769e33e5f171a10a9",
-    "pulsemetry_cli_windows_arm64.exe": "1d55046fc0928723014d24469d80cfa135ad8fc19d6993f7daf563e2790ef406"
+    "pulsemetry_cli_windows_arm64.exe": "1d55046fc0928723014d24469d80cfa135ad8fc19d6993f7daf563e2790ef406",
+    "pulsemetry_gui_darwin_amd64.dmg": "4eafad90f4476faa62dbfdaff2cb5cc1f5dba64e5a9c4d5f1d182c013787a1d4",
+    "pulsemetry_gui_darwin_arm64.dmg": "067910f6dc8fd0539ee4d50195ffd4acccbf4e46965590ba2ffa3bcc36ef22e3",
+    "pulsemetry_gui_linux_amd64.AppImage": "ae7395e7c40b32dc16bba5ee2cc2fdd335a46e4485e5576c3f95ebf5bf0490e9",
+    "pulsemetry_gui_linux_arm64.AppImage": "42b0207c41d2f0aeb62ad696d6a6727b5548f95fd4ac9859d2a24b32f3bf4ffb",
+    "pulsemetry_gui_windows_amd64.exe": "bed12ee6e6a0d1a8a457c89b7512bfcdc4f2829b9965f0593ad6e56f25626022",
+    "pulsemetry_gui_windows_arm64.exe": "f850e22bd670fe117e39b8f9c913959e997f1b8c942874ca60689262f01c03bb",
+    "SHA256SUMS": "05f5fa10e323c10abf970cc898633e2c9feaacba420d076b65cb5e1083d42f86"
   }
 }

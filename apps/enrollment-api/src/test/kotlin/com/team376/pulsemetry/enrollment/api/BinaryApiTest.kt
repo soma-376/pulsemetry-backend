@@ -67,8 +67,8 @@ class BinaryApiTest {
 	}
 
 	@Test
-	@DisplayName("화이트리스트 6개가 모두 서빙된다")
-	fun servesAllSixAllowedNames() {
+	@DisplayName("CLI·GUI 허용 이름 12개가 모두 서빙된다")
+	fun servesAllAllowedNames() {
 		BinaryController.ALLOWED_FILENAMES.forEach { place(it) }
 
 		BinaryController.ALLOWED_FILENAMES.forEach { name ->
@@ -79,8 +79,8 @@ class BinaryApiTest {
 	}
 
 	@Test
-	@DisplayName("화이트리스트가 PLAN §6.6 의 6개와 정확히 같다")
-	fun allowlistMatchesPlan() {
+	@DisplayName("허용 목록이 허브 enrollment 계약의 CLI·GUI 12개와 정확히 같다")
+	fun allowlistMatchesContract() {
 		assertThat(BinaryController.ALLOWED_FILENAMES).containsExactlyInAnyOrder(
 			"pulsemetry_windows_amd64.exe",
 			"pulsemetry_windows_arm64.exe",
@@ -88,6 +88,9 @@ class BinaryApiTest {
 			"pulsemetry_darwin_arm64",
 			"pulsemetry_linux_amd64",
 			"pulsemetry_linux_arm64",
+            "pulsemetry_gui_windows_amd64.exe", "pulsemetry_gui_windows_arm64.exe",
+            "pulsemetry_gui_darwin_amd64.dmg", "pulsemetry_gui_darwin_arm64.dmg",
+            "pulsemetry_gui_linux_amd64.AppImage", "pulsemetry_gui_linux_arm64.AppImage",
 		)
 	}
 
@@ -116,8 +119,12 @@ class BinaryApiTest {
 		assertThat(darwin.body()).isEqualTo("darwin-0.2.0")
 		assertThat(darwin.headers().firstValue("Content-Disposition")).hasValue("attachment; filename=\"pulsemetry_darwin_arm64\"")
 		assertThat(get("/bin/pulsemetry_windows_amd64.exe").body()).isEqualTo("windows-0.2.0")
-		// 릴리스에 없는 대상, 릴리스 자산 이름, SHA256SUMS·GUI 패키지는 내려주지 않는다.
-		for (path in listOf("/bin/pulsemetry_linux_amd64", "/bin/pulsemetry_cli_darwin_arm64", "/bin/SHA256SUMS", "/bin/pulsemetry_gui_darwin_arm64.dmg")) {
+		val gui = get("/bin/pulsemetry_gui_darwin_arm64.dmg")
+        assertThat(gui.statusCode()).isEqualTo(200)
+        assertThat(gui.body()).isEqualTo("gui")
+        assertThat(gui.headers().firstValue("Content-Disposition")).hasValue("attachment; filename=\"Pulsemetry.dmg\"")
+        // 릴리스에 없는 대상, CLI 릴리스 자산 이름, SHA256SUMS는 내려주지 않는다.
+		for (path in listOf("/bin/pulsemetry_linux_amd64", "/bin/pulsemetry_cli_darwin_arm64", "/bin/SHA256SUMS")) {
 			assertThat(get(path).statusCode()).describedAs(path).isEqualTo(404)
 		}
 	}

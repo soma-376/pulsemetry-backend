@@ -21,6 +21,14 @@ Invoke-WebRequest -Uri "$env:PULSEMETRY_SERVER/bin/pulsemetry_windows_$arch.exe"
 
 & $exe enroll --invite $env:PULSEMETRY_INVITE_CODE --server $env:PULSEMETRY_SERVER
 
+if ($LASTEXITCODE -ne 0) { throw 'Pulsemetry 등록에 실패했습니다.' }
+
+# GUI 실패는 이미 완료한 등록과 데몬 기동을 취소하지 않는다.
+try {
+    & $exe gui install
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'GUI 설치·실행을 완료하지 못했습니다. pulsemetry gui install로 다시 시도하세요.' }
+} catch {
+    Write-Warning 'GUI 설치·실행을 완료하지 못했습니다. 수집 데몬 상태는 pulsemetry status로 확인하세요.'
+}
 Write-Host 'Pulsemetry 설치가 끝났습니다.'
-Write-Host 'Windows 는 daemon 자동 실행 등록이 아직 지원되지 않습니다.'
-Write-Host "필요할 때마다 `"$exe`" daemon 을 직접 실행하세요."
+Write-Host 'daemon 자동 실행 등록은 enroll이 처리했습니다. 상태 확인: pulsemetry status'

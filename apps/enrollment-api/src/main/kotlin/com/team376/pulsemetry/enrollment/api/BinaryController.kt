@@ -15,9 +15,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * CLI 바이너리 서빙 (PLAN.md §6.6).
+ * CLI·GUI 파일 서빙 (허브 ADR 0023, enrollment 계약 §1).
  *
- * 방어는 **화이트리스트 하나뿐**이다. 요청한 이름이 [ALLOWED_FILENAMES] 의 6개 중 하나와
+ * 방어는 **화이트리스트 하나뿐**이다. 요청한 이름이 [ALLOWED_FILENAMES] 의 12개 중 하나와
  * 정확히 같지 않으면 그 자리에서 404 다.
  *
  * `..` 를 문자열 치환으로 지우거나 경로를 정규화해서 막으려 하지 마라 (A9).
@@ -56,12 +56,12 @@ class BinaryController(
 		return ResponseEntity.ok()
 			.contentType(MediaType.APPLICATION_OCTET_STREAM)
 			.contentLength(size)
-			.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"$filename\"")
+			.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"${downloadName(filename)}\"")
 			.body(FileSystemResource(file))
 	}
 
 	companion object {
-		/** 부트스트랩 스크립트가 만들어 내는 이름 6개. 이 목록이 곧 계약이다. */
+		/** 부트스트랩 스크립트가 만들어 내는 이름 12개. 이 목록이 곧 계약이다. */
 		val ALLOWED_FILENAMES: Set<String> = setOf(
 			"pulsemetry_windows_amd64.exe",
 			"pulsemetry_windows_arm64.exe",
@@ -69,6 +69,12 @@ class BinaryController(
 			"pulsemetry_darwin_arm64",
 			"pulsemetry_linux_amd64",
 			"pulsemetry_linux_arm64",
+			"pulsemetry_gui_windows_amd64.exe", "pulsemetry_gui_windows_arm64.exe",
+			"pulsemetry_gui_darwin_amd64.dmg", "pulsemetry_gui_darwin_arm64.dmg",
+			"pulsemetry_gui_linux_amd64.AppImage", "pulsemetry_gui_linux_arm64.AppImage",
 		)
+
+		private fun downloadName(filename: String): String =
+			if (filename.startsWith("pulsemetry_gui_")) "Pulsemetry." + filename.substringAfterLast('.') else filename
 	}
 }

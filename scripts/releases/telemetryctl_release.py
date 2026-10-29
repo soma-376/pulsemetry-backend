@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""게시된 CLI 릴리스를 고정 해시로 검증해 enrollment 이미지에 공급한다."""
+"""게시된 CLI·GUI 릴리스를 고정 해시로 검증해 enrollment 이미지에 공급한다."""
 
 import argparse
 import hashlib
@@ -19,7 +19,13 @@ CLI_ASSETS = tuple(
     for system in ("darwin", "linux", "windows")
     for arch in ("amd64", "arm64")
 )
-ASSETS = ("SHA256SUMS", *CLI_ASSETS)
+GUI_ASSETS = tuple(
+    f"pulsemetry_gui_{system}_{arch}{extension}"
+    for system, extension in (("darwin", ".dmg"), ("linux", ".AppImage"), ("windows", ".exe"))
+    for arch in ("amd64", "arm64")
+)
+PRODUCT_ASSETS = (*CLI_ASSETS, *GUI_ASSETS)
+ASSETS = ("SHA256SUMS", *PRODUCT_ASSETS)
 DEFAULT_LOCK = Path(__file__).resolve().parents[2] / "config/telemetryctl-release.json"
 
 
@@ -38,7 +44,7 @@ def load_lock(path):
         not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
         for value in hashes.values()
     ):
-        raise ReleaseError("CLI 6종과 SHA256SUMS의 고정 해시가 필요하다")
+        raise ReleaseError("CLI 6종·GUI 6종과 SHA256SUMS의 고정 해시가 필요하다")
     return lock
 
 
@@ -57,8 +63,8 @@ def checksums(path):
         if not match or match[2] in result:
             raise ReleaseError("SHA256SUMS 형식 오류 또는 중복 파일명")
         result[match[2]] = match[1]
-    if not set(CLI_ASSETS).issubset(result):
-        raise ReleaseError("SHA256SUMS에 필수 CLI가 없다")
+    if not set(PRODUCT_ASSETS).issubset(result):
+        raise ReleaseError("SHA256SUMS에 필수 CLI 또는 GUI가 없다")
     return result
 
 
@@ -71,7 +77,7 @@ def verify(lock, root):
     if {entry.name for entry in root.iterdir()} != {lock["tag"]}:
         raise ReleaseError("공급 디렉터리는 고정 태그 하나만 포함해야 한다")
     if {entry.name for entry in directory.iterdir()} != set(ASSETS):
-        raise ReleaseError("CLI 6종과 원본 SHA256SUMS만 공급해야 한다")
+        raise ReleaseError("CLI 6종·GUI 6종과 원본 SHA256SUMS만 공급해야 한다")
     for name in ASSETS:
         path = directory / name
         if path.is_symlink() or not path.is_file():
@@ -79,9 +85,9 @@ def verify(lock, root):
         if sha256(path) != lock["sha256"][name]:
             raise ReleaseError(f"고정 해시와 일치하지 않는다: {name}")
     expected = checksums(directory / "SHA256SUMS")
-    for name in CLI_ASSETS:
+    for name in PRODUCT_ASSETS:
         if expected[name] != lock["sha256"][name]:
-            raise ReleaseError(f"SHA256SUMS와 CLI 해시가 일치하지 않는다: {name}")
+            raise ReleaseError(f"SHA256SUMS와 자산 해시가 일치하지 않는다: {name}")
     return directory
 
 
@@ -145,8 +151,8 @@ def download(lock, output):
             download_asset(urls[name], release_dir / name)
             if sha256(release_dir / name) != lock["sha256"][name]:
                 raise ReleaseError(f"다운로드 자산의 해시가 다르다: {name}")
-            # 읽기 권한은 런타임 사용자에게도 주고 CLI만 실행 가능하게 둔다.
-            (release_dir / name).chmod(0o644 if name == "SHA256SUMS" else 0o755)
+            # 읽기 권한은 런타임 사용자에게도 주고 CLI와 Linux AppImage만 실행 가능하게 둔다.
+            (release_dir / name).chmod(0o755 if name in CLI_ASSETS or name.endswith(".AppImage") else 0o644)
         verify(lock, staging)
         staging.rename(output)
 

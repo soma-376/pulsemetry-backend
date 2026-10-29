@@ -33,5 +33,10 @@ chmod +x "$exe"
 
 "$exe" enroll --invite "$PULSEMETRY_INVITE_CODE" --server "$PULSEMETRY_SERVER"
 
+# GUI는 별도 실패 경계다. 등록·수집은 GUI 다운로드가 실패해도 유지한다.
+if ! "$exe" gui install; then
+    echo 'GUI 설치·실행을 완료하지 못했습니다. 수집은 유지됩니다. pulsemetry gui install로 다시 시도하세요.' >&2
+fi
+
 echo 'Pulsemetry 설치가 끝났습니다.'
 echo 'daemon 자동 실행 등록은 enroll 이 처리했습니다 — 해제하려면 pulsemetry autostart disable 을 쓰세요.'
