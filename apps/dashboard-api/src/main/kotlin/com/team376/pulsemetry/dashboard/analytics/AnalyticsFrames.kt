@@ -13,7 +13,7 @@ import java.util.UUID
 
 /**
  * 모든 분석 응답이 공유하는 틀 — snapshot 하나, 그 snapshot 의 관측 일자, 수신 이력, 그리고 그것으로 정한 **상태**(ADR 0023 §4).
- * 여러 endpoint 가 같은 규칙으로 `dataState`·coverage·비교 공개 여부·가격 혼재를 정하도록 한 곳에서 만든다.
+ * 여러 endpoint 가 같은 규칙으로 `dataState`·coverage·비교 공개 여부를 정하도록 한 곳에서 만든다.
  *
  * - `dataState`: 현재 기간의 모든 날짜가 완전 관측이면 `ready`, 관측이 있거나 완전한 날짜가 있으면 `partial`, 없고 수신 이력이 있으면
  *   `no_data`, 둘 다 없으면 `never_observed`. 완전한 날짜는 snapshot 에 고정한 판정이다(ADR 0042). 수신 이력을 판정할 수 없으면 503 이다([IngestStatusReader.history]).
@@ -47,8 +47,6 @@ class AnalyticsFrames(
 	) {
 		/** no_data·never_observed — 사용량 값을 내지 않는다(상태 우선). */
 		val empty: Boolean get() = dataState != PARTIAL && dataState != READY
-
-		val pricingMixed: Boolean get() = snapshot.pricingVersions.size > 1
 
 		/** 현재 기간 전체가 완전 관측이다 — 사용이 없으면 실제 0 이다. */
 		val currentComplete: Boolean get() = currentCoverage.status == Coverage.COMPLETE
@@ -125,7 +123,6 @@ class AnalyticsFrames(
 		dayCount = frame.period.current.days,
 		dataState = frame.dataState,
 		currentCoverage = frame.currentCoverage,
-		pricingVersion = frame.snapshot.pricingVersions.singleOrNull(),
 	)
 
 	/** 요청서의 `AnalyticsMeta` — 개요 meta + snapshot ID. 목록 화면만 싣는다(개요는 싣지 않는다). */
@@ -197,7 +194,7 @@ class AnalyticsFrames(
 	}
 }
 
-/** 목록 화면의 기간 메타. 개요와 달리 재사용할 snapshot ID와 가격 판을 포함한다. */
+/** 목록 화면의 기간 메타. 개요와 달리 재사용할 snapshot ID를 포함한다. */
 data class AnalyticsMeta(
 	val organizationId: String,
 	val generatedAt: String,
@@ -209,13 +206,12 @@ data class AnalyticsMeta(
 	val dayCount: Int,
 	val dataState: String,
 	val currentCoverage: Coverage,
-	val pricingVersion: String?,
 	val snapshotId: String,
 ) {
 	companion object {
 		fun of(meta: AnalyticsPeriodMeta, snapshotId: String) = AnalyticsMeta(
 			meta.organizationId, meta.generatedAt, meta.dataThrough, meta.currency, meta.startDate, meta.endDate,
-			meta.timeZone, meta.dayCount, meta.dataState, meta.currentCoverage, meta.pricingVersion, snapshotId,
+			meta.timeZone, meta.dayCount, meta.dataState, meta.currentCoverage, snapshotId,
 		)
 	}
 }

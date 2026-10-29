@@ -144,7 +144,6 @@ internal object AnalysisColumns {
 		ColumnSpec("cost_reported_usd", NULLABLE_MONEY),
 		ColumnSpec("cost_estimated_usd", NULLABLE_MONEY),
 		ColumnSpec("reported_cost_basis", LOW_CARDINALITY),
-		ColumnSpec("pricing_version", NULLABLE_STRING),
 		ColumnSpec("success", NULLABLE_BOOL),
 		ColumnSpec("http_status", NULLABLE_UINT16),
 		ColumnSpec("error_type", LOW_CARDINALITY),

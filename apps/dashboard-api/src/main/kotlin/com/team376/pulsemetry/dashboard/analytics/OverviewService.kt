@@ -51,7 +51,7 @@ class OverviewService(private val frames: AnalyticsFrames, private val aggregato
  private fun periodReasons(f: AnalyticsFrames.Frame) = f.periodReasons() + f.periodReasons(previous = true)
  private fun count(f: AnalyticsFrames.Frame, now: Value<Long>, before: Value<Long>?) = metric(now, before, f.period.mode.wire, periodReasons(f), Long::toBigDecimal, BigDecimal::toLong)
  private fun money(f: AnalyticsFrames.Frame, now: Value<String>, before: Value<String>?) = metric(now, before, f.period.mode.wire, periodReasons(f), String::toBigDecimal, Money::format)
- private fun values(f: AnalyticsFrames.Frame, t: UsageTotals, previous: Boolean = false) = Values(t, if (previous) f.previousComplete else f.currentComplete, f.pricingMixed, if (previous) "previous_period_incomplete" else "current_period_incomplete", f.periodReasons(previous))
+ private fun values(f: AnalyticsFrames.Frame, t: UsageTotals, previous: Boolean = false) = Values(t, if (previous) f.previousComplete else f.currentComplete, if (previous) "previous_period_incomplete" else "current_period_incomplete", f.periodReasons(previous))
  private fun summary(f: AnalyticsFrames.Frame): Summary {
   val now = values(f, aggregator.totals(f.snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()))
   val before = if (f.comparable) values(f, aggregator.totals(f.snapshot, Side.PREVIOUS, Axis.ORGANIZATION).getValue(emptyList()), true) else null
@@ -62,7 +62,7 @@ class OverviewService(private val frames: AnalyticsFrames, private val aggregato
   val days = aggregator.totals(f.snapshot, Side.CURRENT, Axis.DAY)
   return Trend("day", f.period.current.dates().map { date ->
    val observation = f.observation(date)
-   val v = Values(days[listOf(date.toString())] ?: UsageTotals.EMPTY, observation == "complete", f.pricingMixed, detailReasons = f.dateReasons(date))
+   val v = Values(days[listOf(date.toString())] ?: UsageTotals.EMPTY, observation == "complete", detailReasons = f.dateReasons(date))
    TrendPoint(date.toString(), observation, if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.cost,
     if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.tokens,
     if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.knownCost, v.pricedUsageRows, v.unpricedUsageRows)
@@ -85,7 +85,7 @@ class OverviewService(private val frames: AnalyticsFrames, private val aggregato
   val products = aggregator.totals(f.snapshot, Side.CURRENT, Axis.TEAM_PRODUCT, products = mapping)
   fun productsOf(id: String?) = Products.refs(products.filter { it.key[0] == id && it.value.hasUsage }.map { it.key[1] ?: UsageAggregator.UNMAPPED_PRODUCT }, mapping)
   fun before(id: String?) = if (f.comparable) values(f, previous[listOf(id)] ?: UsageTotals.EMPTY, true).cost else null
-  val ranked = current.filterKeys { it.single() != null }.entries.sortedWith(compareBy<Map.Entry<List<String?>,UsageTotals>,BigDecimal?>(nullsLast(reverseOrder())) { it.value.equivalentCost(f.pricingMixed) }.thenBy { it.key.single() })
+  val ranked = current.filterKeys { it.single() != null }.entries.sortedWith(compareBy<Map.Entry<List<String?>,UsageTotals>,BigDecimal?>(nullsLast(reverseOrder())) { it.value.equivalentCost() }.thenBy { it.key.single() })
   val teams = ranked.take(3).map { (key,t) -> val id = key.single()!!; val v = values(f,t)
    TopTeam(id, directory[id]?.name ?: id, productsOf(id), v.users, money(f,v.cost,before(id))) }
   val unassigned = current[listOf(null)]?.takeIf { it.hasUsage }?.let { val v = values(f,it); Unassigned(productsOf(null),v.users,money(f,v.cost,before(null))) }

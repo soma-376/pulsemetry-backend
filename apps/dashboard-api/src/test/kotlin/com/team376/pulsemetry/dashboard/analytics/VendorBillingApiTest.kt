@@ -94,7 +94,7 @@ class VendorBillingApiTest : AbstractDashboardApiTest() {
 		// 환산 비용(이번 달 claude_code 사용 7달러)·월 계약액(150달러)과 다른 청구 누계 412.8달러.
 		val member = SourceFixtures.insertMember(tenant, "dev-${UUID.randomUUID()}@example.test")
 		SourceFixtures.insertEvents(tenant, Event("$tenant-cost", maxOf(monthStart, now.minus(Duration.ofHours(2))), memberId = member, sessionId = "s",
-			costEstimatedUsd = BigDecimal("7"), pricingVersion = "v1"))
+			costEstimatedUsd = BigDecimal("7")))
 		billed(tenant, claude, connection, monthStart, now.minus(Duration.ofHours(1)), "412.80000000", "usage_cost", now.minus(Duration.ofHours(1)))
 
 		val settings = ok(tenant, "/settings")

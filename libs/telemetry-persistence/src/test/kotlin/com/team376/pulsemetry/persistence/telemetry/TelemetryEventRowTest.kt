@@ -30,12 +30,13 @@ class TelemetryEventRowTest {
 	private fun base() = event().observation
 
 	@Test
-	@DisplayName("107컬럼을 DDL 순서대로 전부 쓴다 — 선택 값도 생략하지 않는다")
+	@DisplayName("호환용 가격판을 제외한 106컬럼을 쓴다 — 선택 값도 생략하지 않는다")
 	fun writesEveryColumnInOrder() {
 		val row = tokens(base())
 
 		assertThat(row.keys).containsExactlyElementsOf(AnalysisColumns.EVENTS.map { it.name })
-		assertThat(row).hasSize(107)
+		assertThat(row).hasSize(106)
+		assertThat(row).doesNotContainKey("pricing_version")
 	}
 
 	@Test

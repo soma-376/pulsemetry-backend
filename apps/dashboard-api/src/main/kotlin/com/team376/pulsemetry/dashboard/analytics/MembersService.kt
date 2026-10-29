@@ -242,7 +242,7 @@ class MembersService(
 		/** 좌석 판정(ADR 0048). 좌석 상태만 쓰는 목록은 회수 검토 없이 만든다. */
 		val seats: SeatAssessment?,
 	) {
-		fun values(totals: UsageTotals) = OverviewValues.Values(totals, frame.currentComplete, frame.pricingMixed, detailReasons = frame.periodReasons())
+		fun values(totals: UsageTotals) = OverviewValues.Values(totals, frame.currentComplete, detailReasons = frame.periodReasons())
 
 		fun totals(id: UUID): UsageTotals = usage[listOf(id.toString())] ?: UsageTotals.EMPTY
 

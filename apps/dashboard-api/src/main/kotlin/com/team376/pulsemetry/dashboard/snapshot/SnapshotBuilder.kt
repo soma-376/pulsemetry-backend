@@ -23,7 +23,6 @@ import java.util.UUID
  * 5. 기간 밖 고정 입력(구성원별 마지막 사용)을 만든다.
  * 6. **검증** — 조회에 쓸 연결로 행을 세어 서버가 보고한 쓴 행 수와 맞춘다. 입구의 모든 행은 관측 일자의 개수로 한 번씩 세이므로
  *    `written_rows = Σ observations + 사용량 행 + 관측 일자 행` 이어야 한다. 어긋나면 결과를 믿지 않는다.
- * 7. 가격 판 집합을 manifest 에 고정한다.
  *
  * 복사 문장에는 읽기 상한(행·바이트)과 실행 시간 상한을 싣는다 — 넘으면 잘라 내지 않고 실패한다.
  * 2 이후에 실패하면 manifest 를 `failed` 로 바꾸고 원래 예외를 다시 던진다. 남은 캐시 행은 어떤 조회도 읽지 않는다 —
@@ -63,7 +62,6 @@ class SnapshotBuilder(
 		val buildId: UUID,
 		val usageRows: Long,
 		val observedDayRows: Long,
-		val pricingVersions: List<String>,
 		val policyEpoch: Long,
 	)
 
@@ -144,13 +142,7 @@ class SnapshotBuilder(
 				throw SnapshotUnavailableException(VERIFICATION_FAILED)
 			}
 
-			val pricingVersions = clickHouse.query(
-				"SELECT DISTINCT assumeNotNull(pricing_version) AS v FROM snapshot_usage WHERE $BUILD_FILTER AND isNotNull(pricing_version) ORDER BY v",
-				keys,
-			) { it.path("v").asString() }
-			manifests.setPricingVersions(buildId, pricingVersions)
-
-			return Built(snapshotId, buildId, usageRows, distinctDays, pricingVersions, boundary.policyEpoch)
+			return Built(snapshotId, buildId, usageRows, distinctDays, boundary.policyEpoch)
 		} catch (e: Exception) {
 			fail(buildId, e)
 			throw e

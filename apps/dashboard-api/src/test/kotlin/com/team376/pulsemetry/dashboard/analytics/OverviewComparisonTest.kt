@@ -69,7 +69,7 @@ class OverviewComparisonTest {
 		val teams = listOf("A", "B", "C", "D", "E").associateWith { SourceFixtures.insertTeam(tenant, it) }
 		fun usage(name: String, team: String, day: String, cost: String) = Event(
 			"$tenant-$name", kst("${day}T10:00:00"), teamId = teams.getValue(team), memberId = UUID.randomUUID(),
-			costEstimatedUsd = BigDecimal(cost), pricingVersion = "v1",
+			costEstimatedUsd = BigDecimal(cost),
 		)
 		SourceFixtures.insertEvents(
 			tenant,

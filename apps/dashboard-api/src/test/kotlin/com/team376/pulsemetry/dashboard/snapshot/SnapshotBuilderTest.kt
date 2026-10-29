@@ -293,7 +293,7 @@ class SnapshotBuilderTest {
 
 		assertThat(row.take(11)).containsExactly(
 			"building", "prev_period", "2026-09-07", "2026-09-13", "2026-08-31", "2026-09-06",
-			"Asia/Seoul", "dashboard-v6", "organization", "model-id-v1", "60",
+			"Asia/Seoul", "dashboard-v7", "organization", "model-id-v1", "60",
 		)
 		assertThat(Instant.parse(row[11])).isBetween(before.minusSeconds(1), Instant.now())
 		assertThat(SnapshotIds.isWellFormed(row[12])).isTrue()
@@ -321,22 +321,22 @@ class SnapshotBuilderTest {
 	}
 
 	@Test
-	@DisplayName("가격 판 집합을 manifest 에 고정한다 — 둘이면 혼재다")
-	fun pricingVersionsAreFixed() {
+	@DisplayName("과거 가격판을 복사하거나 기록하지 않고 기존 금액만 보존한다")
+	fun legacyPricingMetadataIsNotCopied() {
 		val tenant = UUID.randomUUID()
 		SourceFixtures.insertEvents(
 			tenant,
-			Event("p3", kst("2026-09-24T10:00:00"), costEstimatedUsd = BigDecimal("1.5"), pricingVersion = "v3"),
-			Event("p4", kst("2026-09-24T11:00:00"), costEstimatedUsd = BigDecimal("2.5"), pricingVersion = "v4"),
+			Event("p3", kst("2026-09-24T10:00:00"), costEstimatedUsd = BigDecimal("1.5"), legacyPricingVersion = "v3"),
+			Event("p4", kst("2026-09-24T11:00:00"), costEstimatedUsd = BigDecimal("2.5"), legacyPricingVersion = "v4"),
 			Event("unpriced", kst("2026-09-24T12:00:00")),
 		)
 
 		val built = build(tenant, period("2026-09-24", "2026-09-24"))
 
-		assertThat(built.pricingVersions).containsExactly("v3", "v4")
 		val stored = DashboardTestStores.writer.sql("SELECT pricing_versions FROM dashboard_cache.snapshots WHERE build_id = :b")
 			.param("b", built.buildId).query { rs, _ -> (rs.getArray(1).array as Array<*>).toList() }.single()
-		assertThat(stored).containsExactly("v3", "v4")
+		assertThat(stored).isEmpty()
+		assertThat(usage(built, "ifNull(pricing_version, 'NULL')")).containsOnly(listOf("NULL"))
 		assertThat(usage(built, "ifNull(toString(cost_estimated_usd), 'NULL')")).containsExactly(listOf("1.5"), listOf("2.5"), listOf("NULL"))
 	}
 

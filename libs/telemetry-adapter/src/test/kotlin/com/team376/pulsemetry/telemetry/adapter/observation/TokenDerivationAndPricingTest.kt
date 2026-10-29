@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
 import com.team376.pulsemetry.telemetry.adapter.observation.pricing.ModelPrice
-import com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingProfile
+import com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingCatalog
 import com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage
 import com.team376.pulsemetry.telemetry.adapter.observation.semantics.CacheWriteStatus
 import com.team376.pulsemetry.telemetry.adapter.observation.semantics.SemanticsProfile
@@ -169,43 +169,37 @@ class TokenDerivationAndPricingTest {
 
 	private fun price(
 		model: String = "model-a",
-		from: Long = 0,
-		until: Long? = null,
 		semantics: Set<String> = setOf(inclusive.id),
 		create: BigDecimal? = BigDecimal("3.75"),
-	) = ModelPrice(model, EpochNanos(from), until?.let { EpochNanos(it) }, semantics, BigDecimal("3"), BigDecimal("15"), BigDecimal("0.3"), create)
+	) = ModelPrice(model, semantics, BigDecimal("3"), BigDecimal("15"), BigDecimal("0.3"), create)
 
 	private fun priced(stage: PricingStage, observation: EventObservation = TokenDerivation.apply(usage(), inclusive)) = stage.apply(observation)
 
 	@Test
-	@DisplayName("가격 프로파일이 없으면 추정 비용과 pricing_version 은 null 이다(기본)")
-	fun noPricingProfile() {
-		val result = priced(PricingStage.NONE)
+	@DisplayName("단일 카탈로그에 없는 모델은 추정 비용이 null 이다")
+	fun unknownModelInSingleCatalog() {
+		val result = priced(PricingStage())
 
 		assertThat(result.costEstimatedUsd).isNull()
-		assertThat(result.pricingVersion).isNull()
 	}
 
 	@Test
 	@DisplayName("성분별 단가로 정확한 10진 계산 — 60×3 + 20×15 + 40×0.3 + 0×3.75 = 492 / 100만 USD")
 	fun estimatesFromComponents() {
-		val result = priced(PricingStage(PricingProfile("prices-test-1", listOf(price()))))
+		val result = priced(PricingStage(PricingCatalog(listOf(price()))))
 
 		assertThat(result.costEstimatedUsd).isEqualByComparingTo("0.000492")
-		assertThat(result.pricingVersion).isEqualTo("prices-test-1")
 	}
 
 	@Test
-	@DisplayName("계산하지 않는 경우 — 모르는 모델·유효 기간 밖·의미 전제 불일치·단가 둘·write 단가 없음·파생 input 없음·사용량 아님")
+	@DisplayName("계산하지 않는 경우 — 모르는 모델·의미 전제 불일치·단가 둘·write 단가 없음·파생 input 없음·사용량 아님")
 	fun refusesWithoutEvidence() {
-		fun stage(vararg prices: ModelPrice) = PricingStage(PricingProfile("p", prices.toList()))
+		fun stage(vararg prices: ModelPrice) = PricingStage(PricingCatalog(prices.toList()))
 
 		assertThat(priced(stage(price(model = "model-b"))).costEstimatedUsd).isNull()
 		assertThat(priced(stage(price(model = "model"))).costEstimatedUsd).describedAs("부분 문자열로 맞추지 않는다").isNull()
-		assertThat(priced(stage(price(from = 2_000))).costEstimatedUsd).isNull()
-		assertThat(priced(stage(price(until = 1_000))).costEstimatedUsd).describedAs("반개방").isNull()
 		assertThat(priced(stage(price(semantics = setOf("other")))).costEstimatedUsd).isNull()
-		assertThat(priced(stage(price(), price(from = 1))).costEstimatedUsd).describedAs("단가가 둘이면 고르지 않는다").isNull()
+		assertThat(priced(stage(price(), price())).costEstimatedUsd).describedAs("단가가 둘이면 고르지 않는다").isNull()
 		assertThat(priced(stage(price(create = null)), TokenDerivation.apply(usage(create = 10), inclusive)).costEstimatedUsd).isNull()
 		assertThat(priced(stage(price()), TokenDerivation.apply(usage(), null)).costEstimatedUsd).isNull()
 		assertThat(priced(stage(price()), usage(model = null)).costEstimatedUsd).isNull()
@@ -213,10 +207,9 @@ class TokenDerivationAndPricingTest {
 	}
 
 	@Test
-	@DisplayName("가격 데이터 자체의 제약 — 음수·소수 여섯 자리 초과·빈 유효 기간은 거부한다")
+	@DisplayName("가격 데이터 자체의 제약 — 음수·소수 여섯 자리 초과은 거부한다")
 	fun priceDataConstraints() {
 		assertThatThrownBy { price(create = BigDecimal("-1")) }.isInstanceOf(IllegalArgumentException::class.java)
 		assertThatThrownBy { price(create = BigDecimal("0.0000001")) }.isInstanceOf(IllegalArgumentException::class.java)
-		assertThatThrownBy { price(from = 5, until = 5) }.isInstanceOf(IllegalArgumentException::class.java)
 	}
 }

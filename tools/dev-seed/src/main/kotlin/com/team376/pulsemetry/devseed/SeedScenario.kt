@@ -310,7 +310,7 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String, includ
                 "team_ids_as_of" to listOfNotNull(teamIndex?.let(::team)), "session_id" to null, "session_id_namespace" to null,
                 "tokens_input" to null, "tokens_output" to null, "tokens_cache_read" to null, "tokens_cache_create" to null,
                 "tokens_input_uncached" to null, "tokens_total_derived" to null, "input_semantics" to "unknown", "output_semantics" to "unknown",
-                "semantics_profile" to null, "cost_estimated_usd" to null, "pricing_version" to null,
+                "semantics_profile" to null, "cost_estimated_usd" to null,
                 "reported_cost_basis" to "unknown", "mapping_version" to "seed-v1", "enrichment_version" to "seed-v1", "masking_version" to "seed-v1",
                 "metadata_json" to encode(mapOf("synthetic" to true)), "attrs" to emptyMap<String, String>(), "enrichment_json" to "{}"))
             receipt(index, whenAt, product)
@@ -331,7 +331,7 @@ private fun generate(name: String, asOf: LocalDate, otlpEndpoint: String, includ
             "tokens_total_derived" to if (incomplete) null else input + output + if (claude) cacheRead + cacheCreate else 0,
             "input_semantics" to if (claude) "exclusive" else "inclusive", "output_semantics" to "inclusive",
             "semantics_profile" to if (claude) "claude-code-exclusive-v1" else "codex-inclusive-v1",
-            "cost_estimated_usd" to if (incomplete || unknown) null else cost, "pricing_version" to "seed-synthetic-v1",
+            "cost_estimated_usd" to if (incomplete || unknown) null else cost,
             "reported_cost_basis" to "unknown", "mapping_version" to "seed-v1", "enrichment_version" to "seed-v1", "masking_version" to "seed-v1",
             "metadata_json" to encode(mapOf("synthetic" to true)), "attrs" to emptyMap<String, String>(), "enrichment_json" to "{}"))
         receipt(index, whenAt, product)

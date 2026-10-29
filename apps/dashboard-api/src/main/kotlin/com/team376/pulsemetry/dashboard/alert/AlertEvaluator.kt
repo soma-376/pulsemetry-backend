@@ -115,9 +115,9 @@ class AlertEvaluator(
 			val windowEnd = period.current.until
 			val frame = frames.frame(organization, SYSTEM, period, usesComparison = true, snapshotId = null)
 			val reason: String? = if (!frame.comparable) PERIOD_INCOMPLETE else {
-				val current = Usage.of(aggregator.totals(frame.snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()), frame.pricingMixed, frame.currentComplete)
+				val current = Usage.of(aggregator.totals(frame.snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()), frame.currentComplete)
 					.equivalentCostUsd?.toBigDecimal()
-				val before = Usage.of(aggregator.totals(frame.snapshot, Side.PREVIOUS, Axis.ORGANIZATION).getValue(emptyList()), frame.pricingMixed, frame.previousComplete)
+				val before = Usage.of(aggregator.totals(frame.snapshot, Side.PREVIOUS, Axis.ORGANIZATION).getValue(emptyList()), frame.previousComplete)
 					.equivalentCostUsd?.toBigDecimal()
 				when {
 					current == null || before == null -> COST_NOT_AVAILABLE
@@ -226,7 +226,7 @@ class AlertEvaluator(
 
 		/** 두 기간 중 하나라도 완전하지 않다(ADR 0042). */
 		const val PERIOD_INCOMPLETE = "period_incomplete"
-		/** 비용을 모르는 사용이 있다(가격 없음·가격 판 섞임). */
+		/** 비용을 모르는 사용이 있다(가격 없음). */
 		const val COST_NOT_AVAILABLE = "cost_not_available"
 		/** 앞 기간 비용이 0 이라 증가율이 없다. */
 		const val NO_PREVIOUS_SPEND = "no_previous_spend"

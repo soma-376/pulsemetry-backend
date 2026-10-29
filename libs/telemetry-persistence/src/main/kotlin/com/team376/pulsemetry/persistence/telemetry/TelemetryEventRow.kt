@@ -51,7 +51,6 @@ internal object TelemetryEventRow {
 		w.money("cost_reported_usd", o.costReportedUsd)
 		w.money("cost_estimated_usd", o.costEstimatedUsd)
 		w.lowCardinality("reported_cost_basis", o.reportedCostBasis)
-		w.string("pricing_version", o.pricingVersion)
 		w.bool("success", o.success)
 		w.uint16("http_status", o.httpStatus)
 		w.lowCardinality("error_type", o.errorType)

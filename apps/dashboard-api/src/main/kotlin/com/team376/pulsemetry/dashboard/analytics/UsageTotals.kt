@@ -15,7 +15,7 @@ import java.time.Instant
  * - 토큰 범주 — 그 범주의 누락이 하나라도 있으면 없다. 모든 행이 같은 non-null 의미 호환 그룹이어야 한다.
  *   검증된 Claude/Codex canonical 성분만 한 그룹이며 나머지는 원래 프로파일별로 분리한다(ADR 0061).
  * - API `total` — 파생 total 과 네 범주 중 하나라도 누락이 있으면 없다(같은 프로파일 조건도 같다).
- * - 금액 — 단가 없는 행이 하나라도 있거나 snapshot 의 가격 판이 둘 이상이면 없다. 부분합을 총액으로 올리지 않는다.
+ * - 금액 — 단가 없는 행이 하나라도 있으면 없다. 저장된 USD 환산액을 합산한다. 부분합을 총액으로 올리지 않는다.
  */
 data class UsageTotals(
 	val usageRows: Long,
@@ -52,10 +52,10 @@ data class UsageTotals(
 
 	fun apiTotal(): Long? = totalDerived.sum.takeIf { hasUsage && semanticsUniform && apiTotalMissingRows == 0L }
 
-	fun equivalentCost(pricingMixed: Boolean): BigDecimal? = cost.takeIf { hasUsage && unpricedRows == 0L && !pricingMixed }
+	fun equivalentCost(): BigDecimal? = cost.takeIf { hasUsage && unpricedRows == 0L }
 
 	/** 전체 금액과 구분하는 계산 가능한 관측 부분합(ADR 0063). */
-	fun knownEquivalentCost(pricingMixed: Boolean): BigDecimal? = cost.takeIf { hasUsage && usageRows > unpricedRows && !pricingMixed }
+	fun knownEquivalentCost(): BigDecimal? = cost.takeIf { hasUsage && usageRows > unpricedRows }
 
 	/** 캐시 적중 분모 = inputUncached + cacheRead + cacheWrite. 셋 중 하나라도 없으면 없다. */
 	fun cacheEligibleInput(): Long? {

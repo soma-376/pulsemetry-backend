@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted — [허브 ADR 0021](../../../docs/adr/0021-dashboard-runtime-and-deployment-contract.md)이 저장소 연결·캐시 소유와 DDL 적용 책임을 채택했다.
+Accepted — 부분 대체: [ADR 0071](0071-서버-환산은-단일-카탈로그를-쓰고-가격판-기록을-제거한다.md)이 snapshot 가격판 기록을 제거한다. 나머지 규칙은 유지한다.
+
+기존 상태 근거: Accepted — [허브 ADR 0021](../../../docs/adr/0021-dashboard-runtime-and-deployment-contract.md)이 저장소 연결·캐시 소유와 DDL 적용 책임을 채택했다.
 
 ~~Proposed — 허브 [ADR 0007](../../../docs/adr/0007-dashboard-snapshots-and-telemetry-lifetime-summary.md)(분석 snapshot 과 수집 생애주기 요약의 저장소 분리) 채택 시 Accepted.~~
 

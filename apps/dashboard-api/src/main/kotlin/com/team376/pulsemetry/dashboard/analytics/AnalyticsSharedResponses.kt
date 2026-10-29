@@ -12,7 +12,6 @@ data class AnalyticsPeriodMeta(
 	val dayCount: Int,
 	val dataState: String,
 	val currentCoverage: Coverage,
-	val pricingVersion: String?,
 )
 
 data class AnalyticsComparison(

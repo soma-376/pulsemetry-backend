@@ -5,7 +5,7 @@ import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
 import java.math.BigDecimal
 import java.time.Instant
 
-/** 재평가 테스트가 쓰는 저장 사용량 행. 값은 Codeburn 판 단가로 손계산할 수 있게 고른다. */
+/** 재평가 테스트가 쓰는 저장 사용량 행. 값은 단일 카탈로그 단가로 손계산할 수 있게 고른다. */
 internal object StoredUsageSamples {
 	const val TENANT: String = "00000000-0000-0000-0000-000000000001"
 
@@ -38,7 +38,7 @@ internal object StoredUsageSamples {
 			semanticsProfile = semanticsProfile,
 		)
 		return StoredUsageRepricing.Row(
-			EnrichedEvent(AnalysisHash.seal(observation), OrgAttribution("member", "team", listOf("team"), "{}", "org-v1")),
+			EnrichedEvent(if (rev < 10u) observation.copy(envelope = observation.envelope.copy(analysisHash = AnalysisHash.ofLegacyPriced(observation, null))) else AnalysisHash.seal(observation), OrgAttribution("member", "team", listOf("team"), "{}", "org-v1")),
 			RowVersioning.of(rev, ingestSeq),
 		)
 	}

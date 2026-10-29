@@ -61,15 +61,15 @@ class ProductUsageApiTest : AbstractDashboardApiTest() {
 		val (a1, a2, b1, b2, u1) = List(5) { SourceFixtures.insertMember(tenant, "m$it-${UUID.randomUUID()}@example.test") }
 		fun codex(name: String, member: UUID, team: UUID?, cost: String, session: String?) = Event(name, kst("2026-09-09T10:00:00"), product = "codex",
 			serviceName = "codex-app-server", semanticsProfile = "codex-inclusive-v1", memberId = member, teamId = team, sessionId = session,
-			costEstimatedUsd = BigDecimal(cost), pricingVersion = "v1")
+			costEstimatedUsd = BigDecimal(cost))
 		SourceFixtures.insertEvents(
 			tenant,
-			Event("$tenant-a1", kst("2026-09-08T10:00:00"), memberId = a1, teamId = a, sessionId = "s-a1", costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"),
+			Event("$tenant-a1", kst("2026-09-08T10:00:00"), memberId = a1, teamId = a, sessionId = "s-a1", costEstimatedUsd = BigDecimal("1")),
 			codex("$tenant-a2", a2, a, "2", "s-a2"),
-			Event("$tenant-b1", kst("2026-09-10T10:00:00"), memberId = b1, teamId = b, sessionId = "s-b1", costEstimatedUsd = BigDecimal("3"), pricingVersion = "v1"),
+			Event("$tenant-b1", kst("2026-09-10T10:00:00"), memberId = b1, teamId = b, sessionId = "s-b1", costEstimatedUsd = BigDecimal("3")),
 			codex("$tenant-b2", b2, b, "4", null),
 			Event("$tenant-u1", kst("2026-09-11T10:00:00"), product = "unknown", serviceName = "some-tool", semanticsProfile = null, memberId = u1,
-				sessionId = "s-u1", costEstimatedUsd = BigDecimal("5"), pricingVersion = "v1"),
+				sessionId = "s-u1", costEstimatedUsd = BigDecimal("5")),
 		)
 		return Org(tenant, a, b)
 	}

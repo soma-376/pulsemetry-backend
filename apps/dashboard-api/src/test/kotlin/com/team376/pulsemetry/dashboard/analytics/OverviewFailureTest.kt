@@ -31,9 +31,8 @@ class OverviewFailureTest {
  private val refs=mock(SnapshotReferences::class.java)
  private val service=OverviewService(frames,aggregate,refs)
  init {
-  `when`(snapshot.pricingVersions).thenReturn(emptyList())
   `when`(frames.frame(org,user,period,true,null)).thenReturn(frame)
-  `when`(frames.meta(frame)).thenReturn(AnalyticsPeriodMeta(org.id.toString(),frame.now.toString(),null,"USD",day.toString(),day.toString(),"Asia/Seoul",1,"ready",frame.currentCoverage,null))
+  `when`(frames.meta(frame)).thenReturn(AnalyticsPeriodMeta(org.id.toString(),frame.now.toString(),null,"USD",day.toString(),day.toString(),"Asia/Seoul",1,"ready",frame.currentCoverage))
   `when`(aggregate.totals(snapshot,Side.CURRENT,Axis.ORGANIZATION)).thenReturn(mapOf(emptyList<String?>() to UsageTotals.EMPTY))
   `when`(aggregate.totals(snapshot,Side.CURRENT,Axis.DAY)).thenReturn(emptyMap())
   `when`(aggregate.totals(snapshot,Side.CURRENT,Axis.MODEL)).thenReturn(emptyMap())
@@ -67,7 +66,7 @@ class OverviewFailureTest {
  @Test fun `empty period does not query sections or manufacture query errors`() {
   val empty=frame.copy(dataState="no_data",currentCoverage=Coverage("none",0))
   `when`(frames.frame(org,user,period,true,null)).thenReturn(empty)
-  `when`(frames.meta(empty)).thenReturn(AnalyticsPeriodMeta(org.id.toString(),frame.now.toString(),null,"USD",day.toString(),day.toString(),"Asia/Seoul",1,"no_data",empty.currentCoverage,null))
+  `when`(frames.meta(empty)).thenReturn(AnalyticsPeriodMeta(org.id.toString(),frame.now.toString(),null,"USD",day.toString(),day.toString(),"Asia/Seoul",1,"no_data",empty.currentCoverage))
   val result=service.overview(org,user,period)
   assertThat(result.summary).isNull();assertThat(result.trend).isNull();assertThat(result.modelMix).isNull();assertThat(result.teamUsage).isNull();assertThat(result.errors).isEmpty()
   verifyNoInteractions(aggregate,refs)

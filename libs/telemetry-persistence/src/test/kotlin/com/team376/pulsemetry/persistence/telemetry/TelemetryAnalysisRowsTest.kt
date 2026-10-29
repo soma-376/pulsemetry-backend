@@ -47,9 +47,10 @@ class TelemetryAnalysisRowsTest {
 	}
 
 	@Test
-	@DisplayName("인코더의 컬럼 선언이 두 테이블의 system.columns 와 이름·타입·순서까지 같다")
+	@DisplayName("인코더의 컬럼 선언이 호환용 가격판 열을 제외한 system.columns 와 같다")
 	fun declarationsMatchTheTables() {
-		assertThat(AnalysisColumns.EVENTS.map { it.name to it.type }).containsExactlyElementsOf(columns(EVENTS))
+		assertThat(AnalysisColumns.EVENTS.map { it.name to it.type }).containsExactlyElementsOf(columns(EVENTS).filterNot { it.first == "pricing_version" })
+		assertThat(columns(EVENTS)).contains("pricing_version" to "Nullable(String)")
 		assertThat(AnalysisColumns.METRIC_POINTS.map { it.name to it.type }).containsExactlyElementsOf(columns(METRICS))
 	}
 
@@ -66,13 +67,13 @@ class TelemetryAnalysisRowsTest {
 			tokensOutput = 0,
 			costReportedUsd = BigDecimal("99999999999999999999999999.999999999999"),
 			costEstimatedUsd = BigDecimal("0.000000000001"),
-			pricingVersion = "p1",
 			reportedCostBasis = ReportedCostBasis.ESTIMATE,
 			success = false,
 			httpStatus = 65_535,
 			severityNumber = 255,
 		).withFlags(QualityFlag.COST_CONFLICT, QualityFlag.MULTI_TEAM_MEMBERSHIP)
 		insert(event(observation, AnalysisSamples.org(teamIds = listOf("t1", "t2"))))
+		assertThat(select(EVENTS, "isNull(pricing_version)")).containsExactly("1")
 
 		val stored = select(
 			EVENTS,

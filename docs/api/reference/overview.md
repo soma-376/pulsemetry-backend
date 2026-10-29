@@ -69,7 +69,6 @@ type Metric<T> = Value<T> & { comparison: Change<T> };
 | member_identity_missing | 구성원 미식별 사용 존재 |
 | session_identity_missing | 세션 미식별 사용 존재 |
 | pricing_missing | 단가 누락 |
-| pricing_version_mixed | snapshot의 가격 판 혼재 |
 | token_data_incomplete | 토큰 누락 |
 | token_semantics_incompatible | 의미 미검증 또는 다른 의미 프로파일의 토큰 |
 | zero_denominator | 평균·비중의 분모 0 |
@@ -113,4 +112,8 @@ type Metric<T> = Value<T> & { comparison: Change<T> };
 
 ## 계산 가능한 관측 부분합 (허브 ADR 0011)
 
-기존 전체 금액·평균·비중·비교의 null 규칙은 유지한다. 별도 `knownEquivalentCostUsd`, `pricedUsageRows`, `unpricedUsageRows`를 반환한다. 개요 summary/trend point와 팀 metrics에서는 부분합이 `Value<string>`, 팀 trend point에서는 nullable USD 문자열이다. 행 수는 해당 범위의 primary 사용 관측 수다. 미가격 행이 있으면 부분합 사유에 `pricing_missing`을 포함한다. 가격 있는 행이 없거나 가격판 혼재면 부분합도 null이며, 완전 관측한 빈 범위만 0이다. 미관측일을 0으로 대체하지 않는다. 부분합은 전체 사용량·실제 청구액이 아니며 평균·비교·알림에 대신 쓰지 않는다.
+기존 전체 금액·평균·비중·비교의 null 규칙은 유지한다. 별도 `knownEquivalentCostUsd`, `pricedUsageRows`, `unpricedUsageRows`를 반환한다. 개요 summary/trend point와 팀 metrics에서는 부분합이 `Value<string>`, 팀 trend point에서는 nullable USD 문자열이다. 행 수는 해당 범위의 primary 사용 관측 수다. 미가격 행이 있으면 부분합 사유에 `pricing_missing`을 포함한다. 가격 있는 행이 없으면 부분합도 null이며, 완전 관측한 빈 범위만 0이다. 미관측일을 0으로 대체하지 않는다. 부분합은 전체 사용량·실제 청구액이 아니며 평균·비교·알림에 대신 쓰지 않는다.
+
+### 단일 참조 단가표와 저장 금액
+
+새 사용량은 서버에 포함된 단일 참조 단가표로 계산한다. 가격판 선택·관측별 버전 기록·응답 필드는 없다. 대시보드는 각 관측에 저장된 USD 환산액을 합산하며, 과거 단가나 비교 기간·다른 그룹의 단가 차이로 값을 숨기지 않는다. 기존 금액을 자동 재계산하지 않으므로 모든 과거 사용량을 현재 단가로 다시 평가한 합계는 아니다. 미가격 행의 전체값 null·계산 가능한 관측 부분합·기간 완전성 규칙은 유지한다(허브 ADR 0028).

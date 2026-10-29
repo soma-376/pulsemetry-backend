@@ -341,11 +341,10 @@ class ObservationNormalizerTest {
 	fun pipelineOrder() {
 		val registry = ProfileRegistry(listOf(TestCodexProfile))
 		val pricing = com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage(
-			com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingProfile(
-				"prices-test-1",
+			com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingCatalog(
 				listOf(
 					com.team376.pulsemetry.telemetry.adapter.observation.pricing.ModelPrice(
-						"model-a", EpochNanos(0), null, setOf(TestSemanticsHolder.value.id),
+						"model-a", setOf(TestSemanticsHolder.value.id),
 						java.math.BigDecimal("1"), java.math.BigDecimal("2"), java.math.BigDecimal("0.5"), null,
 					),
 				),
@@ -359,9 +358,8 @@ class ObservationNormalizerTest {
 		assertThat(unpriced.tokensInputUncached).isEqualTo(60)
 		assertThat(unpriced.tokensTotalDerived).isEqualTo(120)
 		assertThat(unpriced.costEstimatedUsd).isNull()
-		// 60×1 + 20×2 + 40×0.5 = 120 → 0.000120 USD. cache write 는 해당 없음 프로파일이라 항이 없다.
+		// 60×1 + 20×2 + 40×0.5 = 120 → 0.000120 USD. 명시 cache write 0은 금액을 더하지 않는다.
 		assertThat(priced.costEstimatedUsd).isEqualByComparingTo("0.000120")
-		assertThat(priced.pricingVersion).isEqualTo("prices-test-1")
 		assertThat(priced.envelope.analysisHash).isNotEqualTo(unpriced.envelope.analysisHash)
 		assertThat(AnalysisHash.of(priced)).isEqualTo(priced.envelope.analysisHash)
 	}
@@ -391,7 +389,7 @@ class ObservationNormalizerTest {
 							mappingStatus = MappingStatus.MAPPED, usageRole = UsageRole.PRIMARY, usageScope = UsageScope.RESPONSE, model = "model-a",
 						),
 						eventType = EventType.MODEL_RESPONSE_USAGE,
-						tokensInput = 100, tokensOutput = 20, tokensCacheRead = 40,
+						tokensInput = 100, tokensOutput = 20, tokensCacheRead = 40, tokensCacheCreate = 0,
 					),
 					semantics = TestSemanticsHolder.value,
 				)
@@ -412,7 +410,7 @@ class ObservationNormalizerTest {
 			id = "test-codex-semantics",
 			inputSemantics = InputSemantics.INCLUSIVE_CACHE,
 			outputSemantics = OutputSemantics.INCLUSIVE_REASONING_TOOL,
-			cacheWrite = com.team376.pulsemetry.telemetry.adapter.observation.semantics.CacheWriteStatus.NOT_APPLICABLE,
+			cacheWrite = com.team376.pulsemetry.telemetry.adapter.observation.semantics.CacheWriteStatus.REPORTED,
 			scope = com.team376.pulsemetry.telemetry.adapter.observation.semantics.SemanticsScope(Product.CODEX, "test", "unknown", "test"),
 			evidencePath = "test/EVIDENCE.md",
 		)

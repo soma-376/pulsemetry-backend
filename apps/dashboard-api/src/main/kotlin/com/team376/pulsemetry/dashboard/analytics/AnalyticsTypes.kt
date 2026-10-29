@@ -53,7 +53,7 @@ data class Usage(
 		 * 공통 계산기의 null 규칙을 거친 값. [complete] 는 이 값의 기간이 완전 관측이라는 뜻이다 — 그때 사용이 없으면 null 이 아니라 0 이다.
 		 * 사용이 있으면 [complete] 와 무관하게 같은 규칙이다(의미가 섞인 토큰·가격 없는 행은 완전해도 null).
 		 */
-		fun of(totals: UsageTotals, pricingMixed: Boolean, complete: Boolean = false) = if (complete && !totals.hasUsage) ZERO else Usage(
+		fun of(totals: UsageTotals, complete: Boolean = false) = if (complete && !totals.hasUsage) ZERO else Usage(
 			activeUsers = totals.activeUsers(),
 			sessionCount = totals.sessionCount(),
 			tokens = Tokens(
@@ -63,7 +63,7 @@ data class Usage(
 				cacheWrite = totals.tokens(totals.cacheWrite),
 				total = totals.apiTotal(),
 			),
-			equivalentCostUsd = totals.equivalentCost(pricingMixed)?.let(Money::format),
+			equivalentCostUsd = totals.equivalentCost()?.let(Money::format),
 		)
 	}
 }
@@ -74,9 +74,9 @@ data class TeamPeriod(
 ) {
 	companion object {
 		/** [complete] 인 기간에 사용이 없으면 0 이다([Usage.of] 와 같은 규칙). */
-		fun of(totals: UsageTotals, pricingMixed: Boolean, complete: Boolean = false) =
+		fun of(totals: UsageTotals, complete: Boolean = false) =
 			if (complete && !totals.hasUsage) TeamPeriod(0, Money.format(BigDecimal.ZERO))
-			else TeamPeriod(totals.activeUsers(), totals.equivalentCost(pricingMixed)?.let(Money::format))
+			else TeamPeriod(totals.activeUsers(), totals.equivalentCost()?.let(Money::format))
 	}
 }
 

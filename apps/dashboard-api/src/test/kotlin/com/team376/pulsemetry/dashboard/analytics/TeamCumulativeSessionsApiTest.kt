@@ -58,7 +58,7 @@ class TeamCumulativeSessionsApiTest : AbstractDashboardApiTest() {
 
 	private fun event(org: Org, name: String, at: String, team: UUID, session: String?, product: String = "claude_code") = Event(
 		"${org.tenant}-$name", kst(at), product = product, memberId = if (team == org.a) org.memberA else org.memberB, teamId = team, sessionId = session,
-		costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1",
+		costEstimatedUsd = BigDecimal("1"),
 	)
 
 	/**
@@ -175,7 +175,7 @@ class TeamCumulativeSessionsApiTest : AbstractDashboardApiTest() {
 		val team = SourceFixtures.insertTeam(tenant, "팀")
 		val member = SourceFixtures.insertMember(tenant, "m-${UUID.randomUUID()}@example.test")
 		SourceFixtures.insertEvents(tenant, Event("$tenant-e", kst("2026-09-08T10:00:00"), memberId = member, teamId = team, sessionId = "s",
-			costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"))
+			costEstimatedUsd = BigDecimal("1")))
 
 		val item = ok(tenant, "/analytics/teams?$week").at("/teams/items").single()
 		assertThat(item.at("/metrics/sessionCount/value").asLong()).isEqualTo(1)

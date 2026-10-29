@@ -5,7 +5,6 @@ import com.team376.pulsemetry.persistence.telemetry.AnalysisWriteBoundary
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
 import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
 import com.team376.pulsemetry.telemetry.adapter.observation.*
-import com.team376.pulsemetry.telemetry.adapter.observation.pricing.CodeburnReferencePrices
 import com.team376.pulsemetry.telemetry.maintenance.StoredUsageRepricing.Disposition
 import com.team376.pulsemetry.telemetry.maintenance.StoredUsageRepricing.Reason
 import com.team376.pulsemetry.telemetry.maintenance.StoredUsageSamples.row
@@ -34,7 +33,7 @@ class StoredUsageRepricingTest {
 			TelemetryEventsSink(ClickHouseHttpClient("http://127.0.0.1:${server.address.port}")).insert(
 				listOf(row.event), row.version, AnalysisWriteBoundary(row.event.observation.envelope.tenantId, null, 0),
 			)
-			return mapper.readTree(body) as ObjectNode
+			return (mapper.readTree(body) as ObjectNode).also { if (row.version.normalizerRev < 10u) it.putNull("pricing_version") }
 		} finally { server.stop(0) }
 	}
 
@@ -48,11 +47,10 @@ class StoredUsageRepricingTest {
 		assertThat(decoded).isEqualTo(old)
 		val actual = target(decoded)
 		assertThat(actual.event.observation.costEstimatedUsd).isEqualByComparingTo("0.0011825")
-		assertThat(actual.event.observation.pricingVersion).isEqualTo(CodeburnReferencePrices.VERSION)
 		assertThat(actual.version).isEqualTo(RowVersioning.of(RowVersioning.NORMALIZER_REV, 123u))
 		assertThat(actual.event.org).isEqualTo(old.event.org)
 		assertThat(actual.event.observation.copy(
-			costEstimatedUsd = null, pricingVersion = null,
+			costEstimatedUsd = null,
 			envelope = actual.event.observation.envelope.copy(analysisHash = old.event.observation.envelope.analysisHash),
 		)).isEqualTo(old.event.observation)
 		assertThat(AnalysisHash.of(actual.event.observation)).isEqualTo(actual.event.observation.envelope.analysisHash)
@@ -85,10 +83,9 @@ class StoredUsageRepricingTest {
 	@Test
 	fun unknownModelKeepsNullPriceInsteadOfStopping() {
 		val planned = StoredUsageRepricing.classify(row(model = "unknown-model"))
-		assertThat(planned.disposition).isEqualTo(Disposition.REPRICE)
+		assertThat(planned.disposition).isEqualTo(Disposition.CURRENT)
 		assertThat(planned.reason).isEqualTo(Reason.PRICE_UNAVAILABLE)
 		assertThat(planned.target!!.event.observation.costEstimatedUsd).isNull()
-		assertThat(planned.target!!.event.observation.pricingVersion).isNull()
 	}
 
 	@Test
@@ -123,10 +120,48 @@ class StoredUsageRepricingTest {
 	}
 
 	@Test
+	fun legacyCheckpointMatchesHashesFromDeployedNormalizer() {
+		// 변경 전 commit 9e36c7c의 컴파일된 Samples·PricingStage·AnalysisHash를 별도 JVM에서 실행한 고정 결과다.
+		// 새 호환 함수로 기대값을 생성하지 않는다. 입력은 StoredUsageSamples.row(rev=9)다.
+		val old = row(rev = 9u)
+		assertThat(old.event.observation.envelope.analysisHash).isEqualTo("89fe0f1aef049a193ba532388ea8dcf7a2ec3a124e217ee239ecacde6bc57d4b")
+		val priced = com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage().apply(old.event.observation)
+		val legacy = "codeburn-0.9.24-reference-2026-10-16-v1"
+		assertThat(AnalysisHash.ofLegacyPriced(priced, legacy)).isEqualTo("d876af0f32bb828b2b15d3881f21632e9a16383320daa983c7c79b53d8e236cd")
+		val checkpoint = encoded(old).put("cost_estimated_usd", "0.001182500000")
+			.put("pricing_version", legacy).put("analysis_hash", "d876af0f32bb828b2b15d3881f21632e9a16383320daa983c7c79b53d8e236cd")
+		assertThat(StoredUsageRepricing.classify(StoredUsageRepricing.decode(checkpoint)).disposition).isEqualTo(Disposition.CURRENT)
+	}
+
+	@Test
+	fun legacyVersionOnlyServesCheckpointValidationAndSameCostIsNotRewritten() {
+		val old = row(rev = 9u)
+		val priced = com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage().apply(old.event.observation)
+		val legacy = priced.copy(envelope = priced.envelope.copy(analysisHash = AnalysisHash.ofLegacyPriced(priced, "legacy-price")))
+		val source = old.copy(event = old.event.copy(observation = legacy))
+		val json = encoded(source).put("pricing_version", "legacy-price")
+		val decoded = StoredUsageRepricing.decode(json)
+		assertThat(StoredUsageRepricing.classify(decoded).disposition).isEqualTo(Disposition.CURRENT)
+		assertThat(StoredUsageRepricing.classify(decoded).target).isEqualTo(decoded)
+		assertThatThrownBy { StoredUsageRepricing.decode(json.deepCopy().put("pricing_version", "tampered")) }
+			.isInstanceOf(StoredUsageRepricing.Stop::class.java)
+		assertThatThrownBy { StoredUsageRepricing.decode(json.deepCopy().also { it.remove("pricing_version") }) }
+			.isInstanceOf(StoredUsageRepricing.Stop::class.java)
+	}
+
+	@Test
+	fun newCheckpointRejectsUnexpectedVersionMetadata() {
+		val current = target(row())
+		assertThat(encoded(current).has("pricing_version")).isFalse()
+		assertThatThrownBy { StoredUsageRepricing.decode(encoded(current).put("pricing_version", "not-allowed")) }
+			.isInstanceOf(StoredUsageRepricing.Stop::class.java)
+	}
+
+	@Test
 	fun longContextUsesOriginalPerRequestInput() {
 		val old = row(model = "gpt-6-astra")
 		val event = old.event.observation.copy(tokensInput = 300000, tokensInputUncached = 299950, tokensTotalDerived = 300020)
-		val actual = target(old.copy(event = old.event.copy(observation = AnalysisHash.seal(event))))
+		val actual = target(old.copy(event = old.event.copy(observation = event.copy(envelope = event.envelope.copy(analysisHash = AnalysisHash.ofLegacyPriced(event, null))))))
 		// 299950×20 + 40×2 + 10×25 + 20×75 = 6,000,830 / M
 		assertThat(actual.event.observation.costEstimatedUsd).isEqualByComparingTo("6.000830")
 	}

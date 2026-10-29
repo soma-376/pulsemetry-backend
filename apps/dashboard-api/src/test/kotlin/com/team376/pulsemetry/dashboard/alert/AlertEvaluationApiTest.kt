@@ -86,10 +86,10 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 	}
 
 	private fun cost(org: Org, name: String, at: String, usd: String) = Event("${org.tenant}-$name", kst(at), memberId = org.member, sessionId = "s-$name",
-		costEstimatedUsd = BigDecimal(usd), pricingVersion = "v1")
+		costEstimatedUsd = BigDecimal(usd))
 
 	private fun model(org: Org, name: String, at: String, model: String, member: UUID = org.member, product: String = "claude_code") = Event("${org.tenant}-$name", kst(at), memberId = member,
-		sessionId = "s-$name", model = model, product = product, costEstimatedUsd = BigDecimal("0.01"), pricingVersion = "v1")
+		sessionId = "s-$name", model = model, product = product, costEstimatedUsd = BigDecimal("0.01"))
 
 	private fun get(tenant: UUID, path: String): HttpResponse<String> = http.send(
 		"/api/v1/organizations/$tenant$path",

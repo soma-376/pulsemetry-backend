@@ -92,7 +92,7 @@ class SeatQueryApiTest : AbstractDashboardApiTest() {
 	}
 
 	private fun used(tenant: UUID, member: UUID, at: Instant, name: String) =
-		Event("$tenant-$name", at, memberId = member, sessionId = "session-$name", costEstimatedUsd = java.math.BigDecimal("1"), pricingVersion = "v1")
+		Event("$tenant-$name", at, memberId = member, sessionId = "session-$name", costEstimatedUsd = java.math.BigDecimal("1"))
 
 	/**
 	 * Claude Team(수동 원천) 10석에 dana(사용 없음 — 후보), eli(2일 전 사용), fox(설치 없음), hana(14일 1시간 전 사용 — 경계 안), ivy(13일 23시간 전 — 경계 밖),

@@ -9,7 +9,7 @@ class OverviewValuesTest {
  private val sample = UsageTotals.EMPTY.copy(usageRows=2, identifiedUsers=1, identifiedSessions=2,
   totalDerived=UsageTotals.Component(100,0), semanticsProfiles=1, cost=BigDecimal("12"))
  @Test fun `identified users stay partial but average cannot mix populations`() {
-  val v=Values(sample.copy(unidentifiedRows=1),true,false)
+  val v=Values(sample.copy(unidentifiedRows=1),true)
   assertThat(v.users.value).isEqualTo(1)
   assertThat(v.users.status).isEqualTo("partial")
   assertThat(v.users.reasons).containsExactly("member_identity_missing")
@@ -19,19 +19,19 @@ class OverviewValuesTest {
   assertThat(v.sessionsPerUser.value).isNull()
  }
  @Test fun `zero usage in complete period is zero with undefined averages`() {
-  val v=Values(UsageTotals.EMPTY,true,false)
+  val v=Values(UsageTotals.EMPTY,true)
   assertThat(v.users.value).isZero();assertThat(v.sessions.value).isZero();assertThat(v.tokens.value).isZero()
   assertThat(v.cost.value).isEqualTo("0.000000")
   assertThat(v.perUser.value).isNull();assertThat(v.perUser.reasons).containsExactly("zero_denominator")
-  assertThat(Values(UsageTotals.EMPTY,false,false).cost.value).isNull()
+  assertThat(Values(UsageTotals.EMPTY,false).cost.value).isNull()
  }
  @Test fun `metric reasons are independent and periods add their own reasons`() {
-  val v=Values(sample.copy(sessionlessRows=1,unpricedRows=1,apiTotalMissingRows=1),false,true)
+  val v=Values(sample.copy(sessionlessRows=1,unpricedRows=1,apiTotalMissingRows=1),false)
   assertThat(v.users.status).isEqualTo("partial")
   assertThat(v.sessions.reasons).containsExactly("current_period_incomplete","session_identity_missing")
-  assertThat(v.cost.reasons).containsExactly("current_period_incomplete","pricing_missing","pricing_version_mixed")
+  assertThat(v.cost.reasons).containsExactly("current_period_incomplete","pricing_missing")
   assertThat(v.tokens.reasons).containsExactly("current_period_incomplete","token_data_incomplete")
-  val other=Values(sample.copy(semanticsProfiles=2),true,false)
+  val other=Values(sample.copy(semanticsProfiles=2),true)
   assertThat(other.tokens.value).isNull();assertThat(other.tokens.reasons).containsExactly("token_semantics_incompatible")
  }
  private fun delta(now:Long,before:Long,mode:String="prev_week")=OverviewValues.metric(OverviewValues.value(now),OverviewValues.value(before),mode,emptyList(),Long::toBigDecimal,BigDecimal::toLong)

@@ -19,7 +19,7 @@ public class ObservationBatch(
  */
 public class ObservationPipeline(
 	private val normalizer: ObservationNormalizer = ObservationNormalizer(),
-	private val pricing: PricingStage = PricingStage.NONE,
+	private val pricing: PricingStage = PricingStage(),
 ) {
 	public fun run(request: Message, context: ObservationContext): ObservationBatch {
 		val result = normalizer.normalize(request, context)

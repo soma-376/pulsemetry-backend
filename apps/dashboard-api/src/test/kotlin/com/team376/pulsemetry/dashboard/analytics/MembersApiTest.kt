@@ -74,12 +74,12 @@ class MembersApiTest : AbstractDashboardApiTest() {
 		SourceFixtures.insertMembership(payments, dave, joined)
 		SourceFixtures.insertEvents(
 			tenant,
-			Event("$tenant-a-in", kst("2026-09-08T10:00:00"), memberId = alice, teamId = platform, costEstimatedUsd = BigDecimal("3"), pricingVersion = "v1"),
+			Event("$tenant-a-in", kst("2026-09-08T10:00:00"), memberId = alice, teamId = platform, costEstimatedUsd = BigDecimal("3")),
 			// 기간 뒤, 다른 팀 — 구성원의 마지막 사용(asOf 까지·팀 무관)이지 팀 표의 기간 안 마지막 사용이 아니다.
-			Event("$tenant-a-after", kst("2026-09-20T10:00:00"), memberId = alice, teamId = payments, costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"),
-			Event("$tenant-b-in", kst("2026-09-09T10:00:00"), memberId = bob, costEstimatedUsd = BigDecimal("2"), pricingVersion = "v1"),
-			Event("$tenant-b-before", kst("2026-08-15T10:00:00"), memberId = bob, costEstimatedUsd = BigDecimal("9"), pricingVersion = "v1"),
-			Event("$tenant-anon", kst("2026-09-10T10:00:00"), memberId = null, costEstimatedUsd = BigDecimal("0.5"), pricingVersion = "v1"),
+			Event("$tenant-a-after", kst("2026-09-20T10:00:00"), memberId = alice, teamId = payments, costEstimatedUsd = BigDecimal("1")),
+			Event("$tenant-b-in", kst("2026-09-09T10:00:00"), memberId = bob, costEstimatedUsd = BigDecimal("2")),
+			Event("$tenant-b-before", kst("2026-08-15T10:00:00"), memberId = bob, costEstimatedUsd = BigDecimal("9")),
+			Event("$tenant-anon", kst("2026-09-10T10:00:00"), memberId = null, costEstimatedUsd = BigDecimal("0.5")),
 		)
 		return Org(tenant, platform, payments, alice, bob, carol, dave)
 	}

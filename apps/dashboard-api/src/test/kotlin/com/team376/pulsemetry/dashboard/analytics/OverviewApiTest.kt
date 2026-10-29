@@ -59,10 +59,10 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		SourceFixtures.insertEvents(
 			tenant,
 			Event("claude", kst("2026-09-07T10:00:00"), tokensInputUncached = 100, tokensTotalDerived = 110,
-				semanticsProfile = "claude-code-exclusive-v1", costEstimatedUsd = BigDecimal("1"), pricingVersion = "v3"),
+				semanticsProfile = "claude-code-exclusive-v1", costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "v3"),
 			Event("codex", kst("2026-09-07T11:00:00"), product = "codex", tokensInput = 100, tokensOutput = 20,
 				tokensCacheRead = 40, tokensInputUncached = 60, tokensTotalDerived = 120,
-				semanticsProfile = "codex-responses-inclusive-v1", costEstimatedUsd = BigDecimal("2"), pricingVersion = "v3"),
+				semanticsProfile = "codex-responses-inclusive-v1", costEstimatedUsd = BigDecimal("2"), legacyPricingVersion = "v3"),
 			Event("different", kst("2026-09-08T11:00:00"), semanticsProfile = "unverified-other-v1"),
 		)
 
@@ -150,8 +150,8 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		SourceFixtures.setSummary(tenant, firstReceivedAt = kst("2026-09-01T00:00:00"), lastReceivedAt = kst("2026-09-27T00:00:00"))
 		SourceFixtures.insertEvents(
 			tenant,
-			Event("late", kst("2026-09-24T23:59:00"), receivedTime = kst("2026-09-25T00:01:00"), costEstimatedUsd = BigDecimal("2"), pricingVersion = "v1"),
-			Event("d26", kst("2026-09-26T10:00:00"), costEstimatedUsd = BigDecimal("3"), pricingVersion = "v1"),
+			Event("late", kst("2026-09-24T23:59:00"), receivedTime = kst("2026-09-25T00:01:00"), costEstimatedUsd = BigDecimal("2"), legacyPricingVersion = "v1"),
+			Event("d26", kst("2026-09-26T10:00:00"), costEstimatedUsd = BigDecimal("3"), legacyPricingVersion = "v1"),
 		)
 		SourceFixtures.insertMetricPoint(tenant, "$tenant-metric", kst("2026-09-27T10:00:00"))
 
@@ -208,10 +208,10 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 			listOf("claude-a", "claude-b").mapIndexed { index, model ->
 				Event(
 					"$tenant-${n++}", kst("2026-09-0${7 + index}T10:00:00"), teamId = teams.getValue(team), memberId = UUID.randomUUID(),
-					model = model, costEstimatedUsd = BigDecimal(cost), pricingVersion = "rate-v1",
+					model = model, costEstimatedUsd = BigDecimal(cost), legacyPricingVersion = "rate-v1",
 				)
 			}
-		} + Event("$tenant-unassigned", kst("2026-09-09T10:00:00"), costEstimatedUsd = BigDecimal("0.5"), pricingVersion = "rate-v1")
+		} + Event("$tenant-unassigned", kst("2026-09-09T10:00:00"), costEstimatedUsd = BigDecimal("0.5"), legacyPricingVersion = "rate-v1")
 		SourceFixtures.insertEvents(tenant, *events.toTypedArray())
 
 		val body = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
@@ -253,7 +253,7 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		val member = UUID.randomUUID()
 		SourceFixtures.insertEvents(
 			tenant,
-			Event("$tenant-p", kst("2026-09-08T10:00:00"), teamId = team, memberId = member, costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"),
+			Event("$tenant-p", kst("2026-09-08T10:00:00"), teamId = team, memberId = member, costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "v1"),
 			Event("$tenant-u", kst("2026-09-08T11:00:00"), teamId = team, memberId = member),
 		)
 
@@ -278,21 +278,23 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
-	@DisplayName("사례 7 — 가격 판이 섞이면 pricingVersion 과 모든 공시 환산 금액이 null 이다")
-	fun mixedPricingThroughHttp() {
+	@DisplayName("과거 가격판이 달라도 현재 금액과 부분합을 저장 금액으로 반환한다")
+	fun legacyStoredCostsThroughHttp() {
 		val tenant = DashboardTestStores.insertTenant()
 		SourceFixtures.setSummary(tenant, firstReceivedAt = kst("2026-09-01T00:00:00"))
 		SourceFixtures.insertEvents(
 			tenant,
-			Event("$tenant-3", kst("2026-09-08T10:00:00"), costEstimatedUsd = BigDecimal("1"), pricingVersion = "v3"),
-			Event("$tenant-4", kst("2026-09-08T11:00:00"), costEstimatedUsd = BigDecimal("1"), pricingVersion = "v4"),
+			Event("$tenant-3", kst("2026-09-08T10:00:00"), costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "v3"),
+			Event("$tenant-4", kst("2026-09-08T11:00:00"), costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "v4"),
 		)
 
 		val body = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
 
-		assertThat(body.at("/summary/equivalentCostUsd/reasons").list().map { it.asString() }).contains("pricing_version_mixed")
-		assertThat(body.at("/summary/equivalentCostUsd/value").isNull).isTrue()
-		assertThat(body.at("/teamUsage/unassigned/equivalentCostUsd/value").isNull).isTrue()
+		assertThat(body.at("/summary/equivalentCostUsd/reasons").list().map { it.asString() }).doesNotContain("pricing_version_mixed")
+		assertThat(body.at("/summary/equivalentCostUsd/value").asString()).isEqualTo("2.000000")
+		assertThat(body.at("/teamUsage/unassigned/equivalentCostUsd/value").asString()).isEqualTo("2.000000")
+		assertThat(body.at("/summary/knownEquivalentCostUsd/value").asString()).isEqualTo("2.000000")
+		assertThat(body.path("meta").has("pricingVersion")).isFalse()
 		assertThat(body.at("/summary/totalTokens/value").asLong()).isEqualTo(220)
 	}
 
@@ -374,7 +376,7 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 		val team = SourceFixtures.insertTeam(tenant, "플랫폼")
 		SourceFixtures.insertEvents(
 			tenant,
-			Event("$tenant-a", kst("2026-09-08T10:00:00"), teamId = team, memberId = UUID.randomUUID(), costEstimatedUsd = BigDecimal("1"), pricingVersion = "v1"),
+			Event("$tenant-a", kst("2026-09-08T10:00:00"), teamId = team, memberId = UUID.randomUUID(), costEstimatedUsd = BigDecimal("1"), legacyPricingVersion = "v1"),
 		)
 		val body = overview(tenant, "startDate=2026-09-07&endDate=2026-09-13")
 

@@ -43,7 +43,8 @@ class FixtureCase(val name: String, val documents: List<Map<*, *>>, val expectat
  */
 class FixtureSuite(
 	private val registry: ProfileRegistry = ProfileRegistry.EMPTY,
-	private val pricing: PricingStage = PricingStage.NONE,
+	// 매핑·의미 fixture는 단가를 주입하지 않는다. 가격 계약은 카탈로그 테스트와 명시 가격 fixture가 검증한다.
+	private val pricing: PricingStage = PricingStage(com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingCatalog(emptyList())),
 ) {
 
 	fun load(directory: String): List<FixtureCase> =

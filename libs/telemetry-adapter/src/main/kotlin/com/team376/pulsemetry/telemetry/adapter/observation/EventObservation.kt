@@ -3,7 +3,7 @@ package com.team376.pulsemetry.telemetry.adapter.observation
 import java.math.BigDecimal
 
 /**
- * `telemetry_events` 한 행의 정규화 몫 — 봉투([envelope]) + 이벤트 고유 58컬럼(ADR 0020 §1·§4, 부록 D.1).
+ * `telemetry_events` 한 행의 정규화 몫 — 봉투([envelope]) + 이벤트 고유 57컬럼(가격판 호환 열 제외)(ADR 0020 §1·§4, 부록 D.1).
  *
  * 로그 하나 또는 허용 목록 안의 스팬 하나가 관측 하나다. 속성 순서는 DDL 의 컬럼 순서를 따른다.
  * 기본값은 "이 관측에 해당하지 않음"이다 — 측정값은 null, 분류는 `none`(없는 어휘는 `unknown`).
@@ -50,7 +50,6 @@ public data class EventObservation(
 	public val costReportedUsd: BigDecimal? = null,
 	public val costEstimatedUsd: BigDecimal? = null,
 	public val reportedCostBasis: ReportedCostBasis = ReportedCostBasis.UNKNOWN,
-	public val pricingVersion: String? = null,
 	public val success: Boolean? = null,
 	public val httpStatus: Int? = null,
 	public val errorType: ErrorType = ErrorType.NONE,
@@ -95,7 +94,6 @@ public data class EventObservation(
 		// 두 금액은 서로 다른 출처다 — 음수 금액은 어느 쪽에도 유효하지 않다.
 		require(costReportedUsd == null || costReportedUsd.signum() >= 0) { "cost_reported_usd 가 음수다" }
 		require(costEstimatedUsd == null || costEstimatedUsd.signum() >= 0) { "cost_estimated_usd 가 음수다" }
-		require((costEstimatedUsd == null) == (pricingVersion == null)) { "추정 비용과 pricing_version 은 함께 있다(ADR 0020 §4)" }
 	}
 }
 

@@ -104,10 +104,10 @@ public data class RowVersioning(
 
 	public companion object {
 		/**
-		 * 배포된 정규화 규칙의 버전(ADR 0020 §3). 매핑·스키마·의미 프로파일·가격 프로파일·보강 규칙 중 하나라도 바뀌면
+		 * 배포된 정규화 규칙의 버전(ADR 0020 §3). 매핑·스키마·의미 프로파일·가격 계산·보강 규칙 중 하나라도 바뀌면
 		 * 올린다 — 높은 값이 언제나 이기므로 구 규칙의 결과가 늦게 와도 새 결과를 되돌리지 못한다. 1 부터 시작한다.
 		 */
-		public const val NORMALIZER_REV: UInt = 9u
+		public const val NORMALIZER_REV: UInt = 10u
 
 		public fun of(normalizerRev: UInt, ingestSeq: UInt): RowVersioning =
 			RowVersioning(normalizerRev, (normalizerRev.toULong() shl 32) or ingestSeq.toULong())

@@ -7,7 +7,6 @@ import com.team376.pulsemetry.persistence.telemetryops.TenantRetentionBoundary
 import com.team376.pulsemetry.persistence.telemetryops.TenantRetentionBoundaryStore
 import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
 import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.adapter.observation.pricing.CodeburnReferencePrices
 import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
 import com.team376.pulsemetry.telemetry.maintenance.StoredUsageRepricing.Disposition
 import com.team376.pulsemetry.telemetry.maintenance.StoredUsageRepricing.Planned
@@ -122,7 +121,6 @@ object RepriceStoredUsage {
 		fun report(applied: Apply.Result?): String {
 			val root = mapper.createObjectNode()
 			root.put("rows", rows)
-			root.put("pricingVersion", CodeburnReferencePrices.VERSION)
 			root.put("normalizerRev", RowVersioning.NORMALIZER_REV.toLong())
 			val dispositions = root.putObject("dispositions")
 			counts.forEach { (disposition, reasons) ->

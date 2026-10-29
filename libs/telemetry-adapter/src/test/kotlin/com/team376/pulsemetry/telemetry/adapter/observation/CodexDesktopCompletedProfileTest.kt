@@ -26,7 +26,7 @@ class CodexDesktopCompletedProfileTest {
 	private val emitter = "event otel/src/events/session_telemetry.rs:1012"
 	private val context = ObservationContext("tenant", "installation", EpochNanos(time + 10), "masking-v2", "stamp-v1", null)
 	private val registry = ProfileRegistry(listOf(CodexProfile, CodexCompletedProfile, CodexDesktopCompletedProfile))
-	private val pipeline = ObservationPipeline(ObservationNormalizer(registry), CurrentPublicPrices.select(CurrentPublicPrices.VERSION))
+	private val pipeline = ObservationPipeline(ObservationNormalizer(registry), com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage())
 	private fun text(key: String, value: String): KeyValue =
 		KeyValue.newBuilder().setKey(key).setValue(AnyValue.newBuilder().setStringValue(value)).build()
 	private fun number(key: String, value: Long): KeyValue =
@@ -66,7 +66,6 @@ class CodexDesktopCompletedProfileTest {
 		assertThat(result.tokensReasoning).isEqualTo(15)
 		assertThat(result.tokensTool).isNull()
 		assertThat(result.costEstimatedUsd).isEqualByComparingTo("0.001665")
-		assertThat(result.pricingVersion).isEqualTo("public-standard-global-reference-2026-10-16-v4")
 	}
 
 	@ParameterizedTest
@@ -100,7 +99,7 @@ class CodexDesktopCompletedProfileTest {
 	@ParameterizedTest
 	@CsvSource("0.153.4,2", "0.154.0-alpha.6.2,3")
 	fun existingSanitizedDesktopCapturesMatchTheNarrowCompletionProfile(version: String, expectedCount: Int) {
-		val suite = FixtureSuite(registry, CurrentPublicPrices.select(CurrentPublicPrices.VERSION))
+		val suite = FixtureSuite(registry, com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage())
 		val case = suite.inputs("codex/real").single { it.name.endsWith("logs-codex-desktop-$version-sse") }
 		assertThat(suite.checkInvariants(case)).isEmpty()
 		val events = case.documents.flatMap { pipeline.run(suite.request(it), context).events }
