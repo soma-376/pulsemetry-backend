@@ -41,10 +41,10 @@ internal object StoredUsageRepricing {
 	}
 
 	/**
-	 * 토큰 의미 프로파일을 믿을 수 있는 원천 판. 1·7·8·9는 이전에 사용된 규칙이다.
+	 * 토큰 의미 프로파일을 믿을 수 있는 원천 판. 1·7·8·9·10은 이전에 사용된 규칙이다.
 	 * 이 규칙들은 프로파일 ID 와 토큰 유도 규칙이 현재 판과 같다. 2~6 은 로컬 반복 중의 판이라 제외한다.
 	 */
-	val SOURCE_REVISIONS: Set<UInt> = setOf(1u, 7u, 8u, 9u)
+	val SOURCE_REVISIONS: Set<UInt> = setOf(1u, 7u, 8u, 9u, 10u)
 
 	private val pricing = PricingStage()
 	private val models = listOf(ObservationEnvelope::class, EventObservation::class, OrgAttribution::class)

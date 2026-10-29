@@ -37,22 +37,24 @@ class CodexDesktopCompletedProfileTest {
 			text("input_token_count", "100"), text("output_token_count", "20"), number("cached_token_count", 40),
 			number("reasoning_token_count", 15), text("tool_token_count", "120"),
 		)).apply { if (create) addAttributes(number("cache_write_token_count", 10)) }.build()
-	private fun request(version: String, record: LogRecord): ExportLogsServiceRequest = ExportLogsServiceRequest.newBuilder()
+	private fun request(version: String, record: LogRecord, service: String = "Codex Desktop"): ExportLogsServiceRequest = ExportLogsServiceRequest.newBuilder()
 		.addResourceLogs(ResourceLogs.newBuilder().setResource(Resource.newBuilder()
-			.addAttributes(text("service.name", "Codex Desktop")).addAttributes(text("service.version", version)))
+			.addAttributes(text("service.name", service)).addAttributes(text("service.version", version)))
 			.addScopeLogs(ScopeLogs.newBuilder().addLogRecords(record))).build()
-	private fun run(version: String, record: LogRecord = record()): EventObservation = pipeline.run(request(version, record), context).events.single()
+	private fun run(version: String, record: LogRecord = record(), service: String = "Codex Desktop"): EventObservation =
+		pipeline.run(request(version, record, service), context).events.single()
+	private fun location(version: String): String = if (version == "0.165.0") "event otel/src/events/session_telemetry.rs:1132" else emitter
 
 	@ParameterizedTest
-	@ValueSource(strings = ["0.153.4", "0.154.0-alpha.6.2"])
+	@ValueSource(strings = ["0.153.4", "0.154.0-alpha.6.2", "0.165.0"])
 	fun confirmedDesktopCompletionUsesNonOverlappingTokensAndKeepsIdentity(version: String) {
-		val input = request(version, record())
+		val input = request(version, record(location(version)))
 		val before = ObservationPipeline(ObservationNormalizer(ProfileRegistry.EMPTY)).run(input, context).events.single()
 		val result = pipeline.run(input, context).events.single()
 		assertThat(result.envelope.observationId).isEqualTo(before.envelope.observationId)
 		assertThat(result.envelope.sourceTime.value).isEqualTo(time)
 		assertThat(result.envelope.surface).isEqualTo(Surface.DESKTOP)
-		assertThat(result.envelope.mappingVersion).isEqualTo("codex-desktop-completed-v1")
+		assertThat(result.envelope.mappingVersion).isEqualTo("codex-desktop-completed-v2")
 		assertThat(result.envelope.mappingStatus).isEqualTo(MappingStatus.MAPPED)
 		assertThat(result.envelope.usageRole).isEqualTo(UsageRole.PRIMARY)
 		assertThat(result.semanticsProfile).isEqualTo("codex-responses-inclusive-v1")
@@ -69,7 +71,7 @@ class CodexDesktopCompletedProfileTest {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = ["0.155.0-alpha.2.6", "0.155.0-alpha.9.2", "0.158.0-alpha.2.1", "0.159.2", "0.162.0-alpha.17.2", "0.154.0-alpha.6.3"])
+	@ValueSource(strings = ["0.155.0-alpha.2.6", "0.155.0-alpha.9.2", "0.158.0-alpha.2.1", "0.159.2", "0.162.0-alpha.17.2", "0.154.0-alpha.6.3", "0.164.0", "0.165.1"])
 	fun otherDesktopVersionsStayGeneric(version: String) {
 		assertGeneric(run(version))
 	}
@@ -77,19 +79,19 @@ class CodexDesktopCompletedProfileTest {
 	@ParameterizedTest
 	@ValueSource(strings = ["event otel/src/events/session_telemetry.rs:999", "event otel/src/events/session_telemetry.rs:1035", ""])
 	fun unconfirmedDesktopEmittersStayGeneric(location: String) {
-		for (version in listOf("0.153.4", "0.154.0-alpha.6.2")) assertGeneric(run(version, record(location)))
+		for (version in listOf("0.153.4", "0.154.0-alpha.6.2", "0.165.0")) assertGeneric(run(version, record(location)))
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = ["0.153.4", "0.154.0-alpha.6.2"])
+	@ValueSource(strings = ["0.153.4", "0.154.0-alpha.6.2", "0.165.0"])
 	fun unrelatedEventsErrorsAndMissingComponentsAreNotInvented(version: String) {
-		assertGeneric(run(version, record(event = "codex.conversation_starts")))
-		assertGeneric(run(version, record(kind = "response.in_progress")))
-		val conflicting = run(version, record().toBuilder().addAttributes(text("error.message", "synthetic-error")).build())
+		assertGeneric(run(version, record(location(version), event = "codex.conversation_starts")))
+		assertGeneric(run(version, record(location(version), kind = "response.in_progress")))
+		val conflicting = run(version, record(location(version)).toBuilder().addAttributes(text("error.message", "synthetic-error")).build())
 		assertThat(conflicting.envelope.mappingStatus).isEqualTo(MappingStatus.AMBIGUOUS)
 		assertThat(conflicting.envelope.usageRole).isEqualTo(UsageRole.DIAGNOSTIC)
 		assertThat(conflicting.costEstimatedUsd).isNull()
-		val missing = run(version, record(create = false))
+		val missing = run(version, record(location(version), create = false))
 		assertThat(missing.envelope.usageRole).isEqualTo(UsageRole.PRIMARY)
 		assertThat(missing.tokensCacheCreate).isNull()
 		assertThat(missing.tokensInputUncached).isNull()
@@ -109,6 +111,56 @@ class CodexDesktopCompletedProfileTest {
 			assertThat(it.envelope.mappingStatus).isEqualTo(MappingStatus.MAPPED)
 			assertThat(it.semanticsProfile).isEqualTo("codex-responses-inclusive-v1")
 		}
+	}
+
+
+	@Test
+	fun exactDesktop165FixtureUsesIndependentNumbers() {
+		val suite = FixtureSuite(registry, com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage())
+		val case = suite.load("codex/desktop-0.165.0").single()
+		assertThat(suite.check(case)).isEmpty()
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = ["codex_cli_rs", "codex-app-server"])
+	fun desktop165EvidenceDoesNotAuthorizeOtherSurfaces(service: String) {
+		assertGeneric(run("0.165.0", record(location("0.165.0")), service))
+	}
+
+	@Test
+	fun desktop165EmitterDoesNotApplyToOldOrNearbyVersions() {
+		assertGeneric(run("0.165.0", record(emitter)))
+		for (version in listOf("0.153.4", "0.154.0-alpha.6.2", "0.164.0", "0.165.1", "0.165.0-alpha.1")) {
+			assertGeneric(run(version, record(location("0.165.0"))))
+		}
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = ["input_token_count", "output_token_count", "cached_token_count", "cache_write_token_count"])
+	fun desktop165MissingOrWrongWireComponentsDoNotCreatePrice(key: String) {
+		val base = record(location("0.165.0"))
+		val missing = base.toBuilder().clearAttributes().addAllAttributes(base.attributesList.filter { it.key != key }).build()
+		val absent = run("0.165.0", missing)
+		assertThat(absent.costEstimatedUsd).isNull()
+		val wrong = if (key in setOf("input_token_count", "output_token_count")) number(key, 20) else text(key, "20")
+		assertThat(run("0.165.0", missing.toBuilder().addAttributes(wrong).build()).costEstimatedUsd).isNull()
+	}
+
+	@Test
+	fun desktop165ReportedZeroDiffersFromMissingAndReportedTotalIsNotAdded() {
+		val base = record(location("0.165.0"))
+		val explicitZero = base.toBuilder().clearAttributes()
+			.addAllAttributes(base.attributesList.filter { it.key !in setOf("cache_write_token_count", "reasoning_token_count", "tool_token_count") })
+			.addAttributes(number("cache_write_token_count", 0)).build()
+		val result = run("0.165.0", explicitZero)
+		assertThat(result.tokensCacheCreate).isZero()
+		assertThat(result.tokensReasoning).isNull()
+		assertThat(result.tokensTotalReported).isNull()
+		assertThat(result.tokensTool).isNull()
+		assertThat(result.tokensInputUncached).isEqualTo(60)
+		assertThat(result.tokensTotalDerived).isEqualTo(120)
+		// (60×10 + 40×1 + 0×12.5 + 20×50) / 1,000,000.
+		assertThat(result.costEstimatedUsd).isEqualByComparingTo("0.001640")
 	}
 
 	@Test

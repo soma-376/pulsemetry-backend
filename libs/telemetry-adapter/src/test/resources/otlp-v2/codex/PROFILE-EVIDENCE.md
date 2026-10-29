@@ -403,3 +403,48 @@ ADR 0064는 `service.name=Codex Desktop`, 정확한 `0.153.4`·`0.154.0-alpha.6.
   함께 검증한다. generic에서 mapped로 바뀌어도 같은 원본의 observation ID와 source time은 유지된다.
 - 미지원 Desktop producer·다른 emitter·다른 event/kind는 generic, usage/error 충돌은 diagnostic이며 가격을 만들지 않는다.
   cache write 미보고는 null이고 다른 신호는 등록하지 않는다. 기존 `CodexProfile` 범위와 과거 fixture 기대값은 유지한다.
+
+
+## 13. Desktop 0.165.0의 완료 분기
+
+[ADR 0072](../../../../../../../docs/adr/0072-Desktop-0.165.0의-확인된-완료-로그만-사용량으로-매핑한다.md)는
+`service.name=Codex Desktop`, 정확한 버전 `0.165.0`, `event.name=codex.sse_event`, `event.kind=response.completed`,
+`eventName=event otel/src/events/session_telemetry.rs:1132`만 추가한다. 기존 두 Desktop 버전과 함께
+`codex-desktop-completed-v2`, normalizer11을 사용한다. 단일 가격표·단가·관측 ID는 유지한다.
+
+### 불변 소스와 실제 구조 대조
+
+공식 `openai/codex`의 정확한 `rust-v0.165.0`은 커밋 `360319d8dee62d87e2d59fc0c21805d79519cfed`다.
+아래 경로는 `codex-rs/` 기준이며 함수·구조체로 감사했다. emitter 문자열의 숫자는 producer가 발행하는 계약 값이다.
+
+| 파일 | 확인한 구조 | SHA-256 |
+|---|---|---|
+| [otel/src/events/session_telemetry.rs](https://github.com/openai/codex/blob/360319d8dee62d87e2d59fc0c21805d79519cfed/codex-rs/otel/src/events/session_telemetry.rs) | `sse_event_completed`는 `TokenUsage` 여섯 성분을 완료 로그에 기록 | `be39f9dcc60be5124bbf5118c6cc684a63497f000eaae212d32677c8ffb3aa84` |
+| [codex-api/src/sse/responses.rs](https://github.com/openai/codex/blob/360319d8dee62d87e2d59fc0c21805d79519cfed/codex-rs/codex-api/src/sse/responses.rs) | `ResponseCompletedUsage` → `TokenUsage` 변환 | `2516c7aee4ee4df70a86f642863b578566e59c1c2ff0b119c527ea95dda2373c` |
+| [core/src/client.rs](https://github.com/openai/codex/blob/360319d8dee62d87e2d59fc0c21805d79519cfed/codex-rs/core/src/client.rs) | `ResponseEvent::Completed`의 해당 응답 사용량을 emitter에 직접 전달 | `a8f9374064bd24cc421c3266f39f105aa8d287e350c72541f9dcde544665fae2` |
+
+실제 dev 완료 로그 두 건에서 위 서비스·버전·emitter·완료 분기와 여섯 필드 wire가 일치했다.
+input/output/total(`tool_token_count`)은 stringValue, cached/cache-write/reasoning은 intValue다.
+개인 식별자·내용·실제 숫자는 fixture로 복사하지 않았다. [desktop-0.165.0/](desktop-0.165.0/README.md)는
+그 구조의 독립 합성 사례이며 실제 캡처나 비영 cache-write 관측이라고 주장하지 않는다.
+
+### 의미와 적용 한계
+
+- [공식 prompt caching 산식](https://developers.openai.com/api/docs/guides/prompt-caching)에서 일반 입력은 input-cache read-cache write이고,
+  [공식 reasoning 설명](https://developers.openai.com/api/docs/guides/reasoning)에서 reasoning은 output에 포함된다.
+  `tokens_input_uncached=input-read-write`, `tokens_total_derived=input+output`이며 reasoning과 `tool_token_count`를 다시 더하지 않는다.
+- API input details·cache-write·output details가 없으면 producer가 해당 성분을 0으로 채울 수 있다.
+  보고된 0이 API의 명시 0인지는 구별할 수 없다. backend는 wire에서 누락된 성분을 0으로 만들지 않는다.
+- `responses.rs`는 중단된 `response.incomplete`도 내부 `ResponseEvent::Completed`로 바꿀 수 있다.
+  이 완료 로그만으로 API 응답이 정상 종료됐는지, 사용량이 완전한지, 실제 청구액이 얼마인지 증명하지 않는다.
+- 서비스 이름은 `otel::provider::make_resource`의 `settings.service_name`에서 오며 originator 설정의 영향을 받는다.
+  실행 파일의 CLI 여부로 surface를 덮어쓰지 않는다. 실제로 관측된 `Codex Desktop`만 지원한다.
+  Desktop 배포 바이너리 전체와 공개 커밋의 동일성, CLI·APP_SERVER·인접 버전의 호환성은 주장하지 않는다.
+- 실제 provider를 추정하지 않고 `provider_unresolved`를 유지한다. 의미 프로파일·모델·필수 성분이 맞을 때만 기존 단일 카탈로그로 환산한다.
+
+### 회귀 범위
+
+`CodexDesktopCompletedProfileTest`는 위 합성 fixture의 독립 토큰·금액 산식, 관측 ID 보존,
+다른 emitter·surface·인접 버전·다른 이벤트/분기·오류 충돌·누락/잘못된 wire·명시0을 검증한다.
+`StoredUsageRepricingTest`는 배포된 normalizer10의 고정 해시를 별도 JVM으로 얻어 무버전 checkpoint를 검증하고,
+현재 금액과 같으면 그대로 유지하며 명시 재평가의 변경 금액만 normalizer11로 교체하는 동작을 검증한다.
