@@ -173,11 +173,13 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   변경이 조용히 무시된다. 컬럼은 다음 번호 파일에 `ALTER TABLE … ADD COLUMN IF NOT EXISTS`로 더한다.
   `IF NOT EXISTS`를 빠뜨린 문장은 **첫 기동에서는 성공하고 두 번째 기동에서 죽는다.**
   대시보드 캐시(`apps/dashboard-api/src/main/resources/clickhouse/dashboard-cache/`)도 같은 규약이다(ADR 0023).
-- **분석 행은 모든 컬럼을 명시하는 typed 인코더로 쓴다**(ADR 0020 §1 · `AnalysisRowWriter`). 정수는 Double을
+- **분석 행은 활성 컬럼을 모두 명시하는 typed 인코더로 쓴다**(ADR 0020 §1 · `AnalysisRowWriter`). 정수는 Double을
   거치지 않고, `Decimal(38, 12)`·`DateTime64(9)`(1900년 이전)·`FixedString(64)`·UInt 범위를 넘는 값은 **적재
   전에 거부**한다 — ClickHouse는 그런 값을 오류 없이 절삭·왜곡한다. Float64는 문자열로 보내 INSERT가
   `toFloat64`로 정밀 파싱한다(24.8의 입력 포맷 float 파서는 1 ULP 어긋난다 — `AnalysisInsert` KDoc).
   `enrichment_json` 문자열만 키 정렬 표기다(`EnrichmentJson`).
+  ADR 0071의 `pricing_version`은 구 이미지 복구를 위한 nullable 물리 호환 열이다. 새 관측·typed INSERT에서
+  이 열을 생략해 NULL로 저장하고, 기존 값은 보존한다. 가격판 기록을 되살리려고 인코더에 다시 추가하지 않는다.
 - **`enrichment_json`에는 no-op provider 스텁 셋(github·jira·ai_analysis)의 빈 항목도 들어간다.**
   등록된 모든 provider가 항상 항목을 쓰기 때문이고(ADR 0017 규칙 8 — 스텁은 `EnrichmentProvider.annotate`의
   기본 빈 맵), 스텁을 지우면 저장되는 값이 달라진다. 그래서 아무것도 하지 않는 클래스 셋이 일부러 남아 있다.
