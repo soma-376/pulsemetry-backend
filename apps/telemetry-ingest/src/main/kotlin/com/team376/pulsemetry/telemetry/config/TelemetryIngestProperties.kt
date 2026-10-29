@@ -5,6 +5,7 @@ import com.team376.pulsemetry.telemetry.collector.OtlpIngestProcessor
 import com.team376.pulsemetry.telemetry.adapter.observation.pricing.CodeburnReferencePrices
 import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaConnection
 import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaSecurity
+import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaTls
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.util.unit.DataSize
 import java.time.Duration
@@ -63,6 +64,7 @@ data class TelemetryIngestProperties(
 		/** consumer group. dev 는 `pulsemetry-dev-telemetry-ingest-<stage>` 다. 저장 대상이 다르면 group 도 다르다. */
 		val consumerGroup: String = "pulsemetry-local-telemetry-ingest",
 		val iam: Iam = Iam(),
+		val tls: TelemetryKafkaTls = TelemetryKafkaTls(),
 		val consumer: Consumer = Consumer(),
 	) {
 		init {
@@ -76,6 +78,7 @@ data class TelemetryIngestProperties(
 			iamRoleArn = iam.roleArn,
 			iamSessionName = iam.sessionName,
 			iamStsRegion = iam.stsRegion,
+			tls = tls,
 		)
 	}
 

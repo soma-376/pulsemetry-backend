@@ -43,6 +43,7 @@ dependencies {
 	implementation(libs.awssdk.s3)
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
+	testImplementation(testFixtures(project(":libs:telemetry-ingress-contract")))
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
 	// telemetry JWT 키쌍·위조 토큰을 테스트마다 만든다.
 	testImplementation(testFixtures(project(":libs:telemetry-auth")))

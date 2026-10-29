@@ -27,6 +27,7 @@ dependencies {
 	runtimeOnly(libs.aws.msk.iam.auth)
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
+	testImplementation(testFixtures(project(":libs:telemetry-ingress-contract")))
 	testImplementation(testFixtures(project(":libs:telemetry-auth")))
 	testImplementation(libs.spring.boot.micrometer.tracing.test)
 	testImplementation(libs.opentelemetry.sdk.testing)

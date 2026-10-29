@@ -9,6 +9,8 @@ Proposed — 허브 [ADR 0005](../../../docs/adr/0005-single-app-telemetry-topol
 직접 HTTP ingest 의 상태 코드 계약은 유지한다. 머지 전이며 번호는 머지 직전 허브 인덱스로 다시 확인한다.
 경로 전환은 배포 설정(`PULSEMETRY_INGEST_MODE`, ALB 대상)으로 하며 이 ADR 만으로 운영 경로가 바뀌지 않는다.
 
+MSK 전용 접속 구현은 [ADR 0070](0070-Kafka-mTLS-접속은-공통-설정에서-PKCS12-파일로-조립한다.md)이 mTLS를 추가한다. dev Strimzi에서는 IAM 대신 workload별 mTLS·ACL을 사용한다. JWT·envelope·크기·ACK/commit 계약과 이 문서의 허브 개정 상태는 유지한다.
+
 ## Context
 
 - 지금은 `:apps:telemetry-ingest` 한 앱이 요청 스레드에서 인증·디코딩·마스킹·아카이브·정규화·적재를 끝내고 응답한다(허브 ADR 0005·0006).

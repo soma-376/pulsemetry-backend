@@ -1,16 +1,19 @@
 package com.team376.pulsemetry.telemetry.config
 
+import com.team376.pulsemetry.telemetry.ingress.KafkaTlsTestFiles
 import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaSecurity
-import org.assertj.core.api.Assertions.assertThat
-import org.assertj.core.api.Assertions.assertThatThrownBy
+import java.nio.file.Path
+import java.time.Duration
 import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import org.springframework.boot.context.properties.bind.BindException
 import org.springframework.boot.context.properties.bind.Binder
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource
-import java.time.Duration
 
 /** 모드·재시도·consumer 설정의 기본값과 기동 검증(ADR 0066 Decision 6·7·8·9). Spring 컨텍스트 없이 돈다. */
 class IngestKafkaSettingsTest {
@@ -91,5 +94,26 @@ class IngestKafkaSettingsTest {
 			TelemetryIngestProperties.Consumer(retryIntervals = listOf(Duration.ofSeconds(700)))
 		}.hasMessageContaining("max-poll-interval")
 		assertThatThrownBy { TelemetryIngestProperties.Consumer(retryIntervals = emptyList()) }.hasMessageContaining("retry-intervals")
+	}
+
+	@Test
+	@DisplayName("mTLS 파일 경로를 바인딩하고 기존 Kafka 처리 설정과 함께 SSL client를 만든다")
+	fun mtlsSettings(@TempDir directory: Path) {
+		val files = KafkaTlsTestFiles.create(directory)
+		val source = MapConfigurationPropertySource(mapOf(
+			"pulsemetry.telemetry.kafka.security" to "mtls",
+			"pulsemetry.telemetry.kafka.bootstrap-servers" to "localhost:9093",
+			"pulsemetry.telemetry.kafka.tls.truststore-location" to files.tls.truststoreLocation,
+			"pulsemetry.telemetry.kafka.tls.truststore-password-file" to files.tls.truststorePasswordFile,
+			"pulsemetry.telemetry.kafka.tls.keystore-location" to files.tls.keystoreLocation,
+			"pulsemetry.telemetry.kafka.tls.keystore-password-file" to files.tls.keystorePasswordFile,
+		))
+		val kafka = Binder(source).bind("pulsemetry.telemetry.kafka", TelemetryIngestProperties.Kafka::class.java).get()
+		assertThat(kafka.security).isEqualTo(TelemetryKafkaSecurity.MTLS)
+		assertThat(kafka.tls).isEqualTo(files.tls)
+		val props = KafkaConsumerConfig.consumerProperties(TelemetryIngestProperties("secret", telemetry = TelemetryIngestProperties.Telemetry(kafka = kafka)))
+		assertThat(props).containsEntry("enable.auto.commit", false).containsEntry("max.partition.fetch.bytes", 13 * 1024 * 1024)
+		assertThat(props).containsEntry("security.protocol", "SSL").doesNotContainKey("sasl.mechanism")
+		KafkaConsumer(props, ByteArrayDeserializer(), ByteArrayDeserializer()).close(Duration.ZERO)
 	}
 }

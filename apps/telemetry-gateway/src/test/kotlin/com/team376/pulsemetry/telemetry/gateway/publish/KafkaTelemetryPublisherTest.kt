@@ -4,6 +4,7 @@ import com.team376.pulsemetry.telemetry.gateway.config.GatewayConfig
 import com.team376.pulsemetry.telemetry.gateway.config.TelemetryGatewayProperties
 import com.team376.pulsemetry.telemetry.ingress.AcceptedTelemetry
 import com.team376.pulsemetry.telemetry.ingress.GatewayAuthContext
+import com.team376.pulsemetry.telemetry.ingress.KafkaTlsTestFiles
 import com.team376.pulsemetry.telemetry.ingress.RawOtlpPayload
 import com.team376.pulsemetry.telemetry.ingress.TelemetryKafkaSecurity
 import com.team376.pulsemetry.telemetry.observability.MicrometerTelemetryObserver
@@ -20,6 +21,12 @@ import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter
 import io.opentelemetry.sdk.trace.SdkTracerProvider
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor
 import io.opentelemetry.sdk.trace.samplers.Sampler
+import java.net.ServerSocket
+import java.nio.file.Path
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
+import java.util.UUID
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import org.apache.kafka.common.serialization.StringSerializer
@@ -27,11 +34,9 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
-import java.net.ServerSocket
-import java.time.Clock
-import java.time.Duration
-import java.time.Instant
-import java.util.UUID
+import org.junit.jupiter.api.io.TempDir
+import org.springframework.boot.context.properties.bind.Binder
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource
 
 /** producer 설정과 broker 가 없을 때의 실패 시간(ADR 0066 Decision 3·9). */
 class KafkaTelemetryPublisherTest {
@@ -161,5 +166,26 @@ class KafkaTelemetryPublisherTest {
 			assertThat(span.attributes.get(AttributeKey.stringKey("error.type"))).isEqualTo("deadline_exceeded")
 			assertThat(span.events.map { it.attributes.get(AttributeKey.stringKey("exception.message")) }).containsOnlyNulls()
 		}
+	}
+
+	@Test
+	@DisplayName("mTLS 파일 경로를 바인딩하고 기존 Kafka 처리 설정과 함께 SSL client를 만든다")
+	fun mtlsSettings(@TempDir directory: Path) {
+		val files = KafkaTlsTestFiles.create(directory)
+		val source = MapConfigurationPropertySource(mapOf(
+			"pulsemetry.telemetry.kafka.security" to "mtls",
+			"pulsemetry.telemetry.kafka.bootstrap-servers" to "localhost:9093",
+			"pulsemetry.telemetry.kafka.tls.truststore-location" to files.tls.truststoreLocation,
+			"pulsemetry.telemetry.kafka.tls.truststore-password-file" to files.tls.truststorePasswordFile,
+			"pulsemetry.telemetry.kafka.tls.keystore-location" to files.tls.keystoreLocation,
+			"pulsemetry.telemetry.kafka.tls.keystore-password-file" to files.tls.keystorePasswordFile,
+		))
+		val kafka = Binder(source).bind("pulsemetry.telemetry.kafka", TelemetryGatewayProperties.Kafka::class.java).get()
+		assertThat(kafka.security).isEqualTo(TelemetryKafkaSecurity.MTLS)
+		assertThat(kafka.tls).isEqualTo(files.tls)
+		val props = GatewayConfig.producerProperties(properties(kafka))
+		assertThat(props).containsEntry("acks", "all").containsEntry("enable.idempotence", true)
+		assertThat(props).containsEntry("security.protocol", "SSL").doesNotContainKey("sasl.mechanism")
+		KafkaProducer(props, StringSerializer(), ByteArraySerializer()).close(Duration.ZERO)
 	}
 }

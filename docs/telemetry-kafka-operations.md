@@ -2,11 +2,12 @@
 
 OTLP 를 Gateway 가 받아 Kafka 에 접수하고 ingest Consumer 가 처리하는 경로([ADR 0066](adr/0066-OTLP-수신은-Gateway가-JWT만-검증해-Kafka에-접수하고-ingest가-RDB로-다시-검증한다.md))와
 telemetry JWT([ADR 0065](adr/0065-telemetry-token은-전용-RS256-JWT로-발급하고-telemetry_tokens를-자격-기록으로-유지한다.md))의 **앱 쪽** 설정과 절차다.
+dev Strimzi mTLS 구현은 [ADR 0070](adr/0070-Kafka-mTLS-접속은-공통-설정에서-PKCS12-파일로-조립한다.md), 배치·접근 계약은 [허브 Kafka 계약](../../docs/contracts/telemetry-kafka.md)을 따른다.
 AWS 리소스·Helm·ALB 전환·offset 재설정 Job 은 infra 런북(`infra` 레포 `docs/runbooks/dev-telemetry-kafka.md`)이 소유한다.
 이 문서는 로컬 구현 기준이며 MSK 실접속·AWS 적용은 검증하지 않았다. 로컬 E2E 결과는 [telemetry-kafka-e2e.md](telemetry-kafka-e2e.md)에 있다.
 
 ```
-데몬 ─Bearer JWT→ ALB ─→ :apps:telemetry-gateway(8082) ─envelope→ MSK topic ─→ :apps:telemetry-ingest Consumer ─→ 수집 코어 → S3·ClickHouse
+데몬 ─Bearer JWT→ ALB ─→ :apps:telemetry-gateway(8082) ─envelope→ Kafka topic ─→ :apps:telemetry-ingest Consumer ─→ 수집 코어 → S3·ClickHouse
                            JWT 서명·claim 만 검증                                   jti 로 RDB 재판정(매 시도)
 ```
 
@@ -19,17 +20,36 @@ AWS 리소스·Helm·ALB 전환·offset 재설정 Job 은 infra 런북(`infra` �
 
 | 키 | 환경변수 | 기본값 | 검증 |
 |---|---|---|---|
-| `pulsemetry.telemetry.kafka.bootstrap-servers` | `PULSEMETRY_KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | `host:port[,host:port…]`. MSK IAM 은 9098 |
-| `pulsemetry.telemetry.kafka.security` | `PULSEMETRY_KAFKA_SECURITY` | `plaintext` | `plaintext`·`iam` 만 |
+| `pulsemetry.telemetry.kafka.bootstrap-servers` | `PULSEMETRY_KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | `host:port[,host:port…]`. MSK IAM은 9098, dev Strimzi 내부 TLS는 9093 |
+| `pulsemetry.telemetry.kafka.security` | `PULSEMETRY_KAFKA_SECURITY` | `plaintext` | `plaintext`·`iam`·`mtls`만 |
 | `pulsemetry.telemetry.kafka.topic` | `PULSEMETRY_KAFKA_TOPIC` | `pulsemetry-local-telemetry-ingress` | 비어 있으면 실패. dev 는 `pulsemetry-dev-telemetry-ingress-<stage>` |
 | `pulsemetry.telemetry.kafka.consumer-group` (ingest) | `PULSEMETRY_KAFKA_CONSUMER_GROUP` | `pulsemetry-local-telemetry-ingest` | 비어 있으면 실패. dev 는 `pulsemetry-dev-telemetry-ingest-<stage>` |
 | `pulsemetry.telemetry.kafka.iam.role-arn` | `PULSEMETRY_KAFKA_IAM_ROLE_ARN` | 빈 값 | `iam` 이면 IAM 역할 ARN 형식 필수 |
 | `pulsemetry.telemetry.kafka.iam.session-name` | `PULSEMETRY_KAFKA_IAM_SESSION_NAME` | 빈 값 | `iam` 이면 `[A-Za-z0-9+=,.@_-]{2,64}` 필수. **고정값** — Pod 마다 바꾸지 않는다 |
 | `pulsemetry.telemetry.kafka.iam.sts-region` | — | `ap-northeast-2` | 리전 형식 |
+| `pulsemetry.telemetry.kafka.tls.truststore-location` | `PULSEMETRY_KAFKA_TLS_TRUSTSTORE_LOCATION` | 빈 값 | `mtls`에서 필수. `/mnt/kafka-tls/cluster/ca.p12` |
+| `pulsemetry.telemetry.kafka.tls.truststore-password-file` | `PULSEMETRY_KAFKA_TLS_TRUSTSTORE_PASSWORD_FILE` | 빈 값 | `mtls`에서 필수. `/mnt/kafka-tls/cluster/ca.password` |
+| `pulsemetry.telemetry.kafka.tls.keystore-location` | `PULSEMETRY_KAFKA_TLS_KEYSTORE_LOCATION` | 빈 값 | `mtls`에서 필수. `/mnt/kafka-tls/user/user.p12` |
+| `pulsemetry.telemetry.kafka.tls.keystore-password-file` | `PULSEMETRY_KAFKA_TLS_KEYSTORE_PASSWORD_FILE` | 빈 값 | `mtls`에서 필수. `/mnt/kafka-tls/user/user.password` |
 
 `iam` 은 `SASL_SSL` + `AWS_MSK_IAM`, JAAS `IAMLoginModule required awsRoleArn=… awsRoleSessionName=… awsStsRegion=…`, 콜백 `IAMClientCallbackHandler` 다.
 자격은 기본 공급자 체인(Pod Identity)으로 얻어 전용 MSK 역할을 assume 한다(ADR 0066 Decision 9). 장기 access key 를 넣지 않는다.
 Boot 의 Kafka 자동설정은 쓰지 않으므로 `spring.kafka.*` 는 효과가 없다.
+
+`mtls`는 `security.protocol=SSL`, PKCS12 truststore·keystore, `ssl.endpoint.identification.algorithm=https`를 사용한다.
+비밀번호 원문은 환경변수·Helm values·로그로 전달하지 않는다. 파일 경로만 설정하며 앱이 client 생성 시 UTF-8 비밀번호를 읽는다.
+비밀번호 파일 내용은 개행 제거 없이 그대로 사용하므로 운영 도구로 저장할 때 임의의 끝 개행을 붙이지 않는다.
+네 파일은 절대 경로의 읽기 가능한 비어 있지 않은 파일이어야 한다. 비밀번호 파일은 4 KiB, PKCS12 파일은 1 MiB 이하로 제한한다.
+PKCS12 비밀번호·유효한 신뢰 인증서·사용자 개인키와 인증서 유효기간을 기동 시 검증한다. 잘못된 파일은 원문/cause를 숨긴 설정 오류로 거절한다.
+CA 교체 기간의 이전 인증서는 허용하되 truststore에 현재 유효한 신뢰 인증서가 하나 이상 있어야 한다.
+
+Strimzi의 `<cluster>-cluster-ca-cert` Secret에서 `ca.p12`·`ca.password`, 각 앱의 KafkaUser Secret에서 `user.p12`·`user.password`만
+읽기 전용으로 mount한다. 두 앱은 다른 KafkaUser를 사용하며 CA 개인키와 다른 앱의 사용자 키는 받지 않는다. mTLS 모드에서는
+IAM 역할·세션·AWS callback을 사용하지 않는다. IAM·plaintext 설정은 호환용으로 남지만 접속 실패 시 자동 전환하지 않는다.
+
+인증서는 자동 재로딩하지 않는다. Strimzi 갱신 후 infra가 CA/user Secret revision을 읽어 TLS revision annotation을 바꾸고
+같은 image digest로 Helm 재배포한다. 현재 dev의 단일 replica·Recreate에서 재시작 중 중단이 있다. 인증서 만료 전 이 절차를 수행하고
+재배포 뒤 실제 publish ACK→consume→commit을 검증한다. readiness만으로 TLS 연결 성공을 판정하지 않는다.
 
 ### 1.2 telemetry JWT 키
 
@@ -79,7 +99,7 @@ record key `tenant_id:installation_id`. Gateway 에는 DB·HMAC·S3·ClickHouse 
 | `pulsemetry.telemetry.kafka.consumer.max-poll-interval` | — | `600s` | 가장 긴 재시도 간격보다 길어야 한다 |
 | `pulsemetry.telemetry.kafka.consumer.fetch-max-bytes` | — | `13MB` | `fetch.max.bytes`·`max.partition.fetch.bytes` |
 | `pulsemetry.telemetry.kafka.consumer.shutdown-timeout` | — | `45s` | 컨테이너 종료 대기. Pod grace 90초 안 |
-| `pulsemetry.telemetry.kafka.consumer.auth-exception-retry-interval` | — | `10s` | MSK 인증·인가 실패에서 멈추지 않고 다시 시도 |
+| `pulsemetry.telemetry.kafka.consumer.auth-exception-retry-interval` | — | `10s` | Kafka 인증·인가 실패에서 멈추지 않고 다시 시도 |
 | `pulsemetry.telemetry.kafka.consumer.concurrency` | — | `1` | listener 스레드 수. 메모리(§7)가 비례한다 |
 | `spring.lifecycle.timeout-per-shutdown-phase` | — | `50s` | 컨테이너 종료(45초)보다 길고 Pod grace 안 |
 
@@ -91,12 +111,12 @@ record key `tenant_id:installation_id`. Gateway 에는 DB·HMAC·S3·ClickHouse 
 | 모드 | OTLP HTTP(`/v1/*`) | Consumer | 필요한 비밀 |
 |---|---|---|---|
 | `http` | `ptt_` + JWT(공개키가 있을 때) | 빈만 있고 시작하지 않는다(broker 접속 없음) | HMAC 키, (선택) 공개키 |
-| `dual` | 같음 | 시작 | HMAC 키, (선택) 공개키, MSK |
-| `kafka` | 닫힘(404) | 시작 | MSK |
+| `dual` | 같음 | 시작 | HMAC 키, (선택) 공개키, Kafka 접속 자격 |
+| `kafka` | 닫힘(404) | 시작 | Kafka 접속 자격 |
 
 health 는 모든 모드에서 `GET /api/v1/healthz` 다. `dual`·`kafka` 에서 listener 컨테이너가 멈춰 있으면 503 `listener_stopped` 다
-(MSK 연결·인증 장애로는 멈추지 않는다). 복구는 재기동이다 — infra chart 는 `dual`·`kafka` ingest 의 readiness 와 liveness 를 모두
-이 경로로 보므로(infra ADR-0036), 멈춘 listener 는 약 30초 뒤 Pod 재시작으로 이어진다. 이 health 가 저장소·MSK 를 보지 않는 것이 그 전제다.
+(Kafka 연결·인증 장애로는 멈추지 않는다). 복구는 재기동이다 — infra chart 는 `dual`·`kafka` ingest 의 readiness 와 liveness 를 모두
+이 경로로 보므로(infra ADR-0036), 멈춘 listener 는 약 30초 뒤 Pod 재시작으로 이어진다. 이 health 가 저장소·Kafka 를 보지 않는 것이 그 전제다.
 Gateway 의 health 는 Kafka 를 보지 않는다.
 
 ## 2. 로그 이벤트
