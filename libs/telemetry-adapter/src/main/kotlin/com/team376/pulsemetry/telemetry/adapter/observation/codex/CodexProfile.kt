@@ -12,7 +12,7 @@ import com.team376.pulsemetry.telemetry.adapter.observation.profile.VersionSet
  * Codex producer 프로파일(ADR 0020 부록 A.2·A.3). 근거 기록은 테스트 리소스의 `otlp-v2/codex/PROFILE-EVIDENCE.md` 다.
  *
  * 소스로 확인한 네 버전만 적용한다 — 그 네 버전은 해당 코드가 같고 소스 위치의 행 번호만 다르다.
- * 표면은 `codex-app-server`·`codex_cli_rs` 두 곳이다. `Codex Desktop`의 확인된 두 버전 완료 로그는
+ * 표면은 `codex-app-server`·`codex_cli_rs` 두 곳이다. `Codex Desktop`의 확인된 버전 완료 로그는
  * [CodexDesktopCompletedProfile]이 별도로 제한하며 나머지는 generic 경로로 간다(ADR 0064).
  *
  * 로그는 [CodexLogs], 스팬 허용 목록은 [CodexSpans], 메트릭 family 는 [CodexMetrics] 가 정한다.

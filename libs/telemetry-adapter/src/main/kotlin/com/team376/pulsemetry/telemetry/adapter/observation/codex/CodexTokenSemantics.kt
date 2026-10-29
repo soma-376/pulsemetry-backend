@@ -28,8 +28,10 @@ internal object CodexTokenSemantics {
 		"0.158.0-alpha.2.1" to "$EMITTER:1035",
 		"0.159.2" to "$EMITTER:1103",
 		"0.162.0-alpha.17.2" to "$EMITTER:1132",
+		"0.165.0" to "$EMITTER:1132",
 	)
 	private val appServerOnly = setOf("0.158.0-alpha.2.1", "0.159.2", "0.162.0-alpha.17.2")
+	private val desktopOnly = setOf("0.165.0")
 
 	private val responses = SemanticsProfile(
 		id = "codex-responses-inclusive-v1",
@@ -40,7 +42,7 @@ internal object CodexTokenSemantics {
 			product = Product.CODEX,
 			producerVersions = locations.keys.joinToString(", "),
 			provider = "unknown — Responses usage 계약의 producer 보고값",
-			configuration = "버전별 완료 emitter; 기존 네 버전 CLI/APP_SERVER, 추가 세 버전 APP_SERVER, Desktop은 0.153.4·0.154.0-alpha.6.2만",
+			configuration = "버전별 완료 emitter; 기존 네 버전 CLI/APP_SERVER, 추가 세 버전 APP_SERVER, Desktop은 0.153.4·0.154.0-alpha.6.2·0.165.0만",
 		),
 		evidencePath = "libs/telemetry-adapter/src/test/resources/otlp-v2/codex/PROFILE-EVIDENCE.md#10-2026-10-16-responses-토큰-의미-검증",
 	)
@@ -54,6 +56,7 @@ internal object CodexTokenSemantics {
 			if (envelope.serviceVersion !in CodexDesktopCompletedProfile.supportedVersions) return null
 		} else if (envelope.surface !in setOf(Surface.APP_SERVER, Surface.CLI)) return null
 		if (envelope.serviceVersion in appServerOnly && envelope.surface != Surface.APP_SERVER) return null
+		if (envelope.serviceVersion in desktopOnly && envelope.surface != Surface.DESKTOP) return null
 		if (!isCompletedEmitter(envelope.serviceVersion, eventName)) return null
 		return responses
 	}

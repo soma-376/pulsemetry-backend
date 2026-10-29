@@ -150,6 +150,28 @@ class StoredUsageRepricingTest {
 	}
 
 	@Test
+	fun deployedRevisionTenCheckpointKeepsItsHashAndEqualCostWithoutWriting() {
+		// 배포 commit 6aaf3ec의 컴파일된 Samples·PricingStage·AnalysisHash를 별도 JVM에서 실행한 고정 값이다.
+		val old = row(rev = 10u)
+		assertThat(old.event.observation.envelope.analysisHash).isEqualTo("50f4847892f89f789fa160f3b53953d7379feac93a299b960fd6e4e3abc5f82d")
+		val checkpoint = encoded(old).put("cost_estimated_usd", "0.001182500000")
+			.put("analysis_hash", "428679a01d65c3ec8cf52c3240780820bb10d50987aa87376e7a7f091eb4a652")
+		assertThat(checkpoint.has("pricing_version")).isFalse()
+		val decoded = StoredUsageRepricing.decode(checkpoint)
+		val planned = StoredUsageRepricing.classify(decoded)
+		assertThat(planned.disposition).isEqualTo(Disposition.CURRENT)
+		assertThat(planned.target).isEqualTo(decoded)
+		assertThat(planned.target!!.version.normalizerRev).isEqualTo(10u)
+		assertThat(StoredUsageRepricing.decode(checkpoint.deepCopy().putNull("pricing_version"))).isEqualTo(decoded)
+		assertThatThrownBy { StoredUsageRepricing.decode(checkpoint.deepCopy().put("pricing_version", "not-allowed")) }
+			.isInstanceOf(StoredUsageRepricing.Stop::class.java)
+		// 금액만 바뀌는 명시 재평가도 rev10을 지원하며 ID·ingest_seq를 보존한다.
+		val repriced = target(StoredUsageRepricing.decode(encoded(old)))
+		assertThat(repriced.version).isEqualTo(RowVersioning.of(11u, 123u))
+		assertThat(repriced.event.observation.envelope.observationId).isEqualTo(old.event.observation.envelope.observationId)
+	}
+
+	@Test
 	fun newCheckpointRejectsUnexpectedVersionMetadata() {
 		val current = target(row())
 		assertThat(encoded(current).has("pricing_version")).isFalse()
