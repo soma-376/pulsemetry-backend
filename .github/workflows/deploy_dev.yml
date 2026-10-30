@@ -185,7 +185,7 @@ jobs:
       # 필수 세 SHA 이미지와 설정된 Gateway 이미지가 모두 게시되기 전에는 호환용 dev 태그를 갱신하지 않는다.
       - name: Build and push enrollment-api
         id: build-enrollment
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: Dockerfile
@@ -222,7 +222,7 @@ jobs:
 
       - name: Build and push telemetry-ingest
         id: build-ingest
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: Dockerfile
