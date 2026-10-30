@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "perf historical seed target evidence v1",
+  "description": "읽기 전용 원천 증거의 출처와 무결성. 권한 승인이나 환경 전체 준비도 판정이 아니다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "environmentId", "targetId", "observedAt", "resolved", "profile", "rds", "cluster", "clickhousePod", "identity"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "perf-seed-target-evidence"},
+    "environmentId": {"type": "string", "pattern": "^perf-[a-z0-9][a-z0-9-]{2,42}$"},
+    "targetId": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,100}$"},
+    "observedAt": {"type": "string", "format": "date-time"},
+    "resolved": {"$ref": "#/$defs/file"},
+    "profile": {"$ref": "#/$defs/file"},
+    "rds": {"$ref": "#/$defs/file"},
+    "cluster": {"$ref": "#/$defs/file"},
+    "clickhousePod": {"$ref": "#/$defs/file"},
+    "identity": {"$ref": "#/$defs/file"}
+  },
+  "$defs": {
+    "file": {
+      "type": "object", "additionalProperties": false,
+      "required": ["file", "sha256"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

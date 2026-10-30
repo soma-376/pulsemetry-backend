@@ -696,6 +696,134 @@ def pressure_sample():
     return sample
 
 
+class PerfTargetTests(unittest.TestCase):
+    def bundle(self, directory):
+        root = Path(directory)
+        environment = "perf-20261030-a"
+        pg = {"database": "controlplane", "username": "seed", "address": "192.0.2.10", "port": 5432, "database_oid": 16384}
+        ch = {"hostname": "clickhouse-0", "database": "default", "version": "24.8.14.39",
+              "table_uuids": {"telemetry_events": "11111111-1111-4111-8111-111111111111", "telemetry_ingest_ledger": "22222222-2222-4222-8222-222222222222"}}
+        rds_arn = "arn:aws:rds:ap-northeast-2:111122223333:db:perf-postgres"
+        cluster_arn = "arn:aws:eks:ap-northeast-2:111122223333:cluster/perf-eks"
+        image = "clickhouse/clickhouse-server@sha256:" + "a" * 64
+        sources = {
+            "profile": {"schema_version": 3, "name": "fixture-only"},
+            "rds": {"DBInstances": [{"DBInstanceArn": rds_arn, "Engine": "postgres", "DBInstanceStatus": "available", "DBName": "controlplane",
+                    "Endpoint": {"Address": "perf.example.test", "Port": 5432}, "TagList": [{"Key": "pulsemetry:perf-environment", "Value": environment}]}]},
+            "cluster": {"cluster": {"arn": cluster_arn, "name": "perf-eks", "status": "ACTIVE", "tags": {"pulsemetry:perf-environment": environment}}},
+            "clickhousePod": {"kind": "Pod", "metadata": {"namespace": "pulsemetry-perf", "name": "clickhouse-0", "ownerReferences": [{"kind": "StatefulSet", "name": "clickhouse", "uid": "statefulset-uid"}]}, "spec": {"containers": [{"image": image}]}},
+            "identity": {"postgres": pg, "clickhouse": ch},
+        }
+        sources["resolved"] = {"schema_version": 3, "kind": "environment-resolved", "status": "ready", "environment_id": environment,
+            "aws": {"region": "ap-northeast-2"}, "infra": {"profile_sha256": seed.sha256(seed.encode(sources["profile"]).encode())},
+            "kafka": {"provider": "strimzi"}, "kubernetes": {"cluster_arn": cluster_arn, "cluster_name": "perf-eks", "namespaces": {"app": "pulsemetry-perf"},
+                "workloads": {"clickhouse": {"namespace": "pulsemetry-perf", "name": "clickhouse", "uid": "statefulset-uid", "image": image}}},
+            "datastores": {"rds": {"arn": rds_arn, "endpoint": {"host": "perf.example.test", "port": 5432, "database": "controlplane"}}},
+            "endpoints": {"clickhouse_http": "http://clickhouse.pulsemetry-perf.svc:8123"}}
+        proof = {"schemaVersion": 1, "kind": "perf-seed-target-evidence", "environmentId": environment,
+                 "targetId": "history-a", "observedAt": "2026-10-29T00:00:00Z"}
+        target = {"schemaVersion": 1, "environment": "perf", "perfEnvironmentId": environment, "targetId": "history-a", "monitorFile": "/tmp/perf-monitor.json",
+                  "postgres": {"host": "perf.example.test", "hostaddr": "127.0.0.1", "port": 15432, "dbname": "controlplane", "user": "seed", "sslmode": "verify-full", "sslrootcert": "/tmp/ca.pem"},
+                  "clickhouse": {"url": "http://127.0.0.1:18123", "database": "default"}}
+        artifact = SimpleNamespace(manifest={"environment": "perf", "perfEnvironmentId": environment})
+        def write():
+            for key, value in sources.items():
+                raw = seed.encode(value).encode()
+                (root / (key + ".json")).write_bytes(raw)
+                proof[key] = {"file": key + ".json", "sha256": seed.sha256(raw)}
+            raw = seed.encode(proof).encode()
+            (root / "proof.json").write_bytes(raw)
+            target["targetEvidence"] = {"file": "proof.json", "sha256": seed.sha256(raw)}
+            (root / "target.json").write_text(seed.encode(target))
+            return root / "target.json"
+        return target, artifact, sources, proof, write
+
+    def test_perf_target_binds_sources_and_requires_real_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, artifact, sources, _, write = self.bundle(directory)
+            target = seed.Target(write(), artifact)
+            self.assertEqual(sources["identity"], target.expected_identity)
+            runner = MemoryRunner([event("a")])
+            runner.target = target
+            runner.pg = mock.Mock()
+            runner.pg.query.return_value = [sources["identity"]["postgres"]]
+            actual_ch = {k: v for k, v in sources["identity"]["clickhouse"].items() if k != "table_uuids"}
+            tables = [{"name": k, "uuid": v} for k, v in sources["identity"]["clickhouse"]["table_uuids"].items()]
+            runner.ch.query = mock.Mock(side_effect=[[copy.deepcopy(actual_ch)], tables])
+            self.assertEqual(target.expected_identity, runner.identity())
+            tables[0]["uuid"] = "33333333-3333-4333-8333-333333333333"
+            runner.ch.query = mock.Mock(side_effect=[[copy.deepcopy(actual_ch)], tables])
+            runner.locked = mock.Mock()
+            with self.assertRaisesRegex(seed.SeedError, "실제 DB identity"):
+                runner.run("apply")
+            runner.locked.assert_not_called()
+            runner.pg.execute.assert_not_called()
+
+    def test_perf_rejects_missing_or_tampered_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target, artifact, _, _, write = self.bundle(directory)
+            path = write()
+            del target["targetEvidence"]
+            path.write_text(seed.encode(target))
+            with self.assertRaisesRegex(seed.SeedError, "원천 증거"):
+                seed.Target(path, artifact)
+            path = write()
+            (Path(directory) / "identity.json").write_text("{}")
+            with self.assertRaisesRegex(seed.SeedError, "SHA-256"):
+                seed.Target(path, artifact)
+
+    def test_perf_rejects_rehashed_wrong_environment_targets_and_sources(self):
+        mutations = [
+            lambda t, s, p: t.update(perfEnvironmentId="perf-different-a"),
+            lambda t, s, p: s["resolved"].update(schema_version=2),
+            lambda t, s, p: s["resolved"].update(status="not-deployed"),
+            lambda t, s, p: s["resolved"].update(environment_id="perf-different-a"),
+            lambda t, s, p: s["resolved"]["infra"].update(profile_sha256="0" * 64),
+            lambda t, s, p: s["resolved"]["aws"].update(region="us-east-1"),
+            lambda t, s, p: s["resolved"]["kafka"].update(provider="msk"),
+            lambda t, s, p: s["rds"]["DBInstances"][0].update(TagList=[]),
+            lambda t, s, p: s["cluster"]["cluster"].update(tags={"pulsemetry:perf-environment": "dev"}),
+            lambda t, s, p: t["postgres"].update(host="dev.example.test"),
+            lambda t, s, p: t["postgres"].update(hostaddr="192.0.2.20"),
+            lambda t, s, p: t["postgres"].update(sslmode="disable"),
+            lambda t, s, p: s["clickhousePod"]["metadata"].update(namespace="pulsemetry-dev"),
+            lambda t, s, p: s["clickhousePod"]["metadata"]["ownerReferences"][0].update(uid="dev-uid"),
+            lambda t, s, p: s["identity"]["clickhouse"].update(table_uuids={}),
+            lambda t, s, p: t["clickhouse"].update(url="https://dev.example.test"),
+            lambda t, s, p: t.pop("monitorFile"),
+        ]
+        for index, change in enumerate(mutations):
+            with self.subTest(case=index), tempfile.TemporaryDirectory() as directory:
+                target, artifact, sources, proof, write = self.bundle(directory)
+                change(target, sources, proof)
+                with self.assertRaises(seed.SeedError):
+                    seed.Target(write(), artifact)
+
+    def test_perf_cannot_activate_even_before_target_or_db_connection(self):
+        artifact = SimpleNamespace(manifest={"environment": "perf"})
+        with mock.patch.object(seed, "Artifact", return_value=artifact), mock.patch.object(seed, "Target") as target, mock.patch.object(seed, "Postgres") as pg:
+            with contextlib.redirect_stderr(__import__("io").StringIO()):
+                self.assertEqual(2, seed.main(["activate-login", "--manifest", "m", "--target", "t", "--state-dir", "s"]))
+            target.assert_not_called()
+            pg.assert_not_called()
+        runner = MemoryRunner([event("a")])
+        runner.target.data["environment"] = "perf"
+        runner.verify = mock.Mock()
+        with self.assertRaisesRegex(seed.SeedError, "활성화"):
+            runner.activate()
+        runner.verify.assert_not_called()
+
+    def test_perf_verification_rejects_active_checkpoint_without_querying(self):
+        runner = MemoryRunner([event("a")])
+        runner.target.data["environment"] = "perf"
+        runner.pg = mock.Mock()
+        for phase in ("active", "activating"):
+            runner.state["phase"] = phase
+            with self.subTest(phase=phase), self.assertRaisesRegex(seed.SeedError, "비활성"):
+                runner.verify_postgres()
+        runner.pg.query.assert_not_called()
+
+
 class PressureGuardTests(unittest.TestCase):
     def test_old_immutable_baseline_is_valid_with_fresh_sample(self):
         with tempfile.TemporaryDirectory() as directory:

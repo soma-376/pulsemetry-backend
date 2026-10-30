@@ -10,7 +10,8 @@ Compose가 기존 소유 모듈의 마이그레이션 → A/B → 대시보드 D
 데이터는 화면·집계 확인용이며 ETL 성능 측정용이 아니다.
 
 50팀·400명·180일의 독립 `soma` 데이터셋은 [과거 화면 시드 운영](historical-seed.md)을 따른다.
-`historical-plan`은 DB 없이 파일을 만들고, 별도 importer가 명시된 local/dev 대상에만 제한 속도로 적재한다.
+`historical-plan`은 DB 없이 파일을 만들고, 별도 importer가 명시된 local/dev 또는 원천 증거가 있는 격리 perf 대상에 제한 속도로 적재한다.
+perf는 기존 rich 합성 규모를 초기 기준으로 사용하며 운영 동등성은 별도 검증한다. 로그인·알림은 활성화하지 않는다.
 기존 Compose `init/apply/reset`에 원격 접속 기능을 추가하지 않는다.
 
 ## DB와 시드 준비
