@@ -1,6 +1,6 @@
 # 수집 운영 계측과 독립 smoke
 
-PROJ-191의 Backend 구현이다. 설계 결정은 [ADR 0068](adr/0068-수집-운영-계측은-전송-계약과-분리하고-앱에서-조립한다.md), Kafka의 재시도·확정 정책은 [Kafka 운영](telemetry-kafka-operations.md)이 소유한다. Grafana·Prometheus·MSK·ClickHouse 서버 exporter·CloudWatch 로그 수집은 Infra 범위다. 이 코드와 로컬 테스트 통과가 AWS 배포 완료를 뜻하지 않는다.
+PROJ-191의 Backend 구현이다. 설계 결정은 [ADR 0068](adr/0068-수집-운영-계측은-전송-계약과-분리하고-앱에서-조립한다.md), Kafka의 재시도·확정 정책은 [Kafka 운영](telemetry-kafka-operations.md)이 소유한다. Grafana·Prometheus·Strimzi Kafka와 ClickHouse 서버 exporter·CloudWatch/Loki 로그 수집은 Infra 범위다. 이 코드와 로컬 테스트 통과가 AWS 배포 완료를 뜻하지 않는다.
 
 ## 관리 포트와 기본 binder
 
@@ -67,7 +67,7 @@ Observer 기본값은 no-op이며 `.observe`가 계측 RuntimeException을 격�
 
 기존 `TelemetryLogEvent`의 `event=<code>`와 필드 구조는 보존한다. JVM/Spring 기동·graceful shutdown·Kafka 재시도 로그도 보존한다. CH 스키마 시작/재적용 실패, RDB 인증 조회 장애, ops 백필 실패에는 component·reason·exception class·제한된 cause/stack frame을 남긴다. `SafeDiagnostic`은 exception message와 suppressed 원문을 제외하고 cause depth 8, 각 stack 8, 전체 4096자로 제한한다. payload·Bearer·자격증명 canary가 로그·metric tag에 새지 않는 테스트를 둔다.
 
-이 로그의 목적은 서비스 기동·종료·의존성 실패 원인을 좁히는 것이다. envelope schema는 바꾸지 않는다. 플랫폼 trace(ADR 0069, Proposed)를 켜면 Kafka record에 `traceparent` header 하나가 붙고, 활성 span 안의 로그에 `trace_id`·`span_id`가 붙는다. MSK broker 로그, ClickHouse system 로그, GC/safepoint stderr, OOMKilled·exit code·restart·Kubernetes Event는 Infra의 CloudWatch 수집과 함께 확인한다. heap dump·stack dump를 자동 강제 생성하지 않는다. 앱 로그가 없는 SIGKILL/OOM도 플랫폼 증거로 판단한다.
+이 로그의 목적은 서비스 기동·종료·의존성 실패 원인을 좁히는 것이다. envelope schema는 바꾸지 않는다. 플랫폼 trace(ADR 0069, Proposed)를 켜면 Kafka record에 `traceparent` header 하나가 붙고, 활성 span 안의 로그에 `trace_id`·`span_id`가 붙는다. dev Strimzi broker 컨테이너 로그, ClickHouse system 로그, GC/safepoint stderr, OOMKilled·exit code·restart·Kubernetes Event는 Infra의 CloudWatch/Loki 수집 및 Kubernetes 상태와 함께 확인한다. heap dump·stack dump를 자동 강제 생성하지 않는다. 앱 로그가 없는 SIGKILL/OOM도 플랫폼 증거로 판단한다.
 
 ### GC·safepoint 로그 (Infra 인계)
 
@@ -147,7 +147,7 @@ python3 scripts/observability-smoke/smoke.py \
 4. tenant·installation·session·request로 범위를 좁혀 `telemetry_events FINAL`을 polling한다. 정확한 기대 fingerprint `observation_id` **1개**, event type, 토큰 값, archive_ref를 대조한다. 기대 ID는 이 고정 fixture에 한정된 id-v1/stamp-v1 oracle이며 임의 OTLP canonicalizer가 아니다.
 5. 사후 scrape와 증거를 저장한다. 출력 디렉터리는 새로 만들며 덮어쓰지 않는다. `payload.json`, 전후 `.prom`, `evidence.json`에 payload SHA256·기대 ID·UTC 시작/HTTP200 관측/논리 행 관측/종료·provenance가 남는다. HTTP accepted 시각은 클라이언트가200을 본 시각이지 내부 Gateway acceptedAt이 아니다.
 
-HTTP200과 논리 행 일치가 모두 있어야 종료코드0이다. 200만 받고 행이 없거나, 예상 ID/값 불일치, 중복 논리 행, transport timeout이면 실패/미확정이다. 모호한 응답은 자동 재전송하지 않고 readback 증거를 남긴다. 실행 실패 시 `phase`, `http_status`, `logical_rows`를 함께 확인한다. 서버 오류 본문과 토큰은 증거에 기록하지 않는다. 한 건의 성공은 처리량/SLO·3개 신호 전체·MSK 장애복구·운영 전체 완전성의 증명이 아니다.
+HTTP200과 논리 행 일치가 모두 있어야 종료코드0이다. 200만 받고 행이 없거나, 예상 ID/값 불일치, 중복 논리 행, transport timeout이면 실패/미확정이다. 모호한 응답은 자동 재전송하지 않고 readback 증거를 남긴다. 실행 실패 시 `phase`, `http_status`, `logical_rows`를 함께 확인한다. 서버 오류 본문과 토큰은 증거에 기록하지 않는다. 한 건의 성공은 처리량/SLO·3개 신호 전체·Kafka 장애복구·운영 전체 완전성의 증명이 아니다.
 
 ## 로컬 검증과 남은 확인
 
@@ -159,4 +159,10 @@ python3 -m unittest discover -s scripts/observability-smoke -p 'test_*.py'
 
 테스트는 실제 분리한 **random management 포트**에서 scrape, 업무 포트 actuator 차단과 기존404 바이트 계약을 확인한다. JVM·Tomcat·Hikari/JDBC·Kafka binder 노출을 확인하고 실제 Kafka/PostgreSQL/ClickHouse에서 completed/empty/소진4회/commit 실패·재전달과 smoke 논리 행을 검증한다. Kafka 경로에서 logs·traces·metrics 세 signal이 기대 `observation_id` 집합과 같은 `FINAL` 논리 행이 되는지(`allSignalsPersistExpectedLogicalRows`), 분석·ledger INSERT 뒤 실패한 시도를 다시 처리하면 `rows_submitted`는 두 번 오르고 논리 행은 하나인지(`retryAfterPartialWriteSubmitsTwiceButStoresOnce`) 본다. Gateway를 거친 3 signal 관통은 실환경 smoke의 몫이다. no-op/실패 observer 반환·재시도 경계, 유한 label, canary, 음수 age도 검증한다. Python fixture ID와 JVM canonical ID를 교차검증한다.
 
-재생성되는 fixture는 `libs/telemetry-observability/build/metrics-contract.prom`(실제 Prometheus registry에서 시나리오를 주입한 계약 fixture), `apps/telemetry-{gateway,ingest}/build/management-scrape.prom`(로컬 실제 앱 HTTP scrape)다. 로컬 client는 Kafka4.2.1, broker Testcontainers3.9.2이며 운영 MSK와 동일하다고 주장하지 않는다. 실제 배포9404·MSK IAM·내부 Security Group/ClusterIP·CloudWatch/GC/OOM 로그 도착·Grafana query와 alert·standalone smoke의 배포 endpoint 실행은 별도 인수 확인이다. 기존 `telemetry-kafka-e2e/run.sh` verifier는 유지했고 관리 포트 충돌만 피하도록39416/39482를 지정했다.
+재생성되는 fixture는 `libs/telemetry-observability/build/metrics-contract.prom`(실제 Prometheus registry에서 시나리오를 주입한 계약 fixture), `apps/telemetry-{gateway,ingest}/build/management-scrape.prom`(로컬 실제 앱 HTTP scrape)다. 로컬 client는 Kafka4.2.1, broker Testcontainers3.9.2이며 실제 dev Strimzi와 동일하다고 주장하지 않는다. 실제 배포9404·Strimzi mTLS·내부 Security Group/ClusterIP·CloudWatch/Loki와 GC/OOM 로그·Grafana query와 alert·standalone smoke의 배포 endpoint 실행은 로컬 검증과 별도 인수 확인이다. 기존 `telemetry-kafka-e2e/run.sh` verifier는 유지했고 관리 포트 충돌만 피하도록39416/39482를 지정했다.
+
+## 현재 배포 상태
+
+dev는 Strimzi/mTLS로 전환했고 기존 MSK와 전용 리소스는 철거했다([PROJ-285](https://team376.atlassian.net/browse/PROJ-285), [infra #85](https://github.com/soma-376/infra/pull/85)). 실제 Gateway ACK→Kafka record→consumer commit→ClickHouse와 sampled 요청의 producer/consumer 연결·ClickHouse child span·두 서비스의 Loki 로그를 확인했다. 30분 안정화 공개 요청 31회는 모두 HTTP 200·ClickHouse 논리 행·해당 record 이후 commit을 확인했지만 모든 요청이 sampled된 것은 아니다.
+
+PROJ-191·255·256의 관측 인수 결과와 남은 검증은 [infra 관측 런북](https://github.com/soma-376/infra/blob/develop/docs/runbooks/dev-observability.md)을 따른다. 위 배포 증거는 ADR 0069의 Proposed 상태를 변경하거나 최대 처리량·SLO·과거 전체 데이터 보존을 입증하지 않는다.
