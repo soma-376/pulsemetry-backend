@@ -33,36 +33,61 @@ internal data class HistoricalSeedConfig(
     val oidcSecretRef: String,
     val activityProfile: String = "rich",
     val stageAlertRules: Boolean = false,
+    val perfEnvironmentId: String? = null,
 ) {
     val startDate: LocalDate = endDate.minusDays(179)
-    val namespace = "$environment/$SOMA_DATASET"
+    val isPerf = environment == "perf"
+    val namespace = if (isPerf) "perf/$perfEnvironmentId/$SOMA_DATASET" else "$environment/$SOMA_DATASET"
     val tenantId = id(namespace)
+    val tenantName = if (isPerf) "[SYNTHETIC] soma $perfEnvironmentId" else "soma"
+    val tenantSlug = if (isPerf) "synthetic-$perfEnvironmentId-soma" else "soma"
     val context = SeedUsageContext(namespace, "soma", somaMemberTeams, somaTeamSizes.size)
     fun identity(key: String) = context.identity(key)
-    fun email(index: Int) = when (index) {
+    fun email(index: Int) = if (isPerf) when (index) {
+        0 -> "owner@$perfEnvironmentId.example.test"
+        1 -> "admin@$perfEnvironmentId.example.test"
+        else -> "member$index@$perfEnvironmentId.example.test"
+    } else when (index) {
         0 -> "owner@seed-a.example.test"
         1 -> "admin@seed-a.example.test"
         else -> "member$index@seed-soma.example.test"
     }
     init {
-        require(environment in setOf("local", "dev")) { "과거 시드는 local 또는 dev만 지원합니다." }
+        require(environment in setOf("local", "dev", "perf")) { "과거 시드는 local, dev 또는 격리 perf만 지원합니다." }
+        if (isPerf) {
+            require(perfEnvironmentId != null && Regex("perf-[a-z0-9][a-z0-9-]{2,42}").matches(perfEnvironmentId)) {
+                "perf에는 perf-로 시작하는 독립 환경 ID가 필요합니다."
+            }
+            require(stageAlertRules) { "perf는 --stage-alert-rules true가 필요합니다." }
+            require(activityProfile == "rich") { "perf 초기 기준은 기존 rich 프로필입니다." }
+            require(listOf(oidcIssuer, oidcClientId, oidcSecretRef).all(String::isEmpty)) { "perf는 OIDC 연결을 받지 않습니다." }
+        } else require(perfEnvironmentId == null) { "perf 환경 ID는 perf에서만 지정합니다." }
         require(activityProfile in setOf("rich", "team-daily")) { "활동 프로필은 rich 또는 team-daily여야 합니다." }
         require(endDate == snapshotAt.atZone(seoul).toLocalDate().minusDays(1)) { "마지막 날은 고정 실행시각의 전날이어야 합니다." }
         require(snapshotAt >= endDate.plusDays(1).atStartOfDay(seoul).toInstant().plusSeconds(600)) {
             "마지막 날의 수집 완료 판정을 위해 다음 날 00:10 KST 이후의 실행시각이 필요합니다."
         }
         validateHistoricalUrl(endpoint, environment)
-        validateHistoricalUrl(oidcIssuer, environment)
-        require(oidcClientId.isNotBlank() && oidcClientId.length <= 255)
-        require(Regex("config:[A-Za-z0-9_-]+").matches(oidcSecretRef)) { "OIDC 비밀 원문 대신 config 참조를 지정하세요." }
+        if (!isPerf) {
+            validateHistoricalUrl(oidcIssuer, environment)
+            require(oidcClientId.isNotBlank() && oidcClientId.length <= 255)
+            require(Regex("config:[A-Za-z0-9_-]+").matches(oidcSecretRef)) { "OIDC 비밀 원문 대신 config 참조를 지정하세요." }
+        }
     }
     fun descriptor(): Row = linkedMapOf(
         "datasetId" to SOMA_DATASET, "environment" to environment, "tenantId" to tenantId,
-        "tenantName" to "soma", "tenantSlug" to "soma", "teamSizes" to somaTeamSizes,
+        "tenantName" to tenantName, "tenantSlug" to tenantSlug, "teamSizes" to somaTeamSizes,
         "range" to linkedMapOf("start" to startDate.toString(), "end" to endDate.toString(), "timezone" to "Asia/Seoul"),
         "snapshotAt" to snapshotAt.toString(), "otlpEndpoint" to endpoint,
-        "oidc" to linkedMapOf("issuer" to oidcIssuer, "clientId" to oidcClientId, "clientSecretRef" to oidcSecretRef),
+        "oidc" to if (isPerf) null else linkedMapOf("issuer" to oidcIssuer, "clientId" to oidcClientId, "clientSecretRef" to oidcSecretRef),
     ).apply {
+        if (isPerf) {
+            put("perfEnvironmentId", perfEnvironmentId)
+            put("provenance", "synthetic-regeneration")
+            put("representativeness", "INCONCLUSIVE")
+            put("activationPolicy", "disabled")
+            put("activityProfileName", activityProfile)
+        }
         // 기존 rich 파일의 설정 지문은 보존한다. 저밀도 후보는 명시적으로 선택하고 manifest에 구분한다.
         if (activityProfile != "rich") put("activityProfile", linkedMapOf(
             "name" to activityProfile, "dailyTeamSessions" to 1,
@@ -82,7 +107,7 @@ private fun validateHistoricalUrl(raw: String, environment: String) {
 
 internal fun runHistoricalPlan(args: Array<String>) {
     val allowed = setOf("output", "end-date", "snapshot-at", "environment", "otlp-endpoint", "oidc-config",
-        "oidc-issuer", "oidc-client-id", "oidc-secret-ref", "activity-profile", "stage-alert-rules")
+        "oidc-issuer", "oidc-client-id", "oidc-secret-ref", "activity-profile", "stage-alert-rules", "perf-environment-id")
     require(args.size % 2 == 1) { "historical-plan 옵션은 --이름 값 형식입니다." }
     val options = linkedMapOf<String, String>()
     args.drop(1).chunked(2).forEach { (name, value) ->
@@ -90,18 +115,25 @@ internal fun runHistoricalPlan(args: Array<String>) {
     }
     fun required(key: String) = requireNotNull(options[key]) { "--$key 옵션이 필요합니다." }
     val environment = required("environment")
+    if (environment == "perf") {
+        require(options.keys.none { it.startsWith("oidc-") }) { "perf는 OIDC 옵션을 받지 않습니다." }
+        required("perf-environment-id")
+        required("activity-profile")
+    }
     val overrideKeys = setOf("oidc-issuer", "oidc-client-id", "oidc-secret-ref")
     val override = overrideKeys.any(options::containsKey)
     require(!override || environment == "local" && overrideKeys.all(options::containsKey) && !options.containsKey("oidc-config")) {
         "OIDC override 세 옵션은 local에서만 함께 지정할 수 있습니다."
     }
-    val publicOidc = if (override) null else parseCompanyOidcSeed(Files.readString(Path.of(options["oidc-config"]
+    val publicOidc = if (override || environment == "perf") null else parseCompanyOidcSeed(Files.readString(Path.of(options["oidc-config"]
         ?: "tools/dev-seed/config/cognito/company-a/cognito-seed.json"))).also { require(it.company == "A") }
     val config = HistoricalSeedConfig(environment, LocalDate.parse(required("end-date")), Instant.parse(required("snapshot-at")),
-        required("otlp-endpoint"), publicOidc?.issuer ?: required("oidc-issuer"),
-        publicOidc?.clientId ?: required("oidc-client-id"), publicOidc?.secretRef ?: required("oidc-secret-ref"),
+        required("otlp-endpoint"), publicOidc?.issuer ?: if (environment == "perf") "" else required("oidc-issuer"),
+        publicOidc?.clientId ?: if (environment == "perf") "" else required("oidc-client-id"),
+        publicOidc?.secretRef ?: if (environment == "perf") "" else required("oidc-secret-ref"),
         options["activity-profile"] ?: "rich",
-        options["stage-alert-rules"]?.let { requireNotNull(it.toBooleanStrictOrNull()) { "--stage-alert-rules 값은 true 또는 false여야 합니다." } } ?: false)
+        options["stage-alert-rules"]?.let { requireNotNull(it.toBooleanStrictOrNull()) { "--stage-alert-rules 값은 true 또는 false여야 합니다." } } ?: false,
+        options["perf-environment-id"])
     val manifest = exportHistoricalSeed(config, Path.of(required("output")))
     println(json.writerWithDefaultPrettyPrinter().writeValueAsString(manifest))
 }
@@ -158,8 +190,9 @@ internal fun somaPostgres(config: HistoricalSeedConfig): LinkedHashMap<String, M
     val manifest = rows.getValue("enrollment.manifests").associate { (it["version"] as Number).toInt() to it.getValue("id") }
     val owner = config.identity("member/0")
     rows["enrollment.tenants"] = mutableListOf(rows.getValue("enrollment.tenants").single() + linkedMapOf(
-        "name" to "soma", "slug" to "soma", "oidc_issuer" to config.oidcIssuer, "oidc_client_id" to config.oidcClientId,
-        "oidc_client_secret_ref" to config.oidcSecretRef, "sso_enabled" to false, "oidc_require_verified_email" to true))
+        "name" to config.tenantName, "slug" to config.tenantSlug,
+        "oidc_issuer" to config.oidcIssuer.takeUnless { config.isPerf }, "oidc_client_id" to config.oidcClientId.takeUnless { config.isPerf },
+        "oidc_client_secret_ref" to config.oidcSecretRef.takeUnless { config.isPerf }, "sso_enabled" to false, "oidc_require_verified_email" to true))
     rows["enrollment.members"] = (0..399).map { index -> linkedMapOf<String, Any?>(
         "id" to config.identity("member/$index"), "tenant_id" to config.tenantId, "email" to config.email(index),
         "display_name" to "soma 구성원 %03d".format(index + 1), "role" to when (index) { 0 -> "owner"; 1 -> "admin"; else -> "member" },
@@ -201,6 +234,7 @@ internal fun somaPostgres(config: HistoricalSeedConfig): LinkedHashMap<String, M
         add("installation_collection_segments", "id" to config.identity("collection-segment/$index"), "installation_id" to installation,
             "run_id" to run, "from_at" to installed, "to_at" to config.snapshotAt.toString(), "lost" to 0)
     }
+    if (config.isPerf) rows.getValue("enrollment.organization_alert_rules").replaceAll { it + ("enabled" to false) }
     return rows
 }
 

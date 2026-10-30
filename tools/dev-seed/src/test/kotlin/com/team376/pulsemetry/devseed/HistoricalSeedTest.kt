@@ -18,6 +18,87 @@ class HistoricalSeedTest {
     private fun config(environment: String = "local") = HistoricalSeedConfig(environment, end, Instant.parse("2026-10-27T02:00:00Z"),
         "https://ingest.example.test", "https://cognito-idp.ap-northeast-2.amazonaws.com/ap-northeast-2_test", "test", "config:cognito-a")
 
+    private fun perf(environmentId: String = "perf-20261030-a") = config().copy(environment = "perf",
+        perfEnvironmentId = environmentId, oidcIssuer = "", oidcClientId = "", oidcSecretRef = "", stageAlertRules = true)
+
+    @Test fun `perf는 환경마다 모든 신원을 분리하고 로그인과 알림 연결을 비워 둔다`() {
+        val cfg = perf()
+        val rows = somaPostgres(cfg)
+        val tenant = rows.getValue("enrollment.tenants").single()
+        assertEquals("synthetic-perf-20261030-a-soma", tenant["slug"])
+        assertEquals(false, tenant["sso_enabled"])
+        assertTrue(listOf("oidc_issuer", "oidc_client_id", "oidc_client_secret_ref").all { tenant[it] == null })
+        assertTrue(rows.getValue("enrollment.organization_alert_rules").all { it["enabled"] == false })
+        assertTrue(rows.getValue("enrollment.members").all { it["email"].toString().endsWith("@perf-20261030-a.example.test") && it["oidc_subject"] == null })
+        assertEquals(null, cfg.descriptor()["oidc"])
+        assertEquals("INCONCLUSIVE", cfg.descriptor()["representativeness"])
+        assertEquals("synthetic-regeneration", cfg.descriptor()["provenance"])
+        assertEquals("disabled", cfg.descriptor()["activationPolicy"])
+        for (other in listOf(config(), config("dev"), perf("perf-20261030-b"))) {
+            assertNotEquals(cfg.tenantId, other.tenantId)
+            for (table in listOf("members", "teams", "installations")) {
+                val ids = rows.getValue("enrollment.$table").map { it["id"] }.toSet()
+                assertTrue(ids.intersect(somaPostgres(other).getValue("enrollment.$table").map { it["id"] }.toSet()).isEmpty())
+            }
+        }
+        val usage = detailedUsage(end, rows, somaSessions(cfg, end), cfg.context)
+        val local = config()
+        val original = detailedUsage(end, somaPostgres(local), somaSessions(local, end), local.context)
+        assertEquals(HistoricalTotals().apply { original.events.forEach(::add) }.value(),
+            HistoricalTotals().apply { usage.events.forEach(::add) }.value())
+    }
+
+    @Test fun `perf 환경 ID 누락과 dev 신원 및 활성화 옵션 재사용을 거부한다`() {
+        assertFailsWith<IllegalArgumentException> { perf().copy(perfEnvironmentId = null) }
+        for (value in listOf("dev", "prod-example", "perf-../dev", "perf-a", "perf-" + "a".repeat(50)))
+            assertFailsWith<IllegalArgumentException> { perf(value) }
+        assertFailsWith<IllegalArgumentException> { perf().copy(oidcIssuer = config().oidcIssuer) }
+        assertFailsWith<IllegalArgumentException> { perf().copy(stageAlertRules = false) }
+        assertFailsWith<IllegalArgumentException> { perf().copy(activityProfile = "team-daily") }
+        assertFailsWith<IllegalArgumentException> { config().copy(perfEnvironmentId = "perf-20261030-a") }
+        assertFailsWith<IllegalArgumentException> { runHistoricalPlan(arrayOf("historical-plan", "--environment", "perf", "--perf-environment-id", "perf-20261030-a")) }
+        assertFailsWith<IllegalArgumentException> { runHistoricalPlan(arrayOf("historical-plan", "--environment", "perf", "--oidc-config", "dev-cognito.json")) }
+    }
+
+    @Test fun `perf rich 파일은 Python importer와 같은 신원 및 비활성 계약으로 대조한다`() {
+        val output = temp.resolve("perf-contract")
+        val manifest = exportHistoricalSeed(perf(), output)
+        assertEquals(400, (manifest["summary"] as Map<*, *>)["members"])
+        @Suppress("UNCHECKED_CAST")
+        val activation = manifest["activationRules"] as List<Row>
+        assertTrue(activation.all { it["desiredEnabled"] == false })
+        val importer = listOf(Path.of("historical_seed.py"), Path.of("tools/dev-seed/historical_seed.py"))
+            .first { Files.isRegularFile(it) }.toAbsolutePath()
+        val process = ProcessBuilder("python3", "-c", """
+            import copy, importlib.util, pathlib, sys
+            spec = importlib.util.spec_from_file_location('seed', sys.argv[1])
+            seed = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(seed)
+            artifact = seed.Artifact(sys.argv[2])
+            assert artifact.manifest['environment'] == 'perf'
+            assert artifact.manifest['activityProfileName'] == 'rich'
+            assert artifact.manifest['oidc'] is None
+            assert len(artifact.member_ids) == 400
+            assert all(not rule['desiredEnabled'] for rule in artifact.activation_rules.values())
+            for field, value in [('representativeness', 'PASS'), ('activationPolicy', 'enabled'), ('oidc', {'issuer': 'https://dev.example.test'})]:
+                changed = copy.deepcopy(artifact.manifest)
+                changed[field] = value
+                path = pathlib.Path(sys.argv[2]).with_name('invalid.json')
+                path.write_text(seed.encode(changed), encoding='utf-8')
+                try:
+                    seed.Artifact(path)
+                except seed.SeedError:
+                    pass
+                else:
+                    raise AssertionError('unsafe perf manifest accepted: ' + field)
+        """.trimIndent(), importer.toString(), output.resolve("manifest.json").toString()).apply {
+            environment()["PYTHONDONTWRITEBYTECODE"] = "1"
+            redirectErrorStream(true)
+        }.start()
+        val result = process.inputStream.bufferedReader().use { it.readText() }
+        assertEquals(0, process.waitFor(), result)
+    }
+
     @Test fun `실행 전날 180일과 settle을 고정하며 prod 및 원격 HTTP를 거부한다`() {
         val cfg = config()
         assertEquals(180, cfg.endDate.toEpochDay() - cfg.startDate.toEpochDay() + 1)

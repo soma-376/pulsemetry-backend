@@ -1,6 +1,7 @@
 # soma 과거 화면 시드 운영
 
-이 도구는 승인된 독립 `soma` 데이터셋을 **local 또는 dev**에 직접 적재한다. 기존 Compose의
+이 도구는 독립 `soma` 데이터셋을 **local, dev 또는 격리 perf**에 직접 적재한다. perf의 별도 대상 증거와
+비활성화 계약은 아래 「perf 초기 기준 데이터」를 따른다. 기존 Compose의
 `init/apply/reset` 경계와 별개이며 DB 마이그레이션·삭제·Cognito 계정 생성은 수행하지 않는다.
 적재 경계·단계적 활성화·원래 사용량과 측정 기반 튜닝은
 [허브 ADR 0023](https://github.com/soma-376/docs/blob/main/adr/0023-dev-historical-dashboard-dataset.md)을 따른다.
@@ -223,3 +224,79 @@ PYTHONPYCACHEPREFIX=/tmp/soma-seed-pycache \
 부분 적재/ACK 유실 재개, 서버 실행 중 재전송 금지, 저장 내용 충돌·물리 중복, PG 잠금 연결 소실,
 메모리·지연·지표 신선도·압력 카운터와 중단 유지, 요청별 로그 길이 제한과 전체 SQL 추적,
 경로/해시 변조, Decimal·나노초 정밀도와 전송 바이트 제한을 검사한다.
+
+## perf 초기 기준 데이터
+
+PROJ-295는 기존 rich 합성 규모(1회사·400명·50팀·398설치·180일)를 초기 기준으로 사용한다.
+운영 동등성은 별도 검증하며 manifest의 `representativeness`는 `INCONCLUSIVE`다. 날짜와 실행 시각은
+명시적으로 고정한다. `snapshot-at`은 UTC Instant이고 사용일의 180일 경계는 기존 KST 계약을 유지한다.
+실행 시각보다 미래인 snapshot이나 실제 보존 경계 이전 데이터는 importer가 거부한다.
+
+```sh
+tools/dev-seed/build/install/dev-seed/bin/dev-seed historical-plan \
+  --environment perf --perf-environment-id perf-20261030-a \
+  --output /absolute/path/new-perf-artifact \
+  --end-date 2026-10-29 --snapshot-at 2026-10-30T00:00:00Z \
+  --otlp-endpoint https://ingest-perf.example.test \
+  --activity-profile rich --stage-alert-rules true
+```
+
+명령은 DB에 접속하지 않는다. 예시 시각·주소는 실제 실행 입력으로 확정한 값이 아니다. perf에서는
+활동 프로필·환경 ID를 생략할 수 없고 `team-daily` 및 OIDC 옵션을 거부한다. UUID namespace는
+`perf/<perfEnvironmentId>/soma-history-v1`, slug는 `synthetic-<perfEnvironmentId>-soma`다.
+각 환경에 합성 원본을 재생성하며 dev DB·기존 파일·credential을 복사하지 않는다. 모든 회원의 subject와
+조직 OIDC 설정은 NULL, SSO와 알림은 false다. perf `activate-login`은 DB 접속 전에 실패한다.
+검증·재개에서 활성 상태도 거부하며 정상 로그인으로 연결된 subject를 예외로 허용하지 않는다.
+
+이력 데이터는 k6 실행 주체 `perf-10x10`과 별개다. 두 데이터셋의 manifest·ID·행 수를 각각 기록한다.
+기간별 이벤트 수는 생성한 manifest가 진실원이며 과거 날짜의 결과를 새 날짜의 정확한 행 수로 복사하지 않는다.
+직접 적재한 행은 Gateway·Kafka·S3 경로 성공이나 아카이브 보관의 증거가 아니다.
+
+### 대상 원천 증거
+
+perf target은 기존 target 형식에 `perfEnvironmentId`와 `targetEvidence: {"file":"target-evidence.json",
+"sha256":"<파일 SHA-256>"}`를 추가한다. `targetEvidence`는 권한 승인 파일이 아니다. 원천 조회의 출처와
+무결성을 묶고 잘못된 접속 대상을 거부한다. 실제 환경·데이터·writer 권한의 실행 조건은 별도로 충족해야 한다.
+원천 조회나 배포를 자동 실행하지 않으며, 파일이 없으면 DB 접속 전에 중단한다.
+
+[증거 schema](schemas/perf-target-evidence.schema.json)의 최상위에는 `schemaVersion=1`,
+`kind=perf-seed-target-evidence`, `environmentId`, `targetId`, `observedAt`을 넣고 다음 여섯 원천을
+각각 `{file, sha256}`로 참조한다. 파일은 증거 파일과 같은 디렉터리 또는 하위에 두고, 원본 바이트의
+SHA-256을 사용한다. target·증거·원천 파일은 비공개 실행 디렉터리에 함께 보관한다.
+
+| 원천 | 내용과 대조 |
+| --- | --- |
+| `resolved` | load-tests의 `environment-resolved` v3 원본. `ready`, `environment_id`, `aws.region`, `kafka.provider=strimzi`, `infra.profile_sha256`, `kubernetes.cluster_arn/cluster_name/namespaces.app/workloads.clickhouse`, `datastores.rds.arn/endpoint`, `endpoints.clickhouse_http`를 대조한다. backend는 이 canonical 경로만 소비하며 전체 v3 schema 검증은 환경 도구의 책임이다. |
+| `profile` | 실제 적용한 profile 원본. 바이트 해시가 resolved의 `infra.profile_sha256`와 같아야 한다. |
+| `rds` | 한 DB만 포함한 AWS `describe-db-instances` 원본. ARN·region·available·PostgreSQL·endpoint·DBName과 `TagList`의 `pulsemetry:perf-environment`를 대조한다. 태그가 없는 출력은 별도 원천을 보완하기 전까지 실행할 수 없다. |
+| `cluster` | AWS `describe-cluster` 원본. ACTIVE·ARN·name·region 및 같은 perf 환경 태그를 대조한다. |
+| `clickhousePod` | 해당 cluster의 `kubectl get pod -o json` 원본. namespace, 소유 StatefulSet UID/name, 이미지를 resolved와 대조한다. |
+| `identity` | 아래 읽기 전용 SQL의 결과를 `{postgres: {...}, clickhouse: {..., table_uuids: {...}}}`로 기록한다. 실제 importer 접속 뒤 같은 값을 다시 조회해 비교한다. |
+
+PostgreSQL identity는 `database`, `username`, `address`, `port`, `database_oid`다. 원천 조회는 실제
+seed 사용자로 하며 credentials를 증거에 넣지 않는다.
+
+```sql
+SELECT current_database() AS database, current_user AS username,
+       inet_server_addr()::text AS address, inet_server_port() AS port,
+       (SELECT oid::bigint FROM pg_database WHERE datname=current_database()) AS database_oid;
+```
+
+ClickHouse identity는 `hostname`, `database`, `version`과 `table_uuids`다. Pod 이름만으로는 다른
+환경의 `clickhouse-0`을 구분할 수 없어 두 원천 테이블의 UUID도 고정한다.
+
+```sql
+SELECT hostName() AS hostname, currentDatabase() AS database, version() AS version;
+SELECT name,toString(uuid) AS uuid FROM system.tables
+WHERE database=currentDatabase() AND name IN ('telemetry_events','telemetry_ingest_ledger') ORDER BY name;
+```
+
+PostgreSQL host는 RDS endpoint와 같아야 하고 TLS `verify-full`과 CA가 필수다. 터널이면 `hostaddr`만
+loopback으로 두며 로컬 포트와 서버 identity 포트를 구분한다. ClickHouse는 HTTPS 또는 loopback 터널을
+유지하고 원격 HTTPS URL은 resolved 값과 같아야 한다. 내부 HTTP Service로 직접 적재하는 예외는 추가하지 않는다.
+환경 파일·태그·identity를 임의로 맞춰 승인 근거를 만드는 도구가 아니다. 원천 증거는 지정한 격리 환경에서
+조회해야 한다. 대상 증거 검증은 발생기 여유·실행 예산·데이터 대표성·운영 동등성을 판정하지 않는다.
+
+`plan`, `apply`, `resume`, `verify`는 기존 순서를 따른다. 2,000행/4MiB·직렬 적재·신선한 압력 지표·retention
+fence·전체 생성 필드 대조는 perf에서도 동일하다. `activate-login`은 실행하지 않는다. 서버나 원천 테이블이
+재생성되면 identity 변경으로 중단하며 기존 checkpoint를 새 정상값으로 덮어쓰지 않는다.

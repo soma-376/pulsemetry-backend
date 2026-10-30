@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""검증된 과거 화면 시드를 local/dev에만 넣는 명시적 운영 도구.
+"""검증된 과거 합성 시드를 local/dev 또는 증거가 있는 격리 perf에 넣는 운영 도구.
 
 표준 라이브러리와 기존 psql만 사용한다. 스키마 변경·삭제·계정 생성은 하지 않는다.
 데이터 계약과 사용법은 historical-seed.md를 참고한다.
@@ -71,6 +71,7 @@ TIMES = {
     "source_time_min", "source_time_max",
 }
 ALERT_RULE_TABLE = "enrollment.organization_alert_rules"
+PERF_ENVIRONMENT_PATTERN = r"perf-[a-z0-9][a-z0-9-]{2,42}"
 
 
 class SeedError(RuntimeError):
@@ -88,6 +89,16 @@ class PressurePaused(Paused):
 def require(condition, message):
     if not condition:
         raise SeedError(message)
+
+
+def perf_seed_id(environment_id, suffix=""):
+    """Kotlin UUID.nameUUIDFromBytes와 같은 합성 신원. 운영 DB의 ID를 가져오지 않는다."""
+    name = "pulsemetry/dev-seed/v1/perf/" + environment_id + "/soma-history-v1" + suffix
+    return str(uuid.UUID(bytes=hashlib.md5(name.encode("utf-8")).digest(), version=3))
+
+
+def require_command_allowed(environment, command):
+    require(not (environment == "perf" and command == "activate-login"), "perf는 SSO·알림 활성화를 지원하지 않습니다.")
 
 
 def sha256(data):
@@ -202,9 +213,20 @@ class Artifact:
         self.sha = sha256(raw)
         self.manifest = m = decode(raw)
         require(m.get("schemaVersion") == 1, "지원하지 않는 manifest 버전입니다.")
-        require(m.get("environment") in ("local", "dev"), "local/dev artifact만 허용합니다.")
+        require(m.get("environment") in ("local", "dev", "perf"), "local/dev/perf artifact만 허용합니다.")
         require(m.get("datasetId") == "soma-history-v1", "soma-history-v1 데이터셋만 허용합니다.")
-        require(m.get("tenantName") == "soma" and m.get("tenantSlug") == "soma", "soma 조직만 허용합니다.")
+        is_perf = m["environment"] == "perf"
+        if is_perf:
+            environment_id = m.get("perfEnvironmentId", "")
+            require(isinstance(environment_id, str) and re.fullmatch(PERF_ENVIRONMENT_PATTERN, environment_id), "perf 환경 ID가 유효하지 않습니다.")
+            require(m.get("tenantId") == perf_seed_id(environment_id), "perf 환경의 독립 tenant ID가 아닙니다.")
+            require(m.get("tenantName") == "[SYNTHETIC] soma " + environment_id and m.get("tenantSlug") == "synthetic-" + environment_id + "-soma", "perf 조직 표지가 다릅니다.")
+            require(m.get("provenance") == "synthetic-regeneration" and m.get("representativeness") == "INCONCLUSIVE", "perf 합성 provenance·대표성 판정이 다릅니다.")
+            require(m.get("activationPolicy") == "disabled" and m.get("stageAlertRules") is True, "perf는 SSO·알림 비활성 계약이 필요합니다.")
+            require(m.get("activityProfileName") == "rich" and "activityProfile" not in m, "perf 초기 기준은 기존 rich 프로필입니다.")
+        else:
+            require("perfEnvironmentId" not in m, "perf 환경 ID는 perf에서만 지정합니다.")
+            require(m.get("tenantName") == "soma" and m.get("tenantSlug") == "soma", "soma 조직만 허용합니다.")
         require(str(uuid.UUID(m["tenantId"])) == m["tenantId"], "tenant UUID가 유효하지 않습니다.")
         self.tenant = m["tenantId"]
         require(re.fullmatch(r"[0-9a-f]{64}", m.get("configHash", "")), "configHash가 유효하지 않습니다.")
@@ -238,23 +260,34 @@ class Artifact:
         require({k: len(v) for k, v in self.tables.items()} == pg["tables"], "PostgreSQL 테이블별 행 수가 다릅니다.")
         self.activation_rules = activation_rules(m, self.tables)
         tenants = self.tables.get("enrollment.tenants", [])
-        require(len(tenants) == 1 and tenants[0]["id"] == self.tenant and tenants[0]["name"] == "soma" and tenants[0]["slug"] == "soma", "조직 행이 manifest와 다릅니다.")
+        require(len(tenants) == 1 and tenants[0]["id"] == self.tenant and tenants[0]["name"] == m["tenantName"] and tenants[0]["slug"] == m["tenantSlug"], "조직 행이 manifest와 다릅니다.")
         require(tenants[0].get("sso_enabled") is False and tenants[0].get("oidc_require_verified_email") is True, "초기 SSO는 비활성, 이메일 검증은 활성이어야 합니다.")
         oidc = m["oidc"]
         for field, key in (("oidc_issuer", "issuer"), ("oidc_client_id", "clientId"), ("oidc_client_secret_ref", "clientSecretRef")):
-            require(tenants[0].get(field) == oidc[key], "OIDC 설정과 조직 행이 다릅니다.")
-        require(re.fullmatch(r"config:[A-Za-z0-9_-]{1,64}", oidc["clientSecretRef"]), "OIDC 비밀 참조가 유효하지 않습니다.")
+            require(tenants[0].get(field) == (None if is_perf else oidc[key]), "OIDC 설정과 조직 행이 다릅니다.")
+        if is_perf:
+            require(oidc is None, "perf에는 OIDC 연결을 복제할 수 없습니다.")
+            require(self.activation_rules is not None and all(not r["desiredEnabled"] for r in self.activation_rules.values()), "perf 알림 활성화 의도는 허용하지 않습니다.")
+        else:
+            require(re.fullmatch(r"config:[A-Za-z0-9_-]{1,64}", oidc["clientSecretRef"]), "OIDC 비밀 참조가 유효하지 않습니다.")
         if m["environment"] == "dev":
             require(oidc == {"issuer": "https://cognito-idp.ap-northeast-2.amazonaws.com/ap-northeast-2_aTZWvnmMu", "clientId": "5p4p8mm8st8i1aimimbmdek03d", "clientSecretRef": "config:cognito-a"}, "dev의 기존 Cognito A 설정만 허용합니다.")
         members = self.tables.get("enrollment.members", [])
         require(len(members) == 400 and all(r["status"] == "active" for r in members), "활성 회원 400명이 필요합니다.")
-        require([(r["email"], r["role"]) for r in members if r["role"] != "member"] == [("owner@seed-a.example.test", "owner"), ("admin@seed-a.example.test", "admin")], "관리자 두 명의 이메일·역할이 다릅니다.")
+        owner_domain = environment_id + ".example.test" if is_perf else "seed-a.example.test"
+        require([(r["email"], r["role"]) for r in members if r["role"] != "member"] == [("owner@" + owner_domain, "owner"), ("admin@" + owner_domain, "admin")], "관리자 두 명의 이메일·역할이 다릅니다.")
         require(all(r.get("oidc_subject") is None for r in members), "신규 OIDC subject는 비워야 합니다.")
         require(len(self.tables.get("enrollment.teams", [])) == 50 and len(self.tables.get("enrollment.installations", [])) == 398, "50팀·398개 설치가 필요합니다.")
         members_ids = {r["id"] for r in members}
         self.team_ids = {r["id"] for r in self.tables["enrollment.teams"]}
         self.installation_ids = {r["id"] for r in self.tables["enrollment.installations"]}
         self.member_ids = members_ids
+        if is_perf:
+            require(members_ids == {perf_seed_id(environment_id, "/member/" + str(i)) for i in range(400)}, "perf 구성원 신원이 다른 환경과 섞였습니다.")
+            require(self.team_ids == {perf_seed_id(environment_id, "/team/" + str(i)) for i in range(50)}, "perf 팀 신원이 다른 환경과 섞였습니다.")
+            require(self.installation_ids == {perf_seed_id(environment_id, "/installation/" + str(i)) for i in range(2, 400)}, "perf 설치 신원이 다른 환경과 섞였습니다.")
+            expected_emails = {perf_seed_id(environment_id, "/member/" + str(i)): ("owner" if i == 0 else "admin" if i == 1 else "member" + str(i)) + "@" + owner_domain for i in range(400)}
+            require(all(r["email"] == expected_emails[r["id"]] for r in members), "perf 합성 이메일이 아닙니다.")
         references = {
             **{field: members_ids for field in ("member_id", "target_member_id", "created_by_member_id", "policy_confirmed_by", "completed_by", "updated_by", "recorded_by", "actor_id")},
             "team_id": self.team_ids, "installation_id": self.installation_ids,
@@ -315,14 +348,77 @@ class Artifact:
         return rows
 
 
+def evidence_json(root, reference):
+    require(isinstance(reference, dict) and set(reference) == {"file", "sha256"}, "증거 참조는 file·sha256만 허용합니다.")
+    require(isinstance(reference["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", reference["sha256"]), "증거 SHA-256이 유효하지 않습니다.")
+    path = within(root.resolve(), reference["file"])
+    raw = read_regular(path)
+    require(sha256(raw) == reference["sha256"], "대상 원천 증거 SHA-256이 다릅니다.")
+    return decode(raw), path
+
+
+def perf_target_evidence(target, root, environment_id):
+    """v3 resolved의 기존 경로와 읽기 전용 원천 증거를 대조한다. 권한 승인을 대신하지 않는다."""
+    proof, proof_path = evidence_json(root, target["targetEvidence"])
+    require(set(proof) == {"schemaVersion", "kind", "environmentId", "targetId", "observedAt", "resolved", "profile", "rds", "cluster", "clickhousePod", "identity"}, "perf 대상 증거 필드가 다릅니다.")
+    require(proof["schemaVersion"] == 1 and proof["kind"] == "perf-seed-target-evidence", "perf 대상 증거 버전이 다릅니다.")
+    require(proof["environmentId"] == environment_id and proof["targetId"] == target["targetId"], "대상 증거의 환경 ID·targetId가 다릅니다.")
+    require(0 < instant(proof["observedAt"]) <= Decimal(str(time.time())) + 1, "대상 증거 조회 시각이 유효하지 않습니다.")
+    sources = {name: evidence_json(proof_path.parent, proof[name])[0] for name in ("resolved", "profile", "rds", "cluster", "clickhousePod", "identity")}
+    resolved = sources["resolved"]
+    require(resolved["schema_version"] == 3 and resolved["kind"] == "environment-resolved" and resolved["status"] == "ready", "ready 상태의 v3 resolved 환경 증거가 필요합니다.")
+    require(resolved["environment_id"] == environment_id, "resolved 환경 ID가 다릅니다.")
+    require(resolved["infra"]["profile_sha256"] == proof["profile"]["sha256"], "실제 적용 profile 해시가 다릅니다.")
+    require(resolved["kafka"]["provider"] == "strimzi", "현재 perf 과거 데이터 대상은 Strimzi 환경이어야 합니다.")
+    region = resolved["aws"]["region"]
+    cluster = sources["cluster"]["cluster"]
+    kube = resolved["kubernetes"]
+    require(cluster["arn"] == kube["cluster_arn"] and cluster["name"] == kube["cluster_name"], "EKS cluster 원천 증거가 resolved와 다릅니다.")
+    require(cluster["status"] == "ACTIVE" and cluster.get("tags", {}).get("pulsemetry:perf-environment") == environment_id, "EKS가 해당 perf 환경의 ACTIVE cluster가 아닙니다.")
+    databases = sources["rds"]["DBInstances"]
+    require(len(databases) == 1, "RDS 원천 증거는 한 인스턴스만 포함해야 합니다.")
+    db = databases[0]
+    require(db["DBInstanceArn"] == resolved["datastores"]["rds"]["arn"] and db["Engine"] == "postgres" and db["DBInstanceStatus"] == "available", "RDS 원천 증거가 resolved와 다릅니다.")
+    require({tag["Key"]: tag["Value"] for tag in db.get("TagList", [])}.get("pulsemetry:perf-environment") == environment_id, "RDS의 perf 환경 태그 증거가 없습니다.")
+    for arn, service in ((db["DBInstanceArn"], "rds"), (cluster["arn"], "eks")):
+        require(arn.split(":")[2:4] == [service, region], "원천 자원의 리전이 resolved와 다릅니다.")
+    pg = target["postgres"]
+    require(resolved["datastores"]["rds"]["endpoint"] == {"host": db["Endpoint"]["Address"], "port": db["Endpoint"]["Port"], "database": db["DBName"]}, "resolved RDS endpoint가 원천 증거와 다릅니다.")
+    require(pg["host"] == db["Endpoint"]["Address"] and pg["dbname"] == db["DBName"], "PostgreSQL 접속 대상이 RDS 원천 증거와 다릅니다.")
+    # 터널의 로컬 포트는 서버 포트와 다르다. 터널 사용 여부와 서버 identity를 따로 대조한다.
+    if "hostaddr" in pg:
+        require(pg["hostaddr"] in ("127.0.0.1", "::1"), "perf PostgreSQL hostaddr는 loopback 터널만 허용합니다.")
+    else:
+        require(pg["port"] == db["Endpoint"]["Port"], "PostgreSQL 포트가 원천 증거와 다릅니다.")
+    pod = sources["clickhousePod"]
+    workload = kube["workloads"]["clickhouse"]
+    metadata = pod["metadata"]
+    require(pod["kind"] == "Pod" and metadata["namespace"] == workload["namespace"] == kube["namespaces"]["app"], "ClickHouse Pod namespace가 resolved와 다릅니다.")
+    require(any(owner["kind"] == "StatefulSet" and owner["name"] == workload["name"] and owner["uid"] == workload["uid"] for owner in metadata.get("ownerReferences", [])), "ClickHouse Pod 소유 UID가 resolved와 다릅니다.")
+    require(any(container["image"] == workload["image"] for container in pod["spec"]["containers"]), "ClickHouse Pod 이미지가 resolved와 다릅니다.")
+    identity = sources["identity"]
+    require(set(identity) == {"postgres", "clickhouse"}, "DB identity 증거 형식이 다릅니다.")
+    expected_pg, expected_ch = identity["postgres"], identity["clickhouse"]
+    require(set(expected_pg) == {"database", "username", "address", "port", "database_oid"}, "PostgreSQL identity 필드가 다릅니다.")
+    require(expected_pg["database"] == pg["dbname"] and expected_pg["username"] == pg["user"] and expected_pg["port"] == db["Endpoint"]["Port"], "PostgreSQL identity와 접속 설정이 다릅니다.")
+    require(isinstance(expected_pg["database_oid"], int) and not isinstance(expected_pg["database_oid"], bool) and expected_pg["database_oid"] > 0 and isinstance(expected_pg["address"], str) and expected_pg["address"], "PostgreSQL 서버 identity가 비어 있습니다.")
+    require(set(expected_ch) == {"hostname", "database", "version", "table_uuids"}, "ClickHouse identity 필드가 다릅니다.")
+    require(expected_ch["hostname"] == metadata["name"] and expected_ch["database"] == target["clickhouse"]["database"], "ClickHouse identity와 Pod가 다릅니다.")
+    require(isinstance(expected_ch["version"], str) and expected_ch["version"], "ClickHouse 버전 증거가 없습니다.")
+    require(set(expected_ch["table_uuids"]) == set(CH_TABLES) and all(str(uuid.UUID(value)) == value and uuid.UUID(value).int != 0 for value in expected_ch["table_uuids"].values()), "ClickHouse 원천 테이블 UUID가 필요합니다.")
+    url = urllib.parse.urlsplit(target["clickhouse"]["url"])
+    require(url.hostname in ("localhost", "127.0.0.1", "::1") or target["clickhouse"]["url"].rstrip("/") == resolved["endpoints"]["clickhouse_http"].rstrip("/"), "ClickHouse URL이 resolved 또는 loopback 터널이 아닙니다.")
+    return identity
+
+
 class Target:
     def __init__(self, path, artifact):
         self.path = Path(path).absolute()
         raw = read_regular(self.path, 65536)
         self.sha = sha256(raw)
         self.data = d = decode(raw)
-        require(set(d) <= {"schemaVersion", "environment", "targetId", "postgres", "clickhouse", "monitorFile", "monitorLatency"}, "target에 알 수 없는 필드 또는 비밀 원문이 있습니다.")
-        require(d.get("schemaVersion") == 1 and d.get("environment") in ("local", "dev"), "local/dev 대상만 허용합니다.")
+        require(set(d) <= {"schemaVersion", "environment", "targetId", "postgres", "clickhouse", "monitorFile", "monitorLatency", "perfEnvironmentId", "targetEvidence"}, "target에 알 수 없는 필드 또는 비밀 원문이 있습니다.")
+        require(d.get("schemaVersion") == 1 and d.get("environment") in ("local", "dev", "perf"), "local/dev/perf 대상만 허용합니다.")
         require(d["environment"] == artifact.manifest["environment"], "artifact와 대상 환경이 다릅니다.")
         require(re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", d.get("targetId", "")), "targetId가 유효하지 않습니다.")
         if "monitorLatency" in d:
@@ -342,15 +438,22 @@ class Target:
         for settings in (pg, ch):
             if "passwordEnv" in settings:
                 require(re.fullmatch(r"[A-Z_][A-Z0-9_]*", settings["passwordEnv"]), "비밀번호 환경변수 이름이 유효하지 않습니다.")
-        if d["environment"] == "dev":
-            require(pg["sslmode"] == "verify-full" and pg.get("sslrootcert"), "dev PostgreSQL은 CA와 verify-full이 필수입니다.")
+        if d["environment"] in ("dev", "perf"):
+            require(pg["sslmode"] == "verify-full" and pg.get("sslrootcert"), "dev/perf PostgreSQL은 CA와 verify-full이 필수입니다.")
             require(url.scheme == "https" or url.hostname in ("localhost", "127.0.0.1", "::1"),
-                    "dev ClickHouse는 HTTPS 또는 loopback 터널만 허용합니다.")
-            require(d.get("monitorFile"), "dev에는 신선한 부하 관측 파일이 필요합니다.")
+                    "dev/perf ClickHouse는 HTTPS 또는 loopback 터널만 허용합니다.")
+            require(d.get("monitorFile"), "dev/perf에는 신선한 부하 관측 파일이 필요합니다.")
         else:
             require(pg["host"] in ("localhost", "127.0.0.1", "::1") and url.hostname in ("localhost", "127.0.0.1", "::1"), "local 대상은 loopback만 허용합니다.")
             require("hostaddr" not in pg or pg["hostaddr"] in ("127.0.0.1", "::1"),
                     "local PostgreSQL hostaddr도 loopback만 허용합니다.")
+        self.expected_identity = None
+        if d["environment"] == "perf":
+            require(d.get("perfEnvironmentId") == artifact.manifest["perfEnvironmentId"], "target의 perf 환경 ID가 artifact와 다릅니다.")
+            require("targetEvidence" in d, "perf 실행에는 resolved·DB 조회 원천 증거가 필요합니다.")
+            self.expected_identity = perf_target_evidence(d, self.path.parent, d["perfEnvironmentId"])
+        else:
+            require(not ({"perfEnvironmentId", "targetEvidence"} & set(d)), "perf 대상 증거는 perf에서만 지정합니다.")
 
 
 class Postgres:
@@ -790,7 +893,14 @@ class Runner:
         require(pg["database"] == self.target.data["postgres"]["dbname"], "PostgreSQL 대상 database가 다릅니다.")
         ch = self.ch.query("SELECT hostName() AS hostname, currentDatabase() AS database, version() AS version")[0]
         require(ch["database"] == self.target.data["clickhouse"]["database"], "ClickHouse 대상 database가 다릅니다.")
-        return {"postgres": pg, "clickhouse": ch}
+        if self.target.data["environment"] == "perf":
+            table_rows = self.ch.query("SELECT name,toString(uuid) AS uuid FROM system.tables WHERE database=" + ch_literal(self.ch.database) + " AND name IN ('telemetry_events','telemetry_ingest_ledger') ORDER BY name")
+            require(len(table_rows) == len(CH_TABLES), "ClickHouse 원천 테이블 identity가 없습니다.")
+            ch["table_uuids"] = {row["name"]: row["uuid"] for row in table_rows}
+        identity = {"postgres": pg, "clickhouse": ch}
+        if self.target.data["environment"] == "perf":
+            require(identity == self.target.expected_identity, "실제 DB identity가 perf 원천 증거와 다릅니다.")
+        return identity
 
     def schema(self):
         names = ",".join(pg_literal(x) for x in self.artifact.tables)
@@ -855,17 +965,24 @@ class Runner:
                 self.state["peakMemoryWorkingSetBytes"] = max(self.state.get("peakMemoryWorkingSetBytes", 0), sample["memoryWorkingSetBytes"])
                 self.state["latestMonitor"] = sample
             return sample
-        require(self.target.data["environment"] == "local", "dev 관측 파일이 없습니다.")
+        require(self.target.data["environment"] == "local", "dev/perf 관측 파일이 없습니다.")
 
     def collision(self):
         t = self.artifact.tenant
-        return self.pg.query("SELECT id::text,name,slug,sso_enabled FROM enrollment.tenants WHERE id=" + pg_literal(t) + " OR slug='soma' OR name='soma'")
+        name = self.artifact.manifest.get("tenantName", "soma")
+        slug = self.artifact.manifest.get("tenantSlug", "soma")
+        return self.pg.query("SELECT id::text,name,slug,sso_enabled FROM enrollment.tenants WHERE id=" + pg_literal(t) + " OR slug=" + pg_literal(slug) + " OR name=" + pg_literal(name))
 
     def plan(self):
+        identity = self.identity()
         self.schema()
         self.retention()
-        result = {"manifestSha256": self.artifact.sha, "targetSha256": self.target.sha, "identity": self.identity(), "collisions": self.collision(), "summary": self.artifact.manifest["summary"], "batchCount": len(self.artifact.batches), "payloadBytes": sum(b["bytes"] for b in self.artifact.batches),
+        result = {"manifestSha256": self.artifact.sha, "targetSha256": self.target.sha, "identity": identity, "collisions": self.collision(), "summary": self.artifact.manifest["summary"], "batchCount": len(self.artifact.batches), "payloadBytes": sum(b["bytes"] for b in self.artifact.batches),
                   "activation": {"stagedRules": self.artifact.activation_rules is not None, "unsafeLegacyEnabledRules": self.unsafe_legacy_rules(), "applyAllowed": not self.unsafe_legacy_rules()}}
+        if self.target.data["environment"] == "perf":
+            result["targetEvidence"] = self.target.data["targetEvidence"]
+            result["activation"]["loginAllowed"] = False
+            result["representativeness"] = "INCONCLUSIVE"
         self.emit("plan", **result)
         return result
 
@@ -884,6 +1001,8 @@ class Runner:
             require(state.get("manifestSha256") == self.artifact.sha and state.get("targetSha256") == self.target.sha, "실행 manifest 또는 대상 설정이 달라졌습니다.")
             require(state.get("identity") == identity, "DB identity가 기존 실행과 다릅니다. 대상 변경을 조사하세요.")
             self.state = state
+            if self.target.data["environment"] == "perf":
+                require(state["phase"] not in ("active", "activating"), "perf checkpoint에 로그인 활성화 상태가 있습니다.")
             if command == "apply":
                 require(state["phase"] in ("verified", "active"), "미완료 실행은 resume 명령으로 재개하세요.")
         else:
@@ -913,6 +1032,8 @@ class Runner:
         raise SeedError("tenant 범위를 정할 수 없는 PostgreSQL 테이블: " + table)
 
     def verify_postgres(self, activation_active=None):
+        if self.target.data["environment"] == "perf":
+            require(self.state["phase"] not in ("active", "activating") and activation_active is not True, "perf 검증은 로그인·알림 비활성 상태만 허용합니다.")
         if activation_active is None:
             activation_active = self.state["phase"] == "active"
             if self.state["phase"] == "activating":
@@ -928,7 +1049,7 @@ class Runner:
             require(len(actual) == len(expected), "PostgreSQL 행 수 불일치: " + table)
             # 복합 키 테이블도 모든 생성 필드를 비교한다. 단 실제 SSO가 연결한 subject는 보존한다.
             fields = set(expected[0])
-            if table == "enrollment.members":
+            if table == "enrollment.members" and self.target.data["environment"] != "perf":
                 fields -= {"oidc_subject"}
             if table == "enrollment.tenants":
                 fields -= {"sso_enabled"}
@@ -1154,6 +1275,7 @@ class Runner:
         self.emit("verified", summary=self.artifact.manifest["summary"], peakMemoryWorkingSetBytes=self.state.get("peakMemoryWorkingSetBytes"))
 
     def activate(self):
+        require_command_allowed(self.target.data["environment"], "activate-login")
         self.require_safe_write()
         require(self.state["phase"] in ("verified", "activating", "active"), "전체 검증 완료 후에만 SSO를 활성화할 수 있습니다.")
         self.verify()
@@ -1200,10 +1322,13 @@ class Runner:
         self.emit("login_activated", tenantId=self.artifact.tenant)
 
     def run(self, command):
+        require_command_allowed(self.target.data["environment"], command)
         if command == "plan":
             return self.plan()
         if command in ("apply", "resume", "activate-login"):
             self.require_safe_write()
+        if self.target.data["environment"] == "perf":
+            self.identity()
         with self.locked():
             self.schema()
             self.retention()
@@ -1242,6 +1367,7 @@ def main(argv=None):
     pg = None
     try:
         artifact = Artifact(args.manifest)
+        require_command_allowed(artifact.manifest["environment"], args.command)
         target = Target(args.target, artifact)
         pg = Postgres(target.data["postgres"])
         Runner(artifact, target, args.state_dir, pg, ClickHouse(target.data["clickhouse"])).run(args.command)
