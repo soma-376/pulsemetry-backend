@@ -24,6 +24,8 @@ dependencies {
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
 	// 분석 테이블(ClickHouse) 스키마를 테스트 저장소에 세운다. 운영에서는 ingest 가 적용한다.
 	testImplementation(project(":libs:telemetry-persistence"))
+	// 새 producer 버전의 원본 이벤트가 정규화·저장 뒤 실제 조회 합계에 들어오는지 검증한다.
+	testImplementation(libs.opentelemetry.proto)
 	testImplementation(libs.testcontainers.postgresql)
 	// ClickHouse 는 GenericContainer 로 띄운다 — 전용 모듈은 JDBC 드라이버를 요구한다.
 	testImplementation(libs.testcontainers)

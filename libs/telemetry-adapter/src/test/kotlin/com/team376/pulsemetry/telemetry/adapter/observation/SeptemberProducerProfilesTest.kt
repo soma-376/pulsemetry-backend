@@ -1,8 +1,7 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
-import com.team376.pulsemetry.telemetry.adapter.observation.claudecode.ClaudeApiProfile
-import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexCompletedProfile
-import com.team376.pulsemetry.telemetry.adapter.observation.pricing.CurrentPublicPrices
+import com.team376.pulsemetry.telemetry.adapter.observation.claudecode.ClaudeCodeProfile
+import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProfileRegistry
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
 import io.opentelemetry.proto.common.v1.AnyValue
@@ -22,7 +21,7 @@ class SeptemberProducerProfilesTest {
 
 	private val time = 1_788_192_000_123_456_789L
 	private val pipeline = ObservationPipeline(
-		ObservationNormalizer(ProfileRegistry(listOf(ClaudeApiProfile, CodexCompletedProfile))),
+		ObservationNormalizer(ProfileRegistry(listOf(ClaudeCodeProfile, CodexProfile))),
 		com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage(),
 	)
 	private fun text(key: String, value: String): KeyValue =
@@ -90,14 +89,14 @@ class SeptemberProducerProfilesTest {
 
 	@ParameterizedTest
 	@CsvSource("0.158.0-alpha.2.1,1035", "0.159.2,1103")
-	fun supportDoesNotExpandToOtherEmittersSurfacesOrErrorRows(version: String, line: Int) {
+	fun emitterAndSurfaceDoNotChangeContractButErrorConflictRemainsRejected(version: String, line: Int) {
 		val emitter = "event otel/src/events/session_telemetry.rs:$line"
 		val wrongEmitter = run(version, codex("event otel/src/events/session_telemetry.rs:9999"), "codex-app-server")
 		val cli = run(version, codex(emitter), "codex_cli_rs")
 		for (result in listOf(wrongEmitter, cli)) {
-			assertThat(result.envelope.mappingStatus).isEqualTo(MappingStatus.GENERIC)
-			assertThat(result.envelope.usageRole).isEqualTo(UsageRole.NONE)
-			assertThat(result.costEstimatedUsd).isNull()
+			assertThat(result.envelope.mappingStatus).isEqualTo(MappingStatus.MAPPED)
+			assertThat(result.envelope.usageRole).isEqualTo(UsageRole.PRIMARY)
+			assertThat(result.costEstimatedUsd).isEqualByComparingTo("0.001665")
 		}
 		val conflicting = codex(emitter).toBuilder().addAttributes(text("error.message", "synthetic-error")).build()
 		val result = run(version, conflicting, "codex-app-server")
@@ -107,12 +106,8 @@ class SeptemberProducerProfilesTest {
 	}
 
 	@Test
-	fun unrelatedSignalsAndVersionsStayUnverified() {
-		assertThat(ClaudeApiProfile.spans).isNull()
-		assertThat(ClaudeApiProfile.metrics).isNull()
-		assertThat(CodexCompletedProfile.spans).isNull()
-		assertThat(CodexCompletedProfile.metrics).isNull()
+	fun unrelatedEventsDoNotBecomePrimaryAndNewVersionKeepsContract() {
 		assertThat(run("2.1.285", claude("subagent_completed"), "claude-code").envelope.usageRole).isEqualTo(UsageRole.NONE)
-		assertThat(run("2.1.286", claude(), "claude-code").envelope.mappingStatus).isEqualTo(MappingStatus.GENERIC)
+		assertThat(run("2.1.286", claude(), "claude-code").envelope.mappingStatus).isEqualTo(MappingStatus.MAPPED)
 	}
 }

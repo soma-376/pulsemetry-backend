@@ -1,5 +1,8 @@
 # codex/real — Codex 실수신 캡처 익명화 추출본
 
+ADR 0074에 따라 현재 기대값은 producer 버전·surface·emitter가 아닌 등록된 이벤트 계약을 적용한다.
+Desktop의 같은 로그·스팬·메트릭도 기존 계약을 따르며 스팬/메트릭 사용량을 로그 primary에 합산하지 않는다.
+
 **실캡처 익명화 — 합성 아님.** 실제 Codex producer 가 로컬 OTLP 수집기로 보낸 export 를 골라 익명화했다.
 실제 wire 모양(속성 키·wire 타입·분기·push 묶음)이 목적이고, 값의 내용은 믿을 대상이 아니다.
 

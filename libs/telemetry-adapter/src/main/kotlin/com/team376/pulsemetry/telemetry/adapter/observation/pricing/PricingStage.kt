@@ -4,6 +4,7 @@ import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
 import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
 import com.team376.pulsemetry.telemetry.adapter.observation.EventType
 import com.team376.pulsemetry.telemetry.adapter.observation.OutputSemantics
+import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
 import java.math.BigDecimal
 
 /** 실제 계정의 청구 조건이 아니라 출처를 명시한 참조 단가 평가의 고정 기준이다. */
@@ -85,6 +86,7 @@ public class PricingStage(private val catalog: PricingCatalog = CodeburnReferenc
 
 	private fun estimate(o: EventObservation): BigDecimal? {
 		if (o.eventType != EventType.MODEL_RESPONSE_USAGE) return null
+		if (QualityFlag.DERIVED_VALUE_INVALID in o.envelope.qualityFlags) return null
 		if (o.outputSemantics != OutputSemantics.INCLUSIVE_REASONING_TOOL) return null
 		val model = o.envelope.model ?: return null
 		val semantics = o.semanticsProfile ?: return null

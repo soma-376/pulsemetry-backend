@@ -2,6 +2,7 @@ package com.team376.pulsemetry.telemetry.config
 
 import com.team376.pulsemetry.telemetry.observability.MicrometerTelemetryObserver
 import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -15,8 +16,12 @@ class ObservabilityConfigTest {
     fun observerFollowsTheSwitch() {
         val registry = SimpleMeterRegistry()
         assertThat(ObservabilityConfig(MockEnvironment()).telemetryObserver(registry)).isInstanceOf(MicrometerTelemetryObserver::class.java)
+        assertThat(registry.get(TelemetryMetric.PIPELINE_USAGE_CONTRACT.meterName).counters()).hasSize(8)
+            .allSatisfy { assertThat(it.count()).isZero() }
         val off = MockEnvironment().withProperty(ObservabilityConfig.ENABLED, "false")
-        assertThat(ObservabilityConfig(off).telemetryObserver(registry)).isSameAs(TelemetryObserver.NONE)
+        val disabledRegistry = SimpleMeterRegistry()
+        assertThat(ObservabilityConfig(off).telemetryObserver(disabledRegistry)).isSameAs(TelemetryObserver.NONE)
+        assertThat(disabledRegistry.find(TelemetryMetric.PIPELINE_USAGE_CONTRACT.meterName).counters()).isEmpty()
     }
 
     @Test

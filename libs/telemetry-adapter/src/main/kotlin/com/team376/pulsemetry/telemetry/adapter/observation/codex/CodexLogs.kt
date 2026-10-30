@@ -69,7 +69,7 @@ internal object CodexLogs : LogProfile {
 		val fields = FieldReader(view.attributes)
 		val mapped = when (name) {
 			"codex.sse_event" -> sse(fields, common(fields, base))
-			"codex.api_request" -> apiRequest(fields, view, common(fields, base))
+			"codex.api_request" -> apiRequest(fields, common(fields, base))
 			"codex.websocket_connect" -> websocketConnect(fields, common(fields, base))
 			"codex.websocket_request" -> websocketRequest(fields, common(fields, base))
 			"codex.tool_result" -> toolResult(fields, common(fields, base))
@@ -110,7 +110,7 @@ internal object CodexLogs : LogProfile {
 			else -> return null
 		}
 		val observation = mapped.withFlags(*fields.flags.toTypedArray())
-		return MappedEvent(observation, CodexTokenSemantics.forCompleted(observation, view.eventName))
+		return MappedEvent(observation, CodexTokenSemantics.forCompleted(observation))
 	}
 
 	/** 모든 매핑 행의 공통 몫 — 의미 확인, 세션, 세션 모델. */
@@ -129,7 +129,7 @@ internal object CodexLogs : LogProfile {
 	/**
 	 * `codex.sse_event` 의 네 분기(ADR 0020 부록 A.3) — 위에서부터 처음 맞는 것.
 	 *
-	 * 기준 키는 `event.kind` 다. 이 버전들의 SSE 로그는 `kind` 를 내지 않으므로 alias 로 읽지 않는다 — 다른 값으로
+	 * 기준 키는 `event.kind` 다. 등록한 SSE 계약은 `kind` 를 alias 로 읽지 않는다 — 다른 값으로
 	 * 함께 오면 `ambiguous_attribute` 이고 완료를 확인하지 못한 것으로 본다. `tool_token_count` 는 tool 성분이 아니라
 	 * 응답의 사용량 총계라 `tokens_total_reported` 다(근거 문서 3).
 	 */
@@ -183,22 +183,15 @@ internal object CodexLogs : LogProfile {
 	}
 
 	/**
-	 * `codex.api_request` → `transport.request.attempt`(ADR 0020 부록 A.2). `operation` 은 등록한 소스 위치로만 정한다 —
-	 * 모델 목록 emitter 는 `models_list`, 세션 emitter 는 여러 요청 경로가 공유하므로 그 위치의 `endpoint` 가
-	 * `/responses` 일 때만 `responses` 다. 위치가 등록되지 않았거나 경로가 다르면 `unknown`. 세션·success 유무로
-	 * 추론하지 않는다. 모델 목록 emitter 의 `success` 만 bool 로 오고, 세션 emitter 는 `success` 를 내지 않는다(null).
+	 * `codex.api_request` → `transport.request.attempt`(ADR 0074). 명시한 endpoint 계약만 operation으로 분류한다.
+	 * 소스 위치·버전·세션·success 유무로 경로를 추정하지 않는다. 경로가 없거나 미등록이면 unknown이다.
 	 */
-	private fun apiRequest(fields: FieldReader, view: LogRecordView, common: EventObservation): EventObservation {
+	private fun apiRequest(fields: FieldReader, common: EventObservation): EventObservation {
 		val endpoint = fields.text("endpoint")
-		val operation = when (CodexLocations.apiRequestEmitter(common.envelope.serviceVersion, view.eventName)) {
-			CodexLocations.ApiRequestEmitter.MODELS_LIST -> if (endpoint == null || endpoint == MODELS_ENDPOINT) {
-				Operation.MODELS_LIST
-			} else {
-				// 위치와 경로가 서로 다른 요청을 가리킨다 — 어느 쪽도 고르지 않는다.
-				return request(fields, common, Operation.UNKNOWN, BoolWire.BOOL).withFlags(QualityFlag.AMBIGUOUS_ATTRIBUTE)
-			}
-			CodexLocations.ApiRequestEmitter.SESSION_REQUEST -> if (endpoint == RESPONSES_ENDPOINT) Operation.RESPONSES else Operation.UNKNOWN
-			null -> Operation.UNKNOWN
+		val operation = when (endpoint) {
+			MODELS_ENDPOINT -> Operation.MODELS_LIST
+			RESPONSES_ENDPOINT -> Operation.RESPONSES
+			else -> Operation.UNKNOWN
 		}
 		return request(fields, common, operation, BoolWire.BOOL)
 	}

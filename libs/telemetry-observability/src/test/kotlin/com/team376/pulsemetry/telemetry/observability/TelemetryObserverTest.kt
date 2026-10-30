@@ -10,6 +10,23 @@ import java.nio.file.Path
 
 class TelemetryObserverTest {
     @Test
+    fun usageContractLabelsAreFiniteAndNeverContainSourceMetadata() {
+        PrometheusMeterRegistry(PrometheusConfig.DEFAULT).let { registry ->
+            val observer = MicrometerTelemetryObserver(registry)
+            observer.observe(TelemetryMetric.PIPELINE_USAGE_CONTRACT, 3.0, "product" to "codex", "outcome" to "compatible")
+            observer.observe(TelemetryMetric.PIPELINE_USAGE_CONTRACT, 1.0, "product" to "claude_code", "outcome" to "invalid")
+            repeat(100) {
+                observer.observe(TelemetryMetric.PIPELINE_USAGE_CONTRACT, 1.0, "product" to "CANARY-product-$it", "outcome" to "CANARY-outcome-$it",
+                    "version" to "CANARY-version-$it", "model" to "CANARY-model-$it", "tenant" to "CANARY-tenant-$it")
+            }
+            assertThat(registry.get(TelemetryMetric.PIPELINE_USAGE_CONTRACT.meterName).counters()).hasSize(3)
+            assertThat(registry.scrape()).contains("pulsemetry_pipeline_usage_contract_total", "product=\"codex\"", "outcome=\"invalid\"")
+                .doesNotContain("CANARY", "version=", "model=", "tenant=")
+            registry.close()
+        }
+    }
+
+    @Test
     fun prometheusContractAndBoundedLabels() {
         PrometheusMeterRegistry(PrometheusConfig.DEFAULT).let { registry ->
             val observer = MicrometerTelemetryObserver(registry)

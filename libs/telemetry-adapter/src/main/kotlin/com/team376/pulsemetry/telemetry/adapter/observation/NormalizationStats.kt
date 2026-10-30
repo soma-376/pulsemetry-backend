@@ -5,13 +5,21 @@ package com.team376.pulsemetry.telemetry.adapter.observation
  *
  * 이 값이 구조화 로그와 수신 ledger 의 `record_count`·`rejected_count`·`source_time_min/max` 의 재료다
  * (ADR 0021 §1). **`rejected_count` 는 분석 테이블에 넣지 않은 레코드 수**다 — `source_time` 을 얻지 못한 것과
- * 스팬 허용 목록 밖으로 버린 것을 합친다. 메트릭 라이브러리로 내보내지 않는다.
+ * 스팬 허용 목록 밖으로 버린 것을 합친다. 사용량 계약 진단은 이 거부 수와 분리하며 앱이 운영 observer로 내보낸다.
  *
  * 단일 스레드에서 한 번의 정규화가 채우고, 끝나면 읽기만 한다.
  */
 public class NormalizationStats {
 
 	private val rejections = sortedMapOf<SourceTimeRejection, Int>()
+	private val usageContracts = linkedMapOf<UsageContractResult, Int>()
+
+	/** 사용량 후보의 계약 결과. 저장 제외 수와 별개이며 제품·결과는 유한 어휘다. */
+	public val usageContractResults: Map<UsageContractResult, Int> get() = usageContracts.toMap()
+
+	internal fun recordUsageContract(observation: EventObservation) {
+		usageContracts.merge(UsageContractDiagnostics.classify(observation), 1, Int::plus)
+	}
 
 	/** 받은 레코드 수 — 로그 레코드·스팬·metric point. */
 	public var received: Int = 0

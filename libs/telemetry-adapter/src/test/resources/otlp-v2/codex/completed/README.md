@@ -1,4 +1,4 @@
-# Codex 0.162.0-alpha.17.2 — 확인된 완료 로그 범위
+# Codex 완료 로그 계약 — 0.162.0-alpha.17.2 캡처와 경계 사례
 
 이 디렉터리의 `logs-*.otlp.jsonl`은 실제 로컬 OTLP file exporter에서 선택한 **1개 완료 레코드의 익명화본**이다. `synthetic-*`는 그 사본의 버전·표면·위치·필드·wire 타입만 바꾼 경계 사례다. 기대값은 원본 성분과 ADR 0020 §4·부록 A.3에서 썼으며 구현 출력으로 생성하지 않았다.
 
@@ -13,7 +13,7 @@
 
 ## 소스 대조
 
-공개 openai/codex 소스 커밋 `cec8c6fb876e90b20250ec740e970e3f33b7396f`와 로컬 태그 `rust-v0.162.0-alpha.18`의 `codex-rs/otel/src/events/session_telemetry.rs:1131–1149`에서 `sse_event_completed`를 확인했다. 이 공개 커밋이 배포 빌드 전체와 동일하다고 주장하지 않는다. 실제 캡처의 emitter 문자열 `event otel/src/events/session_telemetry.rs:1132`와 완료 분기·아래 필드·wire 타입이 일치하는 **그 로그만** 지원한다. `CodexCompletedProfile`은 정확한 버전·APP_SERVER·event.name·event.kind·emitter를 모두 제한한다. 다른 로그, CLI, Desktop, 스팬, 메트릭을 검증 완료로 확장하지 않는다.
+공개 openai/codex 소스 커밋 `cec8c6fb876e90b20250ec740e970e3f33b7396f`와 로컬 태그 `rust-v0.162.0-alpha.18`의 `codex-rs/otel/src/events/session_telemetry.rs:1131–1149`에서 `sse_event_completed`를 확인했다. 이 공개 커밋이 배포 빌드 전체와 동일하다고 주장하지 않는다. 실제 캡처의 완료 분기·아래 필드·wire 타입은 기존 계약의 예시다. ADR 0074에 따라 버전·APP_SERVER/CLI/Desktop·emitter는 허용 조건이 아니며 단일 `CodexProfile`이 등록된 이벤트 계약을 해석한다.
 
 | 필드 | 확인한 emitter 값 | 실제 wire / 저장 필드 |
 |---|---|---|
@@ -31,6 +31,6 @@ ADR 0061과 [PROFILE-EVIDENCE.md 10절](../PROFILE-EVIDENCE.md#10-2026-10-16-res
 
 ## 회귀 경계
 
-실캡처 1개에 더해 미래/다른 버전, Desktop, CLI, 다른 로그, 다른 emitter, 완료 아닌 이벤트는 generic으로 남는다. int로 바뀐 input 및 음수는 해당 성분만 null + invalid_measurement, 충돌 alias는 primary가 아니며, 토큰+오류는 ambiguous diagnostic, 명시적 0은 유효한 보고, 토큰 없는 완료는 stream event다. 스팬·메트릭 프로파일은 null이다. 과거 프로파일 테스트는 그대로 유지한다.
+실캡처 1개에 더해 미래/다른 버전·Desktop·CLI·다른 emitter에서도 같은 완료 계약이 매핑됨을 검증한다. 완료 아닌 분기는 사용량이 아니며 다른 등록 로그는 그 고유 계약으로 매핑된다. int로 바뀐 input 및 음수는 해당 성분만 null + invalid_measurement, 충돌 alias는 primary가 아니며, 토큰+오류는 ambiguous diagnostic, 명시적 0은 유효한 보고, 토큰 없는 완료는 stream event다.
 
-토큰 의미는 ADR 0061, 가격은 ADR 0060을 따른다. mapping_version은 `codex-completed-v2`다. observation ID 버전은 바꾸지 않아 같은 입력 재처리는 더 높은 row_version으로 교체된다.
+토큰 의미는 ADR 0061·0074, 가격은 ADR 0060을 따른다. mapping_version은 `codex-event-contract-v1`다. observation ID 버전은 바꾸지 않아 같은 입력 재처리는 더 높은 row_version으로 교체된다.

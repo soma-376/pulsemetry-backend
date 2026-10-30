@@ -19,6 +19,7 @@ public enum class TelemetryMetric(public val meterName: String, public val kind:
     PIPELINE_INFLIGHT("pulsemetry.pipeline.inflight", Kind.GAUGE),
     PIPELINE_EMPTY("pulsemetry.pipeline.empty", Kind.COUNTER, "signal"),
     PIPELINE_EXCLUDED_OBSERVATIONS("pulsemetry.pipeline.excluded.observations", Kind.COUNTER, "reason"),
+    PIPELINE_USAGE_CONTRACT("pulsemetry.pipeline.usage.contract", Kind.COUNTER, "product", "outcome"),
     CLOCK_SKEW("pulsemetry.pipeline.clock.skew", Kind.COUNTER),
     CLICKHOUSE_REQUESTS("pulsemetry.clickhouse.requests", Kind.COUNTER, "operation", "table", "outcome"),
     CLICKHOUSE_REQUEST_DURATION("pulsemetry.clickhouse.request.duration", Kind.TIMER, "operation", "table", "outcome"),

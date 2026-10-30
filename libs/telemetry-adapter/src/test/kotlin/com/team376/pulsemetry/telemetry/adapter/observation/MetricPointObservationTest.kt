@@ -4,7 +4,6 @@ import com.team376.pulsemetry.telemetry.adapter.observation.profile.MetricPointV
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.MetricProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProductProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProfileRegistry
-import com.team376.pulsemetry.telemetry.adapter.observation.profile.VersionSet
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
 import io.opentelemetry.proto.common.v1.AnyValue
 import io.opentelemetry.proto.common.v1.KeyValue
@@ -323,7 +322,6 @@ class MetricPointObservationTest {
 	/** 테스트 전용 — 모든 metric 을 token.usage 로 매핑한다. 실제 Claude 매핑이 아니다. */
 	private class TestClaudeMetrics(role: UsageRole) : ProductProfile {
 		override val product = Product.CLAUDE_CODE
-		override val versions = VersionSet.ANY
 		override val mappingVersion = "test-claude-v1"
 		override val logs = null
 		override val spans = null

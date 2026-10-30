@@ -9,7 +9,6 @@ import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProductProfi
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProfileRegistry
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.SpanProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.SpanView
-import com.team376.pulsemetry.telemetry.adapter.observation.profile.VersionSet
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
 import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest
@@ -337,6 +336,17 @@ class ObservationNormalizerTest {
 	}
 
 	@Test
+	fun registryRejectsShadowingAndUnknownProductContracts() {
+		org.assertj.core.api.Assertions.assertThatThrownBy { ProfileRegistry(listOf(TestCodexProfile, TestCodexProfile)) }
+			.isInstanceOf(IllegalArgumentException::class.java)
+		val unknown = object : ProductProfile by TestCodexProfile { override val product = Product.UNKNOWN }
+		org.assertj.core.api.Assertions.assertThatThrownBy { ProfileRegistry(listOf(unknown)) }
+			.isInstanceOf(IllegalArgumentException::class.java)
+		assertThat(ProfileRegistry(listOf(TestCodexProfile)).find(Product.CODEX)).isSameAs(TestCodexProfile)
+		assertThat(ProfileRegistry(listOf(TestCodexProfile)).find(Product.UNKNOWN)).isNull()
+	}
+
+	@Test
 	@DisplayName("파이프라인 순서 — 매핑 → 파생 토큰 → 가격 → hash. 가격이 바뀌면 hash 도 바뀐다")
 	fun pipelineOrder() {
 		val registry = ProfileRegistry(listOf(TestCodexProfile))
@@ -367,7 +377,6 @@ class ObservationNormalizerTest {
 	/** 테스트 전용 Codex 프로파일 — 이름 두 개와 스팬 하나만 안다. 실제 Codex 매핑이 아니다. */
 	private object TestCodexProfile : ProductProfile {
 		override val product = Product.CODEX
-		override val versions = VersionSet.ANY
 		override val mappingVersion = "test-codex-v1"
 		override val metrics = null
 		override val logs = object : LogProfile {

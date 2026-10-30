@@ -29,6 +29,8 @@ import com.team376.pulsemetry.telemetry.enricher.observation.ObservationEnricher
 import com.team376.pulsemetry.telemetry.enricher.provider.AiAnalysisProvider
 import com.team376.pulsemetry.telemetry.enricher.provider.GithubProvider
 import com.team376.pulsemetry.telemetry.enricher.provider.JiraProvider
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
 import io.opentelemetry.proto.common.v1.AnyValue
 import io.opentelemetry.proto.common.v1.KeyValue
@@ -298,16 +300,33 @@ class IngestPipelineTest {
 
 	private fun observationPipeline() = ObservationPipeline(ObservationNormalizer(ProfileRegistry(listOf(ClaudeCodeProfile))))
 
+	@Test
+	fun contractMismatchIsObservedWithoutTurningStoredRowsIntoDroppedRecords() {
+		val outcomes = mutableListOf<Pair<Double, Map<String, String>>>()
+		val observer = TelemetryObserver { metric, count, tags ->
+			if (metric == TelemetryMetric.PIPELINE_USAGE_CONTRACT) outcomes += count to tags.toMap()
+		}
+		val pipeline = pipeline(observer = observer)
+		requests.clear()
+		// 이름은 사용량 후보지만 토큰 성분이 없는 원문이다. 0으로 보완하지 않고 저장·진단한다.
+		pipeline.consume(Signal.LOGS, oneApiRequest(), receipt())
+		assertThat(outcomes).containsExactly(1.0 to mapOf("product" to "claude_code", "outcome" to "incomplete"))
+		assertThat(requests.filter { it.startsWith("INSERT") }).hasSize(1)
+		assertThat(operations.loaded).hasSize(1)
+		assertThat(operations.unloaded).isEmpty()
+	}
+
 	private fun pipeline(
 		startupAttempts: Int = 1,
 		normalize: (Message, ObservationContext) -> ObservationBatch = observationPipeline()::run,
 		boundaries: RetentionBoundaries = RetentionBoundaries { AnalysisWriteBoundary(it, deletedBefore = null, policyEpoch = 0) },
+		observer: TelemetryObserver = TelemetryObserver.NONE,
 	): IngestPipeline {
 		val client = ClickHouseHttpClient("http://127.0.0.1:${server.address.port}")
 		val schema = ClickHouseSchema(ClickHouseSchemaMigrator(client), startupAttempts = startupAttempts, startupBackoff = Duration.ZERO)
 		if (startupAttempts > 0) schema.afterPropertiesSet()
 		val enricher = ObservationEnricher(installations, memberships, listOf(GithubProvider(), JiraProvider(), AiAnalysisProvider()))
-		return IngestPipeline(normalize, enricher, TelemetryEventsSink(client), TelemetryMetricPointsSink(client), schema, boundaries, operations)
+		return IngestPipeline(normalize, enricher, TelemetryEventsSink(client), TelemetryMetricPointsSink(client), schema, boundaries, operations, observer)
 	}
 
 	private class RecordingOperations : IngestOperations {
