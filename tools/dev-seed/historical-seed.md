@@ -9,6 +9,31 @@
 
 ## 실행 파일과 입력
 
+격리 perf에서는 `perf_seed_monitor.py`가 현재 importer의 압력 관측 계약을 생성한다.
+기존 dev 실행의 baseline·latch·관측 경로를 복사하지 않는다. manifest·target·원천 증거를 검증하고,
+증거에 연결된 실제 Pod UID·StatefulSet UID·이미지·컨테이너 시작 시각과 ClickHouse 서버·원천 table UUID를 대조한다.
+`target.monitorFile`은 새 출력 디렉터리의 `monitor.json` 절대 경로여야 하며 `monitorLatency`는 지정하지 않는다.
+
+```sh
+python3 tools/dev-seed/perf_seed_monitor.py \
+  --manifest /absolute/path/perf-artifact/manifest.json \
+  --target /absolute/path/perf-target.json \
+  --kubeconfig /absolute/path/perf-kubeconfig \
+  --output /absolute/path/new-perf-monitor --duration 3600
+```
+
+이 도구는 DB에 쓰지 않는다. `system.parts` 개수의 고정 읽기 요청을 10번 워밍업 후 30번 측정하여
+client 경과시간 p95를 한 번 고정한다. 이후 다섯 요청의 중앙값을 사용하며 이 값은 제품 조회 성능 SLO가 아니다.
+고정 기준의 2배 지연, 메모리 working set 75%, `memory.events` 증가, 컨테이너/limit 변경, 새 ClickHouse 오류에서
+즉시 latch하고 importer가 다음 batch를 시작하지 못하게 한다. 두 표본 사이의 대기 구간도 오류 조회에 포함한다.
+DB 요청은 고정 SELECT·`readonly=2`(쓰기 금지와 고정 timeout 설정 허용), 결과/시간 상한을 사용하며 redirect·ambient proxy를 거부한다.
+`kubectl get/logs`와 고정된 cgroup 파일 읽기만 수행한다. 오류 로그 원문·인증정보는 결과에 남기지 않는다.
+
+새 디렉터리만 만들고 baseline·표본·실패 latch를 0600으로 보존한다. 표본은 최대 40초 동안 유효하며 수집 실패나
+정상 종료 시 현재 표본을 제거해 과거 정상값이 남지 않게 한다. latch를 지우거나 기준을 자동 재계산하는 기능은 없다.
+중단 원인을 확인한 뒤 기존 importer의 checkpoint·고정 압력 기준과 함께 재개 여부를 결정한다.
+이 모니터는 perf seed 보호용이며 k6 발생기 관측·디스크 하한·최종 저장 검증을 대신하지 않는다.
+
 추가 Python 패키지는 필요 없다. Python 3.9 이상과 이미 설치된 `psql`을 사용한다.
 Kotlin의 `historical-plan`으로 만든 `manifest.json`, `postgres.json`, 월별 배치 JSONL을 한 디렉터리로 보존한다.
 manifest는 환경·기간·스냅샷 시각·조직 ID·OIDC 공개 연결·각 파일의 SHA-256을 고정한다.
