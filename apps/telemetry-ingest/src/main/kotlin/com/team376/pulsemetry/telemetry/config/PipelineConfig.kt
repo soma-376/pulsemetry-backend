@@ -7,11 +7,8 @@ import com.team376.pulsemetry.persistence.telemetry.TelemetryMetricPointsSink
 import com.team376.pulsemetry.persistence.telemetryops.TenantRetentionBoundaryStore
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationNormalizer
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationPipeline
-import com.team376.pulsemetry.telemetry.adapter.observation.claudecode.ClaudeApiProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.claudecode.ClaudeCodeProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexProfile
-import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexCompletedProfile
-import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexDesktopCompletedProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProfileRegistry
 import com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage
 import com.team376.pulsemetry.telemetry.collector.OtlpIngestHandler
@@ -49,7 +46,7 @@ class PipelineConfig {
 	@Bean
 	fun observationPipeline(properties: TelemetryIngestProperties): ObservationPipeline =
 		ObservationPipeline(
-			ObservationNormalizer(ProfileRegistry(listOf(CodexProfile, CodexCompletedProfile, CodexDesktopCompletedProfile, ClaudeCodeProfile, ClaudeApiProfile))),
+			ObservationNormalizer(ProfileRegistry(listOf(CodexProfile, ClaudeCodeProfile))),
 			PricingStage(),
 		)
 

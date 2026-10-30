@@ -50,6 +50,7 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 | `pulsemetry_pipeline_inflight` | 없음 | 실행 중 listener 수. ingest에만 있다 |
 | `pulsemetry_pipeline_empty_total` | signal | decode 후 레코드가 없는 push |
 | `pulsemetry_pipeline_excluded_observations_total` | reason | source_time·excluded_span·retention 사유 제외 수. 재시도 때 다시 셀 수 있음 |
+| `pulsemetry_pipeline_usage_contract_total` | product,outcome | 명시 사용량 후보의 계약 검사 결과. product는 codex·claude_code, outcome은 compatible·incomplete·invalid·unverified. 정규화 시도마다 세며 저장 성공·고유 관측·폐기 수가 아님(ADR 0074) |
 | `pulsemetry_pipeline_clock_skew_total` | 없음 | 음수 age를 버린 수. 음수를 0초 성공으로 기록하지 않음 |
 | `pulsemetry_clickhouse_requests_total` | operation,table,outcome | HTTP 요청의 success·permanent_error·transient_error. operation은 insert/select/delete/schema, 분류하지 않은 호출만 other. table은 telemetry_events·telemetry_metric_points·telemetry_ingest_ledger·telemetry_retention_fence, 그 밖은 other |
 | `pulsemetry_clickhouse_request_duration_seconds` | operation,table,outcome | ClickHouse HTTP 왕복 시간 |
@@ -57,7 +58,7 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 
 `completed`에는 빈 push와 모든 관측이 제외된 push도 포함된다. 영구 거부는 정상 반환해 offset을 확정하지만 completed가 아니다. 소진한 일시 실패도 오류 처리기가 확정하므로 offset 전진만으로 처리 성공을 주장하지 않는다. commit 실패로 같은 record를 다시 처리하면 attempts와 rows submitted가 다시 증가할 수 있다. 두 분석 테이블과 ops 기록은 하나의 트랜잭션이 아니다.
 
-재시도 소진·commit 실패 counter는 실패 전부터 0으로 있다. Prometheus `increase()`는 처음 보인 series의 첫 값을 증가로 세지 않아서, 첫 실패 때 counter를 만들면 단발 실패가 Infra 경보와 대시보드에서 0이 된다. 새 Pod가 첫 scrape 전에 실패하는 경우는 Infra 경보식이 새 series로 잡는다. 나머지 counter는 처음 실패할 때 생기므로, 각 series의 첫 값은 `increase()`에 잡히지 않는다.
+재시도 소진·commit 실패 counter와 ingest의 사용량 계약 8개 조합(제품 2개 × 결과 4개)은 사건 전부터 0으로 있다. Prometheus `increase()`는 처음 보인 series의 첫 값을 증가로 세지 않아서, 첫 실패 때 counter를 만들면 단발 실패가 Infra 경보와 대시보드에서 0이 된다. 새 Pod가 첫 scrape 전에 실패하는 경우는 Infra 경보식이 새 series로 잡는다. 나머지 counter는 처음 실패할 때 생기므로, 각 series의 첫 값은 `increase()`에 잡히지 않는다.
 
 Gateway의 **200은 Kafka 접수**, pipeline completed는 **시도 완료**, ClickHouse success는 **INSERT HTTP 성공**이다. 적재 완전성은 기대 `observation_id` 집합과 `FINAL` 논리 행을 별도 대조해야 한다. 현재 meter는 persisted/E2E counter를 만들지 않는다. 비동기 age는 Gateway와 ingest의 벽시계 차이에도 영향을 받는다. 순수 stage duration은 `System.nanoTime()`을 쓴다.
 
@@ -166,3 +167,9 @@ python3 -m unittest discover -s scripts/observability-smoke -p 'test_*.py'
 dev는 Strimzi/mTLS로 전환했고 기존 MSK와 전용 리소스는 철거했다([PROJ-285](https://team376.atlassian.net/browse/PROJ-285), [infra #85](https://github.com/soma-376/infra/pull/85)). 실제 Gateway ACK→Kafka record→consumer commit→ClickHouse와 sampled 요청의 producer/consumer 연결·ClickHouse child span·두 서비스의 Loki 로그를 확인했다. 30분 안정화 공개 요청 31회는 모두 HTTP 200·ClickHouse 논리 행·해당 record 이후 commit을 확인했지만 모든 요청이 sampled된 것은 아니다.
 
 PROJ-191·255·256의 관측 인수 결과와 남은 검증은 [infra 관측 런북](https://github.com/soma-376/infra/blob/develop/docs/runbooks/dev-observability.md)을 따른다. 위 배포 증거는 ADR 0069의 Proposed 상태를 변경하거나 최대 처리량·SLO·과거 전체 데이터 보존을 입증하지 않는다.
+
+### 사용량 계약 불일치
+
+`pulsemetry_pipeline_usage_contract_total`은 Claude `api_request`, Codex `codex.sse_event`의 완료 또는 토큰 성분이 있는 레코드만 센다. 일반 진행 이벤트·새로운 임의 이름·모르는 제품은 후보로 추정하지 않는다. `compatible`은 필요한 토큰 성분과 파생 산식이 맞는 경우, `incomplete`는 필요한 성분 누락, `invalid`는 타입·중복·오류/사용량 충돌·산식 위반, `unverified`는 알려진 사용량 이름에서 완료 분기나 의미를 확인하지 못한 경우다. 미등록 모델의 가격 없음은 토큰 계약 불일치가 아니다.
+
+버전·source emitter·모델·세션·설치·테넌트·본문을 label에 넣지 않는다. 새 버전에서 불일치가 늘면 `sum by (product, outcome) (increase(pulsemetry_pipeline_usage_contract_total{outcome!="compatible"}[5m]))`로 분류하고 제한된 원천 관측을 별도 조사한다. 이는 정규화 시도 수이며 재시도 때 다시 센다. generic 저장·필드 일부 누락과 전송 실패·폐기를 혼동하지 않고, 실제 저장은 기존 FINAL 대조로 확인한다. 새 Pod의 첫 scrape 이전 사건은 기존 counter와 마찬가지로 단일 increase만으로 확인하지 않는다. 수집 운영 기록(ledger) 설정과 독립적이고 observability off에서는 내보내지 않는다.

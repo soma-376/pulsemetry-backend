@@ -36,6 +36,7 @@ class TokenDerivationAndPricingTest {
 		create: Long? = 0,
 		reasoning: Long? = null,
 		tool: Long? = null,
+		reportedTotal: Long? = null,
 		model: String? = "model-a",
 		eventType: EventType = EventType.MODEL_RESPONSE_USAGE,
 	) = EventObservation(
@@ -49,7 +50,7 @@ class TokenDerivationAndPricingTest {
 		),
 		eventType = eventType,
 		tokensInput = input, tokensOutput = output, tokensCacheRead = read, tokensCacheCreate = create,
-		tokensReasoning = reasoning, tokensTool = tool,
+		tokensReasoning = reasoning, tokensTool = tool, tokensTotalReported = reportedTotal,
 	)
 
 	// ── 파생 토큰 ────────────────────────────────────────────────────────────
@@ -115,13 +116,44 @@ class TokenDerivationAndPricingTest {
 	}
 
 	@Test
-	@DisplayName("포함관계 위반(캐시가 input 보다 큼)은 그 파생값만 null + derived_value_invalid")
+	@DisplayName("포함관계 위반(캐시가 input 보다 큼)은 파생 input과 total을 null로 하고 환산하지 않는다")
 	fun inclusionViolation() {
 		val derived = TokenDerivation.apply(usage(input = 30, read = 40), profile(InputSemantics.INCLUSIVE_CACHE))
 
 		assertThat(derived.tokensInputUncached).isNull()
-		assertThat(derived.tokensTotalDerived).isEqualTo(50)
+		assertThat(derived.tokensTotalDerived).isNull()
 		assertThat(derived.envelope.qualityFlags).containsExactly(QualityFlag.DERIVED_VALUE_INVALID)
+		assertThat(priced(PricingStage(PricingCatalog(listOf(price()))), derived).costEstimatedUsd).isNull()
+	}
+
+	@ParameterizedTest
+	@CsvSource(nullValues = ["null"], value = ["40, null", "null, 40", "20, 20"])
+	@DisplayName("다른 캐시 성분이 미보고여도 보고 성분의 포함관계 위반은 파생 total을 막는다")
+	fun cacheInclusionViolationWithMissingCounterpart(read: Long?, create: Long?) {
+		val derived = TokenDerivation.apply(usage(input = 30, read = read, create = create, reportedTotal = 50), inclusive)
+
+		assertThat(derived.tokensInputUncached).isNull()
+		assertThat(derived.tokensTotalDerived).isNull()
+		assertThat(derived.tokensInput).isEqualTo(30)
+		assertThat(derived.tokensCacheRead).isEqualTo(read)
+		assertThat(derived.tokensCacheCreate).isEqualTo(create)
+		assertThat(derived.tokensTotalReported).isEqualTo(50)
+		assertThat(derived.envelope.qualityFlags).containsExactly(QualityFlag.DERIVED_VALUE_INVALID)
+		assertThat(priced(PricingStage(PricingCatalog(listOf(price()))), derived).costEstimatedUsd).isNull()
+	}
+
+	@ParameterizedTest
+	@CsvSource(nullValues = ["null"], value = ["0, null", "null, 0", "30, null", "null, 30"])
+	@DisplayName("보고 캐시 성분이 input을 넘지 않으면 다른 성분의 누락은 모순으로 단정하지 않는다")
+	fun missingCacheCounterpartRemainsUnknown(read: Long?, create: Long?) {
+		val derived = TokenDerivation.apply(usage(input = 30, read = read, create = create, reportedTotal = 50), inclusive)
+
+		assertThat(derived.tokensInputUncached).isNull()
+		assertThat(derived.tokensTotalDerived).isEqualTo(50)
+		assertThat(derived.tokensCacheRead).isEqualTo(read)
+		assertThat(derived.tokensCacheCreate).isEqualTo(create)
+		assertThat(derived.envelope.qualityFlags).doesNotContain(QualityFlag.DERIVED_VALUE_INVALID)
+		assertThat(priced(PricingStage(PricingCatalog(listOf(price()))), derived).costEstimatedUsd).isNull()
 	}
 
 	@Test
@@ -132,6 +164,47 @@ class TokenDerivationAndPricingTest {
 		assertThat(derived.tokensTotalDerived).isNull()
 		assertThat(derived.tokensInputUncached).isEqualTo(Long.MAX_VALUE)
 		assertThat(derived.envelope.qualityFlags).containsExactly(QualityFlag.DERIVED_VALUE_INVALID)
+		assertThat(priced(PricingStage(PricingCatalog(listOf(price()))), derived).costEstimatedUsd).isNull()
+	}
+
+	@Test
+	@DisplayName("보고 total이 계산 total과 다르면 원천 성분과 유효한 uncached만 보존하고 환산하지 않는다")
+	fun reportedTotalContradiction() {
+		val derived = TokenDerivation.apply(usage(reportedTotal = 121), inclusive)
+
+		assertThat(derived.tokensTotalDerived).isNull()
+		assertThat(derived.tokensInputUncached).isEqualTo(60)
+		assertThat(listOf(derived.tokensInput, derived.tokensOutput, derived.tokensCacheRead, derived.tokensCacheCreate, derived.tokensTotalReported))
+			.containsExactly(100L, 20L, 40L, 0L, 121L)
+		assertThat(derived.envelope.qualityFlags).containsExactly(QualityFlag.DERIVED_VALUE_INVALID)
+		assertThat(priced(PricingStage(PricingCatalog(listOf(price()))), derived).costEstimatedUsd).isNull()
+	}
+
+	@ParameterizedTest
+	@CsvSource(nullValues = ["null"], value = ["21, null", "null, 21"])
+	@DisplayName("output에 포함된 reasoning 또는 tool이 output을 넘으면 파생 total과 환산액을 만들지 않는다")
+	fun includedOutputContradiction(reasoning: Long?, tool: Long?) {
+		val derived = TokenDerivation.apply(usage(reasoning = reasoning, tool = tool), inclusive)
+
+		assertThat(derived.tokensTotalDerived).isNull()
+		assertThat(derived.tokensInputUncached).isEqualTo(60)
+		assertThat(derived.tokensOutput).isEqualTo(20)
+		assertThat(derived.tokensReasoning).isEqualTo(reasoning)
+		assertThat(derived.tokensTool).isEqualTo(tool)
+		assertThat(derived.envelope.qualityFlags).containsExactly(QualityFlag.DERIVED_VALUE_INVALID)
+		assertThat(priced(PricingStage(PricingCatalog(listOf(price()))), derived).costEstimatedUsd).isNull()
+	}
+
+	@Test
+	@DisplayName("계산할 수 없는 total은 보고 total과 비교하지 않으며 누락된 output을 0으로 채우지 않는다")
+	fun missingRequiredComponentIsNotAnArithmeticContradiction() {
+		val derived = TokenDerivation.apply(usage(output = null, reportedTotal = 120, reasoning = 21), inclusive)
+
+		assertThat(derived.tokensTotalDerived).isNull()
+		assertThat(derived.tokensInputUncached).isEqualTo(60)
+		assertThat(derived.tokensTotalReported).isEqualTo(120)
+		assertThat(derived.envelope.qualityFlags).doesNotContain(QualityFlag.DERIVED_VALUE_INVALID)
+		assertThat(priced(PricingStage(PricingCatalog(listOf(price()))), derived).costEstimatedUsd).isNull()
 	}
 
 	@Test
@@ -153,6 +226,31 @@ class TokenDerivationAndPricingTest {
 	@DisplayName("0 은 유효한 측정이다 — output 0 이면 total 은 input 이다")
 	fun zeroIsAMeasurement() {
 		assertThat(TokenDerivation.apply(usage(output = 0), profile(InputSemantics.INCLUSIVE_CACHE)).tokensTotalDerived).isEqualTo(100)
+	}
+
+	@Test
+	@DisplayName("명시한 0과 보고 합계 일치·선택 성분 미보고는 유효한 계약이며 정상 환산한다")
+	fun validReportedZeroAndAbsentOptionalComponents() {
+		val stage = PricingStage(PricingCatalog(listOf(price())))
+		val zero = TokenDerivation.apply(usage(input = 0, output = 0, read = 0, create = 0, reasoning = 0, tool = 0, reportedTotal = 0), inclusive)
+		val reported = TokenDerivation.apply(usage(reportedTotal = 120), inclusive)
+		val absent = TokenDerivation.apply(usage(), inclusive)
+		// reasoning과 tool이 서로 배타적인 성분이라는 근거는 없으므로 둘의 합으로 포함관계를 검증하지 않는다.
+		val overlapping = TokenDerivation.apply(usage(reasoning = 20, tool = 20), inclusive)
+
+		assertThat(zero.tokensTotalDerived).isZero()
+		assertThat(zero.tokensInputUncached).isZero()
+		assertThat(priced(stage, zero).costEstimatedUsd).isEqualByComparingTo(BigDecimal.ZERO)
+		for (derived in listOf(reported, absent, overlapping)) {
+			assertThat(derived.tokensTotalDerived).isEqualTo(120)
+			assertThat(priced(stage, derived).costEstimatedUsd).isEqualByComparingTo("0.000492")
+		}
+		for (derived in listOf(zero, reported, absent, overlapping)) {
+			assertThat(derived.envelope.qualityFlags).doesNotContain(QualityFlag.DERIVED_VALUE_INVALID)
+		}
+		assertThat(absent.tokensTotalReported).isNull()
+		assertThat(absent.tokensReasoning).isNull()
+		assertThat(absent.tokensTool).isNull()
 	}
 
 	@Test
@@ -189,6 +287,16 @@ class TokenDerivationAndPricingTest {
 		val result = priced(PricingStage(PricingCatalog(listOf(price()))))
 
 		assertThat(result.costEstimatedUsd).isEqualByComparingTo("0.000492")
+	}
+
+	@Test
+	@DisplayName("산식 모순이 아닌 다른 필드의 품질 플래그만으로 유효한 성분의 환산을 막지 않는다")
+	fun unrelatedQualityFlagDoesNotSuppressPrice() {
+		val derived = TokenDerivation.apply(usage().withFlags(QualityFlag.INVALID_MEASUREMENT), inclusive)
+
+		assertThat(derived.tokensTotalDerived).isEqualTo(120)
+		assertThat(derived.envelope.qualityFlags).containsExactly(QualityFlag.INVALID_MEASUREMENT)
+		assertThat(priced(PricingStage(PricingCatalog(listOf(price()))), derived).costEstimatedUsd).isEqualByComparingTo("0.000492")
 	}
 
 	@Test

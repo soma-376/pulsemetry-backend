@@ -54,6 +54,7 @@ public class MicrometerTelemetryObserver(
         "status" -> value.takeIf { it in setOf("200", "400", "401", "404", "405", "413", "415", "500", "503") } ?: "other"
         "stage" -> value.takeIf { it in STAGES } ?: "other"
         "outcome" -> value.takeIf { it in OUTCOMES } ?: "other"
+        "product" -> value.takeIf { it in setOf("codex", "claude_code", "unknown") } ?: "unknown"
         "operation" -> PlatformTracing.clickHouseOperation(value)
         "table" -> PlatformTracing.clickHouseTable(value)
         "reason" -> value.takeIf { it in REASONS } ?: "other"
@@ -64,7 +65,7 @@ public class MicrometerTelemetryObserver(
         val DURATION_BUCKETS = listOf(5L, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000).map(Duration::ofMillis).toTypedArray()
         val AGE_BUCKETS = listOf(100L, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000, 300000, 600000).map(Duration::ofMillis).toTypedArray()
         val STAGES = PipelineStage.entries.map { it.label }.toSet() + setOf("authenticate", "request", "publish", "envelope", "pipeline", "process", "commit", "container")
-        val OUTCOMES = setOf("accepted", "rejected", "failed", "acknowledged", "success", "failure", "completed", "permanent_rejected", "transient_failed", "permanent_error", "transient_error")
+        val OUTCOMES = setOf("accepted", "rejected", "failed", "acknowledged", "success", "failure", "completed", "permanent_rejected", "transient_failed", "permanent_error", "transient_error", "compatible", "incomplete", "invalid", "unverified")
         val REASONS = setOf(
             "none", "unavailable", "unexpected", "pipeline_rejected", "commit_failed", "method_not_allowed", "path_unknown", "unsupported_media_type",
             "unsupported_content_encoding", "payload_too_large", "body_too_large", "decompress_failed", "decode_failed", "masking_failed",

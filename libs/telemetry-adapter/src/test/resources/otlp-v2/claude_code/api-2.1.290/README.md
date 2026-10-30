@@ -1,5 +1,7 @@
 # Claude Code 2.1.290 — api_request 확인 범위
 
+**현재 적용은 ADR 0074를 따른다.** 아래 버전 제한 설명은 당시 검증 범위의 기록이다. 단일 `ClaudeCodeProfile`은 producer 버전과 무관하게 알려진 이벤트 계약을 적용한다. fixture 원문은 보존하고, 버전만 다른 사례는 같은 사용량으로, 등록된 다른 이벤트는 해당 타입·사용량 제외 역할로 기대값을 개정했다.
+
 `logs-api-01`부터 `08`은 로컬 OTLP file exporter에서 제한 복사한 실제 `api_request` 8건의 익명화본이다. 원본은 저장소에 넣지 않았다. `scripts/otlp-fixtures/sanitize.py`를 적용하고 `gate.py --source <선택한 원본 사본> <이 디렉터리>`로 개인 식별자·자격 증명·자유 텍스트가 남지 않았음을 검사한다. 모델·버전·토큰·비용·wire 타입·요청 간 세션 관계는 보존했다. 기대값은 구현 출력이 아니라 입력의 성분과 아래 정의로 계산했다.
 
 - 제한 원본 8행 사본 SHA-256: `40911bf3d60d624f1d142afe7c3ed928e218fa581cd20caf3ab32e80e7a7510c`.

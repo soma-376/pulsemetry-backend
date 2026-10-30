@@ -198,6 +198,7 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
 - **`:libs:` 는 Boot starter를 끌지 않지만 조립 앱은 켠다**(ADR 0016). ADR 0011의 검사 대상은
   `:apps:enrollment-api`의 클래스패스다. `:apps:telemetry-ingest`의
   `spring-boot-starter-security`는 규칙 위반이 아니라 의도된 선택이다.
+- **producer 버전을 집계 허용 조건으로 사용하지 않는다**(ADR 0074). 제품별 이벤트 계약의 이름·필드 타입·토큰 의미로 판정하고, 버전·emitter는 진단 정보로 보존한다. 새 버전 지원을 이유로 허용 목록이나 버전별 프로파일을 다시 추가하지 않는다.
 - **정규화 불변 규칙과 `enrichment_json` 승격 금지는 ADR 0017이 소유하고, ADR 0020이 그 일부를 대체했다** —
   규칙 2·4·6을 대체하고 규칙 7의 승격 목록을 `member_id`·`team_id_as_of`·`team_ids_as_of`로 넓혔다. 규칙
   1·3·5·8은 유효하다. KDoc은 규칙을 반복하지 않고 그 번호를 가리킨다. 규칙을 바꾸려면 해당 ADR을 개정하고

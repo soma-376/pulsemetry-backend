@@ -18,7 +18,7 @@ public enum class CacheWriteStatus(override val wire: String) : WireValue {
 /** 프로파일이 적용되는 범위. 범위 밖은 unknown 이다. */
 public data class SemanticsScope(
 	val product: Product,
-	/** producer 이름과 버전(사람이 읽는 서술 — 실제 매칭은 [com.team376.pulsemetry.telemetry.adapter.observation.profile.ProductProfile.versions]). */
+	/** producer 계약의 근거를 설명하는 서술이다. 버전 문자열은 실행 중 매칭 조건이 아니다(ADR 0074). */
 	val producerVersions: String,
 	/** 공급자 범위. 근거가 없으면 "unknown" 이라 적는다. */
 	val provider: String,

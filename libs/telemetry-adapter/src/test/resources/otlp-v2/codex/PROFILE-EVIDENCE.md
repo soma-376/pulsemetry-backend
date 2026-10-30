@@ -1,9 +1,9 @@
 # Codex 프로파일 근거 — 토큰 성분·provider·operation
 
-> **현재 판정(2026-10-16):** 아래 1–9절의 `unknown` 판정은 당시 확인 범위의 기록이다. ADR 0061과
-> [10절](#10-2026-10-16-responses-토큰-의미-검증)이 정확한 완료 emitter에 한해 이를 대체한다.
-> `codex-responses-inclusive-v1`은 입력의 cache read/write 포함, 출력의 reasoning 포함을 확인했다.
-> 실제 provider 식별과 그 밖의 버전·표면·이벤트의 unknown 상태는 유지한다.
+> **현재 판정(2026-10-30, ADR 0074):** 1–13절의 버전·surface·emitter 허용 범위는 당시 검증 이력이다.
+> 현재는 `CodexProfile` 하나가 등록된 이벤트 이름·분기·필드 wire 계약을 적용한다. 버전·소스 행 번호는 선택 조건이 아니다.
+> `codex-responses-inclusive-v1`의 input/cache·output/reasoning 포함관계와 실제 provider의 unknown은 유지한다.
+> 현재 실행 경계와 회귀 검증은 15절, 최근 원천 대조는 14절을 따른다.
 
 Codex producer 가 내보내는 값의 **의미**를 producer 소스로 확인한 기록이다. ADR 0020 부록 C 의 Codex 행이 이
 문서를 근거 경로로 가리킨다. 외부 원천(producer 소스·공식 문서)의 인용은 이 문서에만 둔다.
@@ -448,3 +448,63 @@ input/output/total(`tool_token_count`)은 stringValue, cached/cache-write/reason
 다른 emitter·surface·인접 버전·다른 이벤트/분기·오류 충돌·누락/잘못된 wire·명시0을 검증한다.
 `StoredUsageRepricingTest`는 배포된 normalizer10의 고정 해시를 별도 JVM으로 얻어 무버전 checkpoint를 검증하고,
 현재 금액과 같으면 그대로 유지하며 명시 재평가의 변경 금액만 normalizer11로 교체하는 동작을 검증한다.
+
+## 14. APP_SERVER 0.165.0과 0.166의 확인된 완료 분기
+
+현재 이벤트 계약과 대조한 실제 resource의 예시는
+`service.name=codex-app-server`의 `0.165.0`, `0.166.0`, `0.166.0-alpha.5.1`이다. 이 목록은 실행 중 허용 목록이 아니다.
+실행 바이너리가 데스크톱 앱에 포함됐더라도 resource가 APP_SERVER를 보고하면 그 표면을 유지한다.
+
+### 고정된 공식 소스와 확인 범위
+
+| 버전 | 공식 `openai/codex` 태그 | 고정 commit |
+|---|---|---|
+| 0.165.0 | `rust-v0.165.0` | `360319d8dee62d87e2d59fc0c21805d79519cfed` (13절의 기존 소스 감사) |
+| 0.166.0 | `rust-v0.166.0` | `6ff1e1ca3b30fc8b914720681fcf5fe62e95f856` |
+| 0.166.0-alpha.5.1 | `rust-v0.166.0-alpha.5.1` | `f79b26ccbb3116b052544666a181012fb45dc49b` |
+
+0.166 두 태그를 GitHub에서 commit으로 해석한 뒤 아래 파일의 해당 함수를 직접 대조했다. 경로는 `codex-rs/` 기준이다.
+
+- `otel/src/events/session_telemetry.rs`의 `sse_event_completed`: 두 버전 모두 로그 위치1132에서
+  `codex.sse_event`·`response.completed`와 input/output/total의 string wire, cache read/write/reasoning의 int wire를 기록한다.
+  [stable 소스](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/otel/src/events/session_telemetry.rs#L1131),
+  [alpha 소스](https://github.com/openai/codex/blob/f79b26ccbb3116b052544666a181012fb45dc49b/codex-rs/otel/src/events/session_telemetry.rs#L1131).
+- `codex-api/src/sse/responses.rs`의 `From<ResponseCompletedUsage>`: input/output/total과 cached/cache-write, reasoning을
+  같은 `TokenUsage` 성분으로 옮긴다. 누락된 detail이 기본값0이 되는 한계는 그대로다.
+  [stable 소스](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/codex-api/src/sse/responses.rs#L131),
+  [alpha 소스](https://github.com/openai/codex/blob/f79b26ccbb3116b052544666a181012fb45dc49b/codex-rs/codex-api/src/sse/responses.rs#L129).
+- `core/src/client.rs`의 `ResponseEvent::Completed`는 응답별 usage를 위 emitter로 직접 전달한다.
+  [stable 소스](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/client.rs#L2753),
+  [alpha 소스](https://github.com/openai/codex/blob/f79b26ccbb3116b052544666a181012fb45dc49b/codex-rs/core/src/client.rs#L2723).
+
+13절에서 확인한 Responses input/cache 포함관계와 output/reasoning 포함관계를 그대로 유지하는 emitter다.
+완료 로그만으로 실제 provider·API 정상 종료·청구액·배포 바이너리 전체의 공개 소스 동일성을 증명하지 않는다.
+
+### 실제 wire 대조와 독립 fixture
+
+2026-10-30 로컬 SQLite의 원본 JSONB를 읽기 전용으로 조회하고 프로그램 안에서 서비스·버전·emitter·이벤트 이름·분기·여섯 사용량 필드만 검사했다.
+프롬프트·응답·계정·세션 식별자를 모델 입력이나 fixture로 복사하지 않았다.
+검사 시점 APP_SERVER 완료 로그는 0.165.0 31건, 0.166.0 4건, 0.166.0-alpha.5.1 1,448건이었다.
+모두 emitter1132와 여섯 필드 wire가 기존 정의에 맞았다. 0.166 두 버전은 완료 분기·비음수·total=input+output·read+write≤input·reasoning≤output 검사에서 위반0건이었다.
+이 수치 검사는 의미를 추측하는 근거가 아니라 공식 소스와 wire가 어긋나지 않는지 확인하는 보조 검사다.
+
+[app-server-current/](app-server-current/README.md)는 관측한 구조를 실제 숫자와 분리해 재현한 독립 합성 사례다.
+`CodexEventContractTest`가 정상 산식·관측 ID 보존·임의 버전과 세 surface·변경/누락 emitter·누락/오류/잘못된 wire·명시0·미등록 모델을 검증한다.
+`codex-responses-inclusive-v1` 산식·카탈로그는 유지하고 mapping 판은 `codex-event-contract-v1`, 정규화 판은12다.
+0.165.0-alpha.1.2에서 확인한 api_request는 전송 시도이며 완료 사용량이 아니다. 버전과 무관하게 완료가 없는 기록에서 토큰을 만들어내지 않는다. 과거 generic 행은 이 패치만으로 재작성되지 않는다.
+
+
+## 15. 버전 대신 이벤트 계약을 적용하는 경계
+
+[ADR 0074](../../../../../../../docs/adr/0074-producer-버전-대신-이벤트-계약으로-정규화한다.md)는 기존 버전·완료 emitter 제한을 대체한다.
+`CodexProfile` 하나가 정확한 서비스 별칭으로 식별한 CLI·APP_SERVER·Desktop에 기존 로그·스팬·메트릭 계약을 적용한다.
+버전과 source emitter는 원천 진단 정보이며 새 버전·prerelease·누락·비정형 버전도 같은 필드 의미를 사용한다.
+`codex.sse_event`의 `event.kind=response.completed`이며 유효한 성분이 보고되고 오류/alias 충돌이 없는 경우만 primary 사용량이다.
+input은 cache read/write를 포함하고 output은 reasoning을 포함한다. 누락·잘못된 wire·음수·산식 위반을 0으로 채우지 않는다.
+토큰 없는 완료·다른 분기·등록하지 않은 의미 이름은 사용량으로 승격하지 않는다. 기존 metadata 제외 목록은 그대로다.
+`api_request`의 operation은 명시적인 `/models`·`/responses` endpoint만 분류하고, 소스 위치로 경로를 추정하지 않는다.
+
+스팬은 기존 네 이름의 허용 범위를 유지하며 턴 토큰은 diagnostic이다. 메트릭은 기존 family/type 쌍만 해석하고 primary로 만들지 않는다.
+옛 Desktop 실캡처의 로그·스팬·메트릭 기대값을 해당 계약에 맞췄고, 임의 버전/표면/emitter 변경은 `CodexEventContractTest`가 검증한다.
+기대값은 ADR 산식과 입력 fixture에서 작성했으며 구현 출력으로 생성하지 않았다. 원천 ID와 source time은 유지한다.
+공식 소스는 기존 계약의 근거이며 미래 바이너리의 모든 동작이 같다는 보증이 아니다. 필드 의미 자체가 바뀌면 계약을 명시적으로 개정해야 한다.

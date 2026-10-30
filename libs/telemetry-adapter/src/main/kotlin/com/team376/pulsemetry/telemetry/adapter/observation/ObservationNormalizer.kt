@@ -23,6 +23,8 @@ public class NormalizationResult(
 public class NormalizedEvent(
 	public val observation: EventObservation,
 	public val semantics: SemanticsProfile?,
+	/** 저장 컬럼이 아닌 운영 진단용 분류다. 원문·producer 버전을 담지 않는다. */
+	public val usageCandidate: Boolean = false,
 )
 
 /**
@@ -49,7 +51,7 @@ public class ObservationNormalizer(
 		val run = Run(context, NormalizationStats())
 		Otlp.resourcesOf(request, signal).forEachIndexed { r, resourceX ->
 			val resource = Resource.of(resourceX)
-			val profile = profiles.find(resource.identity.product, resource.identity.surface, resource.serviceVersion)
+			val profile = profiles.find(resource.identity.product)
 			Otlp.scopesOf(resourceX, signal).forEachIndexed { s, scopeX ->
 				val scope = Scope.of(scopeX)
 				Otlp.recordsOf(scopeX, signal).forEachIndexed { k, record ->
@@ -165,7 +167,10 @@ public class ObservationNormalizer(
 				severityNumber = Otlp.enumNumber(record, "severity_number").takeIf { it in 1..UINT8_MAX },
 			)
 			val mapped = if (name != null) mapper?.map(name, view, base) else null
-			accept(mapped, base, resource, selection, ObservationSignal.LOG, providerEvidence(mapped, mapper?.providerEvidenceKeys, attributes))
+			accept(
+				mapped, base, resource, selection, ObservationSignal.LOG, providerEvidence(mapped, mapper?.providerEvidenceKeys, attributes),
+				usageCandidate = UsageContractDiagnostics.isCandidate(base.envelope.product, name, attributes),
+			)
 		}
 
 		fun span(resource: Resource, profile: ProductProfile?, scope: Scope, record: Message, path: List<Int>) {
@@ -256,6 +261,7 @@ public class ObservationNormalizer(
 			selection: SourceTimeSelection.Selected,
 			signal: ObservationSignal,
 			flags: Set<QualityFlag>,
+			usageCandidate: Boolean = false,
 		) {
 			var observation = (mapped?.observation ?: base).withFlags(*flags.toTypedArray())
 			mapped?.nativeIdentity?.let { native ->
@@ -269,7 +275,7 @@ public class ObservationNormalizer(
 					),
 				)
 			}
-			events += NormalizedEvent(observation, mapped?.semantics)
+			events += NormalizedEvent(observation, mapped?.semantics, usageCandidate)
 		}
 
 		/**

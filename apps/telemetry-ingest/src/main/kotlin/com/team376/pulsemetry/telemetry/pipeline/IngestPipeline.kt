@@ -91,6 +91,9 @@ class IngestPipeline(
 		batches.forEach { batch ->
 			observer.observe(TelemetryMetric.PIPELINE_EXCLUDED_OBSERVATIONS, batch.stats.excludedSpans.toDouble(), "reason" to "excluded_span")
 			observer.observe(TelemetryMetric.PIPELINE_EXCLUDED_OBSERVATIONS, batch.stats.sourceTimeRejections.values.sum().toDouble(), "reason" to "source_time")
+			batch.stats.usageContractResults.forEach { (result, count) ->
+				observer.observe(TelemetryMetric.PIPELINE_USAGE_CONTRACT, count.toDouble(), "product" to result.product.wire, "outcome" to result.outcome.wire)
+			}
 		}
 		val enriched = try {
 			observer.measure(PipelineStage.ENRICH) { enricher.enrich(batches) }

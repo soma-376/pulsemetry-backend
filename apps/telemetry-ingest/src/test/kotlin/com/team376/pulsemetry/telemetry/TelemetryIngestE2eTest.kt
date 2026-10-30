@@ -3,6 +3,7 @@ package com.team376.pulsemetry.telemetry
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
 import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsUnavailableException
 import com.team376.pulsemetry.persistence.telemetryops.TenantSummaryBackfill
+import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
 import com.team376.pulsemetry.telemetry.support.AbstractIngestIntegrationTest
 import com.team376.pulsemetry.telemetry.support.IngestTestData
 import org.assertj.core.api.Assertions.assertThat
@@ -99,8 +100,8 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 		assertThat(row[5]).matches("bytes=\\d+\\+\\d+;path=0/0/0")
 		assertThat(row[6]).matches("[0-9a-f]{64}")
 		// row_version = (normalizer_rev << 32) | receipt 수신 epoch 초.
-		assertThat(row[7].toULong() shr 32).isEqualTo(11uL)
-		assertThat(row[8]).isEqualTo("11")
+		assertThat(row[7].toULong() shr 32).isEqualTo(RowVersioning.NORMALIZER_REV.toULong())
+		assertThat(row[8]).isEqualTo(RowVersioning.NORMALIZER_REV.toString())
 
 		val ledger = clickHouse(
 			"SELECT tenant_id, installation_id, signal, product, record_count, rejected_count, archive_ref FROM telemetry_ingest_ledger FINAL",
@@ -133,11 +134,11 @@ class TelemetryIngestE2eTest : AbstractIngestIntegrationTest() {
 					"FROM telemetry_events FINAL WHERE product = 'claude_code' AND usage_role = 'primary' FORMAT TSV",
 			).trim(),
 		).isEqualTo("claude_code\tapi_request\tmodel.response.usage\tprimary\t863\t0.116755")
-		// ADR 0064: 두 Desktop 완료 캡처는 정확한 분기만 primary로 매핑한다. 토큰·금액 산식은 adapter에서 별도 대조한다.
+		// ADR 0074: 두 Desktop 완료 캡처는 같은 이벤트 계약으로 매핑한다. 버전·emitter는 진단 정보다.
 		assertThat(clickHouse(
 			"SELECT DISTINCT original_name, event_type, usage_role, mapping_version, semantics_profile, normalizer_rev " +
 				"FROM telemetry_events FINAL WHERE product = 'codex' FORMAT TSV",
-		).trim()).isEqualTo("codex.sse_event\tmodel.response.usage\tprimary\tcodex-desktop-completed-v2\tcodex-responses-inclusive-v1\t11")
+		).trim()).isEqualTo("codex.sse_event\tmodel.response.usage\tprimary\tcodex-event-contract-v1\tcodex-responses-inclusive-v1\t${RowVersioning.NORMALIZER_REV}")
 		assertThat(clickHouse("SELECT DISTINCT product FROM telemetry_events FINAL ORDER BY product").trim().lines())
 			.containsExactly("claude_code", "codex")
 		assertThat(clickHouse("SELECT DISTINCT tenant_id, member_id FROM telemetry_events FINAL FORMAT TSV").trim())

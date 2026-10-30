@@ -11,6 +11,8 @@ import com.team376.pulsemetry.telemetry.maintenance.StoredUsageSamples.row
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import tools.jackson.databind.DeserializationFeature
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.databind.node.ObjectNode
@@ -149,10 +151,12 @@ class StoredUsageRepricingTest {
 			.isInstanceOf(StoredUsageRepricing.Stop::class.java)
 	}
 
-	@Test
-	fun deployedRevisionTenCheckpointKeepsItsHashAndEqualCostWithoutWriting() {
+	@ParameterizedTest
+	@ValueSource(ints = [10, 11])
+	fun deployedUnversionedCheckpointsKeepTheirHashAndEqualCostWithoutWriting(revision: Int) {
 		// 배포 commit 6aaf3ec의 컴파일된 Samples·PricingStage·AnalysisHash를 별도 JVM에서 실행한 고정 값이다.
-		val old = row(rev = 10u)
+		// rev11도 같은 무가격판 해시 계약을 쓴다. 정규화 판은 해시 재료가 아니며 원천 판만 달리 검증한다.
+		val old = row(rev = revision.toUInt())
 		assertThat(old.event.observation.envelope.analysisHash).isEqualTo("50f4847892f89f789fa160f3b53953d7379feac93a299b960fd6e4e3abc5f82d")
 		val checkpoint = encoded(old).put("cost_estimated_usd", "0.001182500000")
 			.put("analysis_hash", "428679a01d65c3ec8cf52c3240780820bb10d50987aa87376e7a7f091eb4a652")
@@ -161,13 +165,13 @@ class StoredUsageRepricingTest {
 		val planned = StoredUsageRepricing.classify(decoded)
 		assertThat(planned.disposition).isEqualTo(Disposition.CURRENT)
 		assertThat(planned.target).isEqualTo(decoded)
-		assertThat(planned.target!!.version.normalizerRev).isEqualTo(10u)
+		assertThat(planned.target!!.version.normalizerRev).isEqualTo(revision.toUInt())
 		assertThat(StoredUsageRepricing.decode(checkpoint.deepCopy().putNull("pricing_version"))).isEqualTo(decoded)
 		assertThatThrownBy { StoredUsageRepricing.decode(checkpoint.deepCopy().put("pricing_version", "not-allowed")) }
 			.isInstanceOf(StoredUsageRepricing.Stop::class.java)
-		// 금액만 바뀌는 명시 재평가도 rev10을 지원하며 ID·ingest_seq를 보존한다.
+		// 금액만 바뀌는 명시 재평가도 두 배포 판을 지원하며 ID·ingest_seq를 보존한다.
 		val repriced = target(StoredUsageRepricing.decode(encoded(old)))
-		assertThat(repriced.version).isEqualTo(RowVersioning.of(11u, 123u))
+		assertThat(repriced.version).isEqualTo(RowVersioning.of(12u, 123u))
 		assertThat(repriced.event.observation.envelope.observationId).isEqualTo(old.event.observation.envelope.observationId)
 	}
 

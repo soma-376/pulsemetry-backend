@@ -21,7 +21,8 @@ import com.team376.pulsemetry.telemetry.adapter.observation.withFlags
  * - reasoning·tool 은 `output_semantics` 가 output 밖으로 정한 경우에만 total 에 더하고, 그때는 둘 다 보고돼야 한다.
  * - **미보고 cache write 를 0 으로 추정하지 않는다.** write 가 "보고"인 프로파일에서 값이 없으면 계산하지 않는다.
  *   "해당 없음" 프로파일인데 값이 보고됐다면 프로파일이 이 관측에 맞지 않는 것이다 — 파생값 null + `derived_value_invalid`.
- * - overflow·음수 결과도 null + `derived_value_invalid` 다. 보고 성분은 그대로 남긴다.
+ * - 보고 total과 계산 total의 불일치, 포함형 input보다 큰 캐시 성분·output보다 큰 reasoning·tool, overflow·음수 결과는 계약 모순이다.
+ *   모순에는 total을 null로 하고 `derived_value_invalid`를 남긴다. 유효한 보고 성분과 uncached는 보존한다(ADR 0074).
  * - 프로파일이 없거나 input 의미가 unknown 이면 사용량 관측에 `usage_semantics_unverified` 를 남긴다.
  */
 public object TokenDerivation {
@@ -49,14 +50,26 @@ public object TokenDerivation {
 		val contradiction = semantics.cacheWrite == CacheWriteStatus.NOT_APPLICABLE && o.tokensCacheCreate != null
 		val uncached = if (contradiction) Outcome.Invalid else uncached(o, semantics)
 		val total = if (contradiction) Outcome.Invalid else total(o, semantics)
-		if (uncached == Outcome.Invalid || total == Outcome.Invalid) flags += QualityFlag.DERIVED_VALUE_INVALID
+		val derivedTotal = (total as? Outcome.Value)?.value
+		val totalMismatch = derivedTotal != null && o.tokensTotalReported != null && derivedTotal != o.tokensTotalReported
+		// 다른 캐시 성분이 미보고여도 이미 보고된 성분의 포함관계 위반은 확인할 수 있다.
+		val inputContradiction = semantics.inputSemantics == InputSemantics.INCLUSIVE_CACHE &&
+			o.tokensInput?.let { input ->
+				(o.tokensCacheRead?.let { it > input } == true) || (o.tokensCacheCreate?.let { it > input } == true)
+			} == true
+		val outputContradiction = semantics.outputSemantics == OutputSemantics.INCLUSIVE_REASONING_TOOL &&
+			o.tokensOutput?.let { output ->
+				(o.tokensReasoning?.let { it > output } == true) || (o.tokensTool?.let { it > output } == true)
+			} == true
+		val invalid = uncached == Outcome.Invalid || total == Outcome.Invalid || totalMismatch || inputContradiction || outputContradiction
+		if (invalid) flags += QualityFlag.DERIVED_VALUE_INVALID
 
 		return o.copy(
 			inputSemantics = semantics.inputSemantics,
 			outputSemantics = semantics.outputSemantics,
 			semanticsProfile = semantics.id,
 			tokensInputUncached = (uncached as? Outcome.Value)?.value,
-			tokensTotalDerived = (total as? Outcome.Value)?.value,
+			tokensTotalDerived = if (invalid) null else derivedTotal,
 		).withFlags(*flags.toTypedArray())
 	}
 

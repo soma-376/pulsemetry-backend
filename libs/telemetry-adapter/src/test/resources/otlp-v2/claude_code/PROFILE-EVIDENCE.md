@@ -2,6 +2,10 @@
 
 Claude Code producer 가 내보내는 값의 의미를 확인한 기록이다. 외부 원천의 인용은 이 문서에만 둔다.
 
+**현재 적용 규칙은 ADR 0074다.** 아래 버전별 절은 계약을 확인한 과거 조사 범위이며 런타임 허용 목록이 아니다.
+단일 `ClaudeCodeProfile`은 정확한 서비스 별칭과 등록된 이벤트 이름·필드 wire·충돌·성분 검사를 사용한다.
+producer 버전은 진단 정보로 보존하며 새 버전·누락 버전에도 동일한 계약을 적용한다. 과거의 버전별 미지원 문장은 이 결정으로 대체됐다.
+
 - producer 소스는 공개돼 있지 않다. 근거는 둘이다: (1) **실캡처 fixture**(`real/` — wire 모양의 정본), (2) **공식 모니터링
   문서**(`code.claude.com/docs/en/monitoring-usage`). 문서는 웹 조회 도구가 요약·가공한 형태로만 읽을 수 있었고, 그렇게 얻은
   일부 절(compaction·hook·auth 이벤트 속성)은 실캡처와 어긋났다. 그래서 **실캡처와 일치하는 문서 진술만** 근거로 쓰고, 어긋나는
@@ -172,3 +176,17 @@ cache_create + output`(ADR 0020 §4 표의 exclusive·write 보고 행). 공급�
 같은 날 [Claude Code monitoring 공식 문서](https://code.claude.com/docs/en/monitoring-usage)의 token accounting 절과 [API prompt caching 공식 문서](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)의 Tracking cache performance 절을 다시 열어 확인했다. `input_tokens`는 캐시 읽기·생성을 제외하며 전체 입력은 세 성분의 합이다. 구조 통계는 버전별 wire 일치와 inclusive 가정의 반례를 확인할 뿐, 수치 관계만으로 의미를 추정한 것이 아니다.
 
 `ClaudeApiProfile`에 이 세 **정확한 버전의 api_request만** 추가한다. 기존 `claude-code-exclusive-v1`의 정의와 `claude-code-api-v1` 매핑 규칙은 같다. 다른 로그·스팬·metrics는 generic 상태를 유지한다. `SeptemberProducerProfilesTest`는 원문 복사 없이 독립 정수 예제(uncached 100/read 400/create 10/output 20 → total 530)와 다른 이벤트·다른 버전의 거부를 검증한다. 새 정규화 판·가격표 선택은 ADR 0062를 따른다.
+
+## 12. 2.1.311 api_request의 한정 지원 — 2026-10-30
+
+[api-2.1.311/README.md](api-2.1.311/README.md)는 로컬 실수집 26건의 서비스·버전·이벤트·여덟 사용량/시간 필드의 구조 감사와 메타데이터 해시를 기록한다. 26건 모두 기존 네 토큰 성분의 int wire와 비용 wire를 유지했다. 같은 날 다시 확인한 공식 [모니터링 문서](https://code.claude.com/docs/en/monitoring-usage#map-input-tokens-to-opentelemetry-genai-semantic-conventions)·[캐시 성분 정의](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#tracking-cache-performance)에 따라 기존 exclusive 의미를 적용한다.
+
+정확한 `2.1.311`의 `api_request`만 지원한다. 실제 대화·개인 식별자·사용량을 fixture로 복사하지 않고 독립 합성 숫자로 산식과 검증 경계를 고정했다. 다른 이벤트·버전·스팬·metrics, TTL별 캐시 가격, 공급자 판정은 확대하지 않는다. `ClaudeApi311ProfileTest`는 정상 산식·관측 ID 보존·미확인 버전·다른 이벤트·본문 충돌·누락·잘못된 wire·음수·명시 0을 검증한다.
+
+## 13. 버전과 독립적인 이벤트 계약 — ADR 0074
+
+26건에서 확인한 wire와 9절의 공식 성분 정의는 버전 문자열을 산식의 입력으로 쓰지 않는다. 버전별 전체/부분 프로파일을 `ClaudeCodeProfile` 하나로 통합하고 매핑 판은 `claude-code-event-contract-v1`로 구분한다. `api_request`의 이름과 본문이 일치하고 각 필드가 기존 타입·수치 검사를 통과할 때만 해당 값을 사용하며, input·output·cache read/create의 기존 exclusive 의미 ID는 유지한다.
+
+`ClaudeEventContractTest`는 과거·현재·미래·prerelease·비정형·누락 버전에서 같은 사용량 계약의 결과를 검증한다. 모르는 서비스/이벤트·제품 접두사 충돌·본문 충돌·잘못된 wire·누락·음수는 별도 경계로 남는다. 등록된 여섯 스팬과 metric family는 같은 계약으로 인식하지만 사용량은 diagnostic이라 primary 로그와 더하지 않는다. 새 이벤트·필드·TTL별 가격·공급자 추정은 추가하지 않는다.
+
+기존 fixture의 원천 입력은 보존했다. 기대값은 ADR 0074에 따라 매핑 판, 버전만 달랐던 `api_request`의 독립 합계, 기존에 등록된 다른 이벤트의 타입을 수정했다. 원천 버전이 바뀌지 않은 같은 관측의 ID는 유지된다. 의미를 바꾸지 않은 필드까지 새 버전이라는 이유로 자동 승인하는 것이 아니라 등록된 계약 검사를 공통으로 적용하는 결정이다.

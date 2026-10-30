@@ -6,28 +6,18 @@ import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
 import com.team376.pulsemetry.telemetry.adapter.observation.MetadataAllowlist
 import com.team376.pulsemetry.telemetry.adapter.observation.MetricPointObservation
 import com.team376.pulsemetry.telemetry.adapter.observation.Product
-import com.team376.pulsemetry.telemetry.adapter.observation.Surface
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedAttribute
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedValue
 import com.team376.pulsemetry.telemetry.adapter.observation.semantics.SemanticsProfile
 
 /**
- * 제품·producer 버전 범위 하나의 매핑 규칙 묶음(ADR 0020 §4·부록 A). 벤더별 구현은 이 인터페이스를 채운다.
+ * 제품 하나의 이벤트 계약(ADR 0074). producer 버전·surface는 출처이며 선택 조건이 아니다.
  *
- * 이름이 알려졌다는 사실과 그 버전의 wire 형식·토큰 포함관계가 검증됐다는 사실은 다르다 — 검증은
+ * 제품 식별과 각 이벤트의 wire 형식·토큰 포함관계 검증은 별개다 — 계약 근거는
  * [SemanticsProfile] 과 ADR 0020 부록 C 가 기록한다. 신호별 규칙이 없는(null) 신호는 generic 경로로 간다.
  */
 public interface ProductProfile {
 	public val product: Product
-
-	/** 이 규칙이 적용되는 producer(`service.version`) 버전. */
-	public val versions: VersionSet
-
-	/**
-	 * 이 규칙이 적용되는 표면. null 이면 제품의 모든 표면이다. 같은 제품이라도 근거를 확인한 표면만 적는다 —
-	 * 소스를 확인하지 못한 표면은 generic 경로로 간다.
-	 */
-	public val surfaces: Set<Surface>? get() = null
 
 	/** 규칙의 버전. `mapping_version` 이다 — 규칙을 바꾸면 올린다(관측 ID 는 바뀌지 않는다). */
 	public val mappingVersion: String
@@ -88,23 +78,13 @@ public class MappedEvent(
 
 public data class NativeIdentity(val namespace: String, val id: String)
 
-/** producer 버전 집합. 검증한 버전을 나열하는 것이 기본이다 — 범위 추론은 하지 않는다. */
-public fun interface VersionSet {
-	public fun contains(version: String?): Boolean
+/** 제품당 하나의 계약만 등록한다. 중복을 거부해 등록 순서에 따른 가림을 막는다(ADR 0074). */
+public class ProfileRegistry(profiles: List<ProductProfile>) {
+	private val byProduct = profiles.associateBy { it.product }
 
-	public companion object {
-		public fun exactly(vararg versions: String): VersionSet {
-			val set = versions.toSet()
-			return VersionSet { it != null && it in set }
-		}
-
-		public val ANY: VersionSet = VersionSet { true }
-	}
-}
-
-/** 제품별 프로파일 목록. 같은 제품에서 버전이 겹치는 두 프로파일이 있으면 앞의 것이 쓰인다. */
-public class ProfileRegistry(private val profiles: List<ProductProfile>) {
 	init {
+		require(byProduct.size == profiles.size) { "제품별 프로파일은 하나만 등록할 수 있다" }
+		require(Product.UNKNOWN !in byProduct) { "모르는 제품에는 프로파일을 등록할 수 없다" }
 		for (profile in profiles) {
 			val logs = profile.logs ?: continue
 			val missing = logs.providerEvidenceKeys.filterNot { it in logs.allowlist.record }
@@ -112,8 +92,7 @@ public class ProfileRegistry(private val profiles: List<ProductProfile>) {
 		}
 	}
 
-	public fun find(product: Product, surface: Surface, version: String?): ProductProfile? =
-		profiles.firstOrNull { it.product == product && (it.surfaces?.contains(surface) ?: true) && it.versions.contains(version) }
+	public fun find(product: Product): ProductProfile? = byProduct[product]
 
 	public companion object {
 		public val EMPTY: ProfileRegistry = ProfileRegistry(emptyList())

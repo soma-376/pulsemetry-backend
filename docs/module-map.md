@@ -200,6 +200,7 @@ HTTP 어댑터 `OtlpIngestHandler` 는 메서드·경로·media type 검사와 �
 ([ADR 0020](adr/0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md))으로 전환한 뒤 하위 패키지는
 `observation/` 하나이고, 그 아래를 제품 프로파일(`codex/`·`claudecode/`), 프로파일 SPI(`profile/`), 토큰 의미
 (`semantics/`), 가격(`pricing/`)으로 나눈다. 구 `model/`·`source/`는 지웠다.
+[ADR 0074](adr/0074-producer-버전-대신-이벤트-계약으로-정규화한다.md)에 따라 제품별 단일 이벤트 계약을 사용한다. producer 버전과 emitter 위치는 진단 정보이며 프로파일 선택 조건이 아니다. 등록된 이벤트·필드 타입과 토큰 산식 검증은 유지하고, 사용량 계약 불일치는 유한한 운영 카운터로 관측한다.
 **입력은 수집 단계가 넘겨주는 protobuf 요청이다**
 ([ADR 0013](adr/0013-정규화-입력은-protobuf-이고-원본-해시는-정규-json-으로-되살린다.md)).
 관측 타입(`EventObservation`·`MetricPointObservation`·`ObservationEnvelope`)은 **모듈 경계를 넘는 공개 API**다 —

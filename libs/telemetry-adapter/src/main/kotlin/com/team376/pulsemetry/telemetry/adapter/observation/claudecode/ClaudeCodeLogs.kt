@@ -143,7 +143,7 @@ internal object ClaudeCodeLogs : LogProfile {
 			)
 			else -> return null
 		}
-		val semantics = if (name == "api_request" && base.envelope.serviceVersion in SEMANTICS_VERSIONS) SEMANTICS else null
+		val semantics = if (name == "api_request") SEMANTICS else null
 		return MappedEvent(mapped.withFlags(*fields.flags.toTypedArray()), semantics = semantics)
 	}
 
@@ -293,7 +293,7 @@ internal object ClaudeCodeLogs : LogProfile {
 	/**
 	 * 검증된 토큰 의미 프로파일(ADR 0020 부록 C). input 은 캐시 읽기·쓰기를 뺀 값(`exclusive_cache`), cache write 는 보고되고,
 	 * reasoning 은 output 에 들어 있다(reasoning·tool 성분은 따로 보고되지 않는다). 공식 문서의 성분 정의와 실캡처로 확인한
-	 * 버전에만 적용한다 — `api_request` 실캡처가 없는 버전(2.1.280)과 그 밖의 버전은 프로파일 없음이다.
+	 * 이벤트 계약에 적용한다(ADR 0074). 버전 대신 이름·본문 일치·wire와 각 성분 검증을 사용한다.
 	 */
 	val SEMANTICS: SemanticsProfile = SemanticsProfile(
 		id = "claude-code-exclusive-v1",
@@ -302,16 +302,11 @@ internal object ClaudeCodeLogs : LogProfile {
 		cacheWrite = CacheWriteStatus.REPORTED,
 		scope = SemanticsScope(
 			product = Product.CLAUDE_CODE,
-			producerVersions = "claude-code 2.1.269·2.1.270·2.1.272·2.1.273·2.1.278·2.1.281·2.1.282·2.1.283·2.1.284·2.1.285·2.1.290",
+			producerVersions = "claude-code api_request 이벤트 계약 — producer 버전과 독립",
 			provider = "Anthropic Messages API 의 usage 블록(행의 공급자 근거와는 별개)",
 			configuration = "기본 설정",
 		),
 		evidencePath = "libs/telemetry-adapter/src/test/resources/otlp-v2/claude_code/PROFILE-EVIDENCE.md",
-	)
-
-	/** [SEMANTICS] 가 적용되는 producer 버전 — 사용량 실캡처 또는 원천 구조 감사의 근거가 있는 버전. */
-	val SEMANTICS_VERSIONS: Set<String> = setOf(
-		"2.1.269", "2.1.270", "2.1.272", "2.1.273", "2.1.278", "2.1.281", "2.1.282", "2.1.283", "2.1.284", "2.1.285", "2.1.290",
 	)
 
 	const val SESSION_NAMESPACE: String = "claude_code.session"
