@@ -3,8 +3,21 @@
 OTLP 를 Gateway 가 받아 Kafka 에 접수하고 ingest Consumer 가 처리하는 경로([ADR 0066](adr/0066-OTLP-수신은-Gateway가-JWT만-검증해-Kafka에-접수하고-ingest가-RDB로-다시-검증한다.md))와
 telemetry JWT([ADR 0065](adr/0065-telemetry-token은-전용-RS256-JWT로-발급하고-telemetry_tokens를-자격-기록으로-유지한다.md))의 **앱 쪽** 설정과 절차다.
 dev Strimzi mTLS 구현은 [ADR 0070](adr/0070-Kafka-mTLS-접속은-공통-설정에서-PKCS12-파일로-조립한다.md), 배치·접근 계약은 [허브 Kafka 계약](../../docs/contracts/telemetry-kafka.md)을 따른다.
-AWS 리소스·Helm·ALB 전환·offset 재설정 Job 은 infra 런북(`infra` 레포 `docs/runbooks/dev-telemetry-kafka.md`)이 소유한다.
-이 문서는 로컬 구현 기준이며 MSK 실접속·AWS 적용은 검증하지 않았다. 로컬 E2E 결과는 [telemetry-kafka-e2e.md](telemetry-kafka-e2e.md)에 있다.
+AWS 리소스·Helm·ALB 전환·offset 재설정 Job은 infra가 소유한다. 현재 dev는 Strimzi mTLS 경로이며,
+배포·검증 범위는 [허브 Kafka 계약](../../docs/contracts/telemetry-kafka.md)과
+[infra Strimzi 런북](../../infra/docs/runbooks/dev-strimzi-kafka.md)을 따른다.
+아래 최초 JWT·Kafka 전환 절차와 IAM 호환 설정은 현재 dev가 MSK를 사용한다는 뜻이 아니다.
+로컬 E2E 결과는 [telemetry-kafka-e2e.md](telemetry-kafka-e2e.md)에 있다.
+
+## GitOps 이미지 인계 상태
+
+[ADR 0075](adr/0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)는 enrollment·ingest·Gateway·dashboard 네 앱을 같은 backend SHA·run·attempt의
+완료 묶음으로 공급하는 Accepted 설계다. manifest·승격 구현과 Argo 소유권 인계 전에는 기존 digest 기반
+수동 Helm 운영을 유지한다. 현재 dev의 Strimzi mTLS 배포 상태와 이 GitOps 도입 상태는 별개다.
+인계 후 일반 앱 변경은 enrollment의 Flyway 성공 → ingest → Gateway → dashboard 순서를 따르며,
+아래 최초 JWT 발급·ALB 전환 절차를 이미지 변경마다 반복하지 않는다.
+한 desired commit도 앱 간 구·신 버전 혼합을 없애지 않으므로 JWT·키링·ingress envelope·backlog·
+[정규화 계약 ADR 0074](adr/0074-producer-버전-대신-이벤트-계약으로-정규화한다.md)의 호환성을 유지한다.
 
 ```
 데몬 ─Bearer JWT→ ALB ─→ :apps:telemetry-gateway(8082) ─envelope→ Kafka topic ─→ :apps:telemetry-ingest Consumer ─→ 수집 코어 → S3·ClickHouse
@@ -48,8 +61,10 @@ Strimzi의 `<cluster>-cluster-ca-cert` Secret에서 `ca.p12`·`ca.password`, 각
 IAM 역할·세션·AWS callback을 사용하지 않는다. IAM·plaintext 설정은 호환용으로 남지만 접속 실패 시 자동 전환하지 않는다.
 
 인증서는 자동 재로딩하지 않는다. Strimzi 갱신 후 infra가 CA/user Secret revision을 읽어 TLS revision annotation을 바꾸고
-같은 image digest로 Helm 재배포한다. 현재 dev의 단일 replica·Recreate에서 재시작 중 중단이 있다. 인증서 만료 전 이 절차를 수행하고
-재배포 뒤 실제 publish ACK→consume→commit을 검증한다. readiness만으로 TLS 연결 성공을 판정하지 않는다.
+같은 image digest로 재배포한다. GitOps 인계 전에는 수동 Helm, 인계 후에는 허브 계약의 values 검증·desired 승격 경로를 따른다.
+Secret 원문이나 비밀번호를 Git으로 옮기지 않는다. 현재 dev의 단일 replica·Recreate에서 재시작 중 중단이 있다.
+인증서 만료 전 이 절차를 수행하고 재배포 뒤 실제 publish ACK→consume→commit을 검증한다.
+readiness만으로 TLS 연결 성공을 판정하지 않는다.
 
 ### 1.2 telemetry JWT 키
 
@@ -154,13 +169,21 @@ Consumer 의 `authorize` 거부는 `credential_unknown`·`credential_format`·`c
 
 복구(자동 fallback 없음):
 
-- **Gateway·MSK 장애**: ingest 를 `dual` 로 되돌리고(HMAC 키·공개키 필요) ALB 대상을 ingest 로 바꾼다. 데몬의 JWT 는 HTTP ingest 가 같은 공개키와 RDB 로 검증한다.
-  Consumer 는 같은 group 으로 backlog 를 계속 소비한다.
+- **Gateway·Kafka 장애**: 현재 main 입력으로 ingest `dual`과 TGB를 먼저 복구한다(HMAC 키·공개키 필요).
+  직접 Service·NodePort 응답, Pod Ready와 target 등록을 확인한 뒤 ALB 대상을 ingest로 바꾸고 실제 healthy를 확인한다.
+  데몬의 JWT는 HTTP ingest가 같은 공개키와 RDB로 검증한다. Consumer는 같은 group으로 backlog를 계속 소비한다.
+  현재 Strimzi profile을 유지하며 과거 MSK 자원을 복원하지 않는다. 실제 절차는 infra Strimzi 런북을 따른다.
 - **발급 끄기**(`issue-enabled=false`): ALB 대상이 ingest 일 때만 한다. 이미 나간 JWT 는 만료(최대 3시간)까지 HTTP ingest·Gateway 에서 유효하다.
 - **ingest 를 PROJ-245 이전 이미지로**: 그 이미지는 Bearer 전문의 HMAC 으로 조회한다. JWT 행도 `token_hash` 를 저장하므로 통과한다 —
   단 그 이미지는 `expires_at` 을 보지 않아 JWT 가 회전·폐기 전까지 유효하다(ADR 0065 Negative). `kafka` 모드에서 되돌릴 때는 먼저 ALB 대상을 ingest 로 옮긴다.
 - **enrollment 를 이전 이미지로**: 그 이미지는 `ptt_` 를 발급하고, 회전 UPDATE 가 사유 없이 `revoked_at` 만 쓴다. 그렇게 회전된 JWT 행은 Consumer 가
   `credential_revoked_unknown` 으로 거부하므로 Kafka 에 대기 중인 그 토큰의 record 가 미적재될 수 있다. V33 은 추가형이라 되돌리지 않는다.
+
+GitOps 인계 후의 **일반 이미지 rollback**은 [ADR 0075](adr/0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)를 따른다.
+infra가 승격기·Updater·자동 sync를 중지하고 이전 검증 묶음의 네 digest를 현재 DB 스키마·키링·TLS revision·runtime과
+대조해 복구 desired를 만든다. 위 최초 전환 이전 이미지의 예외를 자동 rollback 허용 근거로 쓰지 않는다.
+DB·PVC·Kafka offset과 과거 values를 함께 되돌리지 않으며, backlog 호환과 ACK→consume→commit·S3/ClickHouse를
+검증한 뒤 desired·실제 상태의 일치를 확인해 자동화를 재개한다.
 
 ## 4. 키 회전
 

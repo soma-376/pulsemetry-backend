@@ -3,7 +3,8 @@
 ## Status
 Accepted ([ADR 0004](0004-Flyway-마이그레이션과-varchar-CHECK-스키마-관리.md) 의 "varchar + CHECK 이식" 결정을 대체한다. 진실원 = Flyway 등 나머지 결정은 유지)
 
-dev 의 마이그레이션 실행 순서는 [허브 ADR 0023](../../../docs/adr/0023-dev-backend-eks-only.md)을 따른다.
+부분 대체: dev 이미지 공급·배포 순서는 [ADR 0075](0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)와
+[허브 ADR 0030](../../../docs/adr/0030-dev-gitops-delivery.md)을 따른다. 원천 Flyway의 소유·실행 책임은 유지한다.
 아래 Context 는 native enum 채택 당시의 공유 DB·구 파이프라인 상태이며 현재 배포 상태를 뜻하지 않는다.
 
 ## Context
@@ -71,9 +72,11 @@ Follow-up), dev 에서는 파이프라인 저장소의 `sql/rds/schema.sql` 을 
 
 ## Follow-up
 - 공유 RDS 접속과 부트스트랩 책임은 [enrollment 서버 명세](../enrollment-server-spec.md) §9.4 에 있다.
-  dev 는 저장소·권한 준비 후 enrollment 의 Flyway 적용을 확인하고 ingest·dashboard 순서로 배포한다.
-  ingest 는 Flyway 를 실행하지 않고 dashboard 는 자기 캐시 DDL 만 적용한다. 실행은
-  [EKS 수동 배포 런북](../../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따르며 `psql` 직접 DDL 주입은 쓰지 않는다.
+  dev 는 저장소·권한 준비 후 enrollment의 Flyway 적용 성공을 확인하고 ingest → Gateway → dashboard 순서로 배포한다.
+  ingest는 원천 Flyway를 실행하지 않고 dashboard는 자기 캐시 DDL만 적용한다.
+  [ADR 0075](0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)의 GitOps 구현·인계 전에는
+  [EKS 수동 배포 런북](../../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 유지한다.
+  Flyway를 별도 배포 Job으로 옮기거나 `psql`로 직접 DDL을 주입하지 않는다.
 - 인증·배선 smoke 조건: enroll 로 발급한 토큰으로 ALB `/v1/traces` POST → 2xx, 토큰 없이 → 401.
   이 응답만으로 실제 분석 적재·조회나 전체 E2E 성공을 판단하지 않는다.
 - **완료** — 파이프라인 `sql/rds/schema.sql`·`seed.sql` 동기화(V2·V3 부분 유니크 인덱스,
