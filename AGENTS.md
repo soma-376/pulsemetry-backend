@@ -54,26 +54,36 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | 알림 | 구현됨 | 규칙 켜기(enrollment-api)·등록 제품 기준 사용 알림(허브 ADR 0008), 주기 평가·개요 미확인 수·확인(dashboard-api 평가 + enrollment-api 확인). 한도 초과는 근거가 없어 켤 수 없다. ADR 0051 |
 | 대시보드 API | 개요·팀·구성원·설정·카탈로그·수집 상태·좌석·알림·작업 상태 조회 구현, ADR 0022·0023 Accepted | `docs/api/README.md` 참고. 관리 쓰기는 enrollment-api가 맡는다. 기간 완전성·비교(ADR 0042), 수집 상태 판정(ADR 0041). API 구현과 프론트 전체 배선·E2E 완료는 별개 |
 | Kafka mTLS 접속(PROJ-284) | 앱 설정·검증 구현, 배포 증거는 별도 | `PULSEMETRY_KAFKA_SECURITY=mtls` + PKCS12 파일 네 경로. 공통 검증·hostname 확인·비밀 오류 정리, IAM/plaintext 호환. ADR 0070과 Kafka 운영 §1.1. Secret 갱신은 infra TLS revision 재배포로 반영 |
-| telemetry JWT·Gateway·Kafka 수집 | 로컬 구현, 배포·허브 개정 전(ADR 0065·0066 Proposed, 0067 Accepted) | telemetry JWT 발급(설정으로 켬)·Gateway·ingest Consumer·수신 모드. 200 은 Kafka 접수다. 설정·전환 순서·키 회전·보안 폐기 SQL은 `docs/telemetry-kafka-operations.md`, 로컬 E2E 결과는 `docs/telemetry-kafka-e2e.md` |
+| telemetry JWT·Gateway·Kafka 수집 | 앱 구현·현재 dev Strimzi 경로. ADR 0065·0066의 Proposed 상태와 배포 증거는 구분 | telemetry JWT 발급(설정으로 켬)·Gateway·ingest Consumer·수신 모드. 200 은 Kafka 접수다. 설정·전환 순서·키 회전·보안 폐기 SQL은 `docs/telemetry-kafka-operations.md`, 로컬 E2E 결과는 `docs/telemetry-kafka-e2e.md` |
 | 수집 운영 계측(PROJ-191) | 로컬 구현·검증, 배포 인수 전 | Gateway/ingest 관리9404 Prometheus·Kafka native·단계/CH semantic metrics. `PULSEMETRY_OBSERVABILITY_ENABLED=false`면 업무 지표만 끈다. GC·safepoint 옵션 문자열은 Infra가 성능 비교 구간에 `JDK_JAVA_OPTIONS`로 넣는다. `docs/telemetry-observability.md`와 ADR0068. 200·completed·rows submitted는 실제 적재와 다르며 독립 smoke의 FINAL 기대 ID 대조로 확인 |
-| 텔레메트리 파이프라인 이관 | 단일 앱 구현·dev EKS 실행 계약 채택 | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다. dev EKS 실행·이미지 공급/수동 배포는 허브 ADR 0023을 따르며 실제 AWS 철거·배포·수집 E2E 검증은 별도다 |
+| 텔레메트리 파이프라인 이관 | 단일 앱 구현·dev EKS 실행 계약 채택 | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다. dev 실행·이미지 인계는 허브 ADR 0031·backend ADR 0075를 따른다. GitOps 구현·인계와 실제 기능 검증은 별도이며 인계 전 수동 배포를 유지한다 |
 
-**파이프라인은 이 레포의 단일 앱이다**(허브 ADR 0004·0005 — 배포 단위 하나, OTel Collector 바이너리 없음).
-모듈 구성은 `docs/module-map.md`가 담는다. dev 실행 계약은 [허브 ADR 0023 — dev 백엔드 EKS 전용](../docs/adr/0023-dev-backend-eks-only.md)과
-[telemetry ingest 계약](../docs/contracts/telemetry-ingest.md)을 따른다. dev OTLP 검증은 이 앱에 조립한 `:libs:security`가 맡는다.
-과거 auth-proxy·collector 경로와 prod의 기존 ECS 계약은 dev EKS 실행 계약과 구분한다. 이 설명은 실제 트래픽 전환·철거 완료의 증거가 아니다.
+**수집 코어는 ingest 한 앱에 조립하며 dev의 공개 접수는 Gateway가 맡는다.** Gateway → Strimzi Kafka → ingest의
+현재 전송·검증 경계는 [허브 Kafka 계약](../docs/contracts/telemetry-kafka.md), 코어와 HTTP 호환 경로는
+[telemetry ingest 계약](../docs/contracts/telemetry-ingest.md)을 따른다. 모듈 구성은 `docs/module-map.md`가 담는다.
+과거 단일 HTTP 접수·auth-proxy·collector 경로와 prod의 기존 ECS 계약을 현재 dev 경로와 구분한다.
+이 설명은 배포·기능 검증 증거를 대신하지 않는다.
 
-backend dev CI는 enrollment-api·telemetry-ingest·dashboard-api와 저장소 Secret이 등록된 telemetry-gateway의
-`linux/arm64` SHA 이미지를 ECR에 게시한다. 설정된 이미지 게시가 모두 끝난 뒤 앞 세 앱만 build digest로
-`dev` 태그를 순차 승격하고, Gateway는 SHA 태그와 workflow summary의 digest를 제공한다. 실제 EKS 배포는 infra가 확인한
-immutable digest로 수동 수행한다. enrollment의 원천 Flyway 적용 확인 → ingest → dashboard 순서와 실패·복구는
-[infra EKS 런북](../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다. 이미지 게시·Pod readiness·기능 검증은 각각 확인한다.
+**현행 dev CI**는 enrollment-api·telemetry-ingest·dashboard-api와 저장소 설정이 있는 telemetry-gateway의
+`linux/arm64` SHA 이미지를 ECR에 게시한다. 설정된 이미지 게시가 끝난 뒤 앞 세 앱만 build digest로
+`dev` 태그를 순차 갱신하고 Gateway는 SHA 태그와 summary digest를 제공한다. 완료 묶음 manifest는 아직 없다.
+
+**채택된 GitOps 공급 설계(PROJ-286)**는 [ADR 0075](docs/adr/0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)를 따른다.
+네 앱을 모두 같은 backend SHA·workflow run·attempt에서 검증하고 build output digest로 완료 묶음을 만든다.
+Gateway 생략·개별 앱 자동 승격은 허용하지 않는다. 같은 SHA의 새 digest도 새 묶음으로 다시 검증한다.
+native Image Updater 후보를 받아 infra가 values 검증·desired 승격·Argo 배포를 소유하며 backend CI는 직접 배포하지 않는다.
+레포 간 B·C·V·P/schema는 [허브 ADR 0031](../docs/adr/0031-dev-gitops-delivery.md)과
+[generated values 동기화 계약](../docs/contracts/generated-values-sync.md)이 진실원이다.
+구현·검증·소유권 인계 전에는 immutable digest를 확인한 [infra 수동 EKS 런북](../infra/docs/runbooks/dev-eks-manual-deployment.md)을 유지한다.
+배포 순서는 enrollment 원천 Flyway 성공 → ingest → Gateway → dashboard이며 기존 스키마 책임은 바꾸지 않는다.
+이미지 게시·Argo 상태·Pod readiness·발급/수집/적재/조회 성공은 각각 확인한다. 복구는 자동화를 중지하고
+이전 검증 묶음과 현재 호환 설정을 조합하며 DB downgrade나 폐기된 MSK 경로 복원을 포함하지 않는다.
 
 **이 레포가 소유하지 않는 것** — 요청이 오면 올바른 레포를 알린다.
 
 | 항목 | 소유 레포 |
 |---|---|
-| AWS/CDK 자원·IAM, Kubernetes/Helm workload·runtime 공급·수동 배포, prod의 기존 ECS·collector 설정 | `infra` |
+| AWS/CDK 자원·IAM, Kubernetes/Helm 선언·runtime 공급·GitOps 인계/운영(인계 전 수동 배포), prod의 기존 ECS·collector 설정 | `infra` |
 | 로컬 수신기·데몬·벤더 도구 배선, enroll 봉투·manifest **계약 스키마 파일**(`enrollment-envelope`·`enrollment-manifest`) | `telemetryctl` |
 | 스키마 다이어그램(dbml) | `rdb-schema` — 단 **마이그레이션 진실원은 이 레포의 Flyway**다 |
 
@@ -111,7 +121,7 @@ immutable digest로 수동 수행한다. enrollment의 원천 Flyway 적용 확�
 | `docs/adr/` | 설계 결정. 최신 목록과 상태는 `docs/adr/README.md` 참고 |
 | `../docs/contracts/enrollment-api.md` | telemetryctl과의 **계약** — 경계에 걸리는 변경은 여기가 기준 |
 | `../docs/contracts/dashboard-api.md` · `../docs/adr/0021-dashboard-runtime-and-deployment-contract.md` | Dashboard 앱 소재·저장소·인증·배포 책임과 전체 path·method·OPTIONS 소유권. 배포·실 DB 검증 완료와 문서 채택은 별개 |
-| `../docs/adr/0023-dev-backend-eks-only.md` · `../infra/docs/runbooks/dev-eks-manual-deployment.md` | dev EKS 실행·이미지 공급과 수동 배포의 책임, 배포 순서·검증·복구. prod·별도 frontend ECS는 변경 대상 밖 |
+| `../docs/adr/0031-dev-gitops-delivery.md` · `../docs/contracts/generated-values-sync.md` · `docs/adr/0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md` | dev 완료 묶음·GitOps 인계의 채택 설계. 구현·인계 전에는 `../infra/docs/runbooks/dev-eks-manual-deployment.md` 유지. prod·별도 frontend ECS는 대상 밖 |
 
 ## 명령어
 
