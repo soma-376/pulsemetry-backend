@@ -3,7 +3,7 @@
 ## Status
 
 Accepted — PROJ-286의 backend 이미지 공급 설계다. 레포 간 인계는
-[허브 ADR 0030](../../../docs/adr/0030-dev-gitops-delivery.md)과
+[허브 ADR 0031](../../../docs/adr/0031-dev-gitops-delivery.md)과
 [generated values 동기화 계약](../../../docs/contracts/generated-values-sync.md)이 소유한다.
 ADR 0005·0009·0016의 dev 이미지 공급·배포 관련 서술만 부분 대체하며, 설치·스키마·조립 규칙은 유지한다.
 이 채택은 workflow·승격 경로·Argo CD의 구현 또는 dev 인계 완료를 뜻하지 않는다.
@@ -156,7 +156,7 @@ ingest의 Kafka backlog 처리, dashboard 캐시 DDL과 ClickHouse 초기화 책
 
 ## References
 
-- [허브 ADR 0030](../../../docs/adr/0030-dev-gitops-delivery.md) · [generated values 동기화 계약](../../../docs/contracts/generated-values-sync.md)
+- [허브 ADR 0031](../../../docs/adr/0031-dev-gitops-delivery.md) · [generated values 동기화 계약](../../../docs/contracts/generated-values-sync.md)
 - [infra ADR 0054](../../../infra/docs/adr/0054-dev-argocd-gitops-operations.md)
 - [enrollment 서버 명세](../enrollment-server-spec.md) §9.4·9.6 · [Kafka 운영](../telemetry-kafka-operations.md)
 - [ADR 0070](0070-Kafka-mTLS-접속은-공통-설정에서-PKCS12-파일로-조립한다.md) — TLS 파일 공급·재시작 계약

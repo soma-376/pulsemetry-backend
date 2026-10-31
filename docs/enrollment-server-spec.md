@@ -269,7 +269,7 @@ GUI 패키지도 같은 릴리스에서 받는다. 새 설치 스크립트는 CL
 dev EKS의 enrollment-api·telemetry-ingest와 dashboard-api의 원천 연결은 infra가 준비한 RDS의
 **`controlplane`** 데이터베이스를 사용한다. 발급·OTLP 검증·사용자 세션 조회가 같은 원천을 보도록
 DB 주소·계정·권한을 준비한다. 계약은 [공유 데이터 계약](../../docs/contracts/data-model.md)과
-[허브 ADR 0030 — dev GitOps 인계](../../docs/adr/0030-dev-gitops-delivery.md)를 따른다.
+[허브 ADR 0031 — dev GitOps 인계](../../docs/adr/0031-dev-gitops-delivery.md)를 따른다.
 
 공유 RDS의 원천 스키마 부트스트랩 주체는 **backend Flyway**다. dev 배포는 다음 순서로 진행한다.
 
@@ -319,7 +319,7 @@ GitOps 구현·인계 전의 입력 생성·Helm 실행·실패와 복구는
 같은 전체 backend SHA·workflow run·attempt에서 검증한 네 앱 완료 묶음으로 인계한다.
 Gateway를 필수화하고 build output digest·플랫폼·검증 증거를 담은 완료 manifest를 발행한다.
 manifest의 정확한 schema와 B 식별자, infra commit C·immutable values snapshot V·desired commit P의
-관계는 [허브 ADR 0030](../../docs/adr/0030-dev-gitops-delivery.md)과
+관계는 [허브 ADR 0031](../../docs/adr/0031-dev-gitops-delivery.md)과
 [generated values 동기화 계약](../../docs/contracts/generated-values-sync.md)이 소유한다.
 같은 SHA의 재실행이라도 digest나 attempt가 달라 새 B가 되면 네 앱과 승격 조건을 다시 검증한다.
 

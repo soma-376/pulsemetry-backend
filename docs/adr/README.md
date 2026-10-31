@@ -88,7 +88,7 @@ Status 열은 각 ADR Status 줄의 **첫 토큰**만 싣는다. 부분 대체·
 Status 첫 토큰이 바뀌는 커밋에서는 이 표도 같은 커밋에서 갱신한다.
 
 dev의 완료 묶음 이미지 공급은 [ADR 0075](0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md), 레포 간 인계는
-[허브 ADR 0030](../../../docs/adr/0030-dev-gitops-delivery.md)과 [generated values 동기화 계약](../../../docs/contracts/generated-values-sync.md)이 기준이다.
+[허브 ADR 0031](../../../docs/adr/0031-dev-gitops-delivery.md)과 [generated values 동기화 계약](../../../docs/contracts/generated-values-sync.md)이 기준이다.
 ADR 0005·0009·0016의 dev 이미지 공급·배포 서술만 부분 대체하며 각 결정의 설치·스키마·조립 규칙은 유지한다.
 GitOps 구현·인계 전에는 수동 배포를 유지한다. 문서 채택은 workflow·Argo 구현이나 실제 배포 완료의 증거가 아니다.
 

@@ -4,7 +4,7 @@
 Accepted ([ADR 0004](0004-Flyway-마이그레이션과-varchar-CHECK-스키마-관리.md) 의 "varchar + CHECK 이식" 결정을 대체한다. 진실원 = Flyway 등 나머지 결정은 유지)
 
 부분 대체: dev 이미지 공급·배포 순서는 [ADR 0075](0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)와
-[허브 ADR 0030](../../../docs/adr/0030-dev-gitops-delivery.md)을 따른다. 원천 Flyway의 소유·실행 책임은 유지한다.
+[허브 ADR 0031](../../../docs/adr/0031-dev-gitops-delivery.md)을 따른다. 원천 Flyway의 소유·실행 책임은 유지한다.
 아래 Context 는 native enum 채택 당시의 공유 DB·구 파이프라인 상태이며 현재 배포 상태를 뜻하지 않는다.
 
 ## Context
