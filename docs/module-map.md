@@ -35,6 +35,22 @@ V9의 활성 제품 유일 제약과 계약 정정 규칙은 Enrollment 명세 �
 
 ---
 
+## PROJ-306 기능·책임 구조
+
+[ADR 0075](adr/0075-기능-패키지와-명령-책임을-분리하고-의존-경계를-검사한다.md)가 다음 구조의 구현 기준이다. 이 절은 선행 설계이며 아래 기존 목록은 각 구현 단계에서 함께 갱신한다.
+
+| 단위 | 책임 |
+|---|---|
+| Dashboard `overview`, `team`, `member`, `settings`, `alert` | 기능별 HTTP·조회 서비스·응답 |
+| Dashboard `analytics`, `snapshot`, 인증·인가·저장소 패키지 | 실제 공유 집계·불변 snapshot·접근 제어·연결 |
+| Enrollment `team`, `member`, `invitation`, `installation`, `policy`, `vendor`, `seat` | 기능 API·명시적 명령·업무 실행 |
+| Enrollment 공통 명령 관문 | 조직 잠금·행위자 재검증·트랜잭션·멱등 응답 조정 |
+| `enrollment-persistence` | SQL·JPA·DDL·원자적 저장 연산 |
+| `enrollment-domain` | Enrollment·Dashboard가 공유하는 순수 규칙·값 |
+| `telemetry-model` | adapter·enricher·persistence가 공유하는 관측·보강 결과 값 |
+
+배포 앱과 파이프라인 단계는 유지한다. 타입 간선은 `adapter/enricher/persistence → telemetry-model`로 바꾸며, 적재를 쓰는 보존 worker에 보강 실행·JPA·Flyway가 따라오지 않는다. 라이브러리 starter는 제거하고 필요한 자동설정은 앱이 선택한다. 구조 검사는 기존 `build`에 연결한다.
+
 ## 1. 현재 모듈
 
 개발 전용 `:tools:dev-seed` (`com.team376.pulsemetry.devseed`) 하나가 시드 생성·적재·검증과 Compose 진입점을 소유한다.
