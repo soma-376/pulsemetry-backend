@@ -17,7 +17,9 @@
 
 ## 2. Enrollment
 
-구현·검증 진행 중.
+`ManagementController`의 다중 경로 분기와 `ManagementStore.command`를 제거했다. 기능별 API가 명시적 application 명령을 호출하고, `ManagementHttp`는 HTTP 상태·헤더·JSON과 기존 재시도 식별자, `ManagementExecutor`는 조직/역할 잠금·트랜잭션·암호화 재응답을 맡는다. Directory·Invitation·Installation·Vendor 저장 연산과 CommandJournal은 SQL만 수행한다. 정책 판 생성·설정 변경·보존 정리 요청 조정은 `PolicyCommands`로 옮겼다. 팀 이름·역할 규칙은 순수 domain에서 검사하며 기존 좌석 원장·상태 전이는 재사용한다.
+
+검증: `:apps:enrollment-api:test :libs:enrollment-persistence:test` 성공, 각각 512개·133개, 실패·오류·skip 0. PostgreSQL·실제 HTTP·메일 outbox·낙관 버전·동시성·정책 정리·좌석 회귀를 포함한다. 신규 ArchUnit 4개, 도메인 규칙 2개, 이전 AES-GCM/AAD 저장 형식 재생·동시 멱등 요청·응답 생성 실패 롤백 3개를 추가했다. 초기 전체 실행은 기존 부트스트랩 테스트의 `pwsh` PATH 누락 한 건만 실패했으며, `/tmp/proj268-powershell/runtime`의 PowerShell 7.4.6을 PATH에 포함해 전체 재실행했다.
 
 ## 3. 공유 의존성과 앱 조립
 

@@ -1,7 +1,7 @@
-package com.team376.pulsemetry.enrollment.api
+package com.team376.pulsemetry.enrollment.installation
 
 import com.team376.pulsemetry.enrollment.contract.TelemetryTokenResponse
-import com.team376.pulsemetry.enrollment.service.TelemetryTokenService
+import com.team376.pulsemetry.enrollment.installation.TelemetryTokenService
 import org.springframework.http.HttpHeaders
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestHeader

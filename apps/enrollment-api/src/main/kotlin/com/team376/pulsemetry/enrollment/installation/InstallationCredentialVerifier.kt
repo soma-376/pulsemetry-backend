@@ -1,4 +1,4 @@
-package com.team376.pulsemetry.enrollment.service
+package com.team376.pulsemetry.enrollment.installation
 
 import com.team376.pulsemetry.enrollment.error.EnrollmentException
 import com.team376.pulsemetry.enrollment.secret.Sha256

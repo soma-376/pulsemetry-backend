@@ -1,9 +1,9 @@
-package com.team376.pulsemetry.enrollment.api
+package com.team376.pulsemetry.enrollment.invitation.api
 
-import com.team376.pulsemetry.enrollment.contract.CreateInvitationRequest
-import com.team376.pulsemetry.enrollment.contract.CreateInvitationResponse
+import com.team376.pulsemetry.enrollment.invitation.CreateInvitationRequest
+import com.team376.pulsemetry.enrollment.invitation.CreateInvitationResponse
 import com.team376.pulsemetry.enrollment.secret.AdminAuthenticator
-import com.team376.pulsemetry.enrollment.service.InvitationAdminService
+import com.team376.pulsemetry.enrollment.invitation.application.InvitationAdminService
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping

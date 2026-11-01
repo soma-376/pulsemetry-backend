@@ -1,4 +1,6 @@
-package com.team376.pulsemetry.enrollment.management
+package com.team376.pulsemetry.enrollment.vendor.api
+
+import com.team376.pulsemetry.enrollment.management.managementActor
 
 import com.team376.pulsemetry.connector.vendor.ConnectionTarget
 import com.team376.pulsemetry.connector.vendor.ConnectorFailure
@@ -28,6 +30,7 @@ import java.util.UUID
  * - 확인은 커넥터의 읽기 호출 하나다. 트랜잭션 밖에서 부르고, 그 사이 연결이 바뀌었으면 결과를 쓰지 않는다(409). 확인은 상태만 남기는 조회라 `Idempotency-Key` 를 받지 않는다.
  * - 응답은 `{seatSource}` — 설정 조회의 벤더 `seatSource` 와 같은 모양이다. ETag 는 `"connection-{판}"`.
  */
+@com.team376.pulsemetry.enrollment.management.ManagementApi
 @RestController
 @ConditionalOnProperty(prefix = "pulsemetry.vendor-connections", name = ["enabled"], havingValue = "true")
 @RequestMapping("/api/v1/organizations/{organizationId}/vendors/{vendorId}/connection")

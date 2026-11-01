@@ -1,9 +1,9 @@
-package com.team376.pulsemetry.enrollment.service
+package com.team376.pulsemetry.enrollment.invitation.application
 
 import com.team376.pulsemetry.enrollment.config.PulsemetryProperties
-import com.team376.pulsemetry.enrollment.contract.CreateInvitationRequest
-import com.team376.pulsemetry.enrollment.contract.CreateInvitationResponse
-import com.team376.pulsemetry.enrollment.contract.InstallCommands
+import com.team376.pulsemetry.enrollment.invitation.CreateInvitationRequest
+import com.team376.pulsemetry.enrollment.invitation.CreateInvitationResponse
+import com.team376.pulsemetry.enrollment.invitation.InstallCommands
 import com.team376.pulsemetry.enrollment.error.EnrollmentException
 import com.team376.pulsemetry.enrollment.secret.InvitationCode
 import com.team376.pulsemetry.enrollment.secret.Sha256

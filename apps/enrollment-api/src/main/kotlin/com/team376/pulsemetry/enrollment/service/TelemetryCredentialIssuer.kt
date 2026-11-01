@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.enrollment.service
 
+import com.team376.pulsemetry.enrollment.installation.TelemetryTokenService
+
 import com.team376.pulsemetry.enrollment.secret.SecretToken
 import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryToken
 import com.team376.pulsemetry.persistence.enrollment.entity.TelemetryTokenFormat

@@ -1,4 +1,6 @@
-package com.team376.pulsemetry.enrollment.management
+package com.team376.pulsemetry.enrollment.alert
+
+import com.team376.pulsemetry.enrollment.management.managementActor
 
 import com.team376.pulsemetry.persistence.enrollment.alert.AlertRuleState
 import com.team376.pulsemetry.persistence.enrollment.alert.AlertRuleStore
@@ -17,6 +19,7 @@ import tools.jackson.databind.JsonNode
 import java.util.UUID
 
 /** 알림 규칙의 켜기·끄기와 확인. 등록 제품 기준은 허브 ADR 0008, 평가는 dashboard-api의 주기 작업이 한다. */
+@com.team376.pulsemetry.enrollment.management.ManagementApi
 @RestController
 @ConditionalOnProperty(prefix = "pulsemetry.management", name = ["enabled"], havingValue = "true")
 @RequestMapping("/api/v1/organizations/{organizationId}")

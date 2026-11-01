@@ -5,7 +5,7 @@
 
 결정의 **배경과 대안**은 ADR에 있다. 이 문서는 "무엇이 어떻게 나뉘어 있는가"만 다룬다.
 HTTP 계약은 [페이지·기능별 API 문서](api/README.md)에 모으고 각 엔드포인트의 담당 서버를 표시한다.
-온보딩·정책·초대 명령은 enrollment-api/management, 카탈로그 조회는 dashboard-api/catalog,
+온보딩·정책·초대 명령은 enrollment-api의 policy·invitation 기능, 카탈로그 조회는 dashboard-api/catalog,
 공통 카탈로그와 온보딩 영속성은 enrollment-persistence/management가 소유한다(ADR 0029).
 카탈로그 기준 데이터는 `enrollment.vendor_catalog_vendors`·`vendor_catalog_products`·`vendor_catalog_plans`에 있다(ADR 0035).
 V10이 초기 목록을 넣고 V11이 OpenAI 복수 좌석 입력을 허용한다. 조회 API와 계약 검증은 같은 DB를 읽는다.
@@ -64,11 +64,13 @@ pulsemetry-backend
 │   ├── enrollment-api/              com.team376.pulsemetry.enrollment
 │   │                                ├ auth/           사용자 인증 HTTP·필터·키 설정
 │   │                                ├ inquiry/        로그인 전 도입 문의 접수 HTTP·출처별 제한 필터
-│   │                                ├ installation/   설치 보고(heartbeat) 수신 — 본문 해석·적용 확인·기록 (ADR 0040). telemetryctl 기본 브랜치에 송신 없음 (ADR 0053)
+│   │                                ├ team/ · member/ · invitation/ · policy/ · vendor/  기능별 api·application, 필요한 domain 규칙
+│   │                                ├ installation/   설치 보고·토큰, api/의 업데이트 안내와 application/ 실행
 │   │                                ├ mail/           메일 설정 바인딩·발송 구현(SMTP·SES)·발송 작업의 주기 실행 (ADR 0037·0058)
 │   │                                ├ update/         데몬 업데이트 확인 — 릴리스 디렉터리의 판과 SHA256SUMS 확인·SemVer 비교, /bin 서빙과 같은 확인 (허브 ADR 0011, ADR 0053)
-│   │                                ├ seat/           벤더 연결 설정·커넥터 조립·좌석 동기화와 회수·복원 벤더 제어의 주기 실행 (ADR 0048·0049·0050)
-│   │                                └ management/     온보딩·정책·팀·초대·제품·계약·좌석·벤더 연결·알림 규칙·알림 확인 관리 HTTP
+│   │                                ├ seat/           기능별 api·application, 커넥터 조립·동기화·벤더 제어의 주기 실행
+│   │                                ├ alert/          알림 규칙·확인 관리 HTTP
+│   │                                └ management/     공통 HTTP 표현·명령 관문·멱등 암호화·조립. 경로에 따른 업무 분기 없음
 │   ├── telemetry-ingest/            com.team376.pulsemetry.telemetry
 │   │                                OTLP 수신부터 적재까지 한 프로세스 — 조립만 한다. HTTP·Kafka Consumer 모드 (ADR 0066)
 │   ├── telemetry-gateway/           com.team376.pulsemetry.telemetry.gateway

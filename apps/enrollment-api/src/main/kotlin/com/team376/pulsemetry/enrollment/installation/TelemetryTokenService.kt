@@ -1,7 +1,8 @@
-package com.team376.pulsemetry.enrollment.service
+package com.team376.pulsemetry.enrollment.installation
+
+import com.team376.pulsemetry.enrollment.service.TelemetryCredentialIssuer
 
 import com.team376.pulsemetry.enrollment.contract.TelemetryTokenResponse
-import com.team376.pulsemetry.enrollment.error.EnrollmentException
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationCredentialRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.MemberRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TelemetryTokenRepository

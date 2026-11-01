@@ -1,4 +1,4 @@
-package com.team376.pulsemetry.enrollment.contract
+package com.team376.pulsemetry.enrollment.invitation
 
 import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
