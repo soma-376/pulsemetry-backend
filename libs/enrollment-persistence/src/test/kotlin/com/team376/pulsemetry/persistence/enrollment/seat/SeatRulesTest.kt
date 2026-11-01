@@ -1,9 +1,16 @@
 package com.team376.pulsemetry.persistence.enrollment.seat
 
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatState.ASSIGNED
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatState.PENDING_ASSIGNMENT
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatState.PENDING_RELEASE
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatState.RELEASED
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState
+
+import com.team376.pulsemetry.domain.enrollment.seat.SeatSource
+import com.team376.pulsemetry.domain.enrollment.seat.SeatTransitions
+import com.team376.pulsemetry.domain.enrollment.seat.SeatAuthority
+import com.team376.pulsemetry.domain.enrollment.seat.SyncStatus
+
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState.ASSIGNED
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState.PENDING_ASSIGNMENT
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState.PENDING_RELEASE
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState.RELEASED
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test

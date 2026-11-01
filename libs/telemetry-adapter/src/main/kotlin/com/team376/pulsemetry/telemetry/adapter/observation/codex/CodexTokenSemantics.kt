@@ -1,12 +1,12 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.codex
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.EventType
-import com.team376.pulsemetry.telemetry.adapter.observation.InputSemantics
-import com.team376.pulsemetry.telemetry.adapter.observation.MappingStatus
-import com.team376.pulsemetry.telemetry.adapter.observation.OutputSemantics
-import com.team376.pulsemetry.telemetry.adapter.observation.Product
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageRole
+import com.team376.pulsemetry.telemetry.model.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventType
+import com.team376.pulsemetry.telemetry.model.InputSemantics
+import com.team376.pulsemetry.telemetry.model.MappingStatus
+import com.team376.pulsemetry.telemetry.model.OutputSemantics
+import com.team376.pulsemetry.telemetry.model.Product
+import com.team376.pulsemetry.telemetry.model.UsageRole
 import com.team376.pulsemetry.telemetry.adapter.observation.semantics.CacheWriteStatus
 import com.team376.pulsemetry.telemetry.adapter.observation.semantics.SemanticsProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.semantics.SemanticsScope

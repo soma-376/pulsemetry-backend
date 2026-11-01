@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
+import com.team376.pulsemetry.telemetry.model.RowVersioning
+import com.team376.pulsemetry.telemetry.model.EnrichedEvent
 
 /**
  * `telemetry_events` 에 쓰는 유일한 주체(ADR 0020 §1·§3). 쓰기 소유는 DDL 이 이 모듈 아래 있다는 사실이 근거다(ADR 0008

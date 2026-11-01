@@ -22,6 +22,12 @@ val protobufVersion = libs.versions.protobuf.get()
 val kotlinReflect = libs.kotlin.reflect
 val kotlinTestJunit5 = libs.kotlin.test.junit5
 val junitPlatformLauncher = libs.junit.platform.launcher
+val archunit = libs.archunit
+
+// 실제 앱의 패키지 목록을 검사에 전달한다. 공통 루트 패키지는 정확히 일치할 때만 앱이다.
+val applicationPackages = fileTree("apps") { include("*/src/main/kotlin/**/*.kt", "*/src/main/java/**/*.java") }.files
+	.mapNotNull { file -> file.useLines { lines -> lines.firstOrNull { it.startsWith("package ") }?.removePrefix("package ")?.removeSuffix(";") } }
+	.distinct().sorted().joinToString(",") { if (it == "com.team376.pulsemetry") it else "$it.." }
 
 subprojects {
 	// :apps, :libs 는 모듈을 담는 컨테이너일 뿐 빌드 스크립트가 없다. 공통 설정 대상에서 뺀다.
@@ -75,4 +81,18 @@ subprojects {
 	tasks.withType<Test>().configureEach {
 		useJUnitPlatform()
 	}
+
+	if (path.startsWith(":libs:")) {
+		dependencies { add("testImplementation", archunit) }
+		extensions.configure<KotlinJvmProjectExtension> {
+			sourceSets.named("test") { kotlin.srcDir(rootProject.file("architecture/src/test/kotlin")) }
+		}
+		tasks.withType<Test>().configureEach {
+			systemProperty("pulsemetry.architecture.main", files(layout.buildDirectory.dir("classes/kotlin/main"), layout.buildDirectory.dir("classes/java/main")).asPath)
+			systemProperty("pulsemetry.architecture.module", project.path)
+			systemProperty("pulsemetry.architecture.apps", applicationPackages)
+		}
+	}
 }
+
+apply(from = "gradle/architecture.gradle.kts")

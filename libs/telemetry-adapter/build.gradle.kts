@@ -5,6 +5,8 @@ plugins {
 }
 
 dependencies {
+	// 관측·집계 값이 정규화의 공개 입력/출력 시그니처에 나타난다 (ADR 0075).
+	api(project(":libs:telemetry-model"))
 	// 진입점 시그니처는 protobuf 의 MessageOrBuilder 다 — 그 타입이 소비자의 계약이므로 api() 다
 	// (ADR 0008 규칙 3). 어느 OTLP 요청인지는 런타임에 디스크립터로 가른다.
 	api(libs.protobuf.java)

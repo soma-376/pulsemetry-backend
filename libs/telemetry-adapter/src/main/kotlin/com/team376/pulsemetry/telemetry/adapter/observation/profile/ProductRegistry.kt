@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.profile
 
-import com.team376.pulsemetry.telemetry.adapter.observation.Product
-import com.team376.pulsemetry.telemetry.adapter.observation.Surface
+import com.team376.pulsemetry.telemetry.model.Product
+import com.team376.pulsemetry.telemetry.model.Surface
 
 /** 서비스 별칭으로 정한 제품과 표면. */
 public data class ProductIdentity(val product: Product, val surface: Surface)

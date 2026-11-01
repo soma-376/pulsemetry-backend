@@ -2,10 +2,10 @@ package com.team376.pulsemetry.telemetry.adapter.observation.profile
 
 import com.google.protobuf.Message
 import com.google.protobuf.MessageOrBuilder
-import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventObservation
 import com.team376.pulsemetry.telemetry.adapter.observation.MetadataAllowlist
-import com.team376.pulsemetry.telemetry.adapter.observation.MetricPointObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.Product
+import com.team376.pulsemetry.telemetry.model.MetricPointObservation
+import com.team376.pulsemetry.telemetry.model.Product
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedAttribute
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedValue
 import com.team376.pulsemetry.telemetry.adapter.observation.semantics.SemanticsProfile

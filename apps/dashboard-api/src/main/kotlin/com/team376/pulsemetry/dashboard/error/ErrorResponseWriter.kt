@@ -1,13 +1,12 @@
 package com.team376.pulsemetry.dashboard.error
 
-import com.team376.pulsemetry.dashboard.config.DashboardApiProperties
-import com.team376.pulsemetry.dashboard.request.RequestIds
+import java.time.Duration
+import com.team376.pulsemetry.dashboard.error.RequestIds
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
-import org.springframework.stereotype.Component
 import tools.jackson.databind.ObjectMapper
 
 /**
@@ -16,13 +15,12 @@ import tools.jackson.databind.ObjectMapper
  *
  * 503 에는 `Retry-After` 를 싣는다(ADR 0022 §5). 값은 필수 설정이다.
  */
-@Component
 class ErrorResponseWriter(
 	private val mapper: ObjectMapper,
-	properties: DashboardApiProperties,
+	retryAfter: Duration,
 ) {
 
-	private val retryAfterSeconds: String = properties.retryAfter.toSeconds().toString()
+	private val retryAfterSeconds: String = retryAfter.toSeconds().toString()
 
 	fun entity(
 		request: HttpServletRequest,

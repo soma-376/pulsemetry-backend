@@ -1,10 +1,10 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.pricing
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
-import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.EventType
-import com.team376.pulsemetry.telemetry.adapter.observation.OutputSemantics
-import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventType
+import com.team376.pulsemetry.telemetry.model.OutputSemantics
+import com.team376.pulsemetry.telemetry.model.QualityFlag
 import java.math.BigDecimal
 
 /** 실제 계정의 청구 조건이 아니라 출처를 명시한 참조 단가 평가의 고정 기준이다. */

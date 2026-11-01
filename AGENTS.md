@@ -24,13 +24,15 @@ apps/telemetry-gateway/      OTLP 접수 앱 — telemetry JWT 만 검증해 Kaf
 apps/dashboard-api/          분석·설정·카탈로그 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐. 사용자 인증 어댑터 (ADR 0026)
 apps/retention-worker/       조직별 보존 삭제 — 서버가 아닌 일회성 실행. 분석 원본 DELETE 권한은 여기뿐 (ADR 0024)
 libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이그레이션
+libs/enrollment-domain/      명령·조회가 공유하는 오류·좌석 상태/전이·계약 규칙 — HTTP·SQL·Spring 없음 (ADR 0075)
 libs/security/               횡단 인증 라이브러리 — 사용자 JWT·세션·OIDC 신원 연결, OTLP 경로 ptt_ 검증 · telemetry token 해시
 libs/telemetry-auth/         telemetry JWT 발급·검증 (RS256, 전용 typ·kid) — nimbus 만 의존 (ADR 0065)
 libs/telemetry-otlp-http/    OTLP/HTTP 경로·허용 목록·응답 바이트 — Gateway 와 ingest 가 같은 응답을 낸다
 libs/telemetry-ingress-contract/ Kafka ingress envelope(protobuf)·codec·접속 설정·운영 로그 이벤트 (ADR 0066)
 libs/telemetry-observability/ 운영 계측 포트·Micrometer 구현 — Spring 없음, 앱이 조립 (ADR 0068)
 libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 신원 스탬프 · 원본 아카이브
-libs/telemetry-adapter/      파이프라인 변환 단계 — 관측 모델 2판 · 제품 프로파일(Codex · Claude Code) · 가격 단계
+libs/telemetry-model/        단계 사이 관측·집계·보강 결과 값 — 단계 실행·JPA·Boot 없음 (ADR 0075)
+libs/telemetry-adapter/      파이프라인 변환 단계 — 제품 프로파일(Codex · Claude Code) · 토큰 의미 · 가격 단계
 libs/telemetry-enricher/     파이프라인 보강 단계 — member_id · 대표 팀 as-of · provider 주석
 libs/telemetry-persistence/  파이프라인 적재 단계 — ClickHouse 스키마 소유 · 분석 테이블 · 수신 ledger sink
 libs/telemetry-ops-persistence/ 수집 운영 기록의 RDS 쪽 — telemetry_ops 스키마 · 생애 요약 · 백필
@@ -226,7 +228,7 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   sink 는 `AnalysisWriteBoundary` 없이 쓰지 않는다 — 재처리 경로도 같은 sink 를 지난다. 경계는 MAX 로만 움직인다
   (`TenantRetentionBoundaryStore.advance`). ClickHouse 이미지를 올리면 증거 테스트가 먼저 통과해야 한다.
   삭제는 `:apps:retention-worker` 만 한다 — 발효 → fence → drain → DELETE → 남은 행 0 확인의 순서를 바꾸지 마라(ADR 0024 §4).
-  그 앱은 JPA·Flyway 자동설정을 `spring.autoconfigure.exclude` 로 끈다 — 분석 테이블 모듈이 enrollment-persistence 를 끌어온다.
+  그 앱은 JDBC 자동설정만 선택한다. ADR 0075로 분석 적재의 보강·Enrollment 전이 의존을 제거했으며, 기존 JPA·Flyway 제외 설정은 방어적으로 유지한다.
   조직이 집계 보존을 줄이면 저장 명령이 보존 정리 요청을 남기고, 그 앱의 요청 모드(`--requests`)가 같은 순서로 실행한다(ADR 0047) —
   enrollment-api·dashboard-api 에서 원본을 지우지 마라. 요청 모드는 기존 인자 모드와 종료 코드를 바꾸지 않는다.
 - **계약 테스트는 원격 telemetryctl 기본 브랜치에 있는 스키마만 원본으로 읽는다.** PR CI 는 그 브랜치의 `contracts` 를 체크아웃해

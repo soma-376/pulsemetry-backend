@@ -40,6 +40,7 @@ COPY apps/telemetry-gateway/build.gradle.kts apps/telemetry-gateway/
 COPY apps/dashboard-api/build.gradle.kts apps/dashboard-api/
 COPY apps/retention-worker/build.gradle.kts apps/retention-worker/
 COPY libs/enrollment-persistence/build.gradle.kts libs/enrollment-persistence/
+COPY libs/enrollment-domain/build.gradle.kts libs/enrollment-domain/
 COPY libs/security/build.gradle.kts libs/security/
 COPY libs/telemetry-collector/build.gradle.kts libs/telemetry-collector/
 COPY libs/telemetry-auth/build.gradle.kts libs/telemetry-auth/
@@ -47,6 +48,7 @@ COPY libs/telemetry-observability/build.gradle.kts libs/telemetry-observability/
 COPY libs/telemetry-otlp-http/build.gradle.kts libs/telemetry-otlp-http/
 COPY libs/telemetry-ingress-contract/build.gradle.kts libs/telemetry-ingress-contract/
 COPY libs/telemetry-adapter/build.gradle.kts libs/telemetry-adapter/
+COPY libs/telemetry-model/build.gradle.kts libs/telemetry-model/
 COPY libs/telemetry-enricher/build.gradle.kts libs/telemetry-enricher/
 COPY libs/telemetry-persistence/build.gradle.kts libs/telemetry-persistence/
 COPY libs/telemetry-ops-persistence/build.gradle.kts libs/telemetry-ops-persistence/

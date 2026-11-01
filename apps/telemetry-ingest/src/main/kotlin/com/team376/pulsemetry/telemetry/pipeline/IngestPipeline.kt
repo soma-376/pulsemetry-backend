@@ -4,11 +4,11 @@ import com.google.protobuf.Message
 import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
 import com.team376.pulsemetry.persistence.telemetry.TelemetryMetricPointsSink
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkRejectedException
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationBatch
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.ObservationBatch
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationContext
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationPipeline
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
+import com.team376.pulsemetry.telemetry.model.RowVersioning
 import com.team376.pulsemetry.telemetry.collector.PermanentIngestException
 import com.team376.pulsemetry.telemetry.collector.Signal
 import com.team376.pulsemetry.telemetry.collector.SignalConsumer

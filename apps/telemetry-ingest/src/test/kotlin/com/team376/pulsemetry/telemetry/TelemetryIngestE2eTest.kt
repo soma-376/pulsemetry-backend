@@ -3,7 +3,7 @@ package com.team376.pulsemetry.telemetry
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
 import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsUnavailableException
 import com.team376.pulsemetry.persistence.telemetryops.TenantSummaryBackfill
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
+import com.team376.pulsemetry.telemetry.model.RowVersioning
 import com.team376.pulsemetry.telemetry.support.AbstractIngestIntegrationTest
 import com.team376.pulsemetry.telemetry.support.IngestTestData
 import org.assertj.core.api.Assertions.assertThat

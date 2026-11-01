@@ -1,5 +1,12 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.ObservationBatch
+import com.team376.pulsemetry.telemetry.model.Product
+import com.team376.pulsemetry.telemetry.model.UsageContractOutcome
+import com.team376.pulsemetry.telemetry.model.UsageContractResult
+import com.team376.pulsemetry.telemetry.model.UsageRole
+
 import com.team376.pulsemetry.telemetry.adapter.observation.codex.CodexProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProfileRegistry
 import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest

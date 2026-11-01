@@ -1,14 +1,14 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.claudecode
 
-import com.team376.pulsemetry.telemetry.adapter.observation.MappingStatus
+import com.team376.pulsemetry.telemetry.model.MappingStatus
 import com.team376.pulsemetry.telemetry.adapter.observation.MetadataAllowlist
-import com.team376.pulsemetry.telemetry.adapter.observation.MetricFamily
-import com.team376.pulsemetry.telemetry.adapter.observation.MetricPointObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.MetricType
-import com.team376.pulsemetry.telemetry.adapter.observation.TokenComponent
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageRole
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageScope
-import com.team376.pulsemetry.telemetry.adapter.observation.WorkloadKind
+import com.team376.pulsemetry.telemetry.model.MetricFamily
+import com.team376.pulsemetry.telemetry.model.MetricPointObservation
+import com.team376.pulsemetry.telemetry.model.MetricType
+import com.team376.pulsemetry.telemetry.model.TokenComponent
+import com.team376.pulsemetry.telemetry.model.UsageRole
+import com.team376.pulsemetry.telemetry.model.UsageScope
+import com.team376.pulsemetry.telemetry.model.WorkloadKind
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.FieldReader
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.MetricPointView
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.MetricProfile

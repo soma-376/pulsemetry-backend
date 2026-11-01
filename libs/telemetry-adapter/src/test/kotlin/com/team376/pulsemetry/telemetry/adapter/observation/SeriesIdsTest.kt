@@ -1,5 +1,8 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import com.team376.pulsemetry.telemetry.model.Hex64
+import com.team376.pulsemetry.telemetry.model.SeriesIdentityStatus
+
 import io.opentelemetry.proto.common.v1.AnyValue
 import io.opentelemetry.proto.common.v1.InstrumentationScope
 import io.opentelemetry.proto.common.v1.KeyValue

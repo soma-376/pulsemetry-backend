@@ -1,5 +1,8 @@
 package com.team376.pulsemetry.dashboard.analytics
 
+import com.team376.pulsemetry.dashboard.member.Member
+import com.team376.pulsemetry.dashboard.member.SeatControlRef
+
 import com.team376.pulsemetry.connector.vendor.VendorSeat
 import com.team376.pulsemetry.dashboard.authentication.DashboardPrincipal
 import com.team376.pulsemetry.dashboard.authentication.Role
@@ -16,7 +19,7 @@ import com.team376.pulsemetry.dashboard.support.SourceFixtures
 import com.team376.pulsemetry.dashboard.support.SourceFixtures.Event
 import com.team376.pulsemetry.dashboard.support.TestDashboardAuthenticator
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatSource
+import com.team376.pulsemetry.domain.enrollment.seat.SeatSource
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
 import org.junit.jupiter.api.BeforeEach

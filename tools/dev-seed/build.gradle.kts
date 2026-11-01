@@ -9,8 +9,11 @@ dependencies {
     implementation(libs.flyway.core)
     implementation(libs.jackson.module.kotlin)
     runtimeOnly(libs.postgresql)
+    runtimeOnly(libs.flyway.database.postgresql)
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.junit.jupiter)
+    // 시드 토큰 산식의 비교 오라클은 실제 정규화 구현이다. 실행 배포에는 포함하지 않는다.
+    testImplementation(project(":libs:telemetry-adapter"))
 }
 
 application {

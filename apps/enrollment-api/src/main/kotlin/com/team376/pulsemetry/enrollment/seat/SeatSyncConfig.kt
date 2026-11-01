@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.enrollment.seat
 
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules
+
 import com.team376.pulsemetry.connector.vendor.ClaudeEnterpriseConnector
 import com.team376.pulsemetry.connector.vendor.ConnectionTarget
 import com.team376.pulsemetry.connector.vendor.ConnectorDescriptors
@@ -280,7 +282,7 @@ class SeatControlRunner(
             val result = when {
                 expected != record.connector -> null
                 connector == null -> null
-                claim.action == SeatControl.Action.RELEASE -> connector.release?.release(target, claim.account)
+                claim.action == SeatControlRules.Action.RELEASE -> connector.release?.release(target, claim.account)
                 else -> connector.restore?.restore(target, claim.account)
             }
             when {

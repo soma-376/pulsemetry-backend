@@ -1,14 +1,13 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
-/** 제품·결과의 유한 집합만 계측한다. 수집 거부나 저장 완료를 뜻하지 않는다(ADR 0074). */
-public enum class UsageContractOutcome(public val wire: String) {
-	COMPATIBLE("compatible"),
-	INCOMPLETE("incomplete"),
-	INVALID("invalid"),
-	UNVERIFIED("unverified"),
-}
-
-public data class UsageContractResult(public val product: Product, public val outcome: UsageContractOutcome)
+import com.team376.pulsemetry.telemetry.model.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventType
+import com.team376.pulsemetry.telemetry.model.MappingStatus
+import com.team376.pulsemetry.telemetry.model.Product
+import com.team376.pulsemetry.telemetry.model.QualityFlag
+import com.team376.pulsemetry.telemetry.model.UsageContractOutcome
+import com.team376.pulsemetry.telemetry.model.UsageContractResult
+import com.team376.pulsemetry.telemetry.model.UsageRole
 
 /** 버전·모델·신원·동적 이벤트 이름 없이 사용량 후보의 계약 불일치를 드러낸다. */
 internal object UsageContractDiagnostics {

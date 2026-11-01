@@ -1,15 +1,10 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import com.team376.pulsemetry.telemetry.model.ObservationBatch
+
 import com.google.protobuf.Message
 import com.team376.pulsemetry.telemetry.adapter.observation.pricing.PricingStage
 import com.team376.pulsemetry.telemetry.adapter.observation.semantics.TokenDerivation
-
-/** 파이프라인 한 번의 결과 — hash 가 봉인된 관측과 집계. */
-public class ObservationBatch(
-	public val events: List<EventObservation>,
-	public val metricPoints: List<MetricPointObservation>,
-	public val stats: NormalizationStats,
-)
 
 /**
  * 정규화 단계 전체(ADR 0020 §3 의 처리 순서): 매핑([ObservationNormalizer]) → 파생 토큰([TokenDerivation]) →
@@ -26,7 +21,7 @@ public class ObservationPipeline(
 		return ObservationBatch(
 			events = result.events.map { event ->
 				AnalysisHash.seal(pricing.apply(TokenDerivation.apply(event.observation, event.semantics))).also {
-					if (event.usageCandidate) result.stats.recordUsageContract(it)
+					if (event.usageCandidate) result.stats.recordUsageContract(UsageContractDiagnostics.classify(it))
 				}
 			},
 			metricPoints = result.metricPoints.map { AnalysisHash.seal(it) },

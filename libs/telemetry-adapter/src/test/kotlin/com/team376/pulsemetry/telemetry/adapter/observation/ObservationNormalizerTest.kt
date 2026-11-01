@@ -1,5 +1,28 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventType
+import com.team376.pulsemetry.telemetry.model.Hex64
+import com.team376.pulsemetry.telemetry.model.InputSemantics
+import com.team376.pulsemetry.telemetry.model.MappingStatus
+import com.team376.pulsemetry.telemetry.model.MetricFamily
+import com.team376.pulsemetry.telemetry.model.MetricType
+import com.team376.pulsemetry.telemetry.model.NormalizationStats
+import com.team376.pulsemetry.telemetry.model.ObservationSignal
+import com.team376.pulsemetry.telemetry.model.OutputSemantics
+import com.team376.pulsemetry.telemetry.model.Product
+import com.team376.pulsemetry.telemetry.model.QualityFlag
+import com.team376.pulsemetry.telemetry.model.SourceIdentityKind
+import com.team376.pulsemetry.telemetry.model.SourceTimeOrigin
+import com.team376.pulsemetry.telemetry.model.SourceTimeRejection
+import com.team376.pulsemetry.telemetry.model.SpanKind
+import com.team376.pulsemetry.telemetry.model.SpanStatusCode
+import com.team376.pulsemetry.telemetry.model.Surface
+import com.team376.pulsemetry.telemetry.model.Temporality
+import com.team376.pulsemetry.telemetry.model.UsageRole
+import com.team376.pulsemetry.telemetry.model.UsageScope
+
 import com.google.protobuf.ByteString
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.LogProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.LogRecordView

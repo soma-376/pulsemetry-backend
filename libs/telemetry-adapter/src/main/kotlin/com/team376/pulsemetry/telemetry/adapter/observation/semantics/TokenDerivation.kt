@@ -1,11 +1,11 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.semantics
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.EventType
-import com.team376.pulsemetry.telemetry.adapter.observation.InputSemantics
-import com.team376.pulsemetry.telemetry.adapter.observation.OutputSemantics
-import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
-import com.team376.pulsemetry.telemetry.adapter.observation.withFlags
+import com.team376.pulsemetry.telemetry.model.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventType
+import com.team376.pulsemetry.telemetry.model.InputSemantics
+import com.team376.pulsemetry.telemetry.model.OutputSemantics
+import com.team376.pulsemetry.telemetry.model.QualityFlag
+import com.team376.pulsemetry.telemetry.model.withFlags
 
 /**
  * 파생 토큰 — `tokens_input_uncached`·`tokens_total_derived`(ADR 0020 §4 의 표).

@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import com.team376.pulsemetry.telemetry.model.ObservationSignal
+
 import com.google.protobuf.ByteString
 import com.google.protobuf.Descriptors.EnumValueDescriptor
 import com.google.protobuf.MessageOrBuilder

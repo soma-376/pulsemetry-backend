@@ -5,11 +5,8 @@ plugins {
 }
 
 dependencies {
-	// 단계 모듈 사이의 데이터 타입 간선 (ADR 0014). 금지된 것은 이웃의 seam 인터페이스를
-	// 구현하는 것이지 공개된 데이터 타입을 참조하는 것이 아니다.
-	// api() 다 — 관측 타입(ObservationBatch·EventObservation·OrgAttribution)이 ObservationEnricher 와
-	// EnrichedBatch 의 시그니처에 나타난다.
-	api(project(":libs:telemetry-adapter"))
+	// 관측·보강 결과가 공개 시그니처에 나타난다. 정규화 실행을 끌어오지 않는다 (ADR 0075).
+	api(project(":libs:telemetry-model"))
 
 	// as-of 조인은 읽기 전용이다. team_memberships 의 쓰기 소유는 관리자 API 그대로다 (ADR 0008 규칙 1).
 	// api() 다 — ObservationEnricher 의 public 생성자가 리포지토리를 받는다. 소비자가 그 타입 없이는
@@ -17,6 +14,8 @@ dependencies {
 	api(project(":libs:enrollment-persistence"))
 
 	testImplementation(libs.spring.boot.starter.test)
+	// ID·해시가 보강 뒤에도 유지되는지 실제 정규화 결과로 검증하는 테스트 의존이다.
+	testImplementation(project(":libs:telemetry-adapter"))
 	testImplementation(libs.spring.boot.starter.data.jpa)
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.postgresql)

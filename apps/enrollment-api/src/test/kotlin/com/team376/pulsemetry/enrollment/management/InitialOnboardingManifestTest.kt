@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.enrollment.management
 
 import com.team376.pulsemetry.enrollment.contract.ManifestPayload
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test

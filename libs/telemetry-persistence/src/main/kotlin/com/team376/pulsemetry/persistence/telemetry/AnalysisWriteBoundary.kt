@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationEnvelope
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.ObservationEnvelope
 import java.time.Instant
 import java.util.UUID
 

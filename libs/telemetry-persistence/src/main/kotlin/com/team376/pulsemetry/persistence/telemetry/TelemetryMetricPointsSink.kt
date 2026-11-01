@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedMetricPoint
+import com.team376.pulsemetry.telemetry.model.RowVersioning
+import com.team376.pulsemetry.telemetry.model.EnrichedMetricPoint
 
 /**
  * `telemetry_metric_points` 에 쓰는 유일한 주체(ADR 0020 §1·§3). 교체 저장·삭제 경계·실패·원자성 규칙은 [TelemetryEventsSink] 와 같다.

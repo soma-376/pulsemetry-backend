@@ -1,26 +1,26 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
-import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.EventType
-import com.team376.pulsemetry.telemetry.adapter.observation.MappingStatus
-import com.team376.pulsemetry.telemetry.adapter.observation.MetricPointObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.MetricType
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationEnvelope
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationSignal
-import com.team376.pulsemetry.telemetry.adapter.observation.OrgAttribution
-import com.team376.pulsemetry.telemetry.adapter.observation.Product
-import com.team376.pulsemetry.telemetry.adapter.observation.SeriesIdentityStatus
-import com.team376.pulsemetry.telemetry.adapter.observation.SourceIdentityKind
-import com.team376.pulsemetry.telemetry.adapter.observation.SourceTimeOrigin
-import com.team376.pulsemetry.telemetry.adapter.observation.StructuralStatus
-import com.team376.pulsemetry.telemetry.adapter.observation.Surface
-import com.team376.pulsemetry.telemetry.adapter.observation.Temporality
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageRole
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageScope
-import com.team376.pulsemetry.telemetry.adapter.observation.WorkloadKind
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedMetricPoint
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventType
+import com.team376.pulsemetry.telemetry.model.MappingStatus
+import com.team376.pulsemetry.telemetry.model.MetricPointObservation
+import com.team376.pulsemetry.telemetry.model.MetricType
+import com.team376.pulsemetry.telemetry.model.ObservationEnvelope
+import com.team376.pulsemetry.telemetry.model.ObservationSignal
+import com.team376.pulsemetry.telemetry.model.OrgAttribution
+import com.team376.pulsemetry.telemetry.model.Product
+import com.team376.pulsemetry.telemetry.model.SeriesIdentityStatus
+import com.team376.pulsemetry.telemetry.model.SourceIdentityKind
+import com.team376.pulsemetry.telemetry.model.SourceTimeOrigin
+import com.team376.pulsemetry.telemetry.model.StructuralStatus
+import com.team376.pulsemetry.telemetry.model.Surface
+import com.team376.pulsemetry.telemetry.model.Temporality
+import com.team376.pulsemetry.telemetry.model.UsageRole
+import com.team376.pulsemetry.telemetry.model.UsageScope
+import com.team376.pulsemetry.telemetry.model.WorkloadKind
+import com.team376.pulsemetry.telemetry.model.EnrichedEvent
+import com.team376.pulsemetry.telemetry.model.EnrichedMetricPoint
 import java.time.Instant
 
 /**

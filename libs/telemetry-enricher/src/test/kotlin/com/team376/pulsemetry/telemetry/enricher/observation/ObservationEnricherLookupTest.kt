@@ -2,7 +2,7 @@ package com.team376.pulsemetry.telemetry.enricher.observation
 
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TeamMembershipRepository
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationEnvelope
+import com.team376.pulsemetry.telemetry.model.ObservationEnvelope
 import com.team376.pulsemetry.telemetry.enricher.EnrichmentUnavailableException
 import com.team376.pulsemetry.telemetry.enricher.provider.EnrichmentProvider
 import com.team376.pulsemetry.telemetry.enricher.provider.GithubProvider
