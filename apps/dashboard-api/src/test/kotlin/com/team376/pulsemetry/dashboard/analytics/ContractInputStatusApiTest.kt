@@ -1,5 +1,8 @@
 package com.team376.pulsemetry.dashboard.analytics
 
+import com.team376.pulsemetry.dashboard.settings.ContractInputStatusResponse
+import com.team376.pulsemetry.dashboard.settings.ExpiredContract
+
 import com.team376.pulsemetry.dashboard.authentication.DashboardPrincipal
 import com.team376.pulsemetry.dashboard.authentication.Role
 import com.team376.pulsemetry.dashboard.config.AnalyticsConfig

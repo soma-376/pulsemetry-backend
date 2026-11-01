@@ -5,7 +5,7 @@
 
 결정의 **배경과 대안**은 ADR에 있다. 이 문서는 "무엇이 어떻게 나뉘어 있는가"만 다룬다.
 HTTP 계약은 [페이지·기능별 API 문서](api/README.md)에 모으고 각 엔드포인트의 담당 서버를 표시한다.
-온보딩·정책·초대 명령은 enrollment-api/management, 카탈로그 조회는 dashboard-api/api,
+온보딩·정책·초대 명령은 enrollment-api/management, 카탈로그 조회는 dashboard-api/catalog,
 공통 카탈로그와 온보딩 영속성은 enrollment-persistence/management가 소유한다(ADR 0029).
 카탈로그 기준 데이터는 `enrollment.vendor_catalog_vendors`·`vendor_catalog_products`·`vendor_catalog_plans`에 있다(ADR 0035).
 V10이 초기 목록을 넣고 V11이 OpenAI 복수 좌석 입력을 허용한다. 조회 API와 계약 검증은 같은 DB를 읽는다.
@@ -75,8 +75,10 @@ pulsemetry-backend
 │   │                                OTLP 접수 — telemetry JWT 검증 · Kafka 발행 · ack 뒤 응답. DB·S3 없음 (ADR 0066)
 │   ├── dashboard-api/               com.team376.pulsemetry.dashboard
 │   │                                분석 조회 API — 원천은 읽기만, 쓰기는 자기 캐시와 알림 평가 기록뿐 (ADR 0022·0051)
-│   │                                ├ api/            HTTP 표현 계층 — 화면별 컨트롤러
-│   │                                ├ analytics/      공통 계산기(축별 합계·null 규칙) · 화면별 응답 조립
+│   │                                ├ overview/ · team/ · member/ · settings/ · alert/  기능별 컨트롤러·조회·응답
+│   │                                ├ ingest/ · operation/ · catalog/  독립 조회 HTTP·응답
+│   │                                ├ api/            헬스·공통 예외 HTTP 매핑
+│   │                                ├ analytics/      공통 집계·값·좌석 판정·참조 조회 — 기능 역참조 없음
 │   │                                ├ authentication/ 인증 포트 · 기본 거부 구현 · 필터 · 역할 대응
 │   │                                ├ authorization/  인가 포트 · 기본 정책(관리자만) · 조직 경로 공통 관문
 │   │                                ├ organization/   조직(tenant) 읽기

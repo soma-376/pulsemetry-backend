@@ -37,20 +37,20 @@ class SeatService(private val reader: SeatLedgerReader, private val policies: Or
 	fun activeSeats(tenant: UUID, assessment: SeatAssessment, days: Int): Long? = activeSeatsValue(tenant, assessment, days).value
 
 	/** 같은 산출값에 원장 가용성과 관측 완전성의 사유를 붙여 설정 카드에 보낸다. */
-	fun activeSeatsValue(tenant: UUID, assessment: SeatAssessment, days: Int): OverviewResponse.Value<Long> {
+	fun activeSeatsValue(tenant: UUID, assessment: SeatAssessment, days: Int): Value<Long> {
 		val ledger = assessment.ledger
 		val kindOf = ledger.products.associate { it.vendorId to it.kind }
 		val reasons = assessment.products.filter { it.availability != Availability.AVAILABLE }
 			.map { it.reason ?: "seat_source_unavailable" }.toMutableList()
 		if (assessment.products.all { it.availability == Availability.UNAVAILABLE })
-			return SettingsValues.value(null, reasons.ifEmpty { listOf("not_applicable") })
+			return AvailabilityValues.value(null, reasons.ifEmpty { listOf("not_applicable") })
 		if (assessment.held.any { it.memberId == null }) reasons += "seat_unlinked"
 		if (assessment.held.any { kindOf[it.vendorId] !in ledger.observableKinds }) reasons += "product_unobservable"
-		if ("seat_unlinked" in reasons || "product_unobservable" in reasons) return SettingsValues.value(null, reasons)
+		if ("seat_unlinked" in reasons || "product_unobservable" in reasons) return AvailabilityValues.value(null, reasons)
 		val (used, complete) = reader.activity(tenant, ledger.asOf, days, ledger.mapping)
 		val count = assessment.held.count { (it.memberId!! to kindOf.getValue(it.vendorId)) in used }.toLong()
 		if (!complete) reasons += "observation_incomplete"
-		return SettingsValues.value(count.takeIf { complete || it > 0 }, reasons)
+		return AvailabilityValues.value(count.takeIf { complete || it > 0 }, reasons)
 	}
 
 	fun roster(tenant: UUID, asOf: Instant) = reader.roster(tenant, asOf)

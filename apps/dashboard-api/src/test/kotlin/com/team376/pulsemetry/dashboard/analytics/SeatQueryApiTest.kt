@@ -1,5 +1,8 @@
 package com.team376.pulsemetry.dashboard.analytics
 
+import com.team376.pulsemetry.dashboard.member.Member
+import com.team376.pulsemetry.dashboard.member.SeatControlRef
+
 import com.team376.pulsemetry.connector.vendor.VendorSeat
 import com.team376.pulsemetry.dashboard.authentication.DashboardPrincipal
 import com.team376.pulsemetry.dashboard.authentication.Role
