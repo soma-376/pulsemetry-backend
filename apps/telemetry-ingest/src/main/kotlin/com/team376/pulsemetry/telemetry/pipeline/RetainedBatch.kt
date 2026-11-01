@@ -1,11 +1,11 @@
 package com.team376.pulsemetry.telemetry.pipeline
 
 import com.team376.pulsemetry.persistence.telemetry.AnalysisWriteBoundary
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
-import com.team376.pulsemetry.telemetry.adapter.observation.NormalizationStats
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedBatch
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedMetricPoint
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.NormalizationStats
+import com.team376.pulsemetry.telemetry.model.EnrichedBatch
+import com.team376.pulsemetry.telemetry.model.EnrichedEvent
+import com.team376.pulsemetry.telemetry.model.EnrichedMetricPoint
 
 /**
  * 문서 하나의 적재 결과 — 정규화 집계와, 삭제 경계로 뺀 관측 수, 실제로 적재한 관측의 `source_time` 범위(ADR 0024 §6).

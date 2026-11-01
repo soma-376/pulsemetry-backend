@@ -1,23 +1,23 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.claudecode
 
-import com.team376.pulsemetry.telemetry.adapter.observation.ErrorType
-import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.EventType
-import com.team376.pulsemetry.telemetry.adapter.observation.MappingStatus
+import com.team376.pulsemetry.telemetry.model.ErrorType
+import com.team376.pulsemetry.telemetry.model.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventType
+import com.team376.pulsemetry.telemetry.model.MappingStatus
 import com.team376.pulsemetry.telemetry.adapter.observation.MetadataAllowlist
-import com.team376.pulsemetry.telemetry.adapter.observation.StopReason
-import com.team376.pulsemetry.telemetry.adapter.observation.ToolAction
-import com.team376.pulsemetry.telemetry.adapter.observation.ToolOrigin
-import com.team376.pulsemetry.telemetry.adapter.observation.TtftScope
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageRole
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageScope
+import com.team376.pulsemetry.telemetry.model.StopReason
+import com.team376.pulsemetry.telemetry.model.ToolAction
+import com.team376.pulsemetry.telemetry.model.ToolOrigin
+import com.team376.pulsemetry.telemetry.model.TtftScope
+import com.team376.pulsemetry.telemetry.model.UsageRole
+import com.team376.pulsemetry.telemetry.model.UsageScope
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.BoolWire
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.FieldReader
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.MappedEvent
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.NumberWire
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.SpanProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.SpanView
-import com.team376.pulsemetry.telemetry.adapter.observation.withFlags
+import com.team376.pulsemetry.telemetry.model.withFlags
 
 /**
  * Claude Code 스팬 허용 목록(ADR 0020 부록 A.4). 여섯 이름이 행이 되고 그 밖은 제외 수로 센다. 각 스팬은 자기 구간을 따로

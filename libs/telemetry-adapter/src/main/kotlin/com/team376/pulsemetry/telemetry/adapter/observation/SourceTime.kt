@@ -1,5 +1,12 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.NormalizationStats
+import com.team376.pulsemetry.telemetry.model.QualityFlag
+import com.team376.pulsemetry.telemetry.model.SourceTimeOrigin
+import com.team376.pulsemetry.telemetry.model.SourceTimeRejection
+import com.team376.pulsemetry.telemetry.model.SourceTimeSelection
+
 /**
  * 분석 행의 `source_time` 을 고른다 — ADR 0020 §2 의 규칙을 그대로 옮긴 순수 함수다.
  *
@@ -57,32 +64,6 @@ public object SourceTimes {
 	/** 두 후보가 모두 실패하면 더 구체적인 사유를 센다 — 값이 있었는데 틀린 쪽이 미설정보다 정보가 많다. */
 	private fun moreInformative(a: SourceTimeRejection, b: SourceTimeRejection): SourceTimeRejection =
 		if (a.ordinal >= b.ordinal) a else b
-}
-
-/** [SourceTimes] 의 결과. */
-public sealed interface SourceTimeSelection {
-	public data class Selected(
-		val sourceTime: EpochNanos,
-		val origin: SourceTimeOrigin,
-		/** 로그의 유효한 `observedTimeUnixNano`. 스팬·metric point 는 null. */
-		val observedTime: EpochNanos?,
-	) : SourceTimeSelection
-
-	public data class Rejected(val reason: SourceTimeRejection) : SourceTimeSelection
-}
-
-/**
- * `source_time` 을 얻지 못한 사유. 선언 순서가 정보량 순서다 — 두 후보가 모두 실패하면 뒤의 것을 센다.
- */
-public enum class SourceTimeRejection(override val wire: String) : WireValue {
-	/** 값이 없거나 OTLP 의 미설정 값 0 이다. */
-	UNSET("unset"),
-
-	/** 부호 없는 64비트로는 읽혔지만 `DateTime64(9)` 로 표현할 수 없다(2^63 나노초 이상). */
-	OUT_OF_RANGE("out_of_range"),
-
-	/** OTLP/JSON 의 문자열이 부호 없는 10진 정수가 아니다. */
-	UNPARSEABLE("unparseable"),
 }
 
 /**

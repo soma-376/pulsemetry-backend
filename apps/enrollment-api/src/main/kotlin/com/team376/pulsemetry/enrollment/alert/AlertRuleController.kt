@@ -4,7 +4,7 @@ import com.team376.pulsemetry.enrollment.management.managementActor
 
 import com.team376.pulsemetry.persistence.enrollment.alert.AlertRuleState
 import com.team376.pulsemetry.persistence.enrollment.alert.AlertRuleStore
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import com.team376.pulsemetry.security.user.UserAuthService
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty

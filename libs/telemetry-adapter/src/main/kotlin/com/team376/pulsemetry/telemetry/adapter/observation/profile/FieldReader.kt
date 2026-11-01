@@ -1,8 +1,8 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.profile
 
 import com.team376.pulsemetry.telemetry.adapter.observation.AttributeRead
-import com.team376.pulsemetry.telemetry.adapter.observation.Money
-import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
+import com.team376.pulsemetry.telemetry.model.Money
+import com.team376.pulsemetry.telemetry.model.QualityFlag
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedAttribute
 import com.team376.pulsemetry.telemetry.adapter.observation.TypedValue
 

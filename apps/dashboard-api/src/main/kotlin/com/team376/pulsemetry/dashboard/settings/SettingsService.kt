@@ -3,7 +3,7 @@ package com.team376.pulsemetry.dashboard.settings
 import com.team376.pulsemetry.dashboard.analytics.*
 
 import com.team376.pulsemetry.persistence.enrollment.alert.AlertRules
-import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
+import com.team376.pulsemetry.domain.enrollment.vendor.ContractStatus
 import com.team376.pulsemetry.persistence.enrollment.management.OrganizationPolicySettings
 import com.team376.pulsemetry.dashboard.error.DashboardException
 import com.team376.pulsemetry.dashboard.error.ErrorCode

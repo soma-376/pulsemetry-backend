@@ -1,13 +1,17 @@
 package com.team376.pulsemetry.persistence.enrollment.seat
 
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatControl.Action.RELEASE
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatControl.Action.RESTORE
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatControl.Method.ADMIN_ACTION
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatControl.Method.VENDOR_CONTROL
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatState.ASSIGNED
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatState.PENDING_ASSIGNMENT
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatState.PENDING_RELEASE
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatState.RELEASED
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState
+
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules
+
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules.Action.RELEASE
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules.Action.RESTORE
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules.Method.ADMIN_ACTION
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules.Method.VENDOR_CONTROL
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState.ASSIGNED
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState.PENDING_ASSIGNMENT
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState.PENDING_RELEASE
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState.RELEASED
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import java.time.Instant
@@ -21,9 +25,9 @@ class SeatControlRulesTest {
 	private fun connection(connector: String) = ConnectionRecord(UUID.randomUUID(), UUID.randomUUID(), "v", connector, emptyMap(), Instant.EPOCH,
 		ConnectionCheck.VERIFIED, null, null, null, null, 1, Instant.EPOCH, Instant.EPOCH)
 
-	private fun choose(action: SeatControl.Action, state: SeatState, kind: String, plan: String?, connector: String? = null, ref: String? = "ref",
-		vendorControl: Boolean = true): Pair<SeatControl.Method?, String?> =
-		SeatControl.choose(action, state, kind, plan, connector?.let(::connection), ref, vendorControl).let { it.method to it.reason }
+	private fun choose(action: SeatControlRules.Action, state: SeatState, kind: String, plan: String?, connector: String? = null, ref: String? = "ref",
+		vendorControl: Boolean = true): Pair<SeatControlRules.Method?, String?> =
+		SeatControlChoice.choose(action, state, kind, plan, connector?.let(::connection), ref, vendorControl).let { it.method to it.reason }
 
 	@Test
 	fun `해제 — 활성 연결과 커넥터가 있으면 벤더 제어, 연결이 없거나 커넥터가 없는 플랜이면 관리자 조치다`() {

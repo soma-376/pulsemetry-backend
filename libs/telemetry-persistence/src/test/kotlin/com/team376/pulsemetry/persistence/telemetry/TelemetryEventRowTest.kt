@@ -1,15 +1,15 @@
 package com.team376.pulsemetry.persistence.telemetry
 
 import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.event
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
-import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.EventType
-import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
-import com.team376.pulsemetry.telemetry.adapter.observation.ReportedCostBasis
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageRole
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageScope
-import com.team376.pulsemetry.telemetry.adapter.observation.withFlags
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventType
+import com.team376.pulsemetry.telemetry.model.QualityFlag
+import com.team376.pulsemetry.telemetry.model.ReportedCostBasis
+import com.team376.pulsemetry.telemetry.model.RowVersioning
+import com.team376.pulsemetry.telemetry.model.UsageRole
+import com.team376.pulsemetry.telemetry.model.UsageScope
+import com.team376.pulsemetry.telemetry.model.withFlags
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.DisplayName

@@ -23,8 +23,65 @@
 
 ## 3. 공유 의존성과 앱 조립
 
-구현·검증 진행 중.
+`telemetry-model`은 관측·어휘·집계·보강 결과를 단독으로 소유한다. adapter·enricher·persistence는 공개 시그니처의 값만 이 모듈에서 받으며 서로의 실행 구현을 가져오지 않는다. 정규화 ID·해시·토큰 의미·가격 계산과 보강 실행은 원래 단계에 남겼다. 사용량 계약 판정도 adapter에서 실행하고 결과 값만 집계에 전달한다.
+
+`enrollment-domain`은 오류·좌석 상태/전이·계약 기간·좌석 제어 판정을 소유한다. Dashboard는 좌석 명령 실행기 `SeatControl`에 의존하지 않고, 연결 조회 사실을 순수 규칙으로 넘기는 `SeatControlChoice`를 사용한다. 설치 안내의 활성 상태·적용 판 판정도 기능 domain으로 옮겼다. enrollment-persistence의 main starter·드라이버를 제거하고 앱의 JPA/JDBC/Flyway 선택을 명시했다. 테스트에만 필요한 정규화 구현·DB fixture 자동설정은 test 의존으로 한정한다.
+
+구조 검사:
+
+- Dashboard·Enrollment의 기능 내부 참조·순환, application의 HTTP/SQL 참조, domain의 프레임워크 참조를 ArchUnit으로 검사한다.
+- 모든 라이브러리는 공유 검사 소스로 자신의 Kotlin·Java main 바이트코드만 읽어 앱 참조·Spring 스테레오타입·Bean 조립을 금지한다. 두 순수 모듈은 프레임워크 의존도 금지한다.
+- `verifyModuleBoundaries`가 20개 모듈의 main 방향·순환·단계 간선, compile/runtimeClasspath의 starter 및 적재의 JPA/Flyway 유입을 검사한다. 각 `check`에 연결되어 기존 CI의 `build`로 실행된다. 최종 정상 그래프의 독립 실행도 통과했다.
+- 임시 Gradle init script로 `compileOnlyApi` 앱 참조, runtime Boot starter, compileOnly Boot starter, 모듈 순환을 각각 주입했다. 네 번 모두 해당 규칙의 오류로 실패했다. 검사 후 저장소의 의존 선언은 변경되지 않았다.
+
+실행 jar의 Main-Class/Start-Class·시작 클래스와 테스트 fixture 미포함을 검사했다. Enrollment jar의 manifest 스키마는 원격 telemetryctl에서 읽은 원본과 바이트 단위로 동일하다. Docker build-base의 COPY 목록이 settings.gradle.kts의 20개 모듈을 빠짐없이 포함하는 것도 검사했다.
+
+| 앱 | 배포 jar의 관련 구성 |
+|---|---|
+| enrollment-api | JPA/Hibernate·Flyway 자동설정, PostgreSQL, enrollment-domain |
+| dashboard-api | JPA/Hibernate, PostgreSQL, 수동 cache Flyway, enrollment-domain |
+| telemetry-ingest | 각각 선택한 adapter·enricher·persistence·model, JPA/Hibernate, PostgreSQL. Flyway 자동설정 없음 |
+| telemetry-gateway | 기존 JWT·Kafka·OTLP 구성. DB·Hibernate·공유 업무 모듈 없음 |
+| retention-worker | JDBC·PostgreSQL·telemetry-model·enrollment-domain. adapter·enricher·Hibernate·JPA/Flyway 자동설정 없음 |
+
+최종 `./gradlew build` 성공. 20개 모듈에서 **2,754개 테스트, 실패·오류·skip 0**이다. PostgreSQL·ClickHouse·Kafka·메일 컨테이너를 사용하는 회귀와 다섯 실행 앱의 컨텍스트 기동·bootJar 조립을 포함한다. 아래 수치는 최종 실행 결과이며 앞 단계의 수치를 더한 값이 아니다.
+
+| 모듈 | 테스트 |
+|---|---:|
+| `apps/dashboard-api` | 409 |
+| `apps/enrollment-api` | 514 |
+| `apps/retention-worker` | 28 |
+| `apps/telemetry-gateway` | 41 |
+| `apps/telemetry-ingest` | 145 |
+| `libs/enrollment-domain` | 10 |
+| `libs/enrollment-persistence` | 134 |
+| `libs/security` | 84 |
+| `libs/telemetry-adapter` | 777 |
+| `libs/telemetry-auth` | 37 |
+| `libs/telemetry-collector` | 171 |
+| `libs/telemetry-enricher` | 27 |
+| `libs/telemetry-ingress-contract` | 30 |
+| `libs/telemetry-model` | 17 |
+| `libs/telemetry-observability` | 15 |
+| `libs/telemetry-ops-persistence` | 47 |
+| `libs/telemetry-otlp-http` | 49 |
+| `libs/telemetry-persistence` | 102 |
+| `libs/vendor-connector` | 24 |
+| `tools/dev-seed` | 93 |
+
+재현 명령(로컬 JDK 25·Docker·PowerShell 필요):
+
+```sh
+PULSEMETRY_CONTRACTS_DIR=/tmp/proj306-contracts/contracts ./gradlew build --no-daemon --max-workers=2 \
+  -Pkotlin.compiler.execution.strategy=in-process '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m'
+python3 .github/tests/test_deploy_dev.py
+python3 -m unittest discover -s tools/dev-seed -p 'test_*.py'
+```
+
+Python 검사는 배포 이미지 발행 19개·시드/과거 데이터 도구 76개가 통과했다. 로컬 전체 컴파일 도중 장시간 재사용된 Kotlin 데몬의 512MB 힙이 소진되어, 위 명령처럼 독립 빌드 JVM의 힙 2GB·worker 2개로 실행했다. 저장소/CI의 메모리 설정은 바꾸지 않았다.
 
 ## Infra·배포 영향
 
-현재까지 Infra 코드는 변경하지 않았다. 새 공유 모듈은 Backend Dockerfile의 build 입력에 추가해야 한다. 이미지 target·포트·설정 키·스키마·배포 순서는 유지한다. 구조 검사는 기존 PR CI의 Gradle build로 실행하며 원격 배포 검증을 뜻하지 않는다.
+**Infra 저장소와 배포 워크플로우는 수정하지 않았다.** Backend Dockerfile의 build-base에 `enrollment-domain`·`telemetry-model` 빌드 파일 COPY 두 줄을 추가했다. 기존 Docker 빌드가 새 Gradle 모듈을 구성하기 위해 필요한 변경이다. 이미지 target·포트·설정 키/값·스키마·배포 순서·HTTP/OTLP/Kafka 계약은 유지한다. retention-worker의 application.yaml 변경은 설명 주석뿐이다.
+
+검증 범위는 로컬 Testcontainers와 실행 jar 조립이다. 전체 컨테이너 이미지 빌드·원격 CI 실행·실제 벤더/메일 공급자·운영 환경 배포 smoke는 실행하지 않았다. 문서 허브의 오래된 서술은 이 Backend 범위에서 수정하지 않았다. push·PR·Jira 하위 티켓 생성·운영 배포는 수행하지 않았다.

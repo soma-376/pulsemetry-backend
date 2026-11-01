@@ -9,6 +9,7 @@ import com.team376.pulsemetry.persistence.enrollment.management.*
 import com.team376.pulsemetry.persistence.enrollment.directory.DirectoryCommandStore
 import com.team376.pulsemetry.persistence.enrollment.installation.InstallationCommandStore
 import com.team376.pulsemetry.enrollment.management.CommandRules.fail
+import com.team376.pulsemetry.enrollment.installation.domain.InstallationNotices
 
 /** 기능의 명시적 관리 명령. 공통 실행 관문의 트랜잭션 안에서 호출한다. */
 class InstallationCommands(private val installations: InstallationCommandStore, private val directory: DirectoryCommandStore, private val installationNotifier: InstallationNotifier?, private val clock: Clock) {
@@ -22,10 +23,11 @@ class InstallationCommands(private val installations: InstallationCommandStore, 
         if (active != expected) fail("version_conflict", 409, "expectedPolicyVersion")
         val rows = installations.notificationTargets(tenant, ids, expected)
         if (rows.size != ids.size) fail("not_found", 404, "installationIds")
-        if (rows.any { !it.first }) fail("installation_unavailable", 409, "installationIds")
+        if (rows.any { !InstallationNotices.eligible(it.installationStatus, it.memberStatus, it.notice.appliedVersion, expected) })
+            fail("installation_unavailable", 409, "installationIds")
         val organization = directory.tenantName(tenant)
         val order = ids.withIndex().associate { it.value to it.index }
-        val notices = rows.map { it.second.copy(organization = organization) }.sortedBy { order.getValue(it.installationId) }
+        val notices = rows.map { it.notice.copy(organization = organization) }.sortedBy { order.getValue(it.installationId) }
         return operationNode(notifier.notify(tenant, actor, notices))
     }
 

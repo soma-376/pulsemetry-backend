@@ -37,7 +37,7 @@ V9의 활성 제품 유일 제약과 계약 정정 규칙은 Enrollment 명세 �
 
 ## PROJ-306 기능·책임 구조
 
-[ADR 0075](adr/0075-기능-패키지와-명령-책임을-분리하고-의존-경계를-검사한다.md)가 다음 구조의 구현 기준이다. 이 절은 선행 설계이며 아래 기존 목록은 각 구현 단계에서 함께 갱신한다.
+[ADR 0075](adr/0075-기능-패키지와-명령-책임을-분리하고-의존-경계를-검사한다.md)가 다음 구조의 기준이다. 단계별 회귀와 앱 조립 결과는 [구현 검증](feature-packages-verification.md)에 기록한다.
 
 | 단위 | 책임 |
 |---|---|
@@ -84,13 +84,13 @@ pulsemetry-backend
 │   │                                ├ authentication/ 인증 포트 · 기본 거부 구현 · 필터 · 역할 대응
 │   │                                ├ authorization/  인가 포트 · 기본 정책(관리자만) · 조직 경로 공통 관문
 │   │                                ├ organization/   조직(tenant) 읽기
-│   │                                ├ request/        요청 ID · 조회 파라미터 해석(기간·비교·목록 cursor)
+│   │                                ├ request/        조회 파라미터 해석(기간·비교·목록 cursor)
 │   │                                ├ source/         원천 읽기 — ClickHouse 읽기 전용 클라이언트
 │   │                                ├ cache/          dashboard_cache — 캐시 클라이언트 · 두 캐시 스키마 적용 (ADR 0023)
 │   │                                ├ snapshot/       snapshot — build(원본 한 번 선택·참조 복제·공급자·모델 해석) · 공개 CAS · 만료 · 정리
 │   │                                ├ alert/          알림 평가 주기 작업·평가 기록(자기 스키마)·알림 조회 (ADR 0051)
 │   │                                ├ store/          ClickHouse 연결 · 파라미터 · 저장소 실패 분류(원천·캐시 공용)
-│   │                                ├ error/          오류 본문 · 코드 · 예외 매핑
+│   │                                ├ error/          오류 본문 · 코드 · 요청 ID (HTTP 예외 매핑은 api)
 │   │                                └ config/
 │   └── retention-worker/            com.team376.pulsemetry.retention
 │                                    조직별 보존 삭제 — 일회성 실행, 분석 원본 DELETE 는 여기뿐 (ADR 0024)
@@ -99,8 +99,12 @@ pulsemetry-backend
 │   └── dev-seed/                    com.team376.pulsemetry.devseed
 │                                    Docker 전용 개발 데이터·인증 키 초기화와 시드 관리
 └── libs/
+    ├── enrollment-domain/           com.team376.pulsemetry.domain.enrollment
+    │                                command/ 오류 값 · seat/ 상태·전이·제어 판정 · vendor/ 계약 상태. HTTP·SQL·Spring 없음
     ├── enrollment-persistence/      com.team376.pulsemetry.persistence.enrollment
-    │                                └ enrollment 엔티티·사용자 인증 저장소·관리 명령·문의 접수·메일 outbox·공통 작업 기록·설치 보고·설치 업데이트 안내(ADR 0043)·DB 카탈로그 · Flyway 마이그레이션
+    │                                └ 엔티티·리포지토리·기능 저장 연산·명령 journal·문의·outbox·작업 기록·설치 보고·DB 카탈로그·마이그레이션 파일
+    │                                  ├ directory/ · invitation/ · installation/ · vendor/  명시적 저장 연산
+    │                                  ├ management/  명령 journal·정책/온보딩 조회 및 저장·카탈로그
     │                                  ├ seat/  좌석 원장·벤더 연결(자격증명 암호화)·동기화 실행 기록 (ADR 0048)
     │                                  └ alert/ 알림 규칙의 켜짐·모델·도구 목록과 켜기 판정 (ADR 0051)
     ├── security/                    com.team376.pulsemetry.security
@@ -113,12 +117,14 @@ pulsemetry-backend
     │                                Gateway ↔ Consumer Kafka record 계약 — envelope .proto · codec · DTO · 접속 설정 · 로그 이벤트 (ADR 0066)
     ├── telemetry-observability/     com.team376.pulsemetry.telemetry.observability
     │                                운영 metric 포트·Micrometer 구현. Spring 조립·registry 수명은 앱 소유 (ADR0068)
+    ├── telemetry-model/             com.team376.pulsemetry.telemetry.model
+    │                                관측·봉투·어휘·집계·보강 결과·값 검증. 단계 실행·protobuf·JPA·Boot 없음
     ├── telemetry-collector/         com.team376.pulsemetry.telemetry.collector
     │                                OTLP 수신 · 상태 매핑 · OTLP/JSON 코덱
     │                                ├ masking/    blocked_values 14종 값 마스킹
     │                                └ archive/    제품별 원본 적재 (S3 · 파일)
     ├── telemetry-adapter/           com.team376.pulsemetry.telemetry.adapter
-    │                                └ observation/ 정규화 계약 2판의 관측 모델 (ADR 0020)
+    │                                └ observation/ 정규화 계약 2판의 변환 실행 (관측 값은 telemetry-model, ADR 0075)
     │                                  ├ profile/   제품 프로파일 SPI · 엄격한 필드 읽기
     │                                  ├ codex/     Codex 프로파일
     │                                  ├ claudecode/ Claude Code 프로파일
@@ -227,8 +233,8 @@ HTTP 어댑터 `OtlpIngestHandler` 는 메서드·경로·media type 검사와 �
 보강·적재 단계가 그대로 받는다. 정규화 불변 규칙은
 [ADR 0017](adr/0017-정규화-불변-규칙과-enrichment-json-승격-금지는-이-저장소가-정한다.md)이 소유하고 ADR 0020이
 그중 규칙 2·4·6을 대체했다.
-**단계 모듈은 이웃의 seam 인터페이스를 구현하지 않지만, 공개된 데이터 타입은 `project()` 간선으로
-직접 받는다**([ADR 0014](adr/0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md)). 수집의
+**단계 모듈은 이웃의 seam 인터페이스를 구현하지 않는다. 관측 타입은 `telemetry-model`에서 받는다**
+(ADR 0075가 ADR 0014의 실행 구현 간 데이터 운반 간선을 대체한다). 수집의
 `SignalConsumer`에 변환을 잇는 배선은 여전히 조립 앱의 몫이다(ADR 0011).
 
 `:libs:telemetry-enricher`는 세 번째 단계 모듈이다(PROJ-104). 하위 패키지는 `provider/`·`observation/` 둘이다.
@@ -247,8 +253,9 @@ ClickHouse 테이블(정규화 2판의 `telemetry_events`·`telemetry_metric_poi
 ## 2. 도메인 경계 — 쓰기 소유권
 
 **한 테이블의 쓰기 로직은 한 모듈이 소유한다. 읽는 모듈은 몇 개든 좋다.**
-도메인이란 한 모듈이 쓰기를 독점하는 테이블 묶음이다. RDB 스키마의 진실원이 Flyway이므로(ADR 0004),
-소유 질문은 "이 테이블의 `CREATE TABLE`이 어느 모듈 아래에 있는가"라는 파일 경로 질문으로 환원된다.
+도메인은 일관성이 필요한 업무 규칙의 경계이며 테이블·기능·Gradle 모듈과 동일하지 않다(ADR 0075).
+아래 표는 저장 연산과 DDL 소유권을 나타낸다. RDB 스키마의 진실원은 Flyway이며(ADR 0004),
+테이블 저장 소유권은 `CREATE TABLE`이 놓인 모듈로 확인한다. 실행 순서·트랜잭션 조정은 application 책임이다.
 
 | 도메인 | 테이블 | 쓰기 소유 |
 |---|---|---|
@@ -338,7 +345,7 @@ installation의 배포 상태를 담기 때문이다.
 ## 4. 의존 방향
 
 - `:apps:*`는 `:libs:*`에만 의존한다.
-- **`:apps:*`끼리는 의존하지 않는다.** 앱 사이의 런타임 협력은 이벤트이고, 정의가 갈라지면 안 되는
+- **`:apps:*`끼리는 의존하지 않는다.** 앱 사이의 런타임 협력은 기존 HTTP·OTLP·Kafka 계약을 따르며, 정의가 갈라지면 안 되는
   코드는 `:libs:`로 올린다.
 - `:libs:*`는 `:apps:*`에 의존하지 않는다. `:libs:*` 사이의 의존은 단방향만 둔다.
 - `project()` 간선은 기본 `implementation`이고, `api()`는 그 타입이 소비자의 계약일 때만 쓴다
@@ -348,16 +355,21 @@ installation의 배포 상태를 담기 때문이다.
   리포지토리를 생성자로 받으므로 `:libs:enrollment-persistence`를 `api()`로 두는 것이 그 예다.
   반대로 테스트에서만 쓰는 타입은 `testImplementation`이다(`:libs:telemetry-adapter`의
   `opentelemetry-proto`).
-- **단계 모듈 사이에도 데이터 타입 간선을 둔다**
-  ([ADR 0014](adr/0014-단계-모듈-사이에-데이터-타입-간선을-둔다.md)). 방향은 데이터 흐름과 같고
-  단방향이다 — `adapter ← enricher ← persistence`. 금지되는 것은 **이웃의 seam 인터페이스를
-  구현하는 것**이고, 그 배선은 조립 앱이 한다. 타입을 복제하거나 `-event` 모듈로 빼지 않는다.
+- **단계 실행 모듈은 서로 의존하지 않는다.** adapter·enricher·persistence는 관측 값만 `telemetry-model`에서 받는다(ADR 0075).
+  `api()`는 각 단계의 공개 시그니처에 그 값이 나타나기 때문이다. 정규화·보강 실행은 ingest 앱이 각각 선택한다.
+  적재 소비자에게 JPA·Flyway·정규화/보강 실행이 따라오지 않는다. 타입은 복제하지 않는다.
 - 아웃바운드 기술이 둘 이상이면 라이브러리를 기술별로 나눈다(`-persistence` / `-messaging`).
 - **`:libs:*`는 Spring 스테레오타입을 두지 않고 Boot starter도 끌지 않는다**
   ([ADR 0011](adr/0011-라이브러리-모듈은-spring-조립을-앱에-위임한다.md)). 컴포넌트 스캔 루트가
   저장소 전체라 라이브러리에 붙은 `@Component`는 그 라이브러리를 올린 **모든** 앱에서 살아난다.
   빈 등록과 필터 체인 배선은 앱의 몫이고, 라이브러리는 값을 생성자로 받는다.
   예외는 JPA 엔티티·Spring Data 리포지토리 인터페이스와 `testFixtures`뿐이다.
+  enrollment-persistence는 Spring Data/JDBC/JPA API를 노출하며 Hibernate 매핑 annotation은 compileOnly다.
+  enrollment-api는 JPA·Flyway starter를, dashboard-api·telemetry-ingest는 JPA starter를, retention-worker는 JDBC starter를 선택한다.
+  마이그레이션을 직접 실행하는 앱·dev-seed가 Flyway PostgreSQL 지원을 명시한다.
+- **검사는 `build`의 일부다.** 각 모듈 `check`는 `verifyModuleBoundaries`를 실행한다. main project 방향·순환·단계 간선과
+  라이브러리 runtimeClasspath의 starter·공유 모듈의 프레임워크·적재의 JPA/Flyway 유입을 검사한다.
+  앱 ArchUnit은 기능 참조·순환·레이어 경계를, 모든 라이브러리의 공유 ArchUnit 소스는 실제 main 바이트코드의 앱 참조·스테레오타입·순수 모델 의존을 검사한다.
 
 ## 5. 텔레메트리 파이프라인이 들어올 자리
 
@@ -419,9 +431,7 @@ libs/
 단 **경계가 이미 실측된 경우는 예외다** — 5절의 단계 모듈이 그렇고, 이벤트 payload 모듈도 그렇다
 (ADR 0008 규칙 4 · [ADR 0010](adr/0010-파이프라인-단계를-모듈-경계로-나눈다.md)).
 
-- `:libs:enrollment-persistence`의 도메인별 분할(directory · enrollment · policy · contract)은
-  예정돼 있고, 트리거는 **관리자 API 앱의 첫 커밋**이다. 같은 시점에
-  `InvitationAdminService.createInvitedMember()`의 `members` 직접 쓰기를 directory 모듈이 제공하는
-  연산 호출로 바꾼다.
+- 관리자 기능은 enrollment-api의 기능 패키지로 둔다. 기능 수만으로 관리자 앱이나 저장 모듈을 추가하지 않는다(ADR 0075).
+  실제 공유 규칙은 `enrollment-domain`, 단계 사이 값은 `telemetry-model`로 분리했으며 기존 테이블 저장 소유는 유지한다.
 - 모듈 간 테스트 지원 코드는 `java-test-fixtures`로 공유한다. 테스트 전용 모듈을 따로 만들지 않는다.
 - `:apps`·`:libs` 디렉터리 자체는 빌드 스크립트를 갖지 않는다. 루트가 `buildFile.exists()`로 건너뛴다.

@@ -1,8 +1,8 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationEnvelope
-import com.team376.pulsemetry.telemetry.adapter.observation.OrgAttribution
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
+import com.team376.pulsemetry.telemetry.model.ObservationEnvelope
+import com.team376.pulsemetry.telemetry.model.OrgAttribution
+import com.team376.pulsemetry.telemetry.model.RowVersioning
 
 /**
  * 두 분석 테이블이 공유하는 봉투 49컬럼(ADR 0020 §1). 세 조각을 DDL 순서로 엮는다 — 정규화 몫 42([ObservationEnvelope]),

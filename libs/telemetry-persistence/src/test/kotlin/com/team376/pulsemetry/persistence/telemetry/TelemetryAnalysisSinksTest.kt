@@ -4,11 +4,11 @@ import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.event
 import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.hex
 import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.metricPoint
 import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.metricPointObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.EventType
-import com.team376.pulsemetry.telemetry.adapter.observation.ReportedCostBasis
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
+import com.team376.pulsemetry.telemetry.model.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventType
+import com.team376.pulsemetry.telemetry.model.ReportedCostBasis
+import com.team376.pulsemetry.telemetry.model.RowVersioning
+import com.team376.pulsemetry.telemetry.model.EnrichedEvent
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeEach

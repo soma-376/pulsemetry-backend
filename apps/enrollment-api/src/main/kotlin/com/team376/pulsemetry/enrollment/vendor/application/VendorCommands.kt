@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.enrollment.vendor.application
 
+import com.team376.pulsemetry.domain.enrollment.vendor.ContractStatus
+
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatSourceView
 import tools.jackson.databind.JsonNode
 import java.math.BigDecimal

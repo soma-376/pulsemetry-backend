@@ -2,10 +2,10 @@ package com.team376.pulsemetry.persistence.telemetry
 
 import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.metricPoint
 import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.metricPointObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.MetricPointObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.MetricType
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.adapter.observation.SeriesIdentityStatus
+import com.team376.pulsemetry.telemetry.model.MetricPointObservation
+import com.team376.pulsemetry.telemetry.model.MetricType
+import com.team376.pulsemetry.telemetry.model.RowVersioning
+import com.team376.pulsemetry.telemetry.model.SeriesIdentityStatus
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.DisplayName

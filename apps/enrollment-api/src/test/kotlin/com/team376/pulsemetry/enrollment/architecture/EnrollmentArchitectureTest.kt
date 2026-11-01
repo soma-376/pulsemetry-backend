@@ -3,6 +3,10 @@ package com.team376.pulsemetry.enrollment.architecture
 import com.tngtech.archunit.core.importer.ClassFileImporter
 import com.tngtech.archunit.core.importer.ImportOption
 import com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses
+import com.tngtech.archunit.core.domain.JavaClass
+import com.tngtech.archunit.library.dependencies.SliceAssignment
+import com.tngtech.archunit.library.dependencies.SliceIdentifier
+import com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices
 import org.junit.jupiter.api.Test
 import kotlin.test.assertTrue
 
@@ -24,6 +28,16 @@ class EnrollmentArchitectureTest {
         noClasses().that().resideInAPackage("$root..application..")
             .should().dependOnClassesThat().resideInAnyPackage("..api..", "jakarta.servlet..", "org.springframework.web..", "org.springframework.http..",
                 "org.springframework.jdbc..", "java.sql..", "jakarta.persistence..").check(classes)
+    }
+
+    @Test fun `기능 사이 공개 참조에도 순환이 없다`() {
+        slices().assignedFrom(object : SliceAssignment {
+            override fun getDescription() = "Enrollment 기능"
+            override fun getIdentifierOf(javaClass: JavaClass): SliceIdentifier {
+                val feature = javaClass.packageName.removePrefix("$root.").substringBefore('.')
+                return if (feature in features) SliceIdentifier.of(feature) else SliceIdentifier.ignore()
+            }
+        }).should().beFreeOfCycles().check(classes)
     }
 
     @Test fun `도메인 규칙은 전송과 영속성과 프레임워크를 모른다`() {

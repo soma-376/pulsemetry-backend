@@ -3,7 +3,7 @@ package com.team376.pulsemetry.enrollment.seat.application
 import com.team376.pulsemetry.persistence.enrollment.operation.Operation
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatControl
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatSource
+import com.team376.pulsemetry.domain.enrollment.seat.SeatSource
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatView
 import java.time.Clock
 import java.util.UUID

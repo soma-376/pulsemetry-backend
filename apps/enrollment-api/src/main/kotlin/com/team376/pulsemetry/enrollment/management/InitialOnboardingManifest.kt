@@ -4,7 +4,7 @@ import com.team376.pulsemetry.enrollment.contract.ManifestPayload
 import com.team376.pulsemetry.enrollment.contract.OtlpSettings
 import com.team376.pulsemetry.enrollment.contract.PrivacySettings
 import com.team376.pulsemetry.enrollment.contract.SignalSettings
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 

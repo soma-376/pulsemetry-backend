@@ -1,6 +1,6 @@
 package com.team376.pulsemetry.persistence.enrollment.seat
 
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 
 /**
  * 좌석 CSV (ADR 0048 §3 — 수동 원천의 가져오기). RFC 4180 모양(쉼표 구분, 큰따옴표 감싸기, `""` 이스케이프, CRLF·LF), UTF-8, 첫 줄은 머리글.

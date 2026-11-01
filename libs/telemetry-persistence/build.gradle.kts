@@ -11,9 +11,8 @@ dependencies {
 	api(project(":libs:telemetry-observability"))
 	// 플랫폼 trace의 client span(ADR 0069). Tracer가 공개 생성자 계약에 나타난다. Boot starter·OTel SDK는 끌지 않는다.
 	api(libs.micrometer.tracing)
-	// 적재 대상 타입. insert(events: List<EnrichedEvent>, …) 가 이 모듈의 공개 시그니처다 (ADR 0014).
-	// 어댑터의 관측 타입은 이 간선을 타고 전이로 따라온다.
-	api(project(":libs:telemetry-enricher"))
+	// 적재 대상 관측·보강 결과 값만 공개한다. 보강 실행·Enrollment·JPA를 끌지 않는다 (ADR 0075).
+	api(project(":libs:telemetry-model"))
 
 	// ClickHouse 접속에 드라이버를 쓰지 않는다. JDK 의 HttpClient 로 HTTP 인터페이스를 직접 부른다 —
 	// 이식 원본이 "무거운 클라이언트 도입 금지" 로 stdlib 만 쓴 것과 같은 선택이고, 드라이버를 넣으면

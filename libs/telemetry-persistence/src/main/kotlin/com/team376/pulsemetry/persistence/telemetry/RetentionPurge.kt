@@ -1,6 +1,6 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
+import com.team376.pulsemetry.telemetry.model.EpochNanos
 import java.time.Instant
 
 /**

@@ -1,13 +1,17 @@
 package com.team376.pulsemetry.telemetry.enricher.observation
 
+import com.team376.pulsemetry.telemetry.model.EnrichedBatch
+import com.team376.pulsemetry.telemetry.model.EnrichedEvent
+import com.team376.pulsemetry.telemetry.model.EnrichedMetricPoint
+
 import com.team376.pulsemetry.persistence.enrollment.entity.TeamMembership
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TeamMembershipRepository
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationBatch
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationEnvelope
-import com.team376.pulsemetry.telemetry.adapter.observation.OrgAttribution
-import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
-import com.team376.pulsemetry.telemetry.adapter.observation.withFlags
+import com.team376.pulsemetry.telemetry.model.ObservationBatch
+import com.team376.pulsemetry.telemetry.model.ObservationEnvelope
+import com.team376.pulsemetry.telemetry.model.OrgAttribution
+import com.team376.pulsemetry.telemetry.model.QualityFlag
+import com.team376.pulsemetry.telemetry.model.withFlags
 import com.team376.pulsemetry.telemetry.enricher.EnrichmentUnavailableException
 import com.team376.pulsemetry.telemetry.enricher.provider.EnrichmentProvider
 import org.springframework.dao.DataAccessResourceFailureException

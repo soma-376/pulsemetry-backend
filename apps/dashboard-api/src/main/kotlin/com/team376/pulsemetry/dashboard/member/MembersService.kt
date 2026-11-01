@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.dashboard.member
 
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState
+
 import com.team376.pulsemetry.dashboard.analytics.*
 import com.team376.pulsemetry.dashboard.analytics.UserOrder
 
@@ -139,7 +141,7 @@ class MembersService(
 		val items = assessment.ledger.seats.filter { it.memberId == memberId }.mapNotNull { seat ->
 			val state = states[seat.vendorId] ?: return@mapNotNull null
 			val product = state.product
-			val review = if (seat.state == com.team376.pulsemetry.persistence.enrollment.seat.SeatState.ASSIGNED) assessment.review(seat) else null
+			val review = if (seat.state == com.team376.pulsemetry.domain.enrollment.seat.SeatState.ASSIGNED) assessment.review(seat) else null
 			val reclaim = assessment.reclaim(seat, managementEnabled)
 			MemberSeat(
 				seatAssignmentId = seat.id.toString(), version = seat.version, vendorId = seat.vendorId, vendorName = product.displayName, kind = product.kind,

@@ -5,10 +5,10 @@ import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.event
 import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.hex
 import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.metricPoint
 import com.team376.pulsemetry.persistence.telemetry.AnalysisSamples.metricPointObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedMetricPoint
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.RowVersioning
+import com.team376.pulsemetry.telemetry.model.EnrichedEvent
+import com.team376.pulsemetry.telemetry.model.EnrichedMetricPoint
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeEach

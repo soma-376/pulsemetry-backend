@@ -1,5 +1,24 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import com.team376.pulsemetry.telemetry.model.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventType
+import com.team376.pulsemetry.telemetry.model.MappingStatus
+import com.team376.pulsemetry.telemetry.model.MetricPointObservation
+import com.team376.pulsemetry.telemetry.model.NormalizationStats
+import com.team376.pulsemetry.telemetry.model.ObservationEnvelope
+import com.team376.pulsemetry.telemetry.model.ObservationSignal
+import com.team376.pulsemetry.telemetry.model.Product
+import com.team376.pulsemetry.telemetry.model.QualityFlag
+import com.team376.pulsemetry.telemetry.model.SourceIdentityKind
+import com.team376.pulsemetry.telemetry.model.SourceTimeSelection
+import com.team376.pulsemetry.telemetry.model.SpanKind
+import com.team376.pulsemetry.telemetry.model.SpanStatusCode
+import com.team376.pulsemetry.telemetry.model.UINT8_MAX
+import com.team376.pulsemetry.telemetry.model.UsageRole
+import com.team376.pulsemetry.telemetry.model.UsageScope
+import com.team376.pulsemetry.telemetry.model.WorkloadKind
+import com.team376.pulsemetry.telemetry.model.withFlags
+
 import com.google.protobuf.Message
 import com.google.protobuf.MessageOrBuilder
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.LogRecordView

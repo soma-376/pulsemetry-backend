@@ -2,7 +2,7 @@ package com.team376.pulsemetry.dashboard.settings
 
 import com.team376.pulsemetry.dashboard.analytics.*
 
-import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
+import com.team376.pulsemetry.domain.enrollment.vendor.ContractStatus
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatSourceView
 
 /** 설정 명세의 타입. 이름·타입·nullable 은 요청서의 TypeScript 타입과 같다. */

@@ -1,6 +1,6 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.codex
 
-import com.team376.pulsemetry.telemetry.adapter.observation.Product
+import com.team376.pulsemetry.telemetry.model.Product
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.LogProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.MetricProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProductProfile

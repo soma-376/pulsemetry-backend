@@ -1,6 +1,6 @@
 package com.team376.pulsemetry.telemetry.enricher.provider
 
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationEnvelope
+import com.team376.pulsemetry.telemetry.model.ObservationEnvelope
 
 /**
  * 외부 맥락(GitHub·Jira·AI 분석)을 하나의 인터페이스로 통일한 SPI.

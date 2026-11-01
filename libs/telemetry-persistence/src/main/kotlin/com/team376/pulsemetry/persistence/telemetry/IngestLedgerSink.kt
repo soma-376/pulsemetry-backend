@@ -1,6 +1,6 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
+import com.team376.pulsemetry.telemetry.model.EpochNanos
 
 /**
  * ClickHouse `telemetry_ingest_ledger` 에 쓰는 유일한 주체(ADR 0021 §1·§4). DDL 이 이 모듈 아래 있다.

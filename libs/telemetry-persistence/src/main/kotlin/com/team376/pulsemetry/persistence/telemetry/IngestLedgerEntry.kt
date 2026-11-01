@@ -1,8 +1,8 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
-import com.team376.pulsemetry.telemetry.adapter.observation.NormalizationStats
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationSignal
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.NormalizationStats
+import com.team376.pulsemetry.telemetry.model.ObservationSignal
 import java.time.Instant
 
 /**

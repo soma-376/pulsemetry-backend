@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.persistence.enrollment.management
 
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
+
 import com.team376.pulsemetry.persistence.enrollment.mail.MailDeliveryView
 import org.springframework.jdbc.core.simple.JdbcClient
 import tools.jackson.databind.JsonNode

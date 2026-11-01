@@ -1,6 +1,6 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.pricing
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
+import com.team376.pulsemetry.telemetry.model.EpochNanos
 import java.math.BigDecimal
 import java.time.Instant
 

@@ -4,7 +4,7 @@ import com.team376.pulsemetry.dashboard.analytics.*
 
 import com.team376.pulsemetry.dashboard.analytics.AvailabilityValues.value
 
-import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
+import com.team376.pulsemetry.domain.enrollment.vendor.ContractStatus
 
 /** 설정 카드·목록의 수치를 표현한다. 원천의 부분 값과 모르는 값을 정상 합계로 승격하지 않는다. */
 object SettingsValues {

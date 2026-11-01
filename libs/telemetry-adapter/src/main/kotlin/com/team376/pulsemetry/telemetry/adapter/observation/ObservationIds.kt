@@ -1,5 +1,9 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.ObservationSignal
+import com.team376.pulsemetry.telemetry.model.SourceIdentityKind
+
 import com.google.protobuf.Message
 import com.google.protobuf.MessageOrBuilder
 

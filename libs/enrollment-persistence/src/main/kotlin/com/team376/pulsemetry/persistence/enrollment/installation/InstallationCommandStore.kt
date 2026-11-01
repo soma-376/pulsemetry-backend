@@ -17,9 +17,11 @@ class InstallationCommandStore(private val jdbc: JdbcClient) {
             .param("tenant", tenant).param("ids", ids.joinToString(",", "{", "}"))
             .query { rs, _ ->
                 val applied = rs.getLong("applied_version").takeUnless { rs.wasNull() }
-                val notifiable = rs.getString("status") == "active" && rs.getString("member_status") == "active" && (applied == null || applied < expected)
-                notifiable to InstallationNotifier.Notice(rs.getObject("id", UUID::class.java), rs.getString("email"), "", rs.getString("hostname"),
-                    rs.getString("platform"), expected, applied)
+                NotificationTarget(rs.getString("status"), rs.getString("member_status"),
+                    InstallationNotifier.Notice(rs.getObject("id", UUID::class.java), rs.getString("email"), "", rs.getString("hostname"),
+                        rs.getString("platform"), expected, applied))
             }
             .list()
 }
+
+data class NotificationTarget(val installationStatus: String, val memberStatus: String, val notice: InstallationNotifier.Notice)

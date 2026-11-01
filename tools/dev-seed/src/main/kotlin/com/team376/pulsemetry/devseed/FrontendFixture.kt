@@ -2,7 +2,7 @@ package com.team376.pulsemetry.devseed
 
 import java.time.Instant
 import java.time.LocalDate
-import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
+import com.team376.pulsemetry.domain.enrollment.vendor.ContractStatus
 import com.team376.pulsemetry.persistence.enrollment.management.VendorCatalog
 
 /** 관측 제품 → 카탈로그 제품. enrollment V18(`vendor_catalog_observed_products`)과 같다 — SeedScenarioTest 가 대조한다(ADR 0044). */

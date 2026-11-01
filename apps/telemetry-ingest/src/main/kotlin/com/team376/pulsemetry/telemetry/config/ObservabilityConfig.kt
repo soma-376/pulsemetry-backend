@@ -4,8 +4,8 @@ import com.team376.pulsemetry.telemetry.observability.MicrometerTelemetryObserve
 import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
 import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import com.team376.pulsemetry.telemetry.observability.observe
-import com.team376.pulsemetry.telemetry.adapter.observation.Product
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageContractOutcome
+import com.team376.pulsemetry.telemetry.model.Product
+import com.team376.pulsemetry.telemetry.model.UsageContractOutcome
 import io.micrometer.core.instrument.MeterRegistry
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.context.annotation.Bean

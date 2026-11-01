@@ -1,9 +1,9 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.semantics
 
-import com.team376.pulsemetry.telemetry.adapter.observation.InputSemantics
-import com.team376.pulsemetry.telemetry.adapter.observation.OutputSemantics
-import com.team376.pulsemetry.telemetry.adapter.observation.Product
-import com.team376.pulsemetry.telemetry.adapter.observation.WireValue
+import com.team376.pulsemetry.telemetry.model.InputSemantics
+import com.team376.pulsemetry.telemetry.model.OutputSemantics
+import com.team376.pulsemetry.telemetry.model.Product
+import com.team376.pulsemetry.telemetry.model.WireValue
 
 /** cache write 성분의 상태(ADR 0020 §4). "해당 없음"은 프로파일에 고정된 사실이지 미보고의 대체가 아니다. */
 public enum class CacheWriteStatus(override val wire: String) : WireValue {

@@ -5,7 +5,7 @@ import com.team376.pulsemetry.enrollment.management.managementActor
 import com.team376.pulsemetry.connector.vendor.ConnectionTarget
 import com.team376.pulsemetry.connector.vendor.ConnectorFailure
 import com.team376.pulsemetry.connector.vendor.SeatConnectors
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import com.team376.pulsemetry.persistence.enrollment.seat.ConnectionCheck
 import com.team376.pulsemetry.persistence.enrollment.seat.CredentialKeyUnavailable
 import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnectionStore

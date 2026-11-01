@@ -5,7 +5,7 @@ import com.team376.pulsemetry.persistence.telemetry.IngestLedgerSink
 import com.team376.pulsemetry.persistence.telemetry.LedgerReceipt
 import com.team376.pulsemetry.persistence.telemetryops.SummaryOrigin
 import com.team376.pulsemetry.persistence.telemetryops.TenantIngestSummaryStore
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationSignal
+import com.team376.pulsemetry.telemetry.model.ObservationSignal
 import com.team376.pulsemetry.telemetry.collector.Signal
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveReceipt
 import java.util.UUID

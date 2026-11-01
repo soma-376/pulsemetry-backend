@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.telemetry.enricher.observation
 
+import com.team376.pulsemetry.telemetry.model.EnrichedEvent
+
 import com.team376.pulsemetry.persistence.enrollment.entity.InstallationStatus
 import com.team376.pulsemetry.persistence.enrollment.entity.TeamStatus
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
@@ -10,7 +12,7 @@ import com.team376.pulsemetry.persistence.enrollment.repository.TeamRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TenantRepository
 import com.team376.pulsemetry.persistence.enrollment.support.EnrollmentFixtures
 import com.team376.pulsemetry.telemetry.adapter.observation.AnalysisHash
-import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
+import com.team376.pulsemetry.telemetry.model.QualityFlag
 import com.team376.pulsemetry.telemetry.enricher.provider.AiAnalysisProvider
 import com.team376.pulsemetry.telemetry.enricher.provider.GithubProvider
 import com.team376.pulsemetry.telemetry.enricher.provider.JiraProvider

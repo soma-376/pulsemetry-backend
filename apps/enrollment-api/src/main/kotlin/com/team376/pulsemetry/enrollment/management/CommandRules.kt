@@ -1,6 +1,6 @@
 package com.team376.pulsemetry.enrollment.management
 
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID

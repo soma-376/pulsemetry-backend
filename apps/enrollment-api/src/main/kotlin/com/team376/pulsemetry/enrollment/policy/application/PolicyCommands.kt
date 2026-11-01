@@ -1,6 +1,6 @@
 package com.team376.pulsemetry.enrollment.policy.application
 
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import com.team376.pulsemetry.persistence.enrollment.management.OnboardingStore
 import com.team376.pulsemetry.persistence.enrollment.management.OrganizationPolicySettings
 import com.team376.pulsemetry.persistence.enrollment.operation.RetentionCleanupRequests

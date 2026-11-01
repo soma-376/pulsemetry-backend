@@ -1,6 +1,6 @@
 package com.team376.pulsemetry.dashboard.analytics
 
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatState
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID

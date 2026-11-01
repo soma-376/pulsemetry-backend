@@ -3,12 +3,12 @@ package com.team376.pulsemetry.telemetry.consumer
 import com.google.protobuf.ByteString
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
 import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsUnavailableException
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
+import com.team376.pulsemetry.telemetry.model.EpochNanos
 import com.team376.pulsemetry.telemetry.adapter.observation.IdentityMaterial
 import com.team376.pulsemetry.telemetry.adapter.observation.MetricPoints
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationIds
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationSignal
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
+import com.team376.pulsemetry.telemetry.model.ObservationSignal
+import com.team376.pulsemetry.telemetry.model.RowVersioning
 import com.team376.pulsemetry.telemetry.collector.PermanentIngestException
 import com.team376.pulsemetry.telemetry.collector.VerifiedIngestContext
 import com.team376.pulsemetry.telemetry.config.KafkaConsumerConfig

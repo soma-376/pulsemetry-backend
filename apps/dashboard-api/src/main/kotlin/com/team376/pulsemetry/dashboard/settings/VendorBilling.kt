@@ -8,7 +8,7 @@ import com.team376.pulsemetry.connector.vendor.ConnectorDescriptors
 import com.team376.pulsemetry.dashboard.request.QueryReader
 import com.team376.pulsemetry.persistence.enrollment.seat.BillingPeriod
 import com.team376.pulsemetry.persistence.enrollment.seat.ConnectionRecord
-import com.team376.pulsemetry.persistence.enrollment.seat.SyncStatus
+import com.team376.pulsemetry.domain.enrollment.seat.SyncStatus
 import com.team376.pulsemetry.persistence.enrollment.seat.VendorBillingStore
 import org.springframework.jdbc.core.simple.JdbcClient
 import java.time.Duration

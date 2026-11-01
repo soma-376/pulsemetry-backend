@@ -3,8 +3,8 @@ package com.team376.pulsemetry.telemetry.maintenance
 import com.team376.pulsemetry.persistence.telemetry.AnalysisWriteBoundary
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
 import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
+import com.team376.pulsemetry.telemetry.model.RowVersioning
+import com.team376.pulsemetry.telemetry.model.EnrichedEvent
 import com.team376.pulsemetry.telemetry.maintenance.StoredUsageSamples.row
 import com.team376.pulsemetry.telemetry.support.AbstractIngestIntegrationTest
 import org.assertj.core.api.Assertions.assertThat

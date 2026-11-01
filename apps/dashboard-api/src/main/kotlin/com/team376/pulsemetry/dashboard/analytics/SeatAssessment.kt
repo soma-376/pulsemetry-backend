@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.dashboard.analytics
 
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules
+
 
 import com.team376.pulsemetry.connector.vendor.AccountKind
 import com.team376.pulsemetry.connector.vendor.ConnectorDescriptors
@@ -8,13 +10,13 @@ import com.team376.pulsemetry.dashboard.snapshot.RetentionBoundaryReader
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotCompleteness
 import com.team376.pulsemetry.dashboard.source.ClickHouseSourceReader
 import com.team376.pulsemetry.dashboard.store.ClickHouseParam
-import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
+import com.team376.pulsemetry.domain.enrollment.vendor.ContractStatus
 import com.team376.pulsemetry.persistence.enrollment.seat.ConnectionRecord
-import com.team376.pulsemetry.persistence.enrollment.seat.MemberLink
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatControl
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatSource
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatState
-import com.team376.pulsemetry.persistence.enrollment.seat.SyncStatus
+import com.team376.pulsemetry.domain.enrollment.seat.MemberLink
+import com.team376.pulsemetry.persistence.enrollment.seat.SeatControlChoice
+import com.team376.pulsemetry.domain.enrollment.seat.SeatSource
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState
+import com.team376.pulsemetry.domain.enrollment.seat.SyncStatus
 import com.team376.pulsemetry.persistence.enrollment.seat.VendorConnections
 import org.springframework.jdbc.core.simple.JdbcClient
 import tools.jackson.databind.ObjectMapper
@@ -331,13 +333,13 @@ class SeatAssessment(
 	data class Reclaim(val canReclaim: Boolean, val reason: String?, val method: String?)
 
 	/**
-	 * 회수 가능 여부 — 실행 방식의 규칙은 enrollment 의 명령과 같은 함수(`SeatControl.choose`)다. 관리 기능이 꺼진 배포는 `management_disabled`,
+	 * 회수 가능 여부 — 실행 방식의 규칙은 enrollment 의 명령과 같은 함수(`SeatControlChoice.choose`)다. 관리 기능이 꺼진 배포는 `management_disabled`,
 	 * 끝나지 않은 회수·복원이 있는 좌석은 `control_in_progress`. 연결·진행 중인 작업은 현재 값이다. 이 배포에 커넥터가 조립됐는지는 모른다 — 명령이 확인한다.
 	 */
 	fun reclaim(seat: SeatLedgerReader.SeatAt, managementEnabled: Boolean): Reclaim {
 		if (!managementEnabled) return Reclaim(false, MANAGEMENT_DISABLED, null)
 		val product = ledger.product(seat.vendorId) ?: return Reclaim(false, "not_found", null)
-		val choice = SeatControl.choose(SeatControl.Action.RELEASE, seat.state, product.kind, product.plan, ledger.connections[seat.vendorId], seat.vendorAccountRef,
+		val choice = SeatControlChoice.choose(SeatControlRules.Action.RELEASE, seat.state, product.kind, product.plan, ledger.connections[seat.vendorId], seat.vendorAccountRef,
 			vendorControl = true)
 		return when {
 			choice.reason != null -> Reclaim(false, choice.reason, null)

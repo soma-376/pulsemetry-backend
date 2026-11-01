@@ -16,7 +16,12 @@ dependencies {
 		exclude(group = "io.opentelemetry", module = "opentelemetry-exporter-sender-okhttp")
 	}
 	runtimeOnly(libs.opentelemetry.exporter.sender.jdk)
-	// 적재 모듈이 api() 로 보강·변환 모듈을 함께 끌어온다 (ADR 0014).
+	// 단계 실행을 앱이 각각 선택한다. 적재는 공유 값만 노출한다 (ADR 0075).
+	implementation(project(":libs:telemetry-adapter"))
+	implementation(project(":libs:telemetry-enricher"))
+	// 신원·조직 보강 조회의 JPA 실행. 마이그레이션 자동설정은 선택하지 않는다.
+	implementation(libs.spring.boot.starter.data.jpa)
+	runtimeOnly(libs.postgresql)
 	implementation(project(":libs:telemetry-persistence"))
 	// 수집 운영 기록의 RDS 쪽(tenant 생애 요약·백필) — ADR 0021. DDL 은 enrollment-api 가 적용하고 이 앱은 쓰기만 한다.
 	implementation(project(":libs:telemetry-ops-persistence"))
