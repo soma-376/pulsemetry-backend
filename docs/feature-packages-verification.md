@@ -119,8 +119,37 @@ done
 
 로컬 상세 증거는 `/tmp/proj306-image-<target>.log`, `/tmp/proj306-image-release.log`, `/tmp/proj306-image-inspection.json`에 남겼다. 이미지 빌드는 기존 Dockerfile대로 `-x test`를 사용하며, 앞 절의 전체 회귀 테스트 결과와 별도로 확인했다. 이 후속 작업에서는 검증 문서만 변경했다.
 
+## 5. 의존 인프라와 다섯 앱 컨테이너 smoke
+
+2026-11-01, 4절의 `pulsemetry-proj306/<app>:403f245` 이미지로 전체 로컬 smoke를 완료했다. PostgreSQL 16·ClickHouse 24.8·Kafka 3.9.2·Mailpit 1.27을 별도 Compose 프로젝트에 띄웠다. 외부 통신을 차단한 내부 네트워크에서 검증용 Python 컨테이너가 실제 HTTP 요청을 보냈으며, 호스트 포트와 기존 개발 DB를 사용하지 않았다. Enrollment가 빈 DB의 마이그레이션을 적용한 뒤 나머지 앱을 연결했다. Dashboard에는 원천 읽기와 캐시 쓰기 계정을 따로 공급했다.
+
+| 검증 경로 | 결과 |
+|---|---|
+| Enrollment 관리 | 팀 생성 201, 같은 키 재응답 일치, 다른 본문 409, 잘못된 이름 400·명령 기록 0건. 팀 행은 1건 |
+| 초대·outbox·설치 | 초대 재요청에도 outbox와 Mailpit 수신 각 1건, 발송 후 암호문 제거. 실제 enroll 201·응답 네 키·telemetry JWT 발급 |
+| Dashboard | 미인증 401, 인증된 팀 조회 200. 실제 snapshot 개요 200·2,188토큰·2세션·활성 구성원 1명·섹션 오류 없음 |
+| HTTP ingest | logs 200 뒤 독립 계산한 observation ID·입력 1,066/출력 28토큰·archive 참조와 ClickHouse FINAL 행 일치 |
+| Gateway → Kafka → ingest | logs 200 뒤 동일한 독립 검증 통과. metrics 200 뒤 값 10인 두 점·archive 참조 확인. 데이터를 받은 파티션 commit·lag 0, 나머지 파티션은 빈 상태. 잘못된 JWT 401 |
+| 정책 변경 → Retention → Dashboard 작업 조회 | 정책 API가 만든 보존 정리 요청을 `--requests`로 처리, 종료 0·작업 succeeded·Dashboard 작업 조회 200. 경계 `2025-10-31T15:00:00Z`, epoch 1 |
+| 삭제 범위·재전송 | 오래된 log/metric 각 1건 삭제. 대상 조직의 최신 logs 2건·metric 1건과 다른 조직의 오래된 log/metric 각 1건 보존. 과거 logs 재전송은 200이지만 다시 저장되지 않음. Flyway 이력 불변 |
+| 종료·격리 | HTTP 앱 네 개 UID 10001·graceful SIGTERM 종료(143), ingest consumer 종료, OOM 없음. Retention 종료 0. 알려진 테스트 자격 값의 로그 노출 없음 |
+
+앱·Dockerfile 수정이 필요한 결함은 발견하지 않았다. 검증 스크립트는 비어 있는 Kafka 파티션의 미생성 offset과 JVM의 정상 SIGTERM 종료 코드 143을 구분하도록 정리했다. 보조 probe에는 init을 사용해 종료 신호가 전달되게 했다. 새 빈 환경에서 최종 스크립트를 끝까지 재실행한 결과 `passed`, 종료 코드 0이었다.
+
+재현 도구는 [container-smoke/run.py](../scripts/container-smoke/run.py), 절차·범위는 [README](../scripts/container-smoke/README.md)다. CI와 배포 워크플로우에는 연결하지 않았다.
+
+```sh
+python3 scripts/container-smoke/run.py \
+  --work /tmp/proj306-container-smoke-new \
+  --image-tag 403f245
+```
+
+최종 실행 증거는 `/private/tmp/proj306-container-smoke-verified/`의 `result.json`, `images.json`, `management-evidence.json`, `telemetry-*/evidence.json`, `dashboard-overview.json`, `consumer-lag.txt`, `retention-evidence.json`, `shutdown.json`, 앱 로그에 남겼다. 실행 프로젝트 `pulsemetry-smoke-8181b3f4af79`의 컨테이너·네트워크·익명 볼륨은 정리했고, 기존 `claude-otel` 컨테이너는 유지했다. 결과 디렉터리의 테스트 키·토큰·Compose 설정은 저장소에 포함하지 않았다.
+
 ## Infra·배포 영향
 
 **Infra 저장소와 배포 워크플로우는 수정하지 않았다.** Backend Dockerfile의 build-base에 `enrollment-domain`·`telemetry-model` 빌드 파일 COPY 두 줄을 추가했다. 기존 Docker 빌드가 새 Gradle 모듈을 구성하기 위해 필요한 변경이다. 이미지 target·포트·설정 키/값·스키마·배포 순서·HTTP/OTLP/Kafka 계약은 유지한다. retention-worker의 application.yaml 변경은 설명 주석뿐이다.
 
-검증 범위는 로컬 Testcontainers·실행 jar 조립과 다섯 `linux/arm64` 전체 이미지 빌드·이미지 내부 산출물/JVM 검사다. 전체 서비스를 의존 인프라와 함께 띄우는 컨테이너 smoke·원격 CI 실행·실제 벤더/메일 공급자·운영 환경 배포 smoke는 실행하지 않았다. 문서 허브의 오래된 서술은 이 Backend 범위에서 수정하지 않았다. push·PR·Jira 하위 티켓 생성·운영 배포는 수행하지 않았다.
+컨테이너 smoke 후속 변경은 로컬 검증 스크립트·사용법·결과 기록뿐이며, Infra 코드나 배포 워크플로우에 추가 변경이 필요하지 않다.
+
+검증 범위는 로컬 Testcontainers·실행 jar 조립, 다섯 `linux/arm64` 전체 이미지 빌드, 의존 인프라와 함께 실행한 컨테이너 smoke다. smoke는 단일 Kafka broker·PLAINTEXT, file archive, SMTP와 합성 사용자 세션을 사용했다. 외부 OIDC 로그인·실제 벤더·SES·S3·MSK/IAM/mTLS·운영 권한/부하·진행 중 요청의 종료·원격 CI·운영 배포 인수는 검증하지 않았다. 문서 허브의 오래된 서술은 이 Backend 범위에서 수정하지 않았다. push·PR·Jira 하위 티켓 생성·운영 배포는 수행하지 않았다.
