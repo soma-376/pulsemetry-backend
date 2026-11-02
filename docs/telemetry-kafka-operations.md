@@ -11,8 +11,9 @@ AWS 리소스·Helm·ALB 전환·offset 재설정 Job은 infra가 소유한다. 
 
 ## GitOps 이미지 인계 상태
 
-[ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)는 enrollment·ingest·Gateway·dashboard 네 앱을 같은 backend SHA·run·attempt의
-완료 묶음으로 공급하는 Accepted 설계다. manifest·승격 구현과 Argo 소유권 인계 전에는 기존 digest 기반
+[ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)은 enrollment·ingest·Gateway·dashboard 네 앱을 같은 backend SHA·run·attempt의
+완료 묶음으로 공급하고 backend가 이미지·rollback Git 발행을 맡는 Accepted 설계다. Image Updater는 도입하지 않는다.
+infra는 설정 발행과 Argo 운영을 맡는다. manifest·공유 잠금·상태 판정·자동 복구 구현과 Argo 인계 전에는 기존 digest 기반
 수동 Helm 운영을 유지한다. 현재 dev의 Strimzi mTLS 배포 상태와 이 GitOps 도입 상태는 별개다.
 인계 후 일반 앱 변경은 enrollment의 Flyway 성공 → ingest → Gateway → dashboard 순서를 따르며,
 아래 최초 JWT 발급·ALB 전환 절차를 이미지 변경마다 반복하지 않는다.
@@ -179,11 +180,17 @@ Consumer 의 `authorize` 거부는 `credential_unknown`·`credential_format`·`c
 - **enrollment 를 이전 이미지로**: 그 이미지는 `ptt_` 를 발급하고, 회전 UPDATE 가 사유 없이 `revoked_at` 만 쓴다. 그렇게 회전된 JWT 행은 Consumer 가
   `credential_revoked_unknown` 으로 거부하므로 Kafka 에 대기 중인 그 토큰의 record 가 미적재될 수 있다. V33 은 추가형이라 되돌리지 않는다.
 
-GitOps 인계 후의 **일반 이미지 rollback**은 [ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)를 따른다.
-infra가 승격기·Updater·자동 sync를 중지하고 이전 검증 묶음의 네 digest를 현재 DB 스키마·키링·TLS revision·runtime과
-대조해 복구 desired를 만든다. 위 최초 전환 이전 이미지의 예외를 자동 rollback 허용 근거로 쓰지 않는다.
-DB·PVC·Kafka offset과 과거 values를 함께 되돌리지 않으며, backlog 호환과 ACK→consume→commit·S3/ClickHouse를
-검증한 뒤 desired·실제 상태의 일치를 확인해 자동화를 재개한다.
+GitOps 인계 후의 **일반 이미지 rollback**은 [ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)을 따른다.
+backend 이미지 publisher가 대상 P의 확정된 실패와 진행 중 operation 부재, 실제 적용 schema·현재 C/runtime·키/TLS에 대한
+호환성을 확인한 경우에만 사전 기록 last-known-good B로 한 번 자동 복구한다. private Git CAS 잠금은 같은 owner가
+기능 검증까지 유지하고, 현재 비이미지 값을 보존한 새 V/P를 발행한다. Argo 자동 sync를 유지해 복구 Git을 적용하며
+backend는 Argo/Kubernetes를 직접 변경하지 않는다. unknown·설정 실패·owner 소실·호환성 미확인·복구 실패는 blocked다.
+위 최초 전환 이전 이미지의 예외를 자동 rollback 허용 근거로 쓰지 않는다. DB·PVC·Kafka offset과 과거 values를 함께
+되돌리지 않고 backlog 호환 및 ACK→consume→commit·S3/ClickHouse 기능을 확인한다.
+복구 성공 뒤 실패 source의 develop strict descendant이고 원본 생산 run.created_at이 실패 fence 이후인 정상 B만 자동 재개한다.
+실패 B·같은 네 repository/digest 조합·실패 전 run과 그 재시도는 제외하며 잠금 해제 시 허용 대기 후보를 다시 조회한다.
+키/인증서 교체·ingest 중지·offset reset은 별도 infra 유지보수다. 이 절차의 parent/child self-heal 중지·재개와
+일반 이미지 rollback에서 자동 sync를 유지하는 동작을 구별한다.
 
 ## 4. 키 회전
 

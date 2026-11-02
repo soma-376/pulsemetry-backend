@@ -3,7 +3,7 @@
 메일 발송의 설정 계약, 배포 환경(SES)을 준비하는 인프라 작업에 넘길 조건, 실제 발송 확인 절차, 전환·복구 절차를 담는다.
 결정은 [ADR 0037](adr/0037-메일은-outbox에-적재하고-enrollment-api의-발송-작업이-SMTP로-보낸다.md)(outbox)과
 [ADR 0058](adr/0058-배포-환경의-메일은-SES-API로-보내고-발송-구현은-설정으로-고른다.md)(발송 구현 선택·SES)이 정한다. API의 발송 상태는 [초대 API 공통 규칙](api/reference/invitations.md)이 정한다.
-dev 백엔드의 실행·배포 경계는 [허브 ADR 0023](../../docs/adr/0023-dev-backend-eks-only.md), 실제 설치는 [infra EKS 수동 배포 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다.
+dev EKS 실행은 [허브 ADR 0023](../../docs/adr/0023-dev-backend-eks-only.md), GitOps 인계 전 설치는 [infra EKS 수동 배포 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다. 인계 후 일반 이미지 변경·복구는 [ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)의 backend Git 발행·조건부 자동 rollback을 따른다. 아래 SES 최초 전환·권한·키 변경과 과거 검증 기록을 일반 이미지 자동 복구로 확대하지 않는다.
 
 > **검증 상태.** 로컬·CI 테스트는 AWS 계정 없이 실행한다 — SMTP는 Mailpit, SES는 실제 SDK와 로컬 HTTP 모의 서버를 사용한다(§7).
 > dev EKS의 설정·암호화 키·SES 권한 공급은 구현·적용됐고 지정 수신함의 실제 초대 메일·공개 설치 페이지·Linux ARM64 CLI 등록을 확인했다.

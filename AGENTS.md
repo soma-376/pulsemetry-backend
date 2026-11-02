@@ -70,22 +70,29 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 `linux/arm64` SHA 이미지를 ECR에 게시한다. 설정된 이미지 게시가 끝난 뒤 앞 세 앱만 build digest로
 `dev` 태그를 순차 갱신하고 Gateway는 SHA 태그와 summary digest를 제공한다. 완료 묶음 manifest는 아직 없다.
 
-**채택된 GitOps 공급 설계(PROJ-286)**는 [ADR 0076](docs/adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)를 따른다.
-네 앱을 모두 같은 backend SHA·workflow run·attempt에서 검증하고 build output digest로 완료 묶음을 만든다.
-Gateway 생략·개별 앱 자동 승격은 허용하지 않는다. 같은 SHA의 새 digest도 새 묶음으로 다시 검증한다.
-native Image Updater 후보를 받아 infra가 values 검증·desired 승격·Argo 배포를 소유하며 backend CI는 직접 배포하지 않는다.
-레포 간 B·C·V·P/schema는 [허브 ADR 0031](../docs/adr/0031-dev-gitops-delivery.md)과
-[generated values 동기화 계약](../docs/contracts/generated-values-sync.md)이 진실원이다.
-구현·검증·소유권 인계 전에는 immutable digest를 확인한 [infra 수동 EKS 런북](../infra/docs/runbooks/dev-eks-manual-deployment.md)을 유지한다.
-배포 순서는 enrollment 원천 Flyway 성공 → ingest → Gateway → dashboard이며 기존 스키마 책임은 바꾸지 않는다.
-이미지 게시·Argo 상태·Pod readiness·발급/수집/적재/조회 성공은 각각 확인한다. 복구는 자동화를 중지하고
-이전 검증 묶음과 현재 호환 설정을 조합하며 DB downgrade나 폐기된 MSK 경로 복원을 포함하지 않는다.
+**채택된 GitOps 공급 설계(PROJ-286)**는 [ADR 0076](docs/adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)을 따른다.
+Image Updater 도입을 철회하고 backend가 이미지·rollback Git 발행, infra가 설정 Git 발행을 각각 맡는다.
+네 앱은 같은 backend SHA·이미지 생산 run/attempt의 ARM64 완료 묶음 B이며 Gateway는 필수다.
+원본 게시 run의 최종 성공 뒤 별도 backend workflow가 현재 C·비이미지 값을 보존한 네 `image.repository`·`image.digest`를
+V로 게시하고 P에서 desired·Application 참조를 함께 선택한다. infra 재생성은 현재 B를 보존한다.
+`image.ref`·별도 overlay·candidate branch·태그 발견을 추가하지 않으며 backend는 Kubernetes·Argo API에 쓰지 않는다.
+레포 간 B/C/V/P와 `dev/delivery-state.json` schema는 [허브 ADR 0031](../docs/adr/0031-dev-gitops-delivery.md)·
+[generated values 동기화 계약](../docs/contracts/generated-values-sync.md)이 소유한다. 두 publisher는 private main의
+공유 Git CAS 잠금을 rollout/rollback 종료까지 유지한다. 저장소별 concurrency로 대체하거나 잠금을 자동 탈취하지 않는다.
+배포는 enrollment Flyway 성공 → ingest → Gateway → dashboard 순서이며 이미지 게시·Argo/Pod 상태·기능 성공은 각각 확인한다.
+해당 P의 확정된 이미지 실패이고 진행 중 operation이 없으며 실제 적용 schema·현재 C/runtime/키/TLS에 호환될 때만
+같은 owner가 사전 기록 last-known-good B로 한 번 자동 rollback한다. Argo 자동 sync를 유지해 복구 Git을 적용하고
+DB/PVC/offset을 되돌리지 않는다. unknown·설정 실패·owner 소실·호환성 미확인·복구 실패는 blocked다.
+복구 성공 후에는 실패 source의 develop strict descendant이면서 원본 생산 run.created_at이 실패 fence 이후인 정상 B만
+자동 재개한다. 실패 B·같은 전체 이미지 조합·이전 run 재시도는 제외하고 잠금 해제 시 새 허용 후보를 재조회한다.
+구현·검증·소유권 인계 전에는 [infra 수동 EKS 런북](../infra/docs/runbooks/dev-eks-manual-deployment.md)을 유지한다.
+이 설계 개정은 현재 workflow·AWS/Kubernetes 배포가 바뀌었다는 뜻이 아니다.
 
 **이 레포가 소유하지 않는 것** — 요청이 오면 올바른 레포를 알린다.
 
 | 항목 | 소유 레포 |
 |---|---|
-| AWS/CDK 자원·IAM, Kubernetes/Helm 선언·runtime 공급·GitOps 인계/운영(인계 전 수동 배포), prod의 기존 ECS·collector 설정 | `infra` |
+| AWS/CDK 자원·IAM, Kubernetes/Helm 선언·runtime/설정 공급·Argo 인계/운영(인계 전 수동 배포), prod의 기존 ECS·collector 설정 | `infra` |
 | 로컬 수신기·데몬·벤더 도구 배선, enroll 봉투·manifest **계약 스키마 파일**(`enrollment-envelope`·`enrollment-manifest`) | `telemetryctl` |
 | 스키마 다이어그램(dbml) | `rdb-schema` — 단 **마이그레이션 진실원은 이 레포의 Flyway**다 |
 

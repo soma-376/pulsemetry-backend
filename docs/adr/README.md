@@ -88,10 +88,12 @@ PROJ-268은 ADR 0005의 DB 조회 금지를 읽기 전용 사전 검증으로 �
 Status 열은 각 ADR Status 줄의 **첫 토큰**만 싣는다. 부분 대체·부연은 해당 파일에서 확인한다.
 Status 첫 토큰이 바뀌는 커밋에서는 이 표도 같은 커밋에서 갱신한다.
 
-dev의 완료 묶음 이미지 공급은 [ADR 0076](0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md), 레포 간 인계는
+dev의 완료 묶음 이미지 공급·backend 이미지/rollback Git 발행은 [ADR 0076](0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md), 레포 간 인계는
 [허브 ADR 0031](../../../docs/adr/0031-dev-gitops-delivery.md)과 [generated values 동기화 계약](../../../docs/contracts/generated-values-sync.md)이 기준이다.
 ADR 0005·0009·0016의 dev 이미지 공급·배포 서술만 부분 대체하며 각 결정의 설치·스키마·조립 규칙은 유지한다.
+Image Updater 도입은 철회하며 infra 설정 publisher와 공유 Git CAS 잠금·조건부 자동 복구를 사용한다.
 GitOps 구현·인계 전에는 수동 배포를 유지한다. 문서 채택은 workflow·Argo 구현이나 실제 배포 완료의 증거가 아니다.
+PROJ-306의 구조 ADR 0075는 유지하고, 병행 GitOps 문서의 번호만 0076으로 정정했다.
 
 새 ADR을 작성할 때는 다음 미사용 번호(`0077-...`)를 사용하고
 [`0000-adr-template.md`](0000-adr-template.md)의 구조를 따른다. 파일명은 **한국어 슬러그**다.
