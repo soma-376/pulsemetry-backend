@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.telemetry.maintenance
 
+import com.team376.pulsemetry.telemetry.model.RowVersioning
+
 import com.sun.net.httpserver.HttpServer
 import com.team376.pulsemetry.persistence.telemetry.AnalysisWriteBoundary
 import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient

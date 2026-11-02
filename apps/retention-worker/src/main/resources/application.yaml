@@ -7,9 +7,8 @@ spring:
     web-application-type: none
 
   autoconfigure:
-    # 분석 테이블 모듈이 보강 단계를 타고 :libs:enrollment-persistence 를 끌어와 JPA·Flyway starter 가 런타임 클래스패스에 오른다.
-    # 이 앱은 DDL 을 실행하지 않고(telemetry_ops 는 enrollment-api, ClickHouse 는 ingest 가 적용한다) enrollment 를 읽지도 않는다 —
-    # 켜 두면 Flyway 가 대상 DB 의 public 스키마에 이력 테이블을 만든다.
+    # ADR 0075 이후 main에는 JPA·Flyway starter가 없다. 기존 설정 키는 방어적 제외로 유지한다.
+    # 요청 모드는 enrollment의 정리 요청을 JDBC로 읽고 쓰지만, 이 앱은 DDL을 실행하지 않는다.
     exclude:
       - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration
       - org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration

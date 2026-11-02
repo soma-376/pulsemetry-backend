@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedMetricPoint
+import com.team376.pulsemetry.telemetry.model.RowVersioning
+import com.team376.pulsemetry.telemetry.model.EnrichedMetricPoint
 
 /**
  * `telemetry_metric_points` 한 행(85컬럼)의 JSONEachRow 표기(ADR 0020 §1·§4). 봉투 49 뒤에 point 고유 36컬럼을 DDL 순서로

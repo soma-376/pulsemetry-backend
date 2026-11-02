@@ -1,5 +1,12 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import com.team376.pulsemetry.telemetry.model.MetricPointObservation
+import com.team376.pulsemetry.telemetry.model.MetricType
+import com.team376.pulsemetry.telemetry.model.ObservationEnvelope
+import com.team376.pulsemetry.telemetry.model.QualityFlag
+import com.team376.pulsemetry.telemetry.model.StructuralStatus
+import com.team376.pulsemetry.telemetry.model.Temporality
+
 import com.google.protobuf.Message
 import com.google.protobuf.MessageOrBuilder
 

@@ -5,9 +5,9 @@ import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
 import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
 import com.team376.pulsemetry.persistence.telemetryops.TenantRetentionBoundary
 import com.team376.pulsemetry.persistence.telemetryops.TenantRetentionBoundaryStore
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.RowVersioning
+import com.team376.pulsemetry.telemetry.model.EnrichedEvent
 import com.team376.pulsemetry.telemetry.maintenance.StoredUsageRepricing.Disposition
 import com.team376.pulsemetry.telemetry.maintenance.StoredUsageRepricing.Planned
 import com.team376.pulsemetry.telemetry.maintenance.StoredUsageRepricing.stopUnless

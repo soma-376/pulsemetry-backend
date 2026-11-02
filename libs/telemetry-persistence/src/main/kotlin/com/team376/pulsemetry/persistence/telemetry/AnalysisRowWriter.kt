@@ -1,9 +1,9 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
-import com.team376.pulsemetry.telemetry.adapter.observation.Hex64
-import com.team376.pulsemetry.telemetry.adapter.observation.Money
-import com.team376.pulsemetry.telemetry.adapter.observation.WireValue
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.Hex64
+import com.team376.pulsemetry.telemetry.model.Money
+import com.team376.pulsemetry.telemetry.model.WireValue
 import java.math.BigDecimal
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter

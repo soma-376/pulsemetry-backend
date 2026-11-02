@@ -9,26 +9,31 @@ plugins {
 }
 
 dependencies {
+	// 공개 저장 연산의 오류·좌석·계약 값이다. 순수 규칙의 단일 정의는 domain이 소유한다.
+	api(project(":libs:enrollment-domain"))
 	api(libs.jackson.module.kotlin)
 	// 좌석 원장이 커넥터 설명(계정 종류·커넥터가 있는 플랜)과 벤더 목록 타입을 받는다 — 공개 시그니처에 나타나므로 api 다 (ADR 0048).
 	api(project(":libs:vendor-connector"))
-	// api: 소비자(앱 모듈)의 컴파일 클래스패스에도 노출한다.
-	// 엔티티·리포지토리·DataSource·JdbcClient 는 앱 코드가 직접 다루는 타입이다.
-	api(libs.spring.boot.starter.data.jpa)
-	api(libs.spring.boot.starter.jdbc)
-
-	// 스키마의 진실원인 Flyway 마이그레이션.
-	implementation(libs.spring.boot.starter.flyway)
-	runtimeOnly(libs.flyway.database.postgresql)
-	runtimeOnly(libs.postgresql)
+	// 공개 엔티티·리포지토리·JdbcClient 계약의 API만 노출한다. 자동설정과 드라이버는 앱이 선택한다 (ADR 0075).
+	api("org.springframework.data:spring-data-jpa")
+	api("org.springframework:spring-jdbc")
+	api("jakarta.persistence:jakarta.persistence-api")
+	// 엔티티의 JSON 열 매핑 annotation을 컴파일한다. ORM 실행 구현은 JPA를 선택한 앱이 제공한다.
+	compileOnly("org.hibernate.orm:hibernate-core")
 
 	// 앱 모듈이 같은 컨테이너 설정을 쓰도록 노출한다.
 	// PostgreSQLContainer 는 @Bean 시그니처에 나타나므로 소비자의 컴파일 클래스패스에 있어야 한다 — api 다.
 	testFixturesApi(libs.testcontainers.postgresql)
 	testFixturesImplementation(libs.spring.boot.starter.test)
 	testFixturesImplementation(libs.spring.boot.testcontainers)
+	// 컨테이너 fixture를 쓰는 테스트에만 DB 자동설정·마이그레이션·드라이버를 제공한다.
+	testFixturesRuntimeOnly(libs.spring.boot.starter.data.jpa)
+	testFixturesRuntimeOnly(libs.spring.boot.starter.flyway)
+	testFixturesRuntimeOnly(libs.flyway.database.postgresql)
+	testFixturesRuntimeOnly(libs.postgresql)
 
 	testImplementation(libs.spring.boot.starter.test)
+	testImplementation(libs.flyway.core)
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.postgresql)
 	testImplementation(libs.testcontainers.junit.jupiter)

@@ -23,6 +23,8 @@ dependencies {
 	// 판정 테스트는 실제 PostgreSQL 위에서 돈다 — 거부 사유가 전부 스키마의 컬럼에서 나오기 때문이다.
 	// JPA · JDBC 는 영속성 모듈이 api() 로 노출하므로 여기서 다시 선언하지 않는다.
 	testImplementation(libs.spring.boot.starter.test)
+	// 테스트 앱의 EntityScan과 JPA 조립은 main 라이브러리 의존과 분리한다.
+	testImplementation(libs.spring.boot.starter.data.jpa)
 	testImplementation(libs.spring.boot.testcontainers)
 	testImplementation(libs.testcontainers.postgresql)
 	// PostgresContainerConfig · EnrollmentFixtures 는 영속성 모듈이 testFixtures 로 노출한다 (ADR 0008 규칙 6).

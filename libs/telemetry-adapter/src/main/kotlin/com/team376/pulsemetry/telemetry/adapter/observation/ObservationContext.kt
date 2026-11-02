@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+
 /**
  * 정규화가 받는 수집 시점의 문맥. 수집 단계의 영수증에서 값만 꺼내 조립 앱이 채운다 — 이 모듈은
  * 수집 모듈에 의존하지 않는다(ADR 0010 · 0014).

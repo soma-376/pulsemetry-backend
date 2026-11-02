@@ -1,9 +1,9 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
-import com.team376.pulsemetry.telemetry.adapter.observation.NormalizationStats
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationSignal
-import com.team376.pulsemetry.telemetry.adapter.observation.SourceTimeRejection
+import com.team376.pulsemetry.telemetry.model.EpochNanos
+import com.team376.pulsemetry.telemetry.model.NormalizationStats
+import com.team376.pulsemetry.telemetry.model.ObservationSignal
+import com.team376.pulsemetry.telemetry.model.SourceTimeRejection
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeEach

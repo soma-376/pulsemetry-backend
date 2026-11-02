@@ -11,11 +11,11 @@ import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
 import com.team376.pulsemetry.persistence.telemetry.TelemetryMetricPointsSink
 import com.team376.pulsemetry.persistence.telemetry.TelemetrySinkUnavailableException
 import com.team376.pulsemetry.persistence.telemetryops.TelemetryOpsUnavailableException
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationBatch
+import com.team376.pulsemetry.telemetry.model.ObservationBatch
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationContext
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationNormalizer
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationPipeline
-import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
+import com.team376.pulsemetry.telemetry.model.QualityFlag
 import com.team376.pulsemetry.telemetry.adapter.observation.claudecode.ClaudeCodeProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProfileRegistry
 import com.team376.pulsemetry.telemetry.collector.PermanentIngestException

@@ -24,13 +24,15 @@ apps/telemetry-gateway/      OTLP 접수 앱 — telemetry JWT 만 검증해 Kaf
 apps/dashboard-api/          분석·설정·카탈로그 조회 API — 원천은 읽기만, 쓰기는 자기 캐시뿐. 사용자 인증 어댑터 (ADR 0026)
 apps/retention-worker/       조직별 보존 삭제 — 서버가 아닌 일회성 실행. 분석 원본 DELETE 권한은 여기뿐 (ADR 0024)
 libs/enrollment-persistence/ JPA 엔티티 · 리포지토리 · Flyway 마이그레이션
+libs/enrollment-domain/      명령·조회가 공유하는 오류·좌석 상태/전이·계약 규칙 — HTTP·SQL·Spring 없음 (ADR 0075)
 libs/security/               횡단 인증 라이브러리 — 사용자 JWT·세션·OIDC 신원 연결, OTLP 경로 ptt_ 검증 · telemetry token 해시
 libs/telemetry-auth/         telemetry JWT 발급·검증 (RS256, 전용 typ·kid) — nimbus 만 의존 (ADR 0065)
 libs/telemetry-otlp-http/    OTLP/HTTP 경로·허용 목록·응답 바이트 — Gateway 와 ingest 가 같은 응답을 낸다
 libs/telemetry-ingress-contract/ Kafka ingress envelope(protobuf)·codec·접속 설정·운영 로그 이벤트 (ADR 0066)
 libs/telemetry-observability/ 운영 계측 포트·Micrometer 구현 — Spring 없음, 앱이 조립 (ADR 0068)
 libs/telemetry-collector/    파이프라인 수집 단계 — OTLP 수신 · 마스킹 · 신원 스탬프 · 원본 아카이브
-libs/telemetry-adapter/      파이프라인 변환 단계 — 관측 모델 2판 · 제품 프로파일(Codex · Claude Code) · 가격 단계
+libs/telemetry-model/        단계 사이 관측·집계·보강 결과 값 — 단계 실행·JPA·Boot 없음 (ADR 0075)
+libs/telemetry-adapter/      파이프라인 변환 단계 — 제품 프로파일(Codex · Claude Code) · 토큰 의미 · 가격 단계
 libs/telemetry-enricher/     파이프라인 보강 단계 — member_id · 대표 팀 as-of · provider 주석
 libs/telemetry-persistence/  파이프라인 적재 단계 — ClickHouse 스키마 소유 · 분석 테이블 · 수신 ledger sink
 libs/telemetry-ops-persistence/ 수집 운영 기록의 RDS 쪽 — telemetry_ops 스키마 · 생애 요약 · 백필
@@ -56,7 +58,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 | Kafka mTLS 접속(PROJ-284) | 앱 설정·검증 구현, 배포 증거는 별도 | `PULSEMETRY_KAFKA_SECURITY=mtls` + PKCS12 파일 네 경로. 공통 검증·hostname 확인·비밀 오류 정리, IAM/plaintext 호환. ADR 0070과 Kafka 운영 §1.1. Secret 갱신은 infra TLS revision 재배포로 반영 |
 | telemetry JWT·Gateway·Kafka 수집 | 앱 구현·현재 dev Strimzi 경로. ADR 0065·0066의 Proposed 상태와 배포 증거는 구분 | telemetry JWT 발급(설정으로 켬)·Gateway·ingest Consumer·수신 모드. 200 은 Kafka 접수다. 설정·전환 순서·키 회전·보안 폐기 SQL은 `docs/telemetry-kafka-operations.md`, 로컬 E2E 결과는 `docs/telemetry-kafka-e2e.md` |
 | 수집 운영 계측(PROJ-191) | 로컬 구현·검증, 배포 인수 전 | Gateway/ingest 관리9404 Prometheus·Kafka native·단계/CH semantic metrics. `PULSEMETRY_OBSERVABILITY_ENABLED=false`면 업무 지표만 끈다. GC·safepoint 옵션 문자열은 Infra가 성능 비교 구간에 `JDK_JAVA_OPTIONS`로 넣는다. `docs/telemetry-observability.md`와 ADR0068. 200·completed·rows submitted는 실제 적재와 다르며 독립 smoke의 FINAL 기대 ID 대조로 확인 |
-| 텔레메트리 파이프라인 이관 | 단일 앱 구현·dev EKS 실행 계약 채택 | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다. dev 실행·이미지 인계는 허브 ADR 0031·backend ADR 0075를 따른다. GitOps 구현·인계와 실제 기능 검증은 별도이며 인계 전 수동 배포를 유지한다 |
+| 텔레메트리 파이프라인 이관 | 단일 앱 구현·dev EKS 실행 계약 채택 | 인증(PROJ-102) · 수집(PROJ-114) · 변환(PROJ-103) · 보강과 적재(PROJ-104)에 이어 **조립 앱 `:apps:telemetry-ingest`(PROJ-105)까지 섰다.** 적재는 정규화 계약 2판(ADR 0020)의 분석 테이블 둘(`telemetry_events` · `telemetry_metric_points`)이고 구 `enriched_events` 는 새 행을 받지 않는다. 수신 ledger · 생애 요약(ADR 0021)은 허브 ADR 0007 채택 전까지 `pulsemetry.telemetry.ops.enabled` 로 끈다. 로컬에서는 다섯 모듈이 한 요청에서 돈다. dev 실행·이미지 인계는 허브 ADR 0031·backend ADR 0076을 따른다. GitOps 구현·인계와 실제 기능 검증은 별도이며 인계 전 수동 배포를 유지한다 |
 
 **수집 코어는 ingest 한 앱에 조립하며 dev의 공개 접수는 Gateway가 맡는다.** Gateway → Strimzi Kafka → ingest의
 현재 전송·검증 경계는 [허브 Kafka 계약](../docs/contracts/telemetry-kafka.md), 코어와 HTTP 호환 경로는
@@ -68,7 +70,7 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 `linux/arm64` SHA 이미지를 ECR에 게시한다. 설정된 이미지 게시가 끝난 뒤 앞 세 앱만 build digest로
 `dev` 태그를 순차 갱신하고 Gateway는 SHA 태그와 summary digest를 제공한다. 완료 묶음 manifest는 아직 없다.
 
-**채택된 GitOps 공급 설계(PROJ-286)**는 [ADR 0075](docs/adr/0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)를 따른다.
+**채택된 GitOps 공급 설계(PROJ-286)**는 [ADR 0076](docs/adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)를 따른다.
 네 앱을 모두 같은 backend SHA·workflow run·attempt에서 검증하고 build output digest로 완료 묶음을 만든다.
 Gateway 생략·개별 앱 자동 승격은 허용하지 않는다. 같은 SHA의 새 digest도 새 묶음으로 다시 검증한다.
 native Image Updater 후보를 받아 infra가 values 검증·desired 승격·Argo 배포를 소유하며 backend CI는 직접 배포하지 않는다.
@@ -121,7 +123,7 @@ native Image Updater 후보를 받아 infra가 values 검증·desired 승격·Ar
 | `docs/adr/` | 설계 결정. 최신 목록과 상태는 `docs/adr/README.md` 참고 |
 | `../docs/contracts/enrollment-api.md` | telemetryctl과의 **계약** — 경계에 걸리는 변경은 여기가 기준 |
 | `../docs/contracts/dashboard-api.md` · `../docs/adr/0021-dashboard-runtime-and-deployment-contract.md` | Dashboard 앱 소재·저장소·인증·배포 책임과 전체 path·method·OPTIONS 소유권. 배포·실 DB 검증 완료와 문서 채택은 별개 |
-| `../docs/adr/0031-dev-gitops-delivery.md` · `../docs/contracts/generated-values-sync.md` · `docs/adr/0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md` | dev 완료 묶음·GitOps 인계의 채택 설계. 구현·인계 전에는 `../infra/docs/runbooks/dev-eks-manual-deployment.md` 유지. prod·별도 frontend ECS는 대상 밖 |
+| `../docs/adr/0031-dev-gitops-delivery.md` · `../docs/contracts/generated-values-sync.md` · `docs/adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md` | dev 완료 묶음·GitOps 인계의 채택 설계. 구현·인계 전에는 `../infra/docs/runbooks/dev-eks-manual-deployment.md` 유지. prod·별도 frontend ECS는 대상 밖 |
 
 ## 명령어
 
@@ -236,7 +238,7 @@ Spring 서버는 Compose와 별도로 실행한다. local 프로필·시드 보�
   sink 는 `AnalysisWriteBoundary` 없이 쓰지 않는다 — 재처리 경로도 같은 sink 를 지난다. 경계는 MAX 로만 움직인다
   (`TenantRetentionBoundaryStore.advance`). ClickHouse 이미지를 올리면 증거 테스트가 먼저 통과해야 한다.
   삭제는 `:apps:retention-worker` 만 한다 — 발효 → fence → drain → DELETE → 남은 행 0 확인의 순서를 바꾸지 마라(ADR 0024 §4).
-  그 앱은 JPA·Flyway 자동설정을 `spring.autoconfigure.exclude` 로 끈다 — 분석 테이블 모듈이 enrollment-persistence 를 끌어온다.
+  그 앱은 JDBC 자동설정만 선택한다. ADR 0075로 분석 적재의 보강·Enrollment 전이 의존을 제거했으며, 기존 JPA·Flyway 제외 설정은 방어적으로 유지한다.
   조직이 집계 보존을 줄이면 저장 명령이 보존 정리 요청을 남기고, 그 앱의 요청 모드(`--requests`)가 같은 순서로 실행한다(ADR 0047) —
   enrollment-api·dashboard-api 에서 원본을 지우지 마라. 요청 모드는 기존 인자 모드와 종료 코드를 바꾸지 않는다.
 - **계약 테스트는 원격 telemetryctl 기본 브랜치에 있는 스키마만 원본으로 읽는다.** PR CI 는 그 브랜치의 `contracts` 를 체크아웃해

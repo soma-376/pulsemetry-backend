@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.claudecode
 
-import com.team376.pulsemetry.telemetry.adapter.observation.ToolAction
-import com.team376.pulsemetry.telemetry.adapter.observation.ToolOrigin
+import com.team376.pulsemetry.telemetry.model.ToolAction
+import com.team376.pulsemetry.telemetry.model.ToolOrigin
 
 /** Claude Code 도구의 출처·동작 판정(ADR 0020 부록 A.1). 로그와 스팬이 같은 표를 쓴다 — 근거는 PROFILE-EVIDENCE 5 절. */
 internal object ClaudeCodeTools {

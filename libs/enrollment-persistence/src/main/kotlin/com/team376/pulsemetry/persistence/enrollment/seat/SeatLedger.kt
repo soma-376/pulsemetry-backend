@@ -1,12 +1,18 @@
 package com.team376.pulsemetry.persistence.enrollment.seat
 
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState
+import com.team376.pulsemetry.domain.enrollment.seat.SeatSource
+import com.team376.pulsemetry.domain.enrollment.seat.MemberLink
+import com.team376.pulsemetry.domain.enrollment.seat.SeatTransitions
+import com.team376.pulsemetry.domain.enrollment.seat.SeatAuthority
+
 import com.team376.pulsemetry.connector.vendor.AccountKind
 import com.team376.pulsemetry.connector.vendor.ConnectorDescriptors
 import com.team376.pulsemetry.connector.vendor.ControlResult
 import com.team376.pulsemetry.connector.vendor.ControlStatus
 import com.team376.pulsemetry.connector.vendor.VendorSeat
 import com.team376.pulsemetry.connector.vendor.VendorSeatState
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import com.team376.pulsemetry.persistence.enrollment.operation.Operation
 import com.team376.pulsemetry.persistence.enrollment.operation.OperationKind
 import com.team376.pulsemetry.persistence.enrollment.operation.OperationStatus

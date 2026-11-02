@@ -11,7 +11,7 @@ AWS 리소스·Helm·ALB 전환·offset 재설정 Job은 infra가 소유한다. 
 
 ## GitOps 이미지 인계 상태
 
-[ADR 0075](adr/0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)는 enrollment·ingest·Gateway·dashboard 네 앱을 같은 backend SHA·run·attempt의
+[ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)는 enrollment·ingest·Gateway·dashboard 네 앱을 같은 backend SHA·run·attempt의
 완료 묶음으로 공급하는 Accepted 설계다. manifest·승격 구현과 Argo 소유권 인계 전에는 기존 digest 기반
 수동 Helm 운영을 유지한다. 현재 dev의 Strimzi mTLS 배포 상태와 이 GitOps 도입 상태는 별개다.
 인계 후 일반 앱 변경은 enrollment의 Flyway 성공 → ingest → Gateway → dashboard 순서를 따르며,
@@ -179,7 +179,7 @@ Consumer 의 `authorize` 거부는 `credential_unknown`·`credential_format`·`c
 - **enrollment 를 이전 이미지로**: 그 이미지는 `ptt_` 를 발급하고, 회전 UPDATE 가 사유 없이 `revoked_at` 만 쓴다. 그렇게 회전된 JWT 행은 Consumer 가
   `credential_revoked_unknown` 으로 거부하므로 Kafka 에 대기 중인 그 토큰의 record 가 미적재될 수 있다. V33 은 추가형이라 되돌리지 않는다.
 
-GitOps 인계 후의 **일반 이미지 rollback**은 [ADR 0075](adr/0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)를 따른다.
+GitOps 인계 후의 **일반 이미지 rollback**은 [ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)를 따른다.
 infra가 승격기·Updater·자동 sync를 중지하고 이전 검증 묶음의 네 digest를 현재 DB 스키마·키링·TLS revision·runtime과
 대조해 복구 desired를 만든다. 위 최초 전환 이전 이미지의 예외를 자동 rollback 허용 근거로 쓰지 않는다.
 DB·PVC·Kafka offset과 과거 values를 함께 되돌리지 않으며, backlog 호환과 ACK→consume→commit·S3/ClickHouse를

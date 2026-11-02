@@ -7,14 +7,14 @@ import com.team376.pulsemetry.connector.vendor.reply
 import com.team376.pulsemetry.enrollment.auth.AbstractUserAuthApiTest
 import com.team376.pulsemetry.enrollment.auth.AuthClockConfig
 import com.team376.pulsemetry.enrollment.support.EnrollmentTestData
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import com.team376.pulsemetry.persistence.enrollment.operation.Operation
 import com.team376.pulsemetry.persistence.enrollment.operation.OperationStatus
 import com.team376.pulsemetry.persistence.enrollment.operation.OperationStore
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatControl
 import com.team376.pulsemetry.persistence.enrollment.seat.SeatLedger
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatSource
-import com.team376.pulsemetry.persistence.enrollment.seat.SeatState
+import com.team376.pulsemetry.domain.enrollment.seat.SeatSource
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState
 import com.team376.pulsemetry.persistence.enrollment.support.PostgresContainerConfig
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.catchThrowableOfType

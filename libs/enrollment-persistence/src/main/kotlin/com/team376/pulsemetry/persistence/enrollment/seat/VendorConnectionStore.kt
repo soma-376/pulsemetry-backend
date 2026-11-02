@@ -1,8 +1,10 @@
 package com.team376.pulsemetry.persistence.enrollment.seat
 
+import com.team376.pulsemetry.domain.enrollment.seat.SyncStatus
+
 import com.team376.pulsemetry.connector.vendor.ConnectorCredential
 import com.team376.pulsemetry.connector.vendor.ConnectorDescriptor
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate

@@ -5,10 +5,15 @@ plugins {
 }
 
 dependencies {
+	testImplementation(libs.archunit)
 	implementation(project(":libs:security"))
 	// enrollment 스키마(조직·팀·구성원)를 읽는다. 쓰기 소유는 그대로다 — 이 앱의 RDS 계정은 SELECT 만 갖는다 (ADR 0022 §2·§4).
 	// JPA·JDBC 를 api() 로 노출하므로 엔티티·리포지토리·JdbcClient 를 여기서 바로 쓴다.
 	implementation(project(":libs:enrollment-persistence"))
+	// 읽기용 JPA와 DataSource를 앱에서 선택한다. Flyway는 아래 수동 캐시 마이그레이션만 사용한다.
+	implementation(libs.spring.boot.starter.data.jpa)
+	runtimeOnly(libs.postgresql)
+	runtimeOnly(libs.flyway.database.postgresql)
 	// 수집 운영 기록(tenant 생애 요약·백필 완료)을 읽는다 — 쓰기 소유는 그 모듈이고 DDL 은 enrollment-api 가 적용한다 (ADR 0021).
 	implementation(project(":libs:telemetry-ops-persistence"))
 
@@ -24,6 +29,8 @@ dependencies {
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
 	// 분석 테이블(ClickHouse) 스키마를 테스트 저장소에 세운다. 운영에서는 ingest 가 적용한다.
 	testImplementation(project(":libs:telemetry-persistence"))
+	// producer→정규화→조회 회귀에서만 실제 정규화 실행이 필요하다.
+	testImplementation(project(":libs:telemetry-adapter"))
 	// 새 producer 버전의 원본 이벤트가 정규화·저장 뒤 실제 조회 합계에 들어오는지 검증한다.
 	testImplementation(libs.opentelemetry.proto)
 	testImplementation(libs.testcontainers.postgresql)

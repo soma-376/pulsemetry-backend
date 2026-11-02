@@ -1,28 +1,28 @@
 package com.team376.pulsemetry.telemetry.adapter.observation.codex
 
-import com.team376.pulsemetry.telemetry.adapter.observation.Decision
-import com.team376.pulsemetry.telemetry.adapter.observation.DecisionScope
-import com.team376.pulsemetry.telemetry.adapter.observation.DecisionSource
-import com.team376.pulsemetry.telemetry.adapter.observation.ErrorType
-import com.team376.pulsemetry.telemetry.adapter.observation.EventObservation
-import com.team376.pulsemetry.telemetry.adapter.observation.EventType
-import com.team376.pulsemetry.telemetry.adapter.observation.MappingStatus
+import com.team376.pulsemetry.telemetry.model.Decision
+import com.team376.pulsemetry.telemetry.model.DecisionScope
+import com.team376.pulsemetry.telemetry.model.DecisionSource
+import com.team376.pulsemetry.telemetry.model.ErrorType
+import com.team376.pulsemetry.telemetry.model.EventObservation
+import com.team376.pulsemetry.telemetry.model.EventType
+import com.team376.pulsemetry.telemetry.model.MappingStatus
 import com.team376.pulsemetry.telemetry.adapter.observation.MetadataAllowlist
-import com.team376.pulsemetry.telemetry.adapter.observation.Operation
-import com.team376.pulsemetry.telemetry.adapter.observation.QualityFlag
-import com.team376.pulsemetry.telemetry.adapter.observation.ReasoningEffort
-import com.team376.pulsemetry.telemetry.adapter.observation.ToolAction
-import com.team376.pulsemetry.telemetry.adapter.observation.ToolOrigin
-import com.team376.pulsemetry.telemetry.adapter.observation.TtftScope
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageRole
-import com.team376.pulsemetry.telemetry.adapter.observation.UsageScope
+import com.team376.pulsemetry.telemetry.model.Operation
+import com.team376.pulsemetry.telemetry.model.QualityFlag
+import com.team376.pulsemetry.telemetry.model.ReasoningEffort
+import com.team376.pulsemetry.telemetry.model.ToolAction
+import com.team376.pulsemetry.telemetry.model.ToolOrigin
+import com.team376.pulsemetry.telemetry.model.TtftScope
+import com.team376.pulsemetry.telemetry.model.UsageRole
+import com.team376.pulsemetry.telemetry.model.UsageScope
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.BoolWire
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.FieldReader
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.LogProfile
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.LogRecordView
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.MappedEvent
 import com.team376.pulsemetry.telemetry.adapter.observation.profile.NumberWire
-import com.team376.pulsemetry.telemetry.adapter.observation.withFlags
+import com.team376.pulsemetry.telemetry.model.withFlags
 
 /**
  * Codex 로그 매핑(ADR 0020 부록 A.2·A.3). 의미 이름은 속성 `event.name` 이다 — 최상위 `eventName` 은 producer 의

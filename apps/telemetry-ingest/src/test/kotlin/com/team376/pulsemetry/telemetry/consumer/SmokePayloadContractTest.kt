@@ -1,9 +1,9 @@
 package com.team376.pulsemetry.telemetry.consumer
 
-import com.team376.pulsemetry.telemetry.adapter.observation.EpochNanos
+import com.team376.pulsemetry.telemetry.model.EpochNanos
 import com.team376.pulsemetry.telemetry.adapter.observation.IdentityMaterial
 import com.team376.pulsemetry.telemetry.adapter.observation.ObservationIds
-import com.team376.pulsemetry.telemetry.adapter.observation.ObservationSignal
+import com.team376.pulsemetry.telemetry.model.ObservationSignal
 import io.opentelemetry.proto.common.v1.AnyValue
 import io.opentelemetry.proto.common.v1.InstrumentationScope
 import io.opentelemetry.proto.common.v1.KeyValue

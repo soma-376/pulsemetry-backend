@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.persistence.telemetry
 
-import com.team376.pulsemetry.telemetry.adapter.observation.RowVersioning
-import com.team376.pulsemetry.telemetry.enricher.observation.EnrichedEvent
+import com.team376.pulsemetry.telemetry.model.RowVersioning
+import com.team376.pulsemetry.telemetry.model.EnrichedEvent
 
 /**
  * `telemetry_events` 한 행(107컬럼)의 JSONEachRow 표기(ADR 0020 §1·§4). 봉투 49 뒤에 이벤트 고유 58컬럼을 DDL 순서로

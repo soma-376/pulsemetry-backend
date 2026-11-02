@@ -281,7 +281,7 @@ DB 주소·계정·권한을 준비한다. 계약은 [공유 데이터 계약](.
 4. telemetry-gateway를 배포한다. Gateway는 RDS를 사용하지 않으며 Kafka 수신·발행 호환성을 확인한다.
 5. dashboard-api를 배포한다. 원천은 읽고 자기 RDS·ClickHouse 캐시 DDL만 기동 시 적용한다.
 
-이 순서는 [ADR 0075](adr/0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)의 네 앱 완료 묶음에도 적용한다.
+이 순서는 [ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)의 네 앱 완료 묶음에도 적용한다.
 Flyway를 별도 Job·hook으로 옮기지 않으며 기존 ClickHouse 초기화·재시도와 실패 정책도 유지한다.
 GitOps 구현·인계 전의 입력 생성·Helm 실행·실패와 복구는
 [infra EKS 수동 배포 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다.
@@ -315,7 +315,7 @@ GitOps 구현·인계 전의 입력 생성·Helm 실행·실패와 복구는
 순서로 갱신한다. Gateway는 SHA 태그와 summary digest를 제공한다. 중간 실패 시 이미 바뀐 태그는 남는다.
 `sha-<commit>`도 재실행으로 이동할 수 있어 태그 갱신은 원자적 배포나 불변 산출물의 증거가 아니다.
 
-**채택된 후속 설계** — [ADR 0075](adr/0075-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)는 enrollment·ingest·Gateway·dashboard를
+**채택된 후속 설계** — [ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)는 enrollment·ingest·Gateway·dashboard를
 같은 전체 backend SHA·workflow run·attempt에서 검증한 네 앱 완료 묶음으로 인계한다.
 Gateway를 필수화하고 build output digest·플랫폼·검증 증거를 담은 완료 manifest를 발행한다.
 manifest의 정확한 schema와 B 식별자, infra commit C·immutable values snapshot V·desired commit P의

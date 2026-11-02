@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.persistence.enrollment.seat
 
-import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.vendor.ContractStatus
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import org.springframework.jdbc.core.simple.JdbcClient
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.json.JsonMapper

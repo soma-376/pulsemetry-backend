@@ -1,11 +1,17 @@
 package com.team376.pulsemetry.persistence.enrollment.seat
 
-import com.team376.pulsemetry.connector.vendor.Capability
-import com.team376.pulsemetry.connector.vendor.ConnectorDescriptors
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules
+
+import com.team376.pulsemetry.domain.enrollment.seat.SeatState
+
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules.Action
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules.Method
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules.Choice
+import com.team376.pulsemetry.domain.enrollment.seat.SeatControlRules.controllable
 import com.team376.pulsemetry.connector.vendor.ControlResult
 import com.team376.pulsemetry.connector.vendor.VendorAccount
-import com.team376.pulsemetry.persistence.enrollment.management.ContractStatus
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.vendor.ContractStatus
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import com.team376.pulsemetry.persistence.enrollment.operation.Operation
 import com.team376.pulsemetry.persistence.enrollment.operation.OperationError
 import com.team376.pulsemetry.persistence.enrollment.operation.OperationException
@@ -46,29 +52,6 @@ class SeatControl(
 	private val tx = TransactionTemplate(manager)
 	private val operations = OperationStore(jdbc, manager, clock)
 	private val ledger = SeatLedger(jdbc, manager, clock)
-
-	enum class Action(val wire: String, val capability: Capability) {
-		RELEASE("release", Capability.SEAT_RELEASE), RESTORE("restore", Capability.SEAT_RESTORE);
-
-		companion object {
-			fun of(wire: String): Action = entries.first { it.wire == wire }
-		}
-	}
-
-	enum class Method(val wire: String) {
-		VENDOR_CONTROL("vendor_control"), ADMIN_ACTION("admin_action");
-
-		companion object {
-			fun of(wire: String): Method = entries.first { it.wire == wire }
-		}
-	}
-
-	/** 실행 방식의 판정. [reason] 이 있으면 실행할 수 없다. */
-	data class Choice(val method: Method?, val connectionId: UUID?, val reason: String?) {
-		companion object {
-			fun rejected(reason: String) = Choice(null, null, reason)
-		}
-	}
 
 	data class PreviewTarget(val seatAssignmentId: UUID, val vendorId: String, val version: Long, val method: Method, val connectionId: UUID?)
 	data class Rejection(val seatAssignmentId: String, val reason: String)
@@ -252,7 +235,7 @@ class SeatControl(
 	private data class ControlRow(val operationId: UUID, val seatId: UUID, val tenantId: UUID, val action: Action, val connectionId: UUID)
 
 	private fun choose(action: Action, seat: SeatLedger.Seat, product: RegisteredProduct, connection: ConnectionRecord?): Choice =
-		choose(action, seat.state, product.kind, product.plan, connection, seat.vendorAccountRef, vendorControl)
+		SeatControlChoice.choose(action, seat.state, product.kind, product.plan, connection, seat.vendorAccountRef, vendorControl)
 
 	/** 작업을 시작하고 대상마다 실행 방식을 남긴다. 사유가 있는 대상은 실패, 관리자 조치 대상은 조치 대기로 둔다. */
 	private fun start(tenant: UUID, operationId: UUID, action: Action, targets: List<Triple<UUID, Choice, String?>>, now: Instant) {
@@ -329,39 +312,5 @@ class SeatControl(
 		const val RELEASE_IN_CONSOLE = "release_in_vendor_console"
 		const val RESTORE_IN_CONSOLE = "restore_in_vendor_console"
 
-		/** 그 동작을 지금 상태에서 할 수 있는가 — 해제는 배정 좌석, 복원은 해제·해제 예정 좌석. */
-		fun controllable(action: Action, state: SeatState): Boolean = when (action) {
-			Action.RELEASE -> state == SeatState.ASSIGNED
-			Action.RESTORE -> state == SeatState.RELEASED || state == SeatState.PENDING_RELEASE
-		}
-
-		/**
-		 * 실행 방식 (ADR 0049 §2). 활성 연결이 있고 계약 플랜의 커넥터가 그 연결의 커넥터이며 그 기능을 구현했으면 벤더 제어, 아니면 관리자 조치다.
-		 * 순수 함수라 조회 앱도 같은 규칙으로 좌석의 회수 가능 여부를 낸다([vendorControl] 은 조회 앱에서 모르므로 true 로 본다).
-		 *
-		 * | 사유 | 뜻 |
-		 * | --- | --- |
-		 * | `not_assigned` | 해제할 수 있는 것은 배정 좌석뿐이다(해제 예정·배정 대기·해제는 아니다) |
-		 * | `seat_reassigned` | 복원할 좌석이 이미 다시 보유됐다 |
-		 * | `plan_mismatch` | 연결의 커넥터가 지금 계약 플랜의 커넥터가 아니다 |
-		 * | `vendor_account_unknown` | 그 기능에 벤더 내부 ID 가 필요한데 없다(연결 전 수동 기록) |
-		 * | `connector_unavailable` | 이 배포에 커넥터 호출이 없다 |
-		 * | `not_restorable` | 해제 예정 좌석을 벤더 제어 없이 되살릴 수 없다(관리자 조치 전이에 없다) |
-		 */
-		fun choose(action: Action, state: SeatState, kind: String, plan: String?, connection: ConnectionRecord?, vendorAccountRef: String?,
-			vendorControl: Boolean): Choice {
-			if (!controllable(action, state)) return Choice.rejected(if (action == Action.RELEASE) "not_assigned" else "seat_reassigned")
-			if (connection != null) {
-				val connector = ConnectorDescriptors.forPlan(kind, plan)
-				if (connector?.id != connection.connector) return Choice.rejected("plan_mismatch")
-				if (action.capability in connector.capabilities) {
-					if (action.capability in connector.accountRefRequired && vendorAccountRef == null) return Choice.rejected("vendor_account_unknown")
-					if (!vendorControl) return Choice.rejected("connector_unavailable")
-					return Choice(Method.VENDOR_CONTROL, connection.id, null)
-				}
-			}
-			if (action == Action.RESTORE && state == SeatState.PENDING_RELEASE) return Choice.rejected("not_restorable")
-			return Choice(Method.ADMIN_ACTION, null, null)
-		}
 	}
 }

@@ -8,6 +8,10 @@ import org.springframework.core.Ordered
 
 @Configuration(proxyBeanMethods = false)
 class WebConfig {
+    @Bean
+    fun errorResponseWriter(mapper: tools.jackson.databind.ObjectMapper, properties: DashboardApiProperties) =
+        com.team376.pulsemetry.dashboard.error.ErrorResponseWriter(mapper, properties.retryAfter)
+
 
 	/**
 	 * 요청 ID 필터를 **가장 앞**에 둔다. Spring Security 의 위임 필터(-100)보다 앞이어야 보안 체인이 쓴

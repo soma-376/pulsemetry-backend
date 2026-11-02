@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.team376.pulsemetry.enrollment.contract.ErrorResponse
 import com.team376.pulsemetry.enrollment.error.EnrollmentException
-import com.team376.pulsemetry.enrollment.service.InstallationCredentialVerifier
+import com.team376.pulsemetry.enrollment.installation.InstallationCredentialVerifier
 import com.team376.pulsemetry.persistence.enrollment.installation.CollectionMode
 import com.team376.pulsemetry.persistence.enrollment.installation.InstallationReport
 import com.team376.pulsemetry.persistence.enrollment.installation.InstallationReportStore

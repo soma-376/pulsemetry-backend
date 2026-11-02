@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.persistence.enrollment.seat
 
+import com.team376.pulsemetry.domain.enrollment.seat.SeatAuthority
+
 import com.team376.pulsemetry.connector.vendor.ConnectorDescriptors
 
 /**

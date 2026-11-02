@@ -1,6 +1,6 @@
 package com.team376.pulsemetry.persistence.enrollment.alert
 
-import com.team376.pulsemetry.persistence.enrollment.management.ManagementException
+import com.team376.pulsemetry.domain.enrollment.command.ManagementException
 import com.team376.pulsemetry.persistence.enrollment.seat.RegisteredProducts
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.PlatformTransactionManager

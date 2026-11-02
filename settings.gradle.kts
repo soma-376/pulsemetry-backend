@@ -20,6 +20,7 @@ include(":apps:retention-worker")
 
 // 여러 서버가 공유하는 영속성·도메인 코드 (ADR 0002)
 include(":libs:enrollment-persistence")
+include(":libs:enrollment-domain")
 
 // 컨텍스트에 속하지 않는 횡단 모듈. 인증 계층의 자리다 (ADR 0007·0008 규칙 2)
 include(":libs:security")
@@ -34,6 +35,9 @@ include(":libs:telemetry-ingress-contract")
 include(":libs:telemetry-collector")
 include(":libs:telemetry-adapter")
 include(":libs:telemetry-enricher")
+
+// 단계 실행과 독립적인 관측·보강 결과 값 (ADR 0075).
+include(":libs:telemetry-model")
 
 // telemetry 전용 JWT 발급·검증. Gateway·ingest·enrollment 가 공유하고 RDB 에 의존하지 않는다 (ADR 0065)
 include(":libs:telemetry-auth")

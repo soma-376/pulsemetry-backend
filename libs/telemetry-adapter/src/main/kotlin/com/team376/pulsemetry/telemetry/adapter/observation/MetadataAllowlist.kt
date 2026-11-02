@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.telemetry.adapter.observation
 
+import com.team376.pulsemetry.telemetry.model.QualityFlag
+
 /**
  * 분석 저장소에 들어갈 수 있는 속성 이름의 목록. **버전이 있는 이름별 allowlist** 다(ADR 0020 §1).
  *
