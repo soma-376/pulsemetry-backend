@@ -10,6 +10,8 @@ Accepted — 부분 대체: [ADR 0071](0071-서버-환산은-단일-카탈로그
 
 [ADR 0022](0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) §4 의 ClickHouse 캐시 계정 권한을 이 ADR 이 넓힌다(§3).
 
+[허브 ADR 0032](https://github.com/soma-376/docs/blob/main/adr/0032-remove-usage-provider-classification.md)가 공급자 기반 모델 매핑을 부분 대체한다. 모델 ID 호환·원본 보존·기존 집계 계약은 유지한다.
+
 ## Context
 
 [ADR 0022](0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md)는 대시보드 앱이 자기 캐시(`dashboard_cache`)에만 쓰고 분석 원본은 읽기만 한다고 정했다.

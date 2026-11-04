@@ -61,6 +61,7 @@ public enum class QualityFlag(override val wire: String) : WireValue {
 	USAGE_SEMANTICS_UNVERIFIED("usage_semantics_unverified"),
 	COST_CONFLICT("cost_conflict"),
 	NON_FINITE_VALUE("non_finite_value"),
+	/** 과거 행 읽기 호환용. 정규화 14판부터 생성하지 않는다(허브 ADR 0032). */
 	PROVIDER_UNRESOLVED("provider_unresolved"),
 	EVENT_TIME_MISMATCH("event_time_mismatch"),
 	INVALID_RELATION_ID("invalid_relation_id"),

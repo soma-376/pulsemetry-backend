@@ -129,7 +129,7 @@ class ObservationInvariantsTest {
 	fun liveVersioning() {
 		val receivedAt = Instant.parse("2026-01-01T00:00:05.999Z")
 
-		assertThat(RowVersioning.NORMALIZER_REV).isEqualTo(13u)
+		assertThat(RowVersioning.NORMALIZER_REV).isEqualTo(14u)
 		assertThat(RowVersioning.of(RowVersioning.NORMALIZER_REV, 0u).rowVersion)
 			.isGreaterThan(RowVersioning.of(12u, UInt.MAX_VALUE).rowVersion)
 		assertThat(RowVersioning.live(receivedAt)).isEqualTo(RowVersioning.of(RowVersioning.NORMALIZER_REV, 1_767_225_605u))

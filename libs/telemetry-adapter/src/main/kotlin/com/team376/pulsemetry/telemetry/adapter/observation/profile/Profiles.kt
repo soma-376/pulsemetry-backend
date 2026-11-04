@@ -40,13 +40,6 @@ public interface LogProfile {
 	public fun map(name: String, view: LogRecordView, base: EventObservation): MappedEvent?
 
 	/**
-	 * 사용량 관측의 공급자 근거가 실리는 레코드 속성 키(ADR 0020 §4). 검증된 위치만 적는다 — 없으면 빈 목록이고,
-	 * 그 제품의 사용량 관측은 전부 `provider_unresolved` 다. 키는 [allowlist] 의 레코드 목록에 있어야 한다
-	 * (근거가 metadata 에 남아야 조회 계층이 해석한다).
-	 */
-	public val providerEvidenceKeys: List<String> get() = emptyList()
-
-	/**
 	 * 최상위 `eventName` 을 `metadata_json` 에 남기는가. 그 필드의 값이 무엇인지(예: producer 소스 위치) 검증한
 	 * 프로파일만 켠다 — 모르는 제품의 `eventName` 은 무엇이 들었는지 알 수 없다.
 	 */
@@ -85,11 +78,6 @@ public class ProfileRegistry(profiles: List<ProductProfile>) {
 	init {
 		require(byProduct.size == profiles.size) { "제품별 프로파일은 하나만 등록할 수 있다" }
 		require(Product.UNKNOWN !in byProduct) { "모르는 제품에는 프로파일을 등록할 수 없다" }
-		for (profile in profiles) {
-			val logs = profile.logs ?: continue
-			val missing = logs.providerEvidenceKeys.filterNot { it in logs.allowlist.record }
-			require(missing.isEmpty()) { "${profile.product.wire} 의 공급자 근거 키가 allowlist 에 없다: $missing" }
-		}
 	}
 
 	public fun find(product: Product): ProductProfile? = byProduct[product]

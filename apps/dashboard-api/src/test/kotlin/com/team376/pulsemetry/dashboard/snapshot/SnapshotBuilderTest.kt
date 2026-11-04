@@ -357,25 +357,22 @@ class SnapshotBuilderTest {
 			listOf("NULL", "unknown/codex/~", "NULL", "model-id-v1"),
 		)
 		// ClickHouse 식과 Kotlin 규칙은 같은 ID 를 낸다.
-		assertThat(ModelResolution.NONE.resolve("codex", "codex-app-server", "2.1.282", "gpt-5.1/codex~1").modelId)
+		assertThat(ModelResolution.NONE.resolve("codex", "gpt-5.1/codex~1").modelId)
 			.isEqualTo("unknown/codex/gpt-5.1%2Fcodex%7E1")
 	}
 
 	@Test
-	@DisplayName("사례 23 — 같은 공급자의 별칭 A·B 는 canonical C 로 먼저 모여 $120 이 $100 인 D 보다 앞선다")
-	fun aliasesMergeBeforeRanking() {
+	@DisplayName("사례 23 — 공급자 매핑 없이 모델별 환산액과 총액을 보존한다")
+	fun modelTotalsRemainWithoutProviderMapping() {
 		val tenant = UUID.randomUUID()
-		val resolution = ModelResolution(
-			version = "test-resolution-1",
-			providerScopes = listOf(ModelResolution.ProviderScope("claude_code", "claude-code", setOf("2.1.282"), "anthropic")),
-			aliases = mapOf("anthropic" to mapOf("model-a" to "model-c", "model-b" to "model-c")),
-		)
+		val resolution = ModelResolution.NONE
+
 		SourceFixtures.insertEvents(
 			tenant,
-			Event("a", kst("2026-09-24T10:00:00"), model = "model-a", costEstimatedUsd = BigDecimal("60")),
+			Event("a", kst("2026-09-24T10:00:00"), model = "model-a", costEstimatedUsd = BigDecimal("60"), qualityFlags = listOf("provider_unresolved", "member_unresolved")),
 			Event("b", kst("2026-09-24T11:00:00"), model = "model-b", costEstimatedUsd = BigDecimal("60")),
 			Event("d", kst("2026-09-24T12:00:00"), model = "model-d", costEstimatedUsd = BigDecimal("100")),
-			// 적용 범위 밖의 판은 공급자 미확인이다.
+			// producer 버전이 달라도 같은 제품·원본 모델은 같은 모델 ID다.
 			Event("other-version", kst("2026-09-24T13:00:00"), productVersion = "2.1.280", model = "model-a", costEstimatedUsd = BigDecimal("1")),
 		)
 
@@ -386,12 +383,15 @@ class SnapshotBuilderTest {
 				"GROUP BY model_id ORDER BY cost DESC, model_id",
 		)
 		assertThat(ranking.map { it[0] to BigDecimal(it[1]).stripTrailingZeros().toPlainString() }).containsExactly(
-			"anthropic/model-c" to "120",
-			"anthropic/model-d" to "100",
-			"unknown/claude_code/model-a" to "1",
+			"unknown/claude_code/model-d" to "100",
+			"unknown/claude_code/model-a" to "61",
+			"unknown/claude_code/model-b" to "60",
 		)
+		assertThat(usage(built, "arrayStringConcat(quality_flags, ',')").map { it[0] }).contains("member_unresolved").noneMatch { "provider_unresolved" in it }
+		assertThat(ranking.sumOf { BigDecimal(it[1]) }).isEqualByComparingTo("221")
+		assertThat(usage(built, "ifNull(provider, 'NULL')").map { it[0] }).containsOnly("NULL")
 		assertThat(usage(built, "model").map { it[0] }).containsExactly("model-a", "model-b", "model-d", "model-a")
-		assertThat(resolution.resolve("claude_code", "claude-code", "2.1.282", "model-b"))
-			.isEqualTo(ModelResolution.Resolved("anthropic", "anthropic/model-c"))
+		assertThat(resolution.resolve("claude_code", "model-b"))
+			.isEqualTo(ModelResolution.Resolved("unknown/claude_code/model-b"))
 	}
 }

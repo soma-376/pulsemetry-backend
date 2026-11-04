@@ -23,10 +23,10 @@
 | 0017 | [정규화 불변 규칙과 enrichment_json 승격 금지는 이 저장소가 정한다](0017-정규화-불변-규칙과-enrichment-json-승격-금지는-이-저장소가-정한다.md) | Accepted |
 | 0018 | [사용자 인증은 회전 세션과 명시적 키링으로 운영한다](0018-사용자-인증은-회전-세션과-명시적-키링으로-운영한다.md) | Accepted |
 | 0019 | [manifest 재동기화는 세션과 정책 행을 잠그고 회전한다](0019-manifest-재동기화는-세션과-정책-행을-잠그고-회전한다.md) | Accepted |
-| 0020 | [정규화 계약 2판은 관측을 식별하고 의미 컬럼으로 교체 저장한다](0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md) | Accepted — 버전·emitter 제한은 ADR 0074가 대체 |
+| 0020 | [정규화 계약 2판은 관측을 식별하고 의미 컬럼으로 교체 저장한다](0020-정규화-계약-2판은-관측을-식별하고-의미-컬럼으로-교체-저장한다.md) | Accepted — 버전·emitter 제한은 ADR 0074가 대체; 공급자 미확인 경고는 허브 ADR 0032가 대체 |
 | 0021 | [수집 운영 기록은 ClickHouse ledger 와 RDS telemetry_ops 스키마에 두고 그 RDS DDL 은 enrollment-api 가 적용한다](0021-수집-운영-기록은-ledger-와-telemetry-ops-스키마에-두고-enrollment-api-가-적용한다.md) | Proposed |
 | 0022 | [대시보드 API 는 이 저장소의 별도 앱이고 인증은 포트 뒤에서 기본 거부하며 쓰기는 자기 캐시에 한정한다](0022-대시보드-API-는-별도-앱이고-인증은-포트-뒤에서-기본-거부한다.md) | Accepted |
-| 0023 | [대시보드 snapshot 은 dashboard_cache 의 불변 복사본과 RDS manifest 이고 대시보드 앱이 그 DDL 을 적용한다](0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md) | Accepted — 가격판 규칙은 ADR 0071이 대체 |
+| 0023 | [대시보드 snapshot 은 dashboard_cache 의 불변 복사본과 RDS manifest 이고 대시보드 앱이 그 DDL 을 적용한다](0023-대시보드-snapshot-은-dashboard-cache-의-불변-복사본과-manifest-이고-대시보드-앱이-그-DDL-을-적용한다.md) | Accepted — 가격판 규칙은 ADR 0071이 대체; 공급자 매핑은 허브 ADR 0032가 대체 |
 | 0024 | [조직별 보존 삭제 경계는 RDS 가 진실원이고 분석 INSERT 는 ClickHouse fence 를 서버에서 다시 검사한다](0024-조직별-보존-삭제-경계는-RDS-가-진실원이고-분석-INSERT-는-ClickHouse-fence-를-서버에서-다시-검사한다.md) | Proposed |
 | 0025 | [개발용 시드를 독립 Kotlin 도구 모듈로 관리한다](0025-개발용-시드를-독립-Kotlin-도구-모듈로-관리한다.md) | Accepted |
 | 0026 | [사용자 인증으로 프론트 관리 요청을 연결한다](0026-사용자-인증으로-프론트-관리-요청을-연결한다.md) | Accepted — 웹 호출은 허브 ADR 0009가 부분 대체 |

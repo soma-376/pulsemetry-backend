@@ -332,30 +332,17 @@ class ObservationNormalizerTest {
 		logs(resource(kv("service.name", "codex-app-server")), record("codex.sse_event", *extra))
 
 	@Test
-	@DisplayName("사용량 관측 — 검증된 공급자 키의 값이 하나면 근거가 있고, 없거나 서로 다르면 provider_unresolved")
+	@DisplayName("공급자 속성의 부재·충돌은 더 이상 사용량 품질 경고를 만들지 않는다")
 	fun providerEvidence() {
 		val registry = ProfileRegistry(listOf(TestCodexProfile))
 		fun flags(vararg extra: KeyValue) = normalize(usageRequest(*extra), registry).events.single().observation.envelope.qualityFlags
 
 		assertThat(flags(kv("provider", "openai"))).doesNotContain(QualityFlag.PROVIDER_UNRESOLVED)
-		assertThat(flags()).contains(QualityFlag.PROVIDER_UNRESOLVED)
-		assertThat(flags(kv("provider", "openai"), kv("provider", "azure"))).contains(QualityFlag.PROVIDER_UNRESOLVED)
+		assertThat(flags()).doesNotContain(QualityFlag.PROVIDER_UNRESOLVED)
+		assertThat(flags(kv("provider", "openai"), kv("provider", "azure"))).doesNotContain(QualityFlag.PROVIDER_UNRESOLVED)
 		// 사용량이 아닌 관측에는 붙이지 않는다.
 		assertThat(normalize(logs(resource(kv("service.name", "codex-app-server")), record()), registry).events.single().observation.envelope.qualityFlags)
 			.doesNotContain(QualityFlag.PROVIDER_UNRESOLVED)
-	}
-
-	@Test
-	@DisplayName("공급자 근거 키는 allowlist 에 있어야 한다 — 근거가 metadata 에 남아야 한다")
-	fun providerKeysMustBeAllowlisted() {
-		val broken = object : ProductProfile by TestCodexProfile {
-			override val logs = object : LogProfile by TestCodexProfile.logs {
-				override val providerEvidenceKeys = listOf("model_provider")
-			}
-		}
-
-		org.assertj.core.api.Assertions.assertThatThrownBy { ProfileRegistry(listOf(broken)) }
-			.isInstanceOf(IllegalArgumentException::class.java).hasMessageContaining("model_provider")
 	}
 
 	@Test
@@ -404,7 +391,6 @@ class ObservationNormalizerTest {
 		override val metrics = null
 		override val logs = object : LogProfile {
 			override val allowlist = MetadataAllowlist("test-v1", resource = setOf("service.name"), record = setOf("event.name", "prompt_length", "provider"))
-			override val providerEvidenceKeys = listOf("provider")
 			override fun semanticName(view: LogRecordView) = view.attributes.singleString("event.name")
 			override fun map(name: String, view: LogRecordView, base: EventObservation): MappedEvent? = when (name) {
 				"codex.user_prompt" -> MappedEvent(

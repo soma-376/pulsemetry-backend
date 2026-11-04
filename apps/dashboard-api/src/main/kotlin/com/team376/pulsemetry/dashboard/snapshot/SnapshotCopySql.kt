@@ -47,7 +47,7 @@ class SnapshotCopySql(
 		val params = common(scope)
 		params["tz"] = ClickHouseParam.string(scope.current.zone.id)
 		params["resolution"] = ClickHouseParam.string(resolution.version)
-		val model = resolution.sql(params)
+		val model = resolution.sql()
 		val inCurrent = "(source_time >= {current_from:DateTime64(9, 'UTC')} AND source_time < {current_until:DateTime64(9, 'UTC')})"
 		val inPrevious = if (scope.previous == null) "false" else
 			"(source_time >= {previous_from:DateTime64(9, 'UTC')} AND source_time < {previous_until:DateTime64(9, 'UTC')})"
@@ -72,7 +72,7 @@ class SnapshotCopySql(
 			    tokens_input, tokens_output, tokens_cache_read, tokens_cache_create, tokens_input_uncached, tokens_total_derived,
 			    input_semantics, output_semantics, semantics_profile,
 			    cost_reported_usd, reported_cost_basis, cost_estimated_usd,
-			    quality_flags, {purge:DateTime('UTC')}
+			    arrayFilter(flag -> flag != 'provider_unresolved', quality_flags), {purge:DateTime('UTC')}
 			FROM `$sourceDatabase`.telemetry_events FINAL
 			WHERE $where
 			UNION ALL
