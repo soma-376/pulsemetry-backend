@@ -1,0 +1,209 @@
+# 0076. dev 앱 이미지는 검증한 묶음으로 GitOps에 인계한다.
+
+## Status
+
+Accepted — PROJ-286의 backend 이미지 공급·Git 발행 설계다. Image Updater 도입을 철회하고 backend workflow가
+이미지 values 승격과 조건부 자동 rollback을 맡도록 개정한다. 레포 간 계약은
+[허브 ADR 0031](../../../docs/adr/0031-dev-gitops-delivery.md)과
+[generated values 동기화 계약](../../../docs/contracts/generated-values-sync.md)이 소유한다.
+이 문서는 미병합 GitOps ADR의 번호를 0075에서 0076으로 정정한 것이며, PROJ-306의
+[구조 ADR 0075](0075-기능-패키지와-명령-책임을-분리하고-의존-경계를-검사한다.md)는 유지한다.
+ADR 0005·0009·0016의 dev 이미지 공급·배포 관련 서술만 부분 대체하며 설치·스키마·조립 규칙은 유지한다.
+문서 채택은 workflow·Git 발행·Argo CD 구현 또는 실제 dev 인계 완료를 뜻하지 않는다.
+
+## Context
+
+현재 `.github/workflows/deploy_dev.yml`은 enrollment-api·telemetry-ingest·dashboard-api의
+`linux/arm64` SHA 이미지를 게시한다. telemetry-gateway는 ECR 저장소 설정이 있을 때만 게시한다.
+설정된 이미지의 게시가 끝난 뒤 앞 세 앱의 `dev` 태그를 각 build digest로 순차 갱신하며,
+중간 실패 시 이미 바뀐 태그는 남고 Gateway에는 `dev` 태그를 만들지 않는다.
+현재 workflow에는 네 앱 완료 manifest·GitOps 승격·자동 rollback이 없으며 확인한 digest로 수동 배포한다.
+
+dev 공개 수집 경로는 Gateway → Strimzi Kafka → ingest다. 앱별 최신 태그나 같은 소스 SHA만으로는
+네 앱이 같은 실행에서 검증됐는지 알 수 없고, 같은 SHA의 재빌드도 digest가 달라질 수 있다.
+기존 설계의 Image Updater는 후보를 발견한 뒤 별도 검증·승격을 요구했다. 이미지 생산 workflow가
+이미 정확한 build digest를 알고 있으므로, 완료한 산출물을 직접 Git 발행 workflow에 넘길 수 있다.
+다만 backend 이미지 발행과 infra 설정 발행이 같은 private 저장소를 쓰므로 두 실행의 경쟁을 제어해야 한다.
+Git 선택의 원자성은 앱 교체·Flyway·Kafka backlog·분석 저장소의 호환성을 대신하지 않는다.
+
+## Decision
+
+### 1. 네 앱의 완료 묶음과 원본 실행을 보존한다
+
+- enrollment-api·telemetry-ingest·telemetry-gateway·dashboard-api를 같은 backend 전체 SHA,
+  같은 이미지 게시 workflow run과 attempt에서 검증·빌드·게시한다. 네 이미지 모두 `linux/arm64`이며,
+  Gateway 설정 누락·생략·실패 또는 다른 실행의 이미지 보충은 묶음 실패다. retention-worker·prod·frontend·perf는 제외한다.
+- 필수 검증과 네 이미지 게시가 모두 성공한 뒤 각 build output digest로 완료 manifest를 만든다.
+  예상 ECR repository의 존재·ARM64 manifest, enrollment의 고정 CLI·GUI 릴리스와 `SHA256SUMS` provenance를 검증한다.
+  나중에 SHA·`dev` 태그를 다시 조회한 값으로 build digest를 대체하지 않는다.
+- manifest schema와 `B`는 허브 계약을 따른다. `B`는 원본 UTF-8 바이트의 SHA-256이며 자기 hash를
+  manifest 내부에 넣지 않는다. 원본 바이트·출처·실행 증거·이미지는 소비와 복구에 필요한 동안 보존한다.
+- 원본 이미지 게시 workflow가 최종 성공한 뒤 **별도 backend 승격 workflow**가 이를 소비한다.
+  manifest의 성공 표기만 믿지 않고 허용 workflow/ref·원본 SHA/run/attempt·최종 성공과 이미지 대응을 검증한다.
+  승격·rollback 실행의 식별자는 별도 증거로 남기며 `B`의 생산 run/attempt를 덮어쓰지 않는다.
+- 같은 B의 재소비는 멱등이다. 같은 SHA여도 digest·attempt가 달라 새 B가 되면 다시 전체 검증한다.
+  source와 네 이미지가 같은 정상 재실행은 provenance를 갱신할 수 있지만 불필요한 Pod 재시작은 요구하지 않는다.
+- Image Updater·`candidate/dev`·태그 발견 단계를 사용하지 않는다. 기존 호환용 `dev` 태그는 배포 선택의
+  근거가 아니며 Gateway에 tracking tag를 추가하는 요구도 철회한다.
+
+### 2. backend는 이미지·복구 Git 발행을, infra는 설정 Git 발행을 맡는다
+
+- backend publisher는 검증한 B의 네 앱 `image.repository`·`image.digest`와 대응 metadata를 발행한다.
+  현재 선택된 infra commit C와 비이미지 값을 보존하며 임의 runtime·replica·ServiceAccount·키/TLS 참조를 바꾸지 않는다.
+  현재 chart의 `repository@digest` 렌더를 유지한다. `image.ref` 전환과 별도 image overlay는 도입하지 않는다.
+- infra publisher는 chart·추적 runtime 입력·생성기와 비이미지 generated를 소유한다. 설정을 재생성할 때
+  현재 선택 B의 네 이미지를 유지한다. backend와 infra는 별도 publisher이며 공통 저장소의 제어 계약을 함께 따른다.
+  사람이 generated를 임의 편집하거나 private 사본을 infra 원본으로 역동기화하지 않는다.
+- `C`는 infra 전체 commit, `V`는 generated·원본 manifest 사본의 불변 private snapshot commit,
+  `P`는 C·V·B를 선택하는 별도 desired commit이다. 검증된 V를 먼저 append하되 기존 Application pin을 유지하고,
+  이후 P 하나에서 `dev/desired.yaml`과 영향을 받는 Application의 C/V 참조를 함께 바꾼다.
+  자기 commit SHA를 자기 파일에 넣지 않는다. V 게시만으로 배포 성공을 선언하지 않는다.
+- backend workflow는 private Git에 제한된 변경을 기록하며 Kubernetes·Argo API에 쓰지 않는다.
+  Argo CD는 Git을 읽어 적용한다. infra는 chart·생성·검증 정책과 Argo 운영을 계속 소유한다.
+  정상 이미지는 검증 뒤 자동 승격하며 매번 별도 사람 승인을 추가하지 않는다.
+- 고정 C의 전체 파일 목록·허용 image 필드·렌더 결과·비밀 원문 부재와 현재 runtime/schema/key 호환성을 검증한다.
+  재생성 중 변경이나 출처 불일치를 마지막 writer의 값으로 덮지 않고 최신 기준에서 다시 검증한다.
+
+### 3. 두 publisher는 Git CAS 잠금을 배포·복구 종료까지 유지한다
+
+- 공통 제어 파일 `dev/delivery-state.json`은 허브 계약의 `schemaVersion: 1`과
+  `idle`·`deploying`·`rolling_back`·`blocked` 상태를 따른다. owner의 repository/workflow/run/attempt,
+  fencing generation, expected desired P, 작업 종류, last-known-good 참조, 실패 B와 앱 key별 repository/digest
+  전체 조합, 재개 fence를 기록한다. 이 ADR은 공통 schema의 별도 사본을 만들지 않는다.
+- backend 이미지/rollback과 infra 설정 발행은 같은 private main HEAD를 expected ref로 확인한
+  정상 fast-forward compare-and-swap으로 잠금을 얻는다. 저장소별 GitHub concurrency는 이 공유 잠금을 대체하지 않는다.
+  owner와 generation을 각 전이에서 확인하고 force push하지 않는다. 상태 기록 commit은 배포 선택 P와 구별한다.
+- 잠금은 V/P 게시뿐 아니라 해당 rollout과 가능한 한 번의 rollback·기능 확인까지 유지한다.
+  정상 기능 검증을 마치면 lastKnownGood을 검증된 C/V/B/P로 갱신하고 idle로 잠금을 해제한다.
+  충돌은 최신 main·desired·source·C·B를 다시 읽어 재검증하며 다른 owner를 덮지 않는다.
+  V 게시 뒤 P 실패나 응답 유실은 실제 선택을 조회하여 중복 선택과 혼합 조합을 막는다.
+- owner 취소·runner 소실 등으로 진행을 입증하지 못하면 자동 lease 만료·잠금 탈취 없이 `blocked`로 처리한다.
+  소유권을 잃은 이전 owner는 추가 Git 쓰기를 중단한다. 상태가 손상·부재·미지원이면 idle로 가정하지 않는다.
+  기록 갱신조차 불가능하면 기존 잠금도 닫힌 상태로 유지한다. 운영자가 원인과 실제 상태를 대조해 명시적으로 복구한다.
+  잠금 owner가 살아서 관측한 rollout 실패와 owner 자체의 소실을 같은 실패 경로로 다루지 않는다.
+
+### 4. 실제 배포와 기능 결과를 읽기 전용으로 판정한다
+
+- 저장소·권한·runtime 준비 뒤 enrollment-api의 원천 Flyway 성공과 기동을 확인하고
+  telemetry-ingest → telemetry-gateway → dashboard-api 순으로 진행한다. 앞 단계 실패는 다음 앱 진행을 막는다.
+  ingest는 원천 Flyway를 실행하지 않고 dashboard는 자기 캐시 DDL만 적용한다.
+  기존 ClickHouse 초기화·재시도 정책을 유지하며 GitOps 도입을 위해 Flyway Job·hook을 새로 만들지 않는다.
+- 관측자는 대상 P/C/V/B, Argo의 실제 resolved revisions·진행 중 operation·상태, 기대 repository/digest와
+  ARM64 manifest에 대응하는 Pod imageID, 해당 배포에 귀속된 기능 결과를 읽기 전용으로 대조한다.
+  index digest와 ARM64 child digest의 단순 문자열 일치를 요구하지 않는다. 이전 배포의 Healthy나 smoke 결과는 재사용하지 않는다.
+- enrollment 발급·bootstrap 공급, 공개 수집의 Kafka ACK → consume → commit·S3/ClickHouse 기대 결과,
+  dashboard 조회를 확인한다. Gateway health는 Kafka, ingest health는 저장소 성공을 보증하지 않는다.
+  Git 게시·Argo sync/health·Pod readiness·기능 성공을 따로 기록하며 이 증거를 SLO·최대 처리량으로 확대하지 않는다.
+- 관측 경로 인증/연결 실패, stale·상충 상태, 진행 여부 불명, 증거 누락은 `unknown`으로 보아 `blocked`로 멈춘다.
+  관측 timeout을 확정된 배포 실패로 바꾸지 않는다. 자동 실패 판정은 해당 P에 귀속된 terminal 실패나
+  종료된 rollout의 기능 실패를 확인하고, 이를 되돌릴 진행 중 operation이 없음을 확인했을 때만 한다.
+  관측·기능 검증 산출물에 비밀 원문을 저장하지 않는다.
+
+### 5. 확인된 이미지 실패만 같은 owner가 한 번 자동 rollback한다
+
+- 이미지 승격 직전에 기능까지 검증된 last-known-good B와 당시 P/C/V 및 복구 근거를 기록한다.
+  실패가 대상 이미지 P에 귀속되고 진행 중 operation이 없으며, 이 B가 현재 C·runtime·키·TLS와
+  **실제로 적용된 DB schema**에 호환됨을 확인한 경우에만 같은 lock owner가 `rolling_back`으로 전이한다.
+  새 이미지의 Flyway 적용 뒤에는 배포 전 호환성 판정만 재사용하지 않는다. 확정 실패 B·전체 이미지 조합·source와
+  failure fence를 먼저 공통 state의 durable CAS commit으로 보존하고 복구한다.
+- 복구는 이전 네 이미지와 현재 비이미지 설정으로 새 V를 검증하고 새 P를 발행한다.
+  과거 values 전체 revert, 만료된 키·인증서·폐기 MSK 경로 복원, DB migration·PVC·Kafka offset·업무 데이터 역연산을 하지 않는다.
+  일반 이미지 rollback 동안 Argo auto sync/self-heal을 유지해 복구 P를 소비하게 한다. backend는 Argo/Kubernetes를 직접 조작하지 않는다.
+- 자동 rollback은 한 번뿐이다. last-known-good 부재, 호환성 미확인, 설정 발행 실패, unknown,
+  owner 소실 또는 rollback 자체 실패는 `blocked`로 멈춘다. 더 오래된 B를 차례로 시도하거나 재귀 복구하지 않는다.
+  수동 복구도 대상 B·현재 P·사유와 실제 호환성을 명시하고 같은 Git 제어·검증 경로를 따른다.
+- offset reset·키/인증서 교체·데이터 작업의 유지보수는 infra 운영 절차다. 이 경우 필요한 parent/child
+  self-heal 중지·재개를 일반 이미지 rollback과 구별한다. 전체 dev 중지를 이미지 복구의 필수 단계로 삼지 않는다.
+
+### 6. 복구 성공 뒤에는 실패 이후의 새 정상 묶음만 자동 재개한다
+
+- 복구 desired·실제 상태·기능 성공이 일치하면 복구 조합을 lastKnownGood으로 기록한 뒤 잠금을 해제한다.
+  실패 이력과 resume fence를 보존하며 후속 실패로 이전 거부 항목을 덮어쓰지 않는다. 실패 B와 정확히 같은 앱 key별
+  repository/digest 전체 조합은 B·SHA를 새로 포장해도 다시 승격하지 않는다.
+- 자동 재개 후보는 허용 `develop` 계보에서 실패 source의 strict descendant이며,
+  **원본 이미지 게시 run의 `created_at`이 durable CAS commit으로 기록한 실패 fence 이후**인
+  최종 성공 묶음이어야 한다. attempt 시작·run 번호·완료 시각만으로 판단하지 않는다.
+  실패 전에 생성된 대기/진행 run, 그 run의 재시도, 같은 source의 새 attempt는 재개 조건을 충족하지 않는다.
+- rollback 중 잠금 때문에 대기한 후보는 해제 시 다시 조회·평가한다. 이벤트 한 번을 놓쳤다는 이유로
+  허용된 새 후보가 영구히 멈추지 않도록 한다. 실패·unknown·설정 실패로 `blocked`인 상태는 새 backend 이미지가 우회하지 못한다.
+  자동 복구 성공과 명시적으로 확인한 운영 복구만 재개 판단의 출발점이다.
+
+### 7. 구현·인계 전 운영과 호환성 경계를 유지한다
+
+- 네 이미지 묶음의 Git 선택이 원자적이어도 앱 교체에는 구·신 버전 공존과 중단이 있다.
+  DB·JWT/keyring·runtime, Gateway envelope·ingest backlog, ClickHouse·dashboard 계약의 호환성을 유지한다.
+  안전한 공존이나 복구를 확인할 수 없는 변경은 일반 자동 승격에서 제외하고 별도 전환 절차를 따른다.
+  [ADR 0074](0074-producer-버전-대신-이벤트-계약으로-정규화한다.md)의 이벤트 계약도 유지한다.
+- manifest·두 publisher·읽기 전용 상태 판정·자동 복구·소유권 인계 검증이 끝나기 전에는
+  [EKS 수동 배포 런북](../../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다.
+  완료 B가 없는 기존 이미지는 허브 계약의 고정 C와 별도 handoff snapshot H로 수동 인수하며 B로 위장하지 않는다.
+  인계 후 같은 release를 수동 Helm과 Argo가 동시에 변경하지 않는다.
+
+## Alternatives Considered
+
+### A. Image Updater로 태그를 발견한 뒤 묶음을 승격한다
+
+- 장점: registry 변경을 컨트롤러가 발견한다.
+- 단점: 생산자가 아는 digest를 다시 발견하고 candidate·tracking tag·추가 운영 상태를 관리해야 한다.
+- 탈락 이유: 완료 workflow의 직접 인계로 같은 묶음 검증을 수행할 수 있어 도입을 철회한다.
+
+### B. backend와 infra 발행을 단일 workflow로 합친다
+
+- 장점: 실행 직렬화가 단순하다.
+- 단점: 이미지 공급과 infra 설정 발행의 실행 책임을 한곳으로 옮긴다.
+- 탈락 이유: 별도 publisher를 유지하고 공유 Git CAS 잠금으로 경쟁을 제어한다.
+
+### C. backend가 Kubernetes·Argo API를 직접 변경한다
+
+- 장점: CI에서 즉시 rollout을 시작할 수 있다.
+- 단점: Git desired와 실제 적용 경로가 갈라지고 클러스터 쓰기 권한이 backend에 추가된다.
+- 탈락 이유: backend는 Git 선택을 기록하고 실제 적용·drift 복구는 Argo가 맡는다.
+
+### D. 실패하면 과거 values 전체를 자동 revert하거나 모든 실패를 자동 복구한다
+
+- 장점: 구현과 조작이 짧다.
+- 단점: 현재 schema·키·TLS와 맞지 않는 과거 설정을 복원하거나 관측 불능 상태에서 잘못된 복구를 수행한다.
+- 탈락 이유: 확인된 이미지 실패와 현재 상태에 호환되는 사전 기록 B에만 한 번의 자동 rollback을 허용한다.
+
+## Consequences/Tradeoffs
+
+### Positive
+
+- 이미지 생산 결과를 직접 인계하며 Updater·candidate·`image.ref` 전환 없이 기존 digest 입력을 유지한다.
+- 네 앱 출처와 실제 C/V/B/P 조합, 실패·복구·재개의 근거를 Git과 관측 증거로 추적한다.
+- backend와 infra의 발행 책임을 나누고 Kubernetes 적용·스키마·키·데이터 책임은 유지한다.
+
+### Negative
+
+- backend에 private Git의 제한된 쓰기 권한과 배포 상태를 읽는 경로가 필요하다.
+- 두 publisher가 상태 전이·CAS·증거 보존·잠금 복구를 함께 구현해야 한다. owner 소실은 운영자 복구가 필요하다.
+- 네 앱 중 하나의 실패가 묶음을 막으며, 비호환 migration·상태 불명·설정 실패는 자동 rollback으로 해결하지 못한다.
+- 엄격한 재개 fence는 실패 전에 시작한 새 source 빌드도 제외하므로 새 원본 게시 run이 필요할 수 있다.
+
+## Follow-up
+
+- Gateway 필수화와 완료 manifest·원본 실행/자산 provenance 공급, 생산 성공 이후의 별도 승격 workflow를 구현한다.
+- infra와 별도 publisher의 허용 필드·공통 Git 상태·CAS·읽기 전용 판정·조건부 복구·새 후보 재조회를 검증한다.
+- 기존 Helm 인계, 순차 배포·기능 증거·자동 rollback과 resume를 실제로 검증한다.
+- 이 문서 개정은 workflow·chart·AWS/Kubernetes·private 저장소 파일을 변경하거나 실제 인수를 완료하지 않는다.
+
+## Acceptance Criteria
+
+- 네 SHA/run/attempt/ARM64/repository/digest 및 CLI·GUI 출처가 맞고 생산 run 최종 성공 뒤에만 승격한다.
+- Gateway 누락·부분 게시·혼합 attempt·출처 누락은 새 P를 만들지 않는다. 같은 SHA의 새 B는 재검증한다.
+- 이미지 발행은 C·비이미지 값을, 설정 재생성은 현재 B를 보존한다. 동시 요청은 같은 CAS 잠금에서 한쪽만 진행한다.
+- 상태 commit과 P를 구분하고 V 이후 P 실패·응답 유실·stale expected revision을 최신 상태 조회로 복구한다.
+- 이전 Healthy/smoke, 관측 불능·진행 상태 불명은 자동 rollback을 일으키지 않는다. owner 소실 시 잠금을 자동 탈취하지 않는다.
+- 실제 적용 schema와 현재 설정에 호환되는 사전 last-known-good B에만 한 번 복구하고, 조건 누락·설정 실패·복구 실패는 blocked다.
+- 일반 rollback에서 Argo 자동 적용을 유지하며 DB/PVC/offset·현재 키/TLS를 보존한다.
+- 실패 B·같은 전체 이미지 조합·이전 run/재시도는 재승격하지 않는다. 새 source·실패 이후 원본 run만 복구 후 재개한다.
+- rollback 중 도착한 허용 후보를 해제 시 재조회하고, blocked를 새로운 backend run으로 우회하지 못한다.
+- 문서 검증은 링크·ADR 번호/인덱스·대체 관계·허브와의 소유권/실패/복구 정합성이다. 위 실행 사례는 후속 구현 수락 조건이다.
+
+## References
+
+- [허브 ADR 0031](../../../docs/adr/0031-dev-gitops-delivery.md) · [generated values 동기화 계약](../../../docs/contracts/generated-values-sync.md)
+- [infra ADR 0056](../../../infra/docs/adr/0056-dev-argocd-gitops-operations.md) — Argo 운영·공유 잠금·판정과 복구
+- [enrollment 서버 명세](../enrollment-server-spec.md) §9.4·9.6 · [Kafka 운영](../telemetry-kafka-operations.md)
+- [ADR 0070](0070-Kafka-mTLS-접속은-공통-설정에서-PKCS12-파일로-조립한다.md) — TLS 파일 공급·재시작 계약
+- `.github/workflows/deploy_dev.yml` — 현재 앱별 build와 `Promote dev image tags` 단계

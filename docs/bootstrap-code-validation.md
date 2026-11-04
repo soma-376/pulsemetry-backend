@@ -4,6 +4,8 @@
 
 ## 배포 순서
 
+아래는 GitOps 인계 전의 수동 절차다. 인계 후 이미지 변경·복구는 [ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)의 네 앱 묶음·Git 발행을 따르고, WAF 설정 전환과 실제 설치 검증은 별도로 수행한다.
+
 1. 기존 enrollment 이미지 digest와 runtime 설정 참조를 기록한다. prod는 변경하지 않는다.
 2. infra에서 정확한 세 경로가 기존 등록 그룹과 IP당 300회/300초를 공유하는지, 차단 429와 `Retry-After: 60`, 다른 IP 및 차단 해제 뒤 정상 요청을 확인한다. 배포된 Web ACL과 공개 ALB 연결 증거를 남긴다.
 3. backend 필수 CI·리뷰와 계약 PR을 확인한 뒤 병합한다. 이미지 게시 digest를 infra EKS 런북으로 배포하고 Flyway·readiness·공개 경로를 각각 확인한다.

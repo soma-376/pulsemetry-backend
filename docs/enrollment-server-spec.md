@@ -269,17 +269,22 @@ GUI 패키지도 같은 릴리스에서 받는다. 새 설치 스크립트는 CL
 dev EKS의 enrollment-api·telemetry-ingest와 dashboard-api의 원천 연결은 infra가 준비한 RDS의
 **`controlplane`** 데이터베이스를 사용한다. 발급·OTLP 검증·사용자 세션 조회가 같은 원천을 보도록
 DB 주소·계정·권한을 준비한다. 계약은 [공유 데이터 계약](../../docs/contracts/data-model.md)과
-[허브 ADR 0027 — dev 백엔드 EKS 전용](../../docs/adr/0023-dev-backend-eks-only.md)을 따른다.
+[허브 ADR 0031 — dev GitOps 인계](../../docs/adr/0031-dev-gitops-delivery.md)를 따른다.
 
 공유 RDS의 원천 스키마 부트스트랩 주체는 **backend Flyway**다. dev 배포는 다음 순서로 진행한다.
 
 1. infra가 저장소·계정·권한과 runtime 입력을 준비한다. DB 자격 증명·HMAC 키 등은 runtime 파일로 공급하며
    실제 값은 문서·일반 환경변수·배포 출력에 적지 않는다.
-2. enrollment-api를 먼저 배포하고 `enrollment`·`telemetry_ops` Flyway 적용과 DB 연결을 확인한다.
+2. enrollment-api를 먼저 배포하고 `enrollment`·`telemetry_ops` Flyway 적용 성공과 DB 연결·기동을 확인한다.
+   이 확인이 실패하면 다음 앱으로 진행하지 않는다.
 3. `spring.flyway.enabled=false`인 telemetry-ingest를 배포한다. 이 앱에서 enrollment DDL을 실행하지 않는다.
-4. dashboard-api를 배포한다. 원천은 읽고 자기 RDS·ClickHouse 캐시 DDL만 기동 시 적용한다.
+4. telemetry-gateway를 배포한다. Gateway는 RDS를 사용하지 않으며 Kafka 수신·발행 호환성을 확인한다.
+5. dashboard-api를 배포한다. 원천은 읽고 자기 RDS·ClickHouse 캐시 DDL만 기동 시 적용한다.
 
-입력 생성·Helm 실행·실패와 복구는 [infra EKS 수동 배포 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다.
+이 순서는 [ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)의 네 앱 완료 묶음에도 적용한다.
+Flyway를 별도 Job·hook으로 옮기지 않으며 기존 ClickHouse 초기화·재시도와 실패 정책도 유지한다.
+GitOps 구현·인계 전의 입력 생성·Helm 실행·실패와 복구는
+[infra EKS 수동 배포 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다.
 로컬 `bootRun`은 §10의 개발 절차다. dev 공유 RDS의 배포 절차를 대신하지 않으며 파이프라인 DDL을
 `psql`로 직접 넣는 우회도 사용하지 않는다.
 
@@ -304,19 +309,41 @@ DB 주소·계정·권한을 준비한다. 계약은 [공유 데이터 계약](.
 
 ### 9.6 dev 이미지 공급과 배포 책임
 
-`.github/workflows/deploy_dev.yml`은 enrollment-api·telemetry-ingest·dashboard-api 세 앱의 `linux/arm64`
-이미지를 검증·빌드해 ECR에 게시한다. 세 `sha-<commit>` 이미지 게시가 모두 성공한 뒤 각 build digest로
-`dev` 태그를 enrollment → ingest → dashboard 순서로 승격한다. 승격 도중 실패하면 이후 앱은 중단하고
-이미 바뀐 태그는 유지한다. 같은 digest의 재실행은 멱등 처리하며 태그 갱신은 원자적 배포가 아니다.
+**현행 workflow** — `.github/workflows/deploy_dev.yml`은 enrollment-api·telemetry-ingest·dashboard-api의
+`linux/arm64` 이미지를 검증·빌드해 ECR에 게시하며, telemetry-gateway는 ECR 저장소 설정이 있을 때만 게시한다.
+설정된 SHA 이미지 게시가 끝난 뒤 앞 세 앱의 `dev` 태그를 각 build digest로 enrollment → ingest → dashboard
+순서로 갱신한다. Gateway는 SHA 태그와 summary digest를 제공한다. 중간 실패 시 이미 바뀐 태그는 남는다.
+`sha-<commit>`도 재실행으로 이동할 수 있어 태그 갱신은 원자적 배포나 불변 산출물의 증거가 아니다.
 
-CI는 ECS 조회·재배포·안정화 대기나 CDK·Helm·kubectl 실행을 하지 않는다. 운영자는 앱별 **immutable digest**와
-runtime/workload 입력을 확인해 infra 런북으로 수동 배포한다. `sha-<commit>`도 재실행으로 이동할 수 있으므로
-commit·태그·digest의 대응을 함께 기록한다. retention-worker는 이 CI의 이미지 게시 대상이 아니다.
+**채택된 후속 설계** — [ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)은 Image Updater 없이
+backend가 이미지·rollback Git 발행, infra가 설정 Git 발행을 각각 담당하도록 정한다. 네 앱을 같은 전체 backend SHA·
+이미지 게시 run/attempt에서 검증한 ARM64 완료 묶음 B로 만들며 Gateway를 필수화한다. 완료 manifest는 build output digest·
+플랫폼·검증 증거와 고정 CLI/GUI 릴리스·checksum provenance를 포함한다. 원본 게시 workflow 최종 성공 이후 별도 backend
+승격 workflow가 소비하며 승격/rollback run 식별자를 생산 B에 덮어쓰지 않는다.
 
-CDK는 AWS 자원·IAM, Helm과 운영 절차는 Kubernetes workload·runtime 공급·배포, EKS Auto Mode는 노드를 소유한다.
-§9.4의 기동 순서를 따르며 이미지 게시·Pod readiness·기능 검증 성공은 각각 기록한다.
-prod의 기존 ECS와 별도 frontend ECS는 이 dev 백엔드 정리의 대상이 아니다. 실제 ECS 철거·Snapshot은
-[infra 철거 런북](../../infra/docs/runbooks/dev-ecs-retirement.md)의 별도 작업이다.
+manifest와 C·V·B·P, 공통 `dev/delivery-state.json` schema는 [허브 ADR 0031](../../docs/adr/0031-dev-gitops-delivery.md)·
+[generated values 동기화 계약](../../docs/contracts/generated-values-sync.md)이 소유한다. backend는 현재 C·비이미지 값을
+보존하고 네 `image.repository`·`image.digest`를 갱신한다. infra 설정 재생성은 현재 B를 보존한다. `image.ref`, 별도 overlay,
+candidate branch와 태그 발견은 추가하지 않는다. V를 먼저 게시하고 별도 P에서 desired와 Application의 C/V를 함께 선택한다.
+backend는 Kubernetes·Argo API에 쓰지 않는다. 두 publisher는 private main의 Git CAS 잠금·owner/generation을 공유하고
+rollout/rollback·기능 확인까지 유지한다. 상태 commit은 P와 다르며 저장소별 concurrency·force push·자동 잠금 탈취로 대체하지 않는다.
+
+§9.4의 enrollment Flyway 성공 → ingest → Gateway → dashboard 순서와 혼합 버전·backlog 호환성을 유지한다.
+관측자는 대상 P/C/V/B와 실제 Argo revision/operation·Pod imageID·현재 배포의 발급/수집/적재/조회 증거를 읽기 전용으로
+확인한다. 이전 Healthy/smoke나 관측 실패를 배포 실패 증거로 쓰지 않는다. Git 게시·Argo 상태·기능 성공은 별도 결과다.
+
+확정된 이미지 P 실패이고 진행 중 operation이 없으며, 현재 C/runtime/키/TLS와 **실제 적용 schema**에 호환되는
+사전 기록 last-known-good B가 있을 때만 같은 owner가 한 번 자동 rollback한다. 현재 비이미지 값을 유지한 새 V/P를
+발행하고 Argo auto sync를 유지해 복구 선언을 적용한다. DB/PVC/offset은 되돌리지 않는다. 설정 실패·unknown·owner 소실·
+호환성 미확인·복구 실패는 blocked로 멈춘다. 키/인증서 교체·offset reset의 수동 유지보수는 별도 infra 절차다.
+복구 기능 검증 후에는 실패 source의 develop strict descendant이며 원본 생산 run.created_at이 durable 실패 fence 이후인
+정상 B만 자동 재개한다. 실패 B·같은 전체 이미지 조합·실패 전 run/재시도는 제외하고 잠금 해제 시 대기 후보를 다시 평가한다.
+
+**인계 전 운영** — 현재 workflow에는 위 완료 manifest·Git 발행·상태 판정·자동 복구가 없다. 구현·검증·소유권 인계 전에는
+앱별 immutable digest와 runtime/workload 입력을 확인해 [infra EKS 수동 배포 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다.
+인계 후 같은 release를 수동 Helm과 Argo가 동시에 변경하지 않는다. CDK는 AWS 자원·IAM, infra는 Helm 선언·runtime/설정 공급과
+Argo 운영, EKS Auto Mode는 노드를 소유한다. retention-worker·prod ECS·별도 frontend·perf는 이 이미지 묶음 대상이 아니다.
+실제 ECS 철거·Snapshot은 [infra 철거 런북](../../infra/docs/runbooks/dev-ecs-retirement.md)의 별도 기록을 따른다.
 
 ## 10. 로컬 실행
 

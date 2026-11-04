@@ -262,6 +262,7 @@ docker buildx build --target enrollment-api \
   --build-context telemetry-contracts=../telemetryctl/contracts -t <repo>:<tag> --load .
 ```
 
-CI의 PR 검증과 develop 이미지 게시 workflow는 telemetryctl 기본 브랜치를 체크아웃해 그 `contracts`를 쓴다(ref를 고정하지 않는다). dev CI는 이미지 공급만 하며 EKS 배포는 infra 런북에 따른 별도 수동 작업이다.
+CI의 PR 검증과 develop 이미지 게시 workflow는 telemetryctl 기본 브랜치를 체크아웃해 그 `contracts`를 쓴다(ref를 고정하지 않는다). 현행 dev CI는 이미지 공급만 하며 EKS 배포는 infra 런북에 따른 별도 수동 작업이다.
+채택된 후속 Git 발행·조건부 자동 복구는 [ADR 0076](adr/0076-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)을 따른다. backend는 이미지 선택을 Git에 기록하고 Argo가 적용하며, 현재 키·runtime과의 호환성을 유지한다. 키 교체의 별도 순서·수동 유지보수는 이미지 rollback으로 대체하지 않는다.
 계약 테스트는 telemetryctl 기본 브랜치에 있는 `enrollment-envelope`·`enrollment-manifest` 두 스키마만 원본으로 읽는다. 사용자 토큰 봉투·AT 클레임·재조회 봉투의 오라클은
 [인증 API](api/auth.md)와 [manifest 재조회](api/enrollment.md)의 표다 — 원격 기본 브랜치에 없는 스키마를 읽게 하면 CI가 죽는다.
