@@ -48,6 +48,9 @@ class QueryReader(private val parameter: (String) -> String?) {
 	/** [period] + `compare`(`prev_week` 기본 · `prev_period` · `none`). 개요·팀 분석만 쓴다. */
 	fun comparedPeriod(): ComparedPeriod = ComparedPeriod(period(), choice(COMPARE, CompareMode.BY_WIRE, CompareMode.PREV_WEEK))
 
+	/** 추이를 제공하는 화면만 읽는다. users는 전달받은 snapshot의 집계 모드를 계승한다. */
+	fun bucket(): TrendBucketMode = choice("bucket", TrendBucketMode.BY_WIRE, TrendBucketMode.DAY)
+
 	/** `limit`(생략 시 [default], 1–[max] 밖은 400 — 잘라 쓰지 않는다)과 `cursor`. */
 	fun page(default: Int, max: Int, codec: PageCursorCodec): PageRequest {
 		require(default in 1..max) { "limit 기본값이 범위 밖이다: $default (최대 $max)" }

@@ -1,5 +1,7 @@
 package com.team376.pulsemetry.dashboard.analytics
 
+import com.fasterxml.jackson.annotation.JsonInclude
+
 /** 다른 분석 화면과 수집 현황이 공유하는 계약. */
 data class AnalyticsPeriodMeta(
 	val organizationId: String,
@@ -12,6 +14,12 @@ data class AnalyticsPeriodMeta(
 	val dayCount: Int,
 	val dataState: String,
 	val currentCoverage: Coverage,
+	@get:JsonInclude(JsonInclude.Include.NON_NULL)
+	val snapshotId: String? = null,
+	@get:JsonInclude(JsonInclude.Include.NON_NULL)
+	val trendAggregation: TrendAggregation? = null,
+	@get:JsonInclude(JsonInclude.Include.NON_NULL)
+	val collectionPolicy: CollectionPolicyAnnotations? = null,
 )
 
 data class AnalyticsComparison(

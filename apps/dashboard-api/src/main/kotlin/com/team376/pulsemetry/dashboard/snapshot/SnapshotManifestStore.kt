@@ -2,6 +2,7 @@ package com.team376.pulsemetry.dashboard.snapshot
 
 import com.team376.pulsemetry.dashboard.request.CompareMode
 import com.team376.pulsemetry.dashboard.request.DatePeriod
+import com.team376.pulsemetry.dashboard.request.TrendBucketMode
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.support.TransactionTemplate
 import java.sql.ResultSet
@@ -34,6 +35,7 @@ class SnapshotManifestStore(
 		val modelResolutionVersion: String,
 		val createdAt: Instant,
 		val buildDeadline: Instant,
+		val queryContract: String = QUERY_CONTRACT,
 	)
 
 	data class Manifest(
@@ -92,7 +94,7 @@ class SnapshotManifestStore(
 			.param("tenant", manifest.tenantId)
 			.param("requested_by", manifest.requestedBy)
 			.param("access_scope", ACCESS_SCOPE)
-			.param("query_contract", QUERY_CONTRACT)
+			.param("query_contract", manifest.queryContract)
 			.param("time_zone", manifest.current.zone.id)
 			.param("compare", manifest.compareMode.wire)
 			.param("current_start", manifest.current.startDate)
@@ -223,6 +225,12 @@ class SnapshotManifestStore(
 	companion object {
 		/** 조회 계약의 판. 응답 의미를 바꾸면 올린다 — 다른 판의 snapshot 은 재사용하지 않는다. */
 		const val QUERY_CONTRACT = "dashboard-v7"
+		const val AUTO_QUERY_CONTRACT = "dashboard-auto-trend-v1"
+
+		fun queryContract(bucket: TrendBucketMode): String = when (bucket) {
+			TrendBucketMode.DAY -> QUERY_CONTRACT
+			TrendBucketMode.AUTO -> AUTO_QUERY_CONTRACT
+		}
 
 		/** 합의 전 재사용 범위 — 조직 전체(ADR 0022 §3 의 기본 인가 정책). */
 		const val ACCESS_SCOPE = "organization"
