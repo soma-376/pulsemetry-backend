@@ -53,6 +53,22 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 
 	private fun JsonNode.text(): String? = if (isNull) null else asString()
 
+    @Test fun modelVendorsAreReturnedEvenWithoutPrices() {
+        val tenant = DashboardTestStores.insertTenant()
+        SourceFixtures.setSummary(tenant, firstReceivedAt = kst("2026-09-01T00:00:00"), lastReceivedAt = kst("2026-09-10T00:00:00"))
+        SourceFixtures.insertEvents(tenant,
+            Event("vendor-claude", kst("2026-09-07T10:00:00"), model = "claude-sonnet-5-5", costEstimatedUsd = null),
+            Event("vendor-gpt", kst("2026-09-07T11:00:00"), product = "codex", model = "gpt-6.1-sol", costEstimatedUsd = null),
+            Event("vendor-unknown", kst("2026-09-07T12:00:00"), model = "custom-model", costEstimatedUsd = null),
+        )
+        val models = overview(tenant, "startDate=2026-09-07&endDate=2026-09-07&compare=none").at("/modelMix/models").list().associateBy { it.path("displayName").asString() }
+        assertThat(models.getValue("claude-sonnet-5-5").at("/modelVendor/id").asString()).isEqualTo("anthropic")
+        assertThat(models.getValue("gpt-6.1-sol").at("/modelVendor/name").asString()).isEqualTo("OpenAI")
+        assertThat(models.getValue("custom-model").has("modelVendor")).isTrue()
+        assertThat(models.getValue("custom-model").path("modelVendor").isNull).isTrue()
+        assertThat(models.values.all { it.at("/equivalentCostUsd/value").isNull }).isTrue()
+    }
+
 	@Test
 	@DisplayName("검증된 Claude와 Codex의 비중복 토큰은 함께 합산하고 미검증 프로파일 혼합은 차단한다")
 	fun canonicalTokenSemanticsAcrossProducts() {

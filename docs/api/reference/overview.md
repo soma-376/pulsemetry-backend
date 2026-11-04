@@ -38,7 +38,7 @@ type Metric<T> = Value<T> & { comparison: Change<T> };
 | comparison | mode, startDate, endDate, coverage |
 | summary | activeUsers: Metric<number>, equivalentCostUsd: Metric<string>, sessionCount: Metric<number>, equivalentCostPerUserUsd: Metric<string>, totalTokens: Metric<number>, sessionsPerUser: Value<number>, equivalentCostPerSessionUsd: Value<string> |
 | trend | bucket: "day", points: {date, observation, equivalentCostUsd: Value<string>, totalTokens: Value<number>}[] |
-| modelMix | models: {modelId, displayName, equivalentCostUsd: Value<string>, totalTokens: Value<number>, effectiveCostPerMillionTokensUsd: Value<string>, costShare: Value<number>}[] |
+| modelMix | models: {modelId, displayName, modelVendor: {id, name} \| null, equivalentCostUsd: Value<string>, totalTokens: Value<number>, effectiveCostPerMillionTokensUsd: Value<string>, costShare: Value<number>}[] |
 | teamUsage | attributionBasis: "event_time", totalTeamCount, topTeams, unassigned |
 | errors | {section: "summary"\|"trend"\|"modelMix"\|"teamUsage", code, retryable}[] |
 
@@ -117,3 +117,5 @@ type Metric<T> = Value<T> & { comparison: Change<T> };
 ### 단일 참조 단가표와 저장 금액
 
 새 사용량은 서버에 포함된 단일 참조 단가표로 계산한다. 가격판 선택·관측별 버전 기록·응답 필드는 없다. 대시보드는 각 관측에 저장된 USD 환산액을 합산하며, 과거 단가나 비교 기간·다른 그룹의 단가 차이로 값을 숨기지 않는다. 기존 금액을 자동 재계산하지 않으므로 모든 과거 사용량을 현재 단가로 다시 평가한 합계는 아니다. 미가격 행의 전체값 null·계산 가능한 관측 부분합·기간 완전성 규칙은 유지한다(허브 ADR 0028).
+
+`modelVendor`는 모델 제작사이며 공급자·사용 도구·계약 벤더와 별개다. 명시적 카탈로그에 없으면 null이고, 비용·토큰 누락 여부와 독립적으로 반환한다. 기존 modelId 및 집계 값은 바꾸지 않는다.

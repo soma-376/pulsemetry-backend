@@ -19,7 +19,7 @@ data class OverviewResponse(
   val knownEquivalentCostUsd: Value<String>, val pricedUsageRows: Long, val unpricedUsageRows: Long)
  data class ModelMix(val models: List<ModelShare>)
  data class ModelShare(val modelId: String, val displayName: String, val equivalentCostUsd: Value<String>, val totalTokens: Value<Long>,
-  val effectiveCostPerMillionTokensUsd: Value<String>, val costShare: Value<Double>)
+  val effectiveCostPerMillionTokensUsd: Value<String>, val costShare: Value<Double>, val modelVendor: ModelVendors.Vendor?)
  data class TeamUsage(val attributionBasis: String, val totalTeamCount: Int, val topTeams: List<TopTeam>, val unassigned: Unassigned?)
  data class TopTeam(val teamId: String, val teamName: String, val products: List<ProductRef>, val activeUsers: Value<Long>, val equivalentCostUsd: Metric<String>)
  data class Unassigned(val products: List<ProductRef>, val activeUsers: Value<Long>, val equivalentCostUsd: Metric<String>)

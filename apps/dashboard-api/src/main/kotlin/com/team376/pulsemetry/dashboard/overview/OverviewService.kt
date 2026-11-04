@@ -77,7 +77,7 @@ class OverviewService(private val frames: AnalyticsFrames, private val aggregato
   val total = value(if (costs.any { it.value == null }) null else Money.format(costs.sumOf { it.value!!.toBigDecimal() }), costs.flatMap { it.reasons })
   return ModelMix(models.map { (id,v) -> ModelShare(id, ModelNames.displayName(id), v.cost, v.tokens,
    value(Money.perMillion(v.cost.value?.toBigDecimal(), v.tokens.value)?.let(Money::format), v.cost.reasons + v.tokens.reasons + if (v.tokens.value == 0L) listOf("zero_denominator") else emptyList()),
-   ratio(v.cost, total, String::toBigDecimal, String::toBigDecimal, BigDecimal::toDouble)) })
+   ratio(v.cost, total, String::toBigDecimal, String::toBigDecimal, BigDecimal::toDouble), ModelVendors.resolve(id)) })
  }
  private fun teamUsage(f: AnalyticsFrames.Frame): TeamUsage {
   val mapping = references.products(f.snapshot)
