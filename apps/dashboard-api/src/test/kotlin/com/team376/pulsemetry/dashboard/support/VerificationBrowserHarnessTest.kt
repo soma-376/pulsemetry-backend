@@ -133,17 +133,22 @@ class VerificationBrowserHarnessTest : AbstractDashboardApiTest() {
 		val team = SourceFixtures.insertTeam(tenant, "플랫폼팀")
 		val admin = SourceFixtures.insertMember(tenant, "admin@example.test", role = "admin", displayName = "관리자")
 		val member = SourceFixtures.insertMember(tenant, "unassigned@example.test", displayName = if (zero) "0원 사용 구성원" else "미환산 사용 구성원")
+		val recent = Instant.now().minusSeconds(120)
 		SourceFixtures.insertMembership(team, admin, from.minusSeconds(1))
 		SourceFixtures.setSummary(tenant, firstReceivedAt = from, lastReceivedAt = Instant.now().minusSeconds(30))
 		SourceFixtures.insertEvents(tenant,
 			SourceFixtures.Event("known", from.plusSeconds(3600), teamId = team, memberId = admin, sessionId = "known", costEstimatedUsd = BigDecimal("10")),
 			SourceFixtures.Event("unassigned", from.plusSeconds(7200), memberId = member, sessionId = null, costEstimatedUsd = if (zero) BigDecimal.ZERO else null,
 				tokensInput = if (zero) 0 else 100, tokensInputUncached = if (zero) 0 else 100, tokensOutput = if (zero) 0 else 10, tokensTotalDerived = if (zero) 0 else 110),
+			// 구성원 화면의 최근 7일 범위에도 같은 의미의 기록을 별도로 제공한다. 9월 집계는 바꾸지 않는다.
+			SourceFixtures.Event("known-recent", recent, teamId = team, memberId = admin, sessionId = "known-recent", costEstimatedUsd = BigDecimal("10")),
+			SourceFixtures.Event("unassigned-recent", recent, memberId = member, sessionId = null, costEstimatedUsd = if (zero) BigDecimal.ZERO else null,
+				tokensInput = if (zero) 0 else 100, tokensInputUncached = if (zero) 0 else 100, tokensOutput = if (zero) 0 else 10, tokensTotalDerived = if (zero) 0 else 110),
 		)
 		return Scenario(tenant, team, admin, mapOf("organizationName" to name, "unassignedMemberId" to member.toString(),
 			"unassignedCostUsd" to if (zero) "0.000000" else null, "unassignedTokens" to if (zero) 0 else 110,
 			"unassignedSessions" to null, "unassignedUsageRows" to 1, "unassignedPricedUsageRows" to if (zero) 1 else 0,
-			"unassignedUnpricedUsageRows" to if (zero) 0 else 1, "unassignedLastUsedAt" to from.plusSeconds(7200).toString()))
+			"unassignedUnpricedUsageRows" to if (zero) 0 else 1, "unassignedLastUsedAt" to recent.toString(), "historicalUnassignedLastUsedAt" to from.plusSeconds(7200).toString()))
 	}
 
 	private fun seedCollection(scenario: Scenario, now: Instant): Map<String, Any?> {
