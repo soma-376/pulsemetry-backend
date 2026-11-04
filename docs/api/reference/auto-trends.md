@@ -36,7 +36,7 @@ type PendingCollectionPolicy = {
 };
 ```
 
-자동 응답의 `meta.trendAggregation`과 `meta.collectionPolicy`는 필수다. 개요 자동 응답에는 `meta.snapshotId`도 필수이며 기존 일별 개요에는 추가하지 않는다. 팀 응답의 기존 snapshotId는 유지한다. `mode=auto`이며 개요 valueMode는 interval, 팀은 cumulative다.
+자동 응답의 `meta.trendAggregation`과 `meta.collectionPolicy`는 필수다. 개요 자동 응답에는 `meta.snapshotId`도 필수이며 기존 일별 개요에는 추가하지 않는다. 팀 응답의 기존 snapshotId는 유지한다. 자동 snapshot을 계승한 팀 사용자 응답도 목록·상세와 동일한 trendAggregation(valueMode=cumulative)·collectionPolicy를 반환한다. `mode=auto`이며 개요 valueMode는 interval, 팀은 cumulative다.
 
 `asOf`는 snapshot 생성 시 고정한 이벤트 시각 상한이다. 현재·비교 기간의 사용량과 관측 metadata를 같은 원본 선택에서 `source_time < asOf`로 제한한다. 수신 시각에 따른 과거 데이터 복원은 아니다. summary·추이·목록·상세·사용자·CSV는 같은 입력을 사용한다.
 

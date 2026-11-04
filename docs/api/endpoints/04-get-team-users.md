@@ -68,4 +68,4 @@ Authorization: Bearer <Pulsemetry access_token>
 
 ## 자동 snapshot 계승
 
-이 API에는 bucket 옵션을 추가하지 않는다. 자동 팀 조회에서 받은 snapshotId를 유지하면 그 snapshot의 발생 시각 상한과 입력을 계승한다. CSV 추가 조회 중 만료되면 전체 내보내기를 새 snapshot으로 다시 시작한다. [자동 시간 추이 계약](../reference/auto-trends.md)을 함께 적용한다.
+이 API에는 bucket 옵션을 추가하지 않는다. 자동 팀 조회에서 받은 snapshotId를 유지하면 그 snapshot의 발생 시각 상한과 입력을 계승한다. 자동 snapshot이면 meta.trendAggregation(valueMode=cumulative)과 meta.collectionPolicy도 목록·상세와 같은 값을 반환한다. CSV 추가 조회 중 만료되면 전체 내보내기를 새 snapshot으로 다시 시작한다. [자동 시간 추이 계약](../reference/auto-trends.md)을 함께 적용한다.
