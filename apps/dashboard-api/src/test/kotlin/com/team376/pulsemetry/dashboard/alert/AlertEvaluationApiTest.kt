@@ -71,6 +71,8 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		val installation = SourceFixtures.insertInstallation(tenant, member)
 		SourceFixtures.setInstallationTimes(installation, kst("2026-08-01T00:00:00"))
 		SourceFixtures.insertSegment(installation, kst(coveredFrom), kst(coveredUntil))
+		// 기존 보안·비용 회귀는 공백 없는 설치로 고정한다. AI 사용 여부는 이 보고와 독립이다.
+		SourceFixtures.setHeartbeat(installation, kst("2026-09-20T00:00:00"))
 		return Org(tenant, owner, member, other)
 	}
 
@@ -218,12 +220,12 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 			model(org, "usage", "2026-09-10T12:00:00", "claude-opus-4"),
 			Event("${org.tenant}-mcp", kst("2026-09-10T11:00:00"), usage = false, memberId = org.member, toolName = "mcp_tool"),
 		)
-		// 제품 등록은 있지만 규칙이 꺼져 있다 — 평가도 알림도 없다.
+		// 사용자 규칙이 꺼져 있어도 시스템 공백 규칙은 평가한다.
 		val clock = MutableClock(kst("2026-09-14T00:00:00"))
 		evaluator(clock).evaluate(org.tenant)
-		assertThat(store.evaluations(org.tenant)).isEmpty()
-		assertThat(overviewAlerts(org.tenant).let { it.path("availability").asString() to it.path("reason").asString() })
-			.isEqualTo("unavailable" to "evaluation_not_configured")
+		assertThat(store.evaluations(org.tenant).map { it.ruleId }).containsExactly("installation_report_gap")
+		assertThat(overviewAlerts(org.tenant).path("availability").asString()).isEqualTo("available")
+		assertThat(overviewAlerts(org.tenant).path("collection").asLong()).isZero()
 
 		enable(org, "product_not_registered", kst("2026-09-10T00:00:00"))
 		assertThat(overviewAlerts(org.tenant).path("reason").asString()).isEqualTo("evaluation_pending")
@@ -400,7 +402,7 @@ class AlertEvaluationApiTest : AbstractDashboardApiTest() {
 		assertThat(store.evaluations(org.tenant)).describedAs("기한 시각에는 아직 그 인스턴스의 것").isEmpty()
 		clock.advance(Duration.ofMillis(1))
 		mine.runOnce()
-		assertThat(store.evaluations(org.tenant).map { it.ruleId }).containsExactly("product_not_registered")
+		assertThat(store.evaluations(org.tenant).map { it.ruleId }).containsExactly("installation_report_gap", "product_not_registered")
 		assertThat(store.claim(org.tenant, "other-instance", clock.instant(), clock.instant().plus(lease))).describedAs("평가가 끝나면 선점을 놓는다").isTrue()
 
 		// 같은 회차를 여러 인스턴스가 동시에 잡는다 — 정확히 하나만 잡는다.

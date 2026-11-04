@@ -1,10 +1,12 @@
 package com.team376.pulsemetry.dashboard.alert
 
 import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.sql.Timestamp
 import java.sql.Types
+import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
@@ -46,7 +48,27 @@ data class Evaluation(
  * 알림 평가 기록의 저장 (ADR 0051 §5). 이 앱의 캐시 계정으로 RDS `dashboard_cache` 에 쓴다 — 원천(분석 행·enrollment)은 읽기만 한다.
  * 알림의 확인은 여기 없다(enrollment-api 의 명령이 enrollment 스키마에 쓴다).
  */
-class AlertStore(private val cache: JdbcClient, private val mapper: ObjectMapper) {
+class AlertStore(private val cache: JdbcClient, private val mapper: ObjectMapper, private val transactions: TransactionTemplate) {
+	/** 공백 원천 조회 결과를 반영하기 직전 선점을 잠가 확인한다. 쓰기 중 만료돼도 전부 롤백한다(ADR 0076). */
+	fun withLease(tenant: UUID, owner: String, clock: Clock, write: () -> Unit): Boolean = try {
+		transactions.execute {
+			val lease = cache.sql("SELECT claimed_by, claimed_until FROM dashboard_cache.alert_evaluation_leases WHERE tenant_id = :tenant FOR UPDATE")
+				.param("tenant", tenant).query { rs, _ -> rs.getString("claimed_by") to rs.getTimestamp("claimed_until").toInstant() }.optional().orElse(null)
+			if (lease == null || lease.first != owner || !clock.instant().isBefore(lease.second)) throw LostLease()
+			write()
+			if (!clock.instant().isBefore(lease.second)) throw LostLease()
+			true
+		} == true
+	} catch (_: LostLease) { false }
+
+	private class LostLease : RuntimeException()
+
+	/** 기준이 바뀐 공백을 종료한다. 사람의 확인과 사건 버전은 건드리지 않는다. */
+	fun resolveReportGap(alert: StoredAlert, lastReceivedAt: Instant?, reason: String, now: Instant) {
+		val summary = alert.summary + mapOf("lastReceivedAt" to lastReceivedAt?.toString(), "resolutionDetectedAt" to now.toString(), "resolutionReason" to reason)
+		cache.sql("UPDATE dashboard_cache.alerts SET status = 'closed', summary = CAST(:summary AS jsonb), updated_at = :now WHERE alert_id = :id AND status = 'open'")
+			.param("summary", mapper.writeValueAsString(summary)).param("now", Timestamp.from(now)).param("id", alert.alertId).update()
+	}
 	/** 마지막 규칙을 껐어도 열린 묶음을 닫아야 하므로 다음 주기 평가에 포함한다. */
 	fun tenantsWithOpenAlerts(): List<UUID> =
 		cache.sql("SELECT DISTINCT tenant_id FROM dashboard_cache.alerts WHERE status = 'open'")

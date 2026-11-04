@@ -32,6 +32,7 @@ class AlertAcknowledgementApiTest : AbstractUserAuthApiTest() {
     @BeforeEach fun alertTable() {
         jdbc.sql("CREATE SCHEMA IF NOT EXISTS dashboard_cache").update()
         jdbc.sql(Files.readString(Path.of("../dashboard-api/src/main/resources/db/dashboard-cache/V5__dashboard_cache_alerts.sql"))).update()
+        jdbc.sql(Files.readString(Path.of("../dashboard-api/src/main/resources/db/dashboard-cache/V9__installation_report_gap_alerts.sql"))).update()
         jdbc.sql("TRUNCATE dashboard_cache.alerts").update()
     }
 
@@ -86,5 +87,23 @@ class AlertAcknowledgementApiTest : AbstractUserAuthApiTest() {
         val memberToken = mapper.readTree(login().body()).path("access_token").asString()
         assertThat(errorOf(acknowledge(alert(tenant), 1, memberToken))).isEqualTo(403 to "forbidden")
         assertThat(acknowledgements()).isEmpty()
+    }
+
+    @Test fun `공백 알림 확인은 해소하지 않고 해소된 미확인 알림도 확인할 수 있다`() {
+        val token = adminToken()
+        val open = alert(tenant)
+        val closed = alert(tenant)
+        jdbc.sql("UPDATE dashboard_cache.alerts SET rule_id = 'installation_report_gap', category = 'collection', event_count = 0 WHERE alert_id IN (:ids)")
+            .param("ids", listOf(open, closed)).update()
+        jdbc.sql("UPDATE dashboard_cache.alerts SET status = 'closed' WHERE alert_id = :id").param("id", closed).update()
+        assertThat(acknowledge(open, 1, token).statusCode()).isEqualTo(200)
+        assertThat(jdbc.sql("SELECT status FROM dashboard_cache.alerts WHERE alert_id = :id").param("id", open).query(String::class.java).single()).isEqualTo("open")
+        assertThat(acknowledgements()).hasSize(1)
+        assertThat(acknowledge(closed, 1, token).statusCode()).isEqualTo(200)
+        assertThat(acknowledgements()).hasSize(2)
+        // 사건을 새로 만들면 이전 확인을 승계하지 않는다.
+        val recurrence = alert(tenant)
+        jdbc.sql("UPDATE dashboard_cache.alerts SET rule_id = 'installation_report_gap', category = 'collection' WHERE alert_id = :id").param("id", recurrence).update()
+        assertThat(jdbc.sql("SELECT count(*) FROM enrollment.alert_acknowledgements WHERE alert_id = :id").param("id", recurrence).query(Int::class.java).single()).isZero()
     }
 }

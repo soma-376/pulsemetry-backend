@@ -16,6 +16,8 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.jdbc.datasource.DataSourceTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.ObjectMapper
 import java.time.Clock
 
@@ -27,7 +29,7 @@ class AlertConfig {
 
 	@Bean
 	fun alertStore(@Qualifier(CacheStoreConfig.CACHE_DATA_SOURCE) cacheDataSource: HikariDataSource, mapper: ObjectMapper): AlertStore =
-		AlertStore(JdbcClient.create(cacheDataSource), mapper)
+		AlertStore(JdbcClient.create(cacheDataSource), mapper, TransactionTemplate(DataSourceTransactionManager(cacheDataSource)))
 
 	@Bean
 	fun alertEvaluator(

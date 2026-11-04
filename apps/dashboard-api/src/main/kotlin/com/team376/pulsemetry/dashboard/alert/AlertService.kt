@@ -43,7 +43,7 @@ class AlertService(
 		if (state.availability != Availability.AVAILABLE) return AnalyticsAlerts(state.availability, state.reason, (state.asOf ?: now).toString(), null, null, null)
 		val open = unacknowledged(tenant)
 		return AnalyticsAlerts(Availability.AVAILABLE, null, state.asOf!!.toString(), open.size.toLong(),
-			open.count { it.category == SECURITY }.toLong(), open.count { it.category == COST }.toLong())
+			open.count { it.category == SECURITY }.toLong(), open.count { it.category == COST }.toLong(), open.count { it.category == COLLECTION }.toLong())
 	}
 
 	fun list(organization: Organization, status: Status, category: String?, page: PageRequest, snapshotId: String?): AlertsResponse {
@@ -80,7 +80,7 @@ class AlertService(
 
 	/** 목록 필터에 해당하는 규칙의 평가 결과만 축약한다. 저장된 평가·판정은 바꾸지 않는다. */
 	fun evaluation(tenant: UUID, category: String? = null): AlertsEvaluation {
-		val rules = AlertRules.rules(source, tenant).filter { category == null || it.category == category }
+		val rules = evaluationRules(tenant).filter { category == null || it.category == category }
 		val ids = rules.map { it.ruleId }.toSet()
 		val evaluations = store.evaluations(tenant).filter { it.ruleId in ids }.associateBy { it.ruleId }
 		val enabled = rules.filter { it.enabled }
@@ -103,6 +103,10 @@ class AlertService(
 			evaluations.values.maxOfOrNull { it.evaluatedAt }?.toString())
 	}
 
+	private fun evaluationRules(tenant: UUID) = AlertRules.rules(source, tenant) +
+		if (InstallationReportGaps.hasActive(source, tenant) || store.evaluation(tenant, InstallationReportGaps.RULE) != null)
+			listOf(InstallationReportGaps.rule()) else emptyList()
+
 	private data class State(val availability: String, val reason: String?, val asOf: Instant?)
 
 	/**
@@ -113,8 +117,10 @@ class AlertService(
 		val evaluations = store.evaluations(tenant)
 		val asOf = evaluations.maxOfOrNull { it.evaluatedAt }
 		val evaluated = evaluations.map { it.ruleId to it.ruleVersion }.toSet()
-		val enabled = AlertRules.rules(source, tenant).filter { it.enabled }
+		val enabled = evaluationRules(tenant).filter { it.enabled }
 		if (enabled.any { (it.ruleId to it.version) !in evaluated }) return State(Availability.UNAVAILABLE, EVALUATION_PENDING, asOf)
+		val gap = evaluations.firstOrNull { it.ruleId == InstallationReportGaps.RULE && it.ruleVersion == InstallationReportGaps.VERSION }
+		if (gap != null && gap.status != AlertEvaluator.EVALUATED) return State(Availability.UNAVAILABLE, gap.reason ?: "evaluation_error", asOf)
 		if (evaluations.isNotEmpty()) return State(Availability.AVAILABLE, null, asOf)
 		return State(Availability.UNAVAILABLE, Availability.EVALUATION_NOT_CONFIGURED, null)
 	}
@@ -143,6 +149,7 @@ class AlertService(
 
 	private fun item(alert: StoredAlert, ack: Ack?, accounts: Map<String, String>): AlertItem {
 		val rolling = alert.ruleId != AlertRules.SPEND_SPIKE
+		val usage = rolling && alert.ruleId != InstallationReportGaps.RULE
 		return AlertItem(
 			alertId = alert.alertId.toString(),
 			version = alert.version,
@@ -154,7 +161,7 @@ class AlertService(
 			windowStart = alert.windowStart.toString(),
 			windowEnd = alert.windowEnd.toString(),
 			subject = alert.subject.takeIf { rolling },
-			eventCount = alert.eventCount.takeIf { rolling },
+			eventCount = alert.eventCount.takeIf { usage },
 			memberCount = alert.memberIds.size.toLong().takeIf { rolling },
 			members = alert.memberIds.map { AlertMember(it, accounts[it]) },
 			evidence = AlertEvidence.from(alert),
@@ -169,10 +176,11 @@ class AlertService(
 		const val KIND = "alerts"
 		const val SECURITY = "security"
 		const val COST = "cost"
+		const val COLLECTION = "collection"
 		/** 켠 규칙이 있지만 아직 한 번도 평가하지 않았다. */
 		const val EVALUATION_PENDING = "evaluation_pending"
 		private const val CURSOR = "cursor"
-		val CATEGORIES = setOf(SECURITY, COST)
+		val CATEGORIES = setOf(SECURITY, COST, COLLECTION)
 	}
 }
 
@@ -218,6 +226,9 @@ sealed interface AlertEvidence {
 
 	companion object {
 		fun from(alert: StoredAlert): AlertEvidence? {
+			if (alert.ruleId == InstallationReportGaps.RULE) return InstallationReportGapEvidence(
+				alert.subject, alert.summary["deviceName"] as? String, alert.windowStart.toString(), alert.occurredAt.toString(),
+				alert.summary["lastReceivedAt"] as? String, alert.summary["resolutionDetectedAt"] as? String, alert.summary["resolutionReason"] as? String)
 			if (alert.ruleId != AlertRules.SPEND_SPIKE) return UsageAlertEvidence(
 				(alert.summary["productName"] as? String)?.takeIf { it.isNotBlank() } ?: alert.subject)
 			val summary = alert.summary
@@ -234,3 +245,14 @@ sealed interface AlertEvidence {
 data class UsageAlertEvidence(val targetName: String) : AlertEvidence { override val kind = "usage" }
 data class SpendAlertEvidence(val startDate: String, val endDate: String, val currentCostUsd: String,
 	val previousCostUsd: String, val increaseRatio: Double) : AlertEvidence { override val kind = "spend" }
+
+/** 공백의 해소 확인 시각과 마지막 서버 보고 시각은 서로 다른 근거다. */
+data class InstallationReportGapEvidence(
+	val installationId: String,
+	val deviceName: String?,
+	val basisAt: String,
+	val thresholdReachedAt: String,
+	val lastReceivedAt: String?,
+	val resolutionDetectedAt: String?,
+	val resolutionReason: String?,
+) : AlertEvidence { override val kind = "installation_report_gap" }
