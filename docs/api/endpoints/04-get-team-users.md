@@ -65,3 +65,7 @@ Authorization: Bearer <Pulsemetry access_token>
 - 평균이 확인 불가이거나 응답의 평균이 0이면 모든 평균 대비를 비교 불가로 취급한다.
 - 비교 불가 값은 양방향 모두 마지막이며, 동률은 memberId 오름차순이다.
 - snapshotId와 기간·팀·정렬 조건을 유지하고 nextOffset으로 이어 읽는다. 정렬 변경 시 offset=0부터 요청한다. cursor 파라미터는 400 unsupported_value로 거부한다. 모든 정렬은 동률이면 memberId 오름차순, null은 양방향 마지막이다.
+
+## 자동 snapshot 계승
+
+이 API에는 bucket 옵션을 추가하지 않는다. 자동 팀 조회에서 받은 snapshotId를 유지하면 그 snapshot의 발생 시각 상한과 입력을 계승한다. CSV 추가 조회 중 만료되면 전체 내보내기를 새 snapshot으로 다시 시작한다. [자동 시간 추이 계약](../reference/auto-trends.md)을 함께 적용한다.

@@ -8,6 +8,7 @@
 ## 먼저 읽기
 
 - [공통 HTTP 규칙](common.md): 인증·오류·멱등성·버전·응답 형식
+- [자동 시간 추이](reference/auto-trends.md): 개요·팀 auto/day, 서버 누적, snapshot, CSV와 활성화 gate
 - [공통 응답 스키마](common-schemas.md): 기간·금액·null·페이지·가용성·비교
 - [Enrollment 운영·실행](../enrollment-server-spec.md), [Dashboard 운영·실행](../dashboard-server-spec.md)
 
