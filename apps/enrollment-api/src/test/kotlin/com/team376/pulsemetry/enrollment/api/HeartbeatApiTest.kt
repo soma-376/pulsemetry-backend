@@ -497,6 +497,19 @@ class HeartbeatApiTest {
     private fun reportedLoss(): Long = jdbc.sql("SELECT COALESCE(sum(payload_count),0) FROM enrollment.installation_loss_events WHERE installation_id=:id")
         .param("id", installation).query(Long::class.java).single()
 
+    @Test fun `추적 중단 중 heartbeat는 503과 재시도 안내를 반환하고 아무것도 기록하지 않는다`() {
+        val active = jdbc.sql("SELECT id FROM enrollment.installation_loss_tracking WHERE stopped_at IS NULL").query(UUID::class.java).single()
+        jdbc.sql("UPDATE enrollment.installation_loss_tracking SET stopped_at=clock_timestamp() WHERE id=:id").param("id", active).update()
+        try {
+            val response = post(report(lost = 3))
+            rejected(response, 503, "heartbeat_unavailable")
+            assertThat(response.headers().firstValue("Retry-After")).hasValue("7")
+            assertThat(lastSeen()).isNull()
+            assertThat(data.countRows("installation_heartbeats")).isZero()
+            assertThat(data.countRows("installation_loss_runs")).isZero()
+        } finally { jdbc.sql("UPDATE enrollment.installation_loss_tracking SET stopped_at=NULL WHERE id=:id").param("id", active).update() }
+    }
+
     @Test fun `손실 원장은 실행별 최고 누계로 계산하여 재보고와 감소를 중복 합산하지 않는다`() {
         for (lost in listOf(5L, 5L, 8L, 5L, 8L)) {
             clock.now = clock.now.plusSeconds(60)

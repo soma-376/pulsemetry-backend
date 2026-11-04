@@ -3,6 +3,7 @@ package com.team376.pulsemetry.persistence.enrollment
 import com.team376.pulsemetry.persistence.enrollment.installation.CollectionMode
 import com.team376.pulsemetry.persistence.enrollment.installation.InstallationReport
 import com.team376.pulsemetry.persistence.enrollment.installation.InstallationLossStore
+import com.team376.pulsemetry.persistence.enrollment.installation.InstallationLossTrackingPaused
 import com.team376.pulsemetry.persistence.enrollment.support.AbstractPersistenceIntegrationTest
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -77,7 +78,7 @@ class InstallationLossMigrationTest : AbstractPersistenceIntegrationTest() {
             }
             // 실제 운영 스크립트를 실행한다. 구 writer가 기록한 누계를 재배포 때 신규 손실로 세면 안 된다.
             script("installation-loss-pause")
-            assertThatThrownBy { report("current", 50) }.isInstanceOf(IllegalStateException::class.java)
+            assertThatThrownBy { report("current", 50) }.isInstanceOf(InstallationLossTrackingPaused::class.java)
             jdbc.sql("UPDATE enrollment.installation_heartbeats SET lost=99 WHERE installation_id=:id").param("id", installation).update()
             script("installation-loss-resume")
             report("current", 99)

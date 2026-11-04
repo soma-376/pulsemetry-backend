@@ -14,8 +14,8 @@ class InstallationLossStore(private val jdbc: JdbcClient, retention: Duration) {
 
     fun record(installationId: UUID, report: InstallationReport, receivedAt: Instant) {
         // rollback 중단 명령과 직렬화한다. 추적이 중단된 채 새 writer가 보고만 갱신해서는 안 된다.
-        check(jdbc.sql("SELECT id FROM enrollment.installation_loss_tracking WHERE stopped_at IS NULL FOR SHARE")
-            .query(UUID::class.java).optional().isPresent) { "손실 추적이 중단되어 있다" }
+        if (!jdbc.sql("SELECT id FROM enrollment.installation_loss_tracking WHERE stopped_at IS NULL FOR SHARE")
+            .query(UUID::class.java).optional().isPresent) throw InstallationLossTrackingPaused()
         if (report.mode == CollectionMode.LOCAL && report.forwarding) observe(installationId, report, receivedAt)
         for (table in listOf("installation_loss_events", "installation_loss_limitations")) {
             jdbc.sql("DELETE FROM enrollment.$table WHERE installation_id=:id AND observed_at<:cutoff")
