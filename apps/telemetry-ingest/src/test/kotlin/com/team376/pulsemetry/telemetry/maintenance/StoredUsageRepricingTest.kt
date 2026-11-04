@@ -45,6 +45,24 @@ class StoredUsageRepricingTest {
 		StoredUsageRepricing.classify(source).also { assertThat(it.disposition).isEqualTo(Disposition.REPRICE) }.target!!
 
 	@Test
+	fun revision12MissingModelsRepriceWithoutChangingSourceAndThenBecomeCurrent() {
+		for ((model, semantics, expected) in listOf(
+			Triple("gpt-6.1-sol", "codex-responses-inclusive-v1", "0.000429"),
+			Triple("claude-haiku-5-5", "claude-code-exclusive-v1", "0.00002165"),
+		)) {
+			val source = row(model = model, rev = 12u, semanticsProfile = semantics)
+			val actual = target(StoredUsageRepricing.decode(encoded(source)))
+			assertThat(actual.event.observation.costEstimatedUsd).isEqualByComparingTo(expected)
+			assertThat(actual.version).isEqualTo(RowVersioning.of(13u, 123u))
+			assertThat(actual.event.org).isEqualTo(source.event.org)
+			assertThat(actual.event.observation.copy(costEstimatedUsd = null,
+				envelope = actual.event.observation.envelope.copy(analysisHash = source.event.observation.envelope.analysisHash)))
+				.isEqualTo(source.event.observation)
+			assertThat(StoredUsageRepricing.classify(actual).disposition).isEqualTo(Disposition.CURRENT)
+		}
+	}
+
+	@Test
 	fun preservesExactTypedSourceAndRepricesOnlyCostHashAndRevision() {
 		val old = row()
 		val decoded = StoredUsageRepricing.decode(encoded(old))
@@ -173,7 +191,7 @@ class StoredUsageRepricingTest {
 			.isInstanceOf(StoredUsageRepricing.Stop::class.java)
 		// 금액만 바뀌는 명시 재평가도 두 배포 판을 지원하며 ID·ingest_seq를 보존한다.
 		val repriced = target(StoredUsageRepricing.decode(encoded(old)))
-		assertThat(repriced.version).isEqualTo(RowVersioning.of(12u, 123u))
+		assertThat(repriced.version).isEqualTo(RowVersioning.of(13u, 123u))
 		assertThat(repriced.event.observation.envelope.observationId).isEqualTo(old.event.observation.envelope.observationId)
 	}
 

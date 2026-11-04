@@ -52,6 +52,39 @@ class CurrentReferencePricingTest {
 
 	@ParameterizedTest
 	@CsvSource(
+		// 100 input, 20 output, 40 cache read, 10 cache create. 독립 USD 산식.
+		"gpt-6.1-sol,codex-responses-inclusive-v1,0.000429",
+		"claude-haiku-5-5,claude-code-exclusive-v1,0.00002165",
+	)
+	fun codeburnSupplementArithmeticAndNulls(model: String, semantics: String, expected: String) {
+		val source = usage(model, create = 10).copy(semanticsProfile = semantics)
+		val result = priced(source)
+		assertThat(result.costEstimatedUsd).isEqualByComparingTo(expected)
+		assertThat(result.copy(costEstimatedUsd = source.costEstimatedUsd)).isEqualTo(source)
+		for (missing in listOf(source.copy(tokensInputUncached = null), source.copy(tokensOutput = null),
+			source.copy(tokensCacheRead = null), source.copy(tokensCacheCreate = null), source.copy(semanticsProfile = "unknown"))) {
+			assertThat(priced(missing).costEstimatedUsd).isNull()
+		}
+		assertThat(priced(source.copy(envelope = source.envelope.copy(model = model + "-unknown"))).costEstimatedUsd).isNull()
+	}
+
+	@ParameterizedTest
+	@CsvSource(
+		// 입력 합은 uncached + 90,000 read + 10,000 create. 경계는 기본 요율이다.
+		"gpt-6.1-sol,codex-responses-inclusive-v1,171999,0.387998",
+		"gpt-6.1-sol,codex-responses-inclusive-v1,172000,0.388",
+		"gpt-6.1-sol,codex-responses-inclusive-v1,172001,0.771004",
+		"claude-haiku-5-5,claude-code-exclusive-v1,0,0.00265",
+		"claude-haiku-5-5,claude-code-exclusive-v1,1,0.0132505",
+	)
+	fun codeburnSupplementLongContext(model: String, semantics: String, uncached: Long, expected: String) {
+		val source = usage(model, create = 10_000).copy(semanticsProfile = semantics,
+			tokensInputUncached = uncached, tokensOutput = 1_000, tokensCacheRead = 90_000)
+		assertThat(priced(source).costEstimatedUsd).isEqualByComparingTo(expected)
+	}
+
+	@ParameterizedTest
+	@CsvSource(
 		// 독립 산식: (100×input + 20×output + 40×read) / 1,000,000. API나 제품 함수를 기대값으로 쓰지 않는다.
 		"claude-opus-5-5,0.000808",
 		"claude-opus-5,0.001020",

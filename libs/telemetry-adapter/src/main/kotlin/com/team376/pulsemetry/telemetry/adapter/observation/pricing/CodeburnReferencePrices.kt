@@ -18,13 +18,14 @@ public object CodeburnReferencePrices {
 	public val CATALOG: PricingCatalog = PricingCatalog(
 		prices = buildMap {
 			ENTRIES.forEach { put(it.model, it.price) }
+			CodeburnSupplementPrices.PRICES.forEach { put(it.model, it) }
 			CurrentPublicPrices.PRICES.forEach { put(it.model, it) }
 		}.values.toList(),
 	)
 
 	public val REFERENCE: ReferenceValuation = ReferenceValuation(
 			asOf = referenceTime, currency = "USD", serviceTier = "standard", geography = "global",
-			sources = listOf("https://github.com/getagentseal/codeburn/tree/v0.9.24") + CurrentPublicPrices.REFERENCE.sources,
+			sources = listOf("https://github.com/getagentseal/codeburn/tree/v0.9.24") + CurrentPublicPrices.REFERENCE.sources + CodeburnSupplementPrices.SOURCE,
 	)
 
 	private fun loadCatalog(): List<Entry> {
