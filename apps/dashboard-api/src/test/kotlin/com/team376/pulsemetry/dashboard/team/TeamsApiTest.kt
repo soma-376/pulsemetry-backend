@@ -150,6 +150,55 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
+	@DisplayName("일별·자동 모드에서도 세션 정렬과 개요·상세·제품의 세션 파생값을 유지한다")
+	fun sessionSortingAndDerivedMetricsInBothBucketModes() {
+		val tenant = DashboardTestStores.insertTenant()
+		val rich = SourceFixtures.insertTeam(tenant, "세션 세 개")
+		val small = SourceFixtures.insertTeam(tenant, "세션 한 개")
+		val alice = SourceFixtures.insertMember(tenant, "session-alice@example.test")
+		val bob = SourceFixtures.insertMember(tenant, "session-bob@example.test")
+		val carol = SourceFixtures.insertMember(tenant, "session-carol@example.test")
+		SourceFixtures.insertEvents(tenant,
+			Event("$tenant-a1", kst("2026-09-08T10:00:00"), teamId = rich, memberId = alice, sessionId = "a1", costEstimatedUsd = BigDecimal("2")),
+			Event("$tenant-a2", kst("2026-09-08T11:00:00"), teamId = rich, memberId = alice, sessionId = "a2", costEstimatedUsd = BigDecimal("4")),
+			Event("$tenant-b", kst("2026-09-09T10:00:00"), teamId = rich, memberId = bob, sessionId = "b", costEstimatedUsd = BigDecimal("6")),
+			Event("$tenant-c", kst("2026-09-09T11:00:00"), teamId = small, memberId = carol, sessionId = "c", costEstimatedUsd = BigDecimal("80")),
+		)
+		for (bucket in listOf("day", "auto")) {
+			val query = "$week&compare=none&bucket=$bucket"
+			// 비용 순서와 반대인 세션 순서를 검증해 sort 옵션 무시를 잡는다.
+			val list = ok(tenant, "/analytics/teams?$query&sort=session")
+			assertThat(list.at("/sort").asString()).isEqualTo("session")
+			assertThat(list.at("/teams/items").list().map { it.path("teamId").asString() }).containsExactly(rich.toString(), small.toString())
+			val snapshot = list.at("/meta/snapshotId").asString()
+			val detail = ok(tenant, "/analytics/teams/$rich?$query&snapshotId=$snapshot").path("team")
+			assertThat(detail.at("/metrics/sessionCount/value").asLong()).isEqualTo(3)
+			assertThat(detail.at("/metrics/sessionsPerUser/value").asDouble()).isEqualTo(1.5)
+			assertThat(detail.at("/metrics/tokensPerSession/value").asDouble()).isEqualTo(110.0)
+			assertThat(detail.at("/metrics/equivalentCostPerSessionUsd/value").asString()).isEqualTo("4.000000")
+			assertThat(detail.at("/modelMix/data/sessionMixAvailable").asBoolean()).isFalse()
+			assertThat(detail.at("/modelMix/data/sessionMixReason").asString()).isEqualTo("multi_model_sessions")
+			assertThat(detail.at("/products/0/sessionCount").asLong()).isEqualTo(3)
+			if (bucket == "auto") assertThat(detail.path("trend").list().last().at("/cumulativeSessionCount/value").asLong()).isEqualTo(3)
+			for (order in listOf("asc", "desc")) {
+				// users는 bucket 옵션 없이 목록 snapshot의 일별·자동 입력을 그대로 계승한다.
+				val path = "/analytics/teams/$rich/users?$week&sort=session&order=$order&limit=1&snapshotId=$snapshot"
+				val first = ok(tenant, path)
+				val second = ok(tenant, "$path&offset=${first.at("/users/nextOffset").asInt()}")
+				val users = first.at("/users/items").list() + second.at("/users/items").list()
+				assertThat(users.map { it.path("memberId").asString() }).containsExactlyElementsOf(
+					(if (order == "asc") listOf(bob, alice) else listOf(alice, bob)).map(UUID::toString))
+				assertThat(users.map { it.at("/usage/sessionCount/value").asLong() }).containsExactlyElementsOf(if (order == "asc") listOf(1L, 2L) else listOf(2L, 1L))
+				assertThat(second.at("/users/nextOffset").isNull).isTrue()
+			}
+			val overview = ok(tenant, "/analytics/overview?$query")
+			assertThat(overview.at("/summary/sessionCount/value").asLong()).isEqualTo(4)
+			assertThat(overview.at("/summary/sessionsPerUser/value").asDouble()).isCloseTo(4.0 / 3.0, org.assertj.core.data.Offset.offset(0.000001))
+			assertThat(overview.at("/summary/equivalentCostPerSessionUsd/value").asString()).isEqualTo("23.000000")
+		}
+	}
+
+	@Test
 	@DisplayName("사례 16 — 목록 snapshot 뒤 원본이 교체돼도 처음 부르는 사용자·상세 endpoint 가 같은 값·순서·distinct 를 낸다")
 	fun sameSnapshotAcrossEndpoints() {
 		val org = seed()
