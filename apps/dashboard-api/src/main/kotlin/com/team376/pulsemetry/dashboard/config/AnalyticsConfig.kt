@@ -7,6 +7,7 @@ import com.team376.pulsemetry.dashboard.analytics.OrganizationPolicies
 import com.team376.pulsemetry.dashboard.analytics.CurrentStateTokens
 import com.team376.pulsemetry.dashboard.analytics.IngestStatusReader
 import com.team376.pulsemetry.dashboard.analytics.IngestThresholds
+import com.team376.pulsemetry.dashboard.ingest.TransmissionLossReader
 import com.team376.pulsemetry.dashboard.member.MembersService
 import com.team376.pulsemetry.dashboard.analytics.SeatLedgerReader
 import com.team376.pulsemetry.dashboard.analytics.SeatService
@@ -45,6 +46,10 @@ import java.time.Clock
  */
 @Configuration(proxyBeanMethods = false)
 class AnalyticsConfig {
+
+    @Bean
+    fun transmissionLossReader(source: JdbcClient, codec: PageCursorCodec, tokens: CurrentStateTokens): TransmissionLossReader =
+        TransmissionLossReader(source, codec, tokens)
 
 	@Bean
 	fun vendorCatalog(source: JdbcClient): VendorCatalog = VendorCatalog(source)
