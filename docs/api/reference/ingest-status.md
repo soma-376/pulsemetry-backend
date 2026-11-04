@@ -37,7 +37,7 @@
   - 전달 대기가 `delayed-after`보다 오래 이어졌다(`installation_heartbeats.pending_since`) → 지연.
   - 그 밖 → 정상. 대기 수가 0이 아니라는 것만으로, 마지막 전달이 오래됐다는 것만으로는 지연이 아니다.
 - 수신 이력이 없으면 설치가 보고하고 있어도 `empty`다(ADR 0034의 뜻 그대로).
-- 현재 상태의 이력 조회가 실패하면 `unknown`/`source_not_available`로 표시하고 `empty`로 위장하지 않는다.
+- 현재 상태의 이력 조회가 실패하면 `unknown`/`source_query_failed`로 표시하고 `empty`로 위장하지 않는다.
   독립적으로 읽을 수 있는 RDS 손실 요약은 유지한다. 인증·조직 권한 조회 실패는 이 fallback으로 우회하지 않는다.
 
 ### 세는 값과 null
