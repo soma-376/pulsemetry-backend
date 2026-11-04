@@ -8,8 +8,8 @@ object UsageValues {
  fun <T> value(raw: T?, reasons: List<String> = emptyList()): Value<T> =
   Value(raw, if (raw == null) "unavailable" else if (reasons.isEmpty()) "complete" else "partial",
    reasons.distinct().ifEmpty { if (raw == null) listOf("no_data") else emptyList() })
- class Values(t: UsageTotals, complete: Boolean, periodReason: String = "current_period_incomplete", detailReasons: List<String> = emptyList()) {
-  private val zero = complete && !t.hasUsage
+ class Values(t: UsageTotals, complete: Boolean, periodReason: String = "current_period_incomplete", detailReasons: List<String> = emptyList(), zeroWhenEmpty: Boolean = true) {
+  private val zero = zeroWhenEmpty && complete && !t.hasUsage
   private val period = if (complete) emptyList() else (listOf(periodReason) + detailReasons).distinct()
   val users = value(if (zero) 0L else t.activeUsers(), period + if (t.unidentifiedRows > 0) listOf("member_identity_missing") else emptyList())
   val sessions = value(if (zero) 0L else t.sessionCount(), period + if (t.sessionlessRows > 0) listOf("session_identity_missing") else emptyList())
@@ -31,6 +31,8 @@ object UsageValues {
   val sessionsPerUser = ratio(sessions, userDenominator, Long::toBigDecimal, Long::toBigDecimal, BigDecimal::toDouble)
   val perSession = ratio(cost, sessions, String::toBigDecimal, Long::toBigDecimal, Money::format)
  }
+ /** 자동 추이는 기록 자체의 결손만 판정한다. complete=true는 수집 완전성 주장이 아니며, 빈 입력을 0으로 만들지 않는다. */
+ fun recorded(totals: UsageTotals) = Values(totals, complete = true, zeroWhenEmpty = false)
  fun <A,B,R> ratio(a: Value<A>, b: Value<B>, toA: (A)->BigDecimal, toB: (B)->BigDecimal, convert: (BigDecimal)->R): Value<R> {
   val numerator = a.value?.let(toA); val denominator = b.value?.let(toB)
   val reasons = a.reasons + b.reasons + if (denominator?.signum() == 0) listOf("zero_denominator") else emptyList()

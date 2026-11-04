@@ -36,6 +36,8 @@ data class UsageTotals(
 	val multiTeamRows: Long,
 	/** 그룹 안 사용량 행의 마지막 source_time. 기간·축으로 이미 좁힌 범위의 값이다. */
 	val lastSourceTime: Instant? = null,
+	/** 버킷 누적에서 distinct 개수를 더하지 않고 실제 의미 호환 그룹의 합집합을 사용한다. */
+	val semanticsGroups: Set<String> = emptySet(),
 ) {
 	data class Component(val sum: Long?, val missingRows: Long)
 
