@@ -4,6 +4,16 @@
 
 [API 목록](../teams.md) · [공통 규칙](../common.md) · [공통 스키마](../common-schemas.md)
 
+## 세션 탭 선택과 API 보존 (PROJ-318)
+
+팀 화면의 선택 탭은 day/auto 모두 비용·토큰이다. 세션 탭 전용 추이·비교·벤더 비중을 화면에서 제거해도 이 API의 세션 필드와 정렬은 유지한다. `sessionCount`, `sessionsPerUser`, `tokensPerSession`, `equivalentCostPerSessionUsd`, `cumulativeSessionCount`, `sessionMixAvailable`, `sessionMixReason`은 기존 의미를 가진다. 팀 목록·사용자의 `sort=session` 요청도 유지한다.
+
+개요 세션 카드·기존 배치, 팀 비용 표의 세션당 환산액, 팀 상세·사용자·구성원 화면과 CSV의 세션 값·상태·사유를 보존한다. `chart_trend`만 화면에서 선택한 비용·토큰 축을 따른다. PROJ-317의 firstSessionBuckets와 일별 firstSessionDays, 고유 세션 누적·정확성 검증을 유지한다. 세션 ID 결손은 세션 지표만 제한하며 정상 비용·토큰 값을 숨기지 않는다.
+
+미배정 행의 사용 관측은 정상 응답의 `pricedUsageRows + unpricedUsageRows`로 판정한다. 두 카운터가 모두 있고 합이 0일 때만 행을 숨긴다. 세션 수나 환산액이 null이어도 합이 양수면 행을 유지한다. 구버전 응답 호환의 optional 카운터가 하나라도 없으면 unknown으로 행을 보존하며 사용이 있다고 단정하지 않는다. 필드 부재·조회 실패를 0으로 바꾸지 않는다. 구성원은 기존 `periodUsage != null`을 사용한다.
+
+원천·snapshot의 세션 식별자, 인증 세션, 마지막 사용·활동·좌석 판단은 변경하지 않는다. 이번 탭 정리는 backend API나 DB migration을 추가하지 않는다. [비율 카드 설계](../../subscription-usage-value-design.md)는 별도 후속 구현이며 세션 지표를 대체하지 않는다.
+
 ### 팀 누적 세션 (ADR 0042)
 
 팀 목록·팀 상세·미배정의 `trend[].cumulativeSessionCount`는 **기간 시작일부터 그날까지 그 팀에서 관측된 고유 세션 수**다.
