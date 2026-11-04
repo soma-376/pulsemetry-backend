@@ -11,6 +11,8 @@ import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.Axis
 import com.team376.pulsemetry.dashboard.analytics.UsageAggregator.Side
 import com.team376.pulsemetry.dashboard.organization.Organization
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
+import com.team376.pulsemetry.dashboard.request.TrendBucketMode
+import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
 import com.team376.pulsemetry.dashboard.store.StoreUnavailableException
 import com.team376.pulsemetry.dashboard.store.StoreQueryRejectedException
 import org.slf4j.LoggerFactory
@@ -24,13 +26,14 @@ import java.util.UUID
 /** 한 snapshot에서 독립 집계를 읽는다. 공통 frame 실패는 HTTP 오류로 전파한다. */
 class OverviewService(private val frames: AnalyticsFrames, private val aggregator: UsageAggregator, private val references: SnapshotReferences) {
  private val log = LoggerFactory.getLogger(OverviewService::class.java)
- fun overview(organization: Organization, requestedBy: UUID, period: ComparedPeriod): OverviewResponse {
-  val f = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId = null)
-  val meta = frames.meta(f).let { Meta(it.organizationId, it.generatedAt, it.dataThrough, it.currency, it.startDate, it.endDate, it.timeZone, it.dayCount, it.dataState, it.currentCoverage) }
+ fun overview(organization: Organization, requestedBy: UUID, period: ComparedPeriod, bucket: TrendBucketMode = TrendBucketMode.DAY): OverviewResponse {
+  val f = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId = null, bucket = bucket)
+  val plan = if (bucket == TrendBucketMode.AUTO) TrendBucketPlan(period.current, f.snapshot.asOf) else null
+  val meta = frames.meta(f, plan?.aggregation("interval")).let { Meta(it.organizationId, it.generatedAt, it.dataThrough, it.currency, it.startDate, it.endDate, it.timeZone, it.dayCount, it.dataState, it.currentCoverage, it.snapshotId, it.trendAggregation, it.collectionPolicy) }
   val comparison = Comparison(period.mode.wire, period.previous?.startDate?.toString(), period.previous?.endDate?.toString(), f.previousCoverage)
   val errors = mutableListOf<SectionError>()
   fun <T> section(name: String, read: () -> T): T? {
-   if (f.empty) return null
+   if (f.empty && !(name == "trend" && plan != null)) return null
    return try { read() } catch (e: StoreUnavailableException) {
     log.warn("overview section={} snapshot={} unavailable", name, f.snapshot.snapshotId, e)
     errors.add(SectionError(name, "source_unavailable", true)); null
@@ -45,7 +48,7 @@ class OverviewService(private val frames: AnalyticsFrames, private val aggregato
    }
   }
   val summary = section("summary") { summary(f) }
-  val trend = section("trend") { trend(f) }
+  val trend = section("trend") { if (plan == null) trend(f) else autoTrend(f, plan) }
   val mix = section("modelMix") { modelMix(f) }
   val teams = section("teamUsage") { teamUsage(f) }
   return OverviewResponse(meta, comparison, summary, trend, mix, teams, errors)
@@ -53,7 +56,7 @@ class OverviewService(private val frames: AnalyticsFrames, private val aggregato
  private fun periodReasons(f: AnalyticsFrames.Frame) = f.periodReasons() + f.periodReasons(previous = true)
  private fun count(f: AnalyticsFrames.Frame, now: Value<Long>, before: Value<Long>?) = metric(now, before, f.period.mode.wire, periodReasons(f), Long::toBigDecimal, BigDecimal::toLong)
  private fun money(f: AnalyticsFrames.Frame, now: Value<String>, before: Value<String>?) = metric(now, before, f.period.mode.wire, periodReasons(f), String::toBigDecimal, Money::format)
- private fun values(f: AnalyticsFrames.Frame, t: UsageTotals, previous: Boolean = false) = Values(t, if (previous) f.previousComplete else f.currentComplete, if (previous) "previous_period_incomplete" else "current_period_incomplete", f.periodReasons(previous))
+ private fun values(f: AnalyticsFrames.Frame, t: UsageTotals, previous: Boolean = false) = if (f.snapshot.queryContract == SnapshotManifestStore.AUTO_QUERY_CONTRACT) UsageValues.recorded(t) else Values(t, if (previous) f.previousComplete else f.currentComplete, if (previous) "previous_period_incomplete" else "current_period_incomplete", f.periodReasons(previous))
  private fun summary(f: AnalyticsFrames.Frame): Summary {
   val now = values(f, aggregator.totals(f.snapshot, Side.CURRENT, Axis.ORGANIZATION).getValue(emptyList()))
   val before = if (f.comparable) values(f, aggregator.totals(f.snapshot, Side.PREVIOUS, Axis.ORGANIZATION).getValue(emptyList()), true) else null
@@ -68,6 +71,19 @@ class OverviewService(private val frames: AnalyticsFrames, private val aggregato
    TrendPoint(date.toString(), observation, if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.cost,
     if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.tokens,
     if (observation == "unobserved") value(null, listOf("no_data") + f.dateReasons(date)) else v.knownCost, v.pricedUsageRows, v.unpricedUsageRows)
+  })
+ }
+ private fun autoTrend(f: AnalyticsFrames.Frame, plan: TrendBucketPlan): Trend {
+  val totals = if (f.empty) emptyMap() else aggregator.bucketTotals(f.snapshot, plan)
+  return Trend("auto", plan.buckets.map { bucket ->
+   val t = totals[listOf(bucket.index.toString())] ?: UsageTotals.EMPTY
+   val values = UsageValues.recorded(t)
+   AutoTrendPoint(bucket.start.toString(), bucket.end.toString(), bucket.temporalState,
+    if (bucket.upcoming) null else t.usageRows,
+    if (bucket.upcoming) value(null, listOf("upcoming")) else values.cost,
+    if (bucket.upcoming) value(null, listOf("upcoming")) else values.tokens,
+    if (bucket.upcoming) value(null, listOf("upcoming")) else values.knownCost,
+    if (bucket.upcoming) null else values.pricedUsageRows, if (bucket.upcoming) null else values.unpricedUsageRows)
   })
  }
  private fun modelMix(f: AnalyticsFrames.Frame): ModelMix {

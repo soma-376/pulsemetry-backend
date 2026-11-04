@@ -20,9 +20,9 @@ import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * 팀 분석 명세의 세 조회와 조직 팀 선택지. 받는 파라미터는 명세의 표 그대로다 — 목록은 기간·비교·`sort`·`limit`(기본 20, 최대 50)·`offset`·`snapshotId`,
- * 상세는 기간·비교·`snapshotId`, 사용자는 기간·`sort`·`order`·`snapshotId`·`limit`(기본 12, 최대 100)·`offset`, 선택지는 `q`·`limit`(기본 50, 최대 100)·`cursor`·`snapshotId`.
- */
+	* 팀 분석 명세의 세 조회와 조직 팀 선택지. 받는 파라미터는 명세의 표 그대로다 — 목록은 기간·비교·`sort`·`limit`(기본 20, 최대 50)·`offset`·`snapshotId`,
+	* 상세는 기간·비교·`snapshotId`, 사용자는 기간·`sort`·`order`·`snapshotId`·`limit`(기본 12, 최대 100)·`offset`, 선택지는 `q`·`limit`(기본 50, 최대 100)·`cursor`·`snapshotId`.
+	*/
 @RestController
 class TeamsController(
 	private val access: OrganizationAccess,
@@ -38,10 +38,12 @@ class TeamsController(
 		request: HttpServletRequest,
 	): TeamsResponse {
 		val organization = access.require(principal, organizationId, DashboardAction.TEAM_ANALYTICS)
-		val (period, sort, page) = QueryReader(request::getParameter).read {
+		val query = QueryReader(request::getParameter)
+		val (period, sort, page) = query.read {
 			Triple(comparedPeriod(), choice("sort", TeamsService.Sort.BY_WIRE, TeamsService.Sort.COST), offsetPage(default = 20, max = 50))
 		}
-		return teams.teams(organization, principal.memberId, period, sort, page, request.getParameter(SNAPSHOT_ID))
+		val bucket = query.read { bucket() }
+		return teams.teams(organization, principal.memberId, period, sort, page, request.getParameter(SNAPSHOT_ID), bucket)
 	}
 
 	@GetMapping("/api/v1/organizations/{organizationId}/analytics/teams/{teamId}")
@@ -54,8 +56,8 @@ class TeamsController(
 		val parsed = TeamKey.parseOrNull(teamId)
 		val organization = access.require(principal, organizationId, DashboardAction.TEAM_ANALYTICS, (parsed as? TeamKey.Team)?.id)
 		val key = parsed ?: throw DashboardException(ErrorCode.NOT_FOUND)
-		val period = QueryReader(request::getParameter).read { comparedPeriod() }
-		return teams.team(organization, principal.memberId, key, period, request.getParameter(SNAPSHOT_ID))
+		val (period, bucket) = QueryReader(request::getParameter).read { comparedPeriod() to bucket() }
+		return teams.team(organization, principal.memberId, key, period, request.getParameter(SNAPSHOT_ID), bucket)
 	}
 
 	@GetMapping("/api/v1/organizations/{organizationId}/analytics/teams/{teamId}/users")
