@@ -43,6 +43,14 @@ class VerificationBrowserHarnessTest : AbstractDashboardApiTest() {
 		val main = mainScenario(seededAt)
 		val zero = missingScenario("0원·0토큰 사용 검증", zero = true)
 		val unpriced = missingScenario("미환산·세션 결손 검증", zero = false)
+		for (scenario in listOf(main, zero, unpriced)) {
+			// 구성원 상세도 조직 설정을 조회하므로 실제 활성 수집 정책을 제공한다.
+			SourceFixtures.insertManifest(scenario.tenant, 1, scenario.member,
+				privacy = """{"collect_user_prompts":false,"collect_user_email":true}""")
+			val settings = get(scenario, "/settings")
+			assertThat(settings.at("/collectionPolicy/version").asInt()).isEqualTo(1)
+			assertThat(settings.at("/collectionPolicy/collectRawContent").asBoolean()).isFalse()
+		}
 		val collection = seedCollection(main, seededAt)
 		val overview = get(main, "/analytics/overview?$period&bucket=auto")
 		assertThat(overview.at("/summary/equivalentCostUsd/value").asString()).isEqualTo("98.123459")
