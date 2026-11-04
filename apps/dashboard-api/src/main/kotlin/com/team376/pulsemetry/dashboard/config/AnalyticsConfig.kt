@@ -8,6 +8,7 @@ import com.team376.pulsemetry.dashboard.analytics.CurrentStateTokens
 import com.team376.pulsemetry.dashboard.analytics.IngestStatusReader
 import com.team376.pulsemetry.dashboard.analytics.IngestThresholds
 import com.team376.pulsemetry.dashboard.ingest.TransmissionLossReader
+import com.team376.pulsemetry.dashboard.ingest.LossSnapshotStore
 import com.team376.pulsemetry.dashboard.member.MembersService
 import com.team376.pulsemetry.dashboard.analytics.SeatLedgerReader
 import com.team376.pulsemetry.dashboard.analytics.SeatService
@@ -38,6 +39,7 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
+import org.springframework.transaction.TransactionDefinition
 import tools.jackson.databind.ObjectMapper
 import java.time.Clock
 
@@ -48,8 +50,15 @@ import java.time.Clock
 class AnalyticsConfig {
 
     @Bean
-    fun transmissionLossReader(source: JdbcClient, codec: PageCursorCodec, tokens: CurrentStateTokens): TransmissionLossReader =
-        TransmissionLossReader(source, codec, tokens)
+    fun transmissionLossReader(source: JdbcClient, sourceDataSource: HikariDataSource,
+        @Qualifier(CacheStoreConfig.CACHE_DATA_SOURCE) cacheDataSource: HikariDataSource,
+        codec: PageCursorCodec, tokens: CurrentStateTokens, mapper: ObjectMapper, clock: Clock): TransmissionLossReader {
+        val tx = TransactionTemplate(DataSourceTransactionManager(sourceDataSource)).apply {
+            isReadOnly = true
+            isolationLevel = TransactionDefinition.ISOLATION_REPEATABLE_READ
+        }
+        return TransmissionLossReader(source, codec, tokens, tx, LossSnapshotStore(JdbcClient.create(cacheDataSource), mapper), clock)
+    }
 
 	@Bean
 	fun vendorCatalog(source: JdbcClient): VendorCatalog = VendorCatalog(source)

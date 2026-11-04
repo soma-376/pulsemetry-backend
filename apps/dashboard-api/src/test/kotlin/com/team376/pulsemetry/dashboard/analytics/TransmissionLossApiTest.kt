@@ -3,15 +3,20 @@ package com.team376.pulsemetry.dashboard.analytics
 import com.team376.pulsemetry.dashboard.authentication.DashboardPrincipal
 import com.team376.pulsemetry.dashboard.authentication.Role
 import com.team376.pulsemetry.dashboard.ingest.TransmissionLossReader
+import com.team376.pulsemetry.dashboard.error.DashboardException
+import com.team376.pulsemetry.dashboard.error.ErrorCode
+import com.team376.pulsemetry.dashboard.request.PageRequest
 import com.team376.pulsemetry.dashboard.support.AbstractDashboardApiTest
 import com.team376.pulsemetry.dashboard.support.DashboardHttp
 import com.team376.pulsemetry.dashboard.support.DashboardTestStores
 import com.team376.pulsemetry.dashboard.support.SourceFixtures
 import com.team376.pulsemetry.dashboard.support.TestDashboardAuthenticator
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import java.sql.Timestamp
+import java.sql.DriverManager
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -66,21 +71,25 @@ class TransmissionLossApiTest : AbstractDashboardApiTest() {
     @Test fun `관측 없는 0과 확인된 0 및 카운터 감소 제한을 구분한다`() {
         val tenant = DashboardTestStores.insertTenant()
         val id = installation(tenant)
-        val end = Instant.now().plusSeconds(1)
+        val end = Instant.now()
         val unavailable = losses.summary(tenant, end)
         assertThat(unavailable.availability).isEqualTo("unavailable")
         assertThat(unavailable.payloadCount).isNull()
         assertThat(unavailable.reasons).contains("no_observation")
+        assertThat(get(tenant, "/loss-installations?windowEnd=$end").statusCode()).isEqualTo(503)
         writer.sql("""INSERT INTO enrollment.installation_loss_runs
             (installation_id,run_id,tenant_id,high_water_lost,first_observed_at,last_observed_at)
             VALUES (:id,'zero',:tenant,0,:at,:at)""").param("id", id).param("tenant", tenant).param("at", Timestamp.from(end.minusMillis(100))).update()
-        val partial = losses.summary(tenant, end)
+        val partial = losses.summary(tenant, end.plusMillis(1))
         assertThat(partial.payloadCount).isZero()
         assertThat(partial.availability).isEqualTo("partial")
         assertThat(partial.reasons).contains("history_incomplete")
+        val empty = get(tenant, "/loss-installations?windowEnd=${partial.windowEnd}")
+        assertThat(empty.statusCode()).describedAs(empty.body()).isEqualTo(200)
+        assertThat(DashboardHttp.json(empty).path("installations").path("totalCount").asInt()).isZero()
         writer.sql("""INSERT INTO enrollment.installation_loss_limitations(tenant_id,installation_id,run_id,reason,observed_at)
             VALUES (:tenant,:id,'zero','counter_decreased',:at)""").param("tenant", tenant).param("id", id).param("at", Timestamp.from(end.minusMillis(50))).update()
-        assertThat(losses.summary(tenant, end).reasons).contains("counter_decreased")
+        assertThat(losses.summary(tenant, end.plusMillis(2)).reasons).contains("counter_decreased")
     }
 
     @Test fun `추적 근거가 168시간보다 오래되면 보고 공백만으로 가용성을 낮추지 않는다`() {
@@ -124,6 +133,8 @@ class TransmissionLossApiTest : AbstractDashboardApiTest() {
             assertThat(loss.path("payloadCount").isNull).isTrue()
             assertThat(loss.path("availability").asString()).isEqualTo("unavailable")
             assertThat(loss.path("reasons").path(0).asString()).isEqualTo("query_failed")
+            val end = loss.path("windowEnd").asString()
+            assertThat(get(tenant, "/loss-installations?windowEnd=$end").statusCode()).isEqualTo(503)
         } finally { writer.sql("ALTER TABLE enrollment.installation_loss_events_unavailable RENAME TO installation_loss_events").update() }
     }
 
@@ -161,5 +172,47 @@ class TransmissionLossApiTest : AbstractDashboardApiTest() {
         assertThat(get(tenant, "/loss-installations").statusCode()).isEqualTo(400)
         assertThat(get(tenant, "/loss-installations?windowEnd=bad").statusCode()).isEqualTo(400)
         assertThat(get(tenant, "/loss-installations?windowEnd=${Instant.now().plusSeconds(60)}").statusCode()).isEqualTo(400)
+        assertThat(get(tenant, path).statusCode()).isEqualTo(409)
+    }
+
+    @Test fun `늦은 commit과 상태 변경은 같은 기준의 요약과 모든 상세 페이지를 바꾸지 않는다`() {
+        val tenant = DashboardTestStores.insertTenant()
+        val ids = List(3) { installation(tenant) }.sortedBy { it.toString() }
+        val end = Instant.now().minusSeconds(1)
+        event(tenant, ids[1], end.minusSeconds(5), 2)
+        event(tenant, ids[2], end.minusSeconds(5), 3)
+        val db = DashboardTestStores.postgres
+        DriverManager.getConnection(db.jdbcUrl, db.username, db.password).use { connection ->
+            connection.autoCommit = false
+            connection.prepareStatement("""INSERT INTO enrollment.installation_loss_events
+                (tenant_id,installation_id,run_id,payload_count,observed_at) VALUES (?,?,'late',100,?)""").use {
+                it.setObject(1, tenant)
+                it.setObject(2, ids[0])
+                it.setTimestamp(3, Timestamp.from(end.minusSeconds(1)))
+                it.executeUpdate()
+            }
+            val summary = losses.summary(tenant, end)
+            assertThat(summary.payloadCount).isEqualTo(5)
+            val firstResponse = get(tenant, "/loss-installations?windowEnd=$end&limit=1")
+            assertThat(firstResponse.statusCode()).describedAs(firstResponse.body()).isEqualTo(200)
+            val first = DashboardHttp.json(firstResponse)
+            val cursor = first.path("installations").path("nextCursor").asString()
+            connection.commit()
+            writer.sql("UPDATE enrollment.installations SET status='revoked' WHERE id=:id").param("id", ids[2]).update()
+            val secondResponse = get(tenant, "/loss-installations?windowEnd=$end&limit=1&cursor=$cursor")
+            assertThat(secondResponse.statusCode()).describedAs(secondResponse.body()).isEqualTo(200)
+            val second = DashboardHttp.json(secondResponse)
+            val rows = listOf(first, second).map { it.path("installations").path("items").path(0) }
+            assertThat(rows.sumOf { it.path("payloadCount").asLong() }).isEqualTo(5)
+            assertThat(rows.map { it.path("installationId").asString() }).containsExactly(ids[1].toString(), ids[2].toString())
+            assertThat(rows.map { it.path("status").asString() }).containsOnly("active")
+            assertThat(losses.summary(tenant, end)).isEqualTo(summary)
+            // 같은 PostgreSQL 마이크로초 안의 다른 기준도 문자열 키로 별개다.
+            val newer = losses.summary(tenant, end.plusNanos(1))
+            assertThat(newer.payloadCount).isEqualTo(105)
+            assertThat(newer.affectedInstallationCount).isEqualTo(3)
+            assertThatThrownBy { losses.installations(tenant, end, PageRequest(20, null), null, end.plusSeconds(600)) }
+                .isInstanceOfSatisfying(DashboardException::class.java) { assertThat(it.code).isEqualTo(ErrorCode.SNAPSHOT_EXPIRED) }
+        }
     }
 }
