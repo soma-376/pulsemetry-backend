@@ -192,5 +192,7 @@ type AlertResponse = { meta: AlertsMeta; alert: Alert };
 평가 중단 중 발생했다가 이미 해소된 과거 사건은 복원하지 않는다. 조회 후 도착한 보고는 다음 성공 평가에 반영한다.
 
 공통 미확인 수는 collection을 포함하며 보안 전용 목록은 제외한다. category=collection은 시스템 규칙의 평가 상태를 요약하고,
-category 생략은 기존 사용자 규칙과 시스템 규칙을 함께 요약한다. 시스템 평가 대기는 `evaluation_pending`이며 0건으로 위장하지 않는다.
+category 생략은 기존 사용자 규칙과 시스템 규칙을 함께 요약한다. 시스템 평가 대기는 `evaluation_pending`이며 0건으로 위장하지 않는다. 현재 시스템 평가가
+`failed` 또는 `not_evaluated`이면 개요 미확인 수는 `unavailable`과 해당 사유를 반환하고 범주별 수량도 null로 둔다.
+이미 발생한 알림 목록과 확인 동작은 유지한다.
 화면은 `보고 공백 지속`/`보고 재개로 해소`/폐기 종료 상태와 `미확인`/`확인함`을 따로 표시한다.
