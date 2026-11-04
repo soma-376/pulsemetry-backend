@@ -112,6 +112,7 @@ E = enrollment-api, D = dashboard-api. 같은 경로라도 서버가 다르면 �
 | 74 | E | GET | `/api/v1/check-updates` | [데몬 업데이트 확인](endpoints/74-check-updates.md) |
 | 75 | E | GET | `/api/v1/healthz` | [생존 확인](endpoints/75-get-enrollment-health.md) |
 | 76 | D | GET | `/api/v1/healthz` | [생존 확인](endpoints/76-get-dashboard-health.md) |
+| 77 | D | GET | `/api/v1/organizations/{organizationId}/ingest-status/loss-installations` | [손실 영향 기기](endpoints/77-list-loss-installations.md) |
 
 ## 문서 유지
 

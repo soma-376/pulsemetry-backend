@@ -7,6 +7,7 @@
 | 번호 | API | 기능 | 서버 |
 | --- | --- | --- | --- |
 | 19 | [GET `/api/v1/organizations/{organizationId}/ingest-status`](endpoints/19-get-ingest-status.md) | 현재 수집 상태 | dashboard-api |
+| 77 | [GET `/api/v1/organizations/{organizationId}/ingest-status/loss-installations`](endpoints/77-list-loss-installations.md) | 손실 영향 기기 | dashboard-api |
 
 <a id="feature-reference"></a>
 
