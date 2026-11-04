@@ -36,9 +36,10 @@ Authorization: Bearer <Pulsemetry access_token>
 ```
 
 창은 `[windowEnd − 168시간, windowEnd)`이며 분석 날짜·팀·벤더 필터를 받지 않는다.
-다음 페이지는 동일한 창과 snapshotId를 유지한다. windowEnd는 서버 현재 시각보다 미래일 수 없고
-요청 시각부터 10분 이전이면 새 요약을 조회해야 한다. 잘못된 시각·페이지 범위·cursor는 400이다.
-기존 cursor의 조직·필터 격리와 snapshot 만료 규칙을 유지한다.
+windowEnd는 헤더가 반환한 값이어야 한다. 최초 기기별 집계와 요약을 10분간 고정하며 다음 페이지는
+동일한 창·snapshotId의 cache payload를 읽는다. 늦게 commit된 증가분은 이 결과를 변경하지 않는다.
+해당 cache가 없거나 만료됐으면 409 `snapshot_expired`로 새 헤더 조회를 요구한다.
+미래 windowEnd·잘못된 시각·페이지 범위·cursor는 400이다. 기존 cursor의 조직·필터 격리를 유지한다.
 
 ## Response
 
@@ -58,4 +59,4 @@ Authorization: Bearer <Pulsemetry access_token>
 ```
 
 양수 손실을 기록한 설치만 포함하며 설치가 폐기되었어도 `revoked`로 남긴다.
-`lastObservedAt`은 마지막 증가분의 **서버 확인 시각**이다. [전체 규칙·스키마](../reference/ingest-status.md)를 따른다.
+`lastObservedAt`은 마지막 증가분의 **서버 확인 시각**이며 `meta.asOf`는 `windowEnd`다. [전체 규칙·스키마](../reference/ingest-status.md)를 따른다.

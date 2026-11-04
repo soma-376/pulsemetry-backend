@@ -122,7 +122,10 @@ type TransmissionLoss = {
 
 [GET 손실 영향 기기](../endpoints/77-list-loss-installations.md)는 요약의 `windowEnd`를 필수로 받는다.
 후속 페이지는 같은 창·`snapshotId`·cursor를 유지한다. 설치 ID·기기명·구성원·손실 수·마지막 증가분 확인 시각과
-현재 설치 상태를 반환하며 폐기 설치도 포함한다. 정렬·cursor는 해당 창의 목록에 고정한다.
+현재 설치 상태를 반환하며 폐기 설치도 포함한다. 정렬·cursor는 해당 창의 목록에 고정한다. 요약 조회 때 한 번 읽은 기기 집계에서 합계·영향 수를 계산하고,
+기기 목록·summary를 조직·windowEnd별 cache에 10분간 보존한다. 상세는 이 payload를 읽으므로 원천의
+늦은 commit이 합계나 후속 페이지를 바꾸지 않는다. 해당 결과가 없거나 만료되면 409 snapshot_expired이며
+새 헤더 조회로 다시 시작한다. 미래 windowEnd는 400이다. meta.asOf는 windowEnd다.
 조회 실패를 빈 목록이나 0으로 대신하지 않는다.
 
 ```ts
