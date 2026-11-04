@@ -59,4 +59,10 @@ windowEnd는 헤더가 반환한 값이어야 한다. 최초 기기별 집계와
 ```
 
 양수 손실을 기록한 설치만 포함하며 설치가 폐기되었어도 `revoked`로 남긴다.
+기기명·구성원·설치 상태는 `windowEnd`의 최초 조회 시점 기준이며 최대 10분간 고정된다.
+그 뒤의 폐기·기기 정보 변경은 새 헤더 조회에서 반영한다.
+
+해당 snapshot의 `availability=unavailable`이면 상세는 503 `unavailable` 오류로 거부한다.
+`query_failed`뿐 아니라 `no_observation` 등 수량이 null인 결과를 빈 목록 0건으로 바꾸지 않는다.
+`complete` 또는 `partial`이고 확인된 손실 수량이 0이면 200의 빈 목록(`items=[]`, `totalCount=0`)을 반환한다.
 `lastObservedAt`은 마지막 증가분의 **서버 확인 시각**이며 `meta.asOf`는 `windowEnd`다. [전체 규칙·스키마](../reference/ingest-status.md)를 따른다.
