@@ -251,17 +251,31 @@ class BootstrapApiTest {
                 val response = get("/$path?code=$code")
                 assertFailure(response, reason, code.takeIf { it.isNotEmpty() })
                 val directory = Files.createTempDirectory("bootstrap-failure-").toFile()
+                // 출력 파일은 검사할 작업 디렉터리 밖에 두고, 파이프가 차서 종료를 막지 않게 한다.
+                val output = Files.createTempDirectory("bootstrap-output-").toFile()
+                val stdout = output.resolve("stdout")
+                val stderr = output.resolve("stderr")
+                var process: Process? = null
                 try {
-                    val process = ProcessBuilder(command).directory(directory).apply {
+                    process = ProcessBuilder(command).directory(directory).apply {
                         environment()["POWERSHELL_TELEMETRY_OPTOUT"] = "true"
+                        redirectOutput(stdout)
+                        redirectError(stderr)
                     }.start()
                     process.outputStream.bufferedWriter().use { it.write(response.body()) }
-                    assertThat(process.waitFor(10, TimeUnit.SECONDS)).isTrue()
-                    assertThat(process.exitValue()).isEqualTo(1)
-                    assertThat(process.inputStream.bufferedReader().readText()).isEmpty()
-                    assertThat(process.errorStream.bufferedReader().readText()).contains(reason)
+                    // CI의 PowerShell 최초 기동 시간을 포함하되 실행에는 유한한 상한을 둔다.
+                    assertThat(process.waitFor(30, TimeUnit.SECONDS))
+                        .withFailMessage("%s (%s) 실행 시간 초과: %s\nstdout: %s\nstderr: %s",
+                            path, reason, command, stdout.readText(), stderr.readText()).isTrue()
+                    assertThat(process.exitValue()).describedAs("%s (%s): %s", path, reason, stderr.readText()).isEqualTo(1)
+                    assertThat(stdout.readText()).isEmpty()
+                    assertThat(stderr.readText()).contains(reason)
                     assertThat(directory.listFiles()).isEmpty()
-                } finally { directory.deleteRecursively() }
+                } finally {
+                    process?.let { if (it.isAlive) { it.destroyForcibly(); it.waitFor(5, TimeUnit.SECONDS) } }
+                    output.deleteRecursively()
+                    directory.deleteRecursively()
+                }
             }
         }
         assertThat(jdbc.sql("SELECT count(*) FROM enrollment.installations").query(Int::class.java).single()).isZero()
