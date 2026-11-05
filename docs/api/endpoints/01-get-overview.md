@@ -35,7 +35,7 @@ Authorization: Bearer <Pulsemetry access_token>
   startDate: string; // 필수 YYYY-MM-DD
   endDate: string; // 필수, 종료일 포함, 1~366일
   timeZone?: "Asia/Seoul"; // 기본 Asia/Seoul
-  bucket?: "day" | "auto"; // 생략/day는 기존 일별 계약, auto는 자동 시간 버킷
+  bucket?: "day" | "auto"; // 생략/auto는 자동 시간 버킷, day는 기존 일별 계약
   compare?: "prev_week" | "prev_period" | "none"; // 기본 prev_week
 }
 ```

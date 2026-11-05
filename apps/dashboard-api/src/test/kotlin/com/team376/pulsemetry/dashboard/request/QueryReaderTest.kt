@@ -24,9 +24,9 @@ class QueryReaderTest {
 	private fun reader(vararg params: Pair<String, String>) = QueryReader(mapOf(*params)::get)
 
 	@Test
-	@DisplayName("bucket은 생략 시 day이고 day와 auto만 허용한다")
+	@DisplayName("bucket은 생략 시 auto이고 day와 auto만 허용한다")
 	fun trendBucketMode() {
-		assertThat(reader().read { bucket() }).isEqualTo(TrendBucketMode.DAY)
+		assertThat(reader().read { bucket() }).isEqualTo(TrendBucketMode.AUTO)
 		assertThat(reader("bucket" to "day").read { bucket() }).isEqualTo(TrendBucketMode.DAY)
 		assertThat(reader("bucket" to "auto").read { bucket() }).isEqualTo(TrendBucketMode.AUTO)
 		for (invalid in listOf("", "AUTO", "hour", " day")) {

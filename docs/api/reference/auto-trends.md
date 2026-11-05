@@ -4,9 +4,9 @@
 
 ## 요청과 호환성
 
-개요·팀 목록·팀 상세만 `bucket?: "day" | "auto"`를 받는다. 생략 또는 day는 기존 응답과 집계를 유지한다. 다른 값은 400 `unsupported_value`다. 사용자 목록에는 bucket을 추가하지 않는다.
+개요·팀 목록·팀 상세만 `bucket?: "day" | "auto"`를 받는다. 생략 또는 auto는 날짜 범위와 시간대로 자동 집계한다. 명시적 day는 기존 일별 응답과 집계를 유지한다. 다른 값은 400 `unsupported_value`다. 사용자 목록에는 bucket을 추가하지 않는다.
 
-자동 snapshot의 `query_contract`는 `dashboard-auto-trend-v1`, 기존 일별은 `dashboard-v7`이다. 팀 목록·상세에서 요청 모드와 snapshot이 다르거나 snapshot이 만료되면 409 `snapshot_expired`로 재조회를 요구한다. 자동 목록의 다음 페이지·상세는 `bucket=auto`와 같은 snapshotId를 유지한다. 사용자 목록은 전달된 snapshot의 계약과 발생 시각 상한을 계승한다.
+자동 snapshot의 `query_contract`는 `dashboard-auto-trend-v2`, 기존 일별은 `dashboard-v7`이다. 팀 목록·상세에서 요청 모드와 snapshot이 다르거나 snapshot이 만료되면 409 `snapshot_expired`로 재조회를 요구한다. 자동 목록의 다음 페이지·상세는 bucket을 생략하고 같은 snapshotId를 유지한다. 사용자 목록은 전달된 snapshot의 계약과 발생 시각 상한을 계승한다.
 
 KST 조회 시작에 맞춰 전체 기간을 6~12개로 계획한다. 아래 자동 버킷 2판 정책을 적용하고, 응답은 현재 기준 effectiveEnd 이전 구간만 포함한다. 원본 source_time으로 집계하며 일별 값을 분배하거나 보간하지 않는다.
 

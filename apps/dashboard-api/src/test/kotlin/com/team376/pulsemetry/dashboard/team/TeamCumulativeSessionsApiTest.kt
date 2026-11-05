@@ -36,7 +36,7 @@ class TeamCumulativeSessionsApiTest : AbstractDashboardApiTest() {
 
 	private fun kst(dateTime: String): Instant = LocalDateTime.parse(dateTime).atZone(QueryReader.SEOUL).toInstant()
 
-	private val week = "startDate=2026-09-07&endDate=2026-09-13"
+	private val week = "bucket=day&startDate=2026-09-07&endDate=2026-09-13"
 
 	private data class Org(val tenant: UUID, val a: UUID, val b: UUID, val memberA: UUID, val memberB: UUID, val installation: UUID)
 
