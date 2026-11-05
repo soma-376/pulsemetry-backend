@@ -36,7 +36,7 @@ class OverviewApiTest : AbstractDashboardApiTest() {
 
 	private fun overview(tenant: UUID, query: String): JsonNode {
 		val response = http.send(
-			"/api/v1/organizations/$tenant/analytics/overview?$query",
+			"/api/v1/organizations/$tenant/analytics/overview?bucket=day&$query",
 			headers = mapOf("Authorization" to TestDashboardAuthenticator.header(DashboardPrincipal(tenant, UUID.randomUUID(), Role.ADMIN))),
 		)
 		assertThat(response.statusCode()).describedAs(response.body()).isEqualTo(200)

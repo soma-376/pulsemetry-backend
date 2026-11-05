@@ -33,7 +33,7 @@ class PeriodCompletenessApiTest : AbstractDashboardApiTest() {
 
 	private fun kst(dateTime: String): Instant = LocalDateTime.parse(dateTime).atZone(QueryReader.SEOUL).toInstant()
 
-	private val week = "startDate=2026-09-07&endDate=2026-09-13&compare=prev_week"
+	private val week = "bucket=day&startDate=2026-09-07&endDate=2026-09-13&compare=prev_week"
 
 	private data class Org(val tenant: UUID, val team: UUID, val member: UUID, val installation: UUID)
 

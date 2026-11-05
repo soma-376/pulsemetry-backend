@@ -1,6 +1,6 @@
 # 팀 분석·관리 — 기능 규칙·공유 스키마
 
-> `bucket=auto`는 [자동 시간 추이 계약](auto-trends.md)을 적용한다. 아래의 날짜별 추이·일별 완전성 규칙은 옵션 생략 또는 `bucket=day`에 해당한다. 자동 응답은 별도 DTO와 snapshot 계약을 사용한다.
+> `bucket=auto`는 [자동 시간 추이 계약](auto-trends.md)을 적용한다. 아래의 날짜별 추이·일별 완전성 규칙은 명시적 `bucket=day`에 해당한다. 자동 응답은 별도 DTO와 snapshot 계약을 사용한다.
 
 [API 목록](../teams.md) · [공통 규칙](../common.md) · [공통 스키마](../common-schemas.md)
 
