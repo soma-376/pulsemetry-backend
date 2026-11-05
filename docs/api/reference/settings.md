@@ -2,6 +2,8 @@
 
 [API 목록](../settings.md) · [공통 규칙](../common.md) · [공통 스키마](../common-schemas.md)
 
+현재 `monthlySeatFeeUsd`는 좌석별 금액을 이미 합산한 월 총액이며 summary는 현재 유효 계약의 합이다. 좌석 수를 다시 곱하거나 선택 기간의 계약액으로 해석하지 않는다. [구독료 대비 사용 환산액 설계](../../subscription-usage-value-design.md)의 효력 이력·일할 배분은 후속 범위이며 이 API의 의미는 유지한다.
+
 ## 응답 스키마
 
 타입 표기는 HTTP JSON의 필드·null 여부를 나타낸다. 아래에 정의되지 않은 공통·연관 타입은 이 문서 끝의 링크로 연결한다.

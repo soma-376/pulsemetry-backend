@@ -239,6 +239,47 @@ class MembersApiTest : AbstractDashboardApiTest() {
 	}
 
 	@Test
+	@DisplayName("세션 ID와 금액이 없는 사용도 구성원 활동·마지막 사용·미배정 행 수를 유지한다")
+	fun sessionlessUnpricedUsageIsStillObservedActivity() {
+		val tenant = DashboardTestStores.insertTenant()
+		val observed = SourceFixtures.insertMember(tenant, "observed@example.test")
+		val idle = SourceFixtures.insertMember(tenant, "unobserved@example.test")
+		val usedAt = kst("2026-09-09T10:00:00")
+		SourceFixtures.insertEvents(tenant, Event("$tenant-unpriced-sessionless", usedAt, memberId = observed, sessionId = null))
+		val dashboard = ok(tenant, "/members/dashboard?$week")
+		val member = dashboard.at("/members/items").list().single { it.path("memberId").asString() == observed.toString() }
+		assertThat(member.path("periodUsage").isNull).isFalse()
+		assertThat(member.at("/periodUsage/sessionCount/value").isNull).isTrue()
+		assertThat(member.at("/periodUsage/sessionCount/reasons").list().map { it.asString() }).contains("session_identity_missing").doesNotContain("pricing_missing")
+		assertThat(member.at("/periodUsage/equivalentCostUsd/value").isNull).isTrue()
+		assertThat(member.at("/periodUsage/equivalentCostUsd/reasons").list().map { it.asString() }).contains("pricing_missing").doesNotContain("session_identity_missing")
+		assertThat(Instant.parse(member.path("lastUsedAt").asString())).isEqualTo(usedAt)
+		val snapshot = dashboard.at("/meta/snapshotId").asString()
+		assertThat(ok(tenant, "/members?$week&snapshotId=$snapshot&status=active").at("/members/items").list().map { it.path("memberId").asString() }).containsExactly(observed.toString())
+		assertThat(ok(tenant, "/members?$week&snapshotId=$snapshot&status=unobserved").at("/members/items").list().map { it.path("memberId").asString() }).containsExactly(idle.toString())
+		for (bucket in listOf("day", "auto")) {
+			val teams = ok(tenant, "/analytics/teams?$week&compare=none&bucket=$bucket")
+			val unassigned = teams.path("unassigned")
+			assertThat(unassigned.at("/metrics/pricedUsageRows").asLong()).isZero()
+			assertThat(unassigned.at("/metrics/unpricedUsageRows").asLong()).isEqualTo(1)
+			assertThat(unassigned.at("/metrics/sessionCount/value").isNull).isTrue()
+			assertThat(unassigned.at("/metrics/equivalentCostUsd/value").isNull).isTrue()
+			assertThat(unassigned.at("/metrics/totalTokens/value").asLong()).isEqualTo(110)
+			assertThat(unassigned.at("/metrics/totalTokens/reasons").list().map { it.asString() }).doesNotContain("session_identity_missing", "pricing_missing")
+			assertThat(unassigned.at("/products/0/sessionCount").isNull).isTrue()
+			assertThat(unassigned.at("/products/0/totalTokens").asLong()).isEqualTo(110)
+			if (bucket == "auto") {
+				assertThat(unassigned.path("trend").list().sumOf { it.path("usageRows").asLong() }).isEqualTo(1)
+				assertThat(unassigned.path("trend").list().last().at("/cumulativeTotalTokens/status").asString()).isEqualTo("complete")
+			}
+			val teamSnapshot = teams.at("/meta/snapshotId").asString()
+			val users = ok(tenant, "/analytics/teams/unassigned/users?$week&snapshotId=$teamSnapshot&sort=session")
+			assertThat(users.at("/users/items/0/memberId").asString()).isEqualTo(observed.toString())
+			assertThat(Instant.parse(users.at("/users/items/0/lastUsedAt").asString())).isEqualTo(usedAt)
+		}
+	}
+
+	@Test
 	@DisplayName("수집 이력이 없어도 관리 목록은 동작한다 — 사용량 값만 null")
 	fun rosterWithoutTelemetry() {
 		val tenant = DashboardTestStores.insertTenant()
