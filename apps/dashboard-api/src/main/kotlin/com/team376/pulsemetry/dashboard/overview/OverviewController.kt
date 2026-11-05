@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController
 
 /**
  * `GET /api/v1/organizations/{organizationId}/analytics/overview` (개요 명세). 받는 파라미터는 `startDate`·`endDate`·`compare`·`timeZone`.
- * 요청마다 snapshot 을 새로 만들고 그 ID 는 응답에 싣지 않는다.
+ * 요청마다 snapshot 을 새로 만들며 자동 모드만 그 ID와 시간 집계 메타를 응답에 싣는다.
  */
 @RestController
 class OverviewController(
@@ -29,7 +29,7 @@ class OverviewController(
 		request: HttpServletRequest,
 	): OverviewResponse {
 		val organization = access.require(principal, organizationId, DashboardAction.ORGANIZATION_ANALYTICS)
-		val period = QueryReader(request::getParameter).read { comparedPeriod() }
-		return overview.overview(organization, principal.memberId, period)
+		val (period, bucket) = QueryReader(request::getParameter).read { comparedPeriod() to bucket() }
+		return overview.overview(organization, principal.memberId, period, bucket)
 	}
 }

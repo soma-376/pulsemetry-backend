@@ -3,12 +3,13 @@ package com.team376.pulsemetry.dashboard.team
 import com.team376.pulsemetry.dashboard.analytics.*
 
 import com.team376.pulsemetry.dashboard.analytics.Value
+import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
 import java.math.BigDecimal
 import java.time.LocalDate
 
 /** 팀 화면의 파생값과 비교 판정은 개요와 같은 근거를 사용한다. */
 object TeamScreenValues {
- private fun values(frame: AnalyticsFrames.Frame, totals: UsageTotals, previous: Boolean = false) = UsageValues.Values(
+ private fun values(frame: AnalyticsFrames.Frame, totals: UsageTotals, previous: Boolean = false) = if (frame.snapshot.queryContract == SnapshotManifestStore.AUTO_QUERY_CONTRACT) UsageValues.recorded(totals) else UsageValues.Values(
   totals, if (previous) frame.previousComplete else frame.currentComplete,
   if (previous) "previous_period_incomplete" else "current_period_incomplete", frame.periodReasons(previous),
  )
@@ -36,7 +37,7 @@ object TeamScreenValues {
  }
  fun cache(frame: AnalyticsFrames.Frame, totals: UsageTotals): Value<Double> {
   val ratio = totals.cacheHitRatio()
-  val reasons = frame.periodReasons() + buildList {
+  val reasons = (if (frame.snapshot.queryContract == SnapshotManifestStore.AUTO_QUERY_CONTRACT) emptyList() else frame.periodReasons()) + buildList {
    if (ratio == null) add("cache_data_unavailable")
    if (totals.hasUsage && !totals.semanticsUniform) add("token_semantics_incompatible")
    if (totals.cacheEligibleInput() == 0L) add("zero_denominator")

@@ -41,6 +41,7 @@ class SnapshotCopySql(
 		val deletedBefore: Instant?,
 		val purgeAfter: Instant,
 		val asOf: Instant,
+		val cutoffAtAsOf: Boolean = false,
 	)
 
 	fun intake(scope: Scope): Statement {
@@ -57,7 +58,12 @@ class SnapshotCopySql(
 			params["previous_from"] = ClickHouseParam.instant(it.from)
 			params["previous_until"] = ClickHouseParam.instant(it.until)
 		}
-		val where = "tenant_id = {tenant:String} AND record_status = 'active' AND ($inCurrent OR $inPrevious)${boundary(scope)}"
+		// 사용량과 관측 일자가 같은 입구를 지나므로 현재·비교 기간 모두 동일한 기준 시각으로 고정된다.
+		val cutoff = if (scope.cutoffAtAsOf) {
+			params["as_of"] = ClickHouseParam.instant(scope.asOf)
+			" AND source_time < {as_of:DateTime64(9, 'UTC')}"
+		} else ""
+		val where = "tenant_id = {tenant:String} AND record_status = 'active' AND ($inCurrent OR $inPrevious)${boundary(scope)}$cutoff"
 
 		val sql = """
 			INSERT INTO snapshot_intake ($INTAKE_COLUMNS)

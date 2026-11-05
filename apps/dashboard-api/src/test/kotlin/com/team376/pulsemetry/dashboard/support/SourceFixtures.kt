@@ -48,6 +48,7 @@ object SourceFixtures {
 		val qualityFlags: List<String> = emptyList(),
 		/** `usage = false` 인 도구 결과 행의 도구 이름(ADR 0051 미승인 도구). */
 		val toolName: String? = null,
+		val sessionIdNamespace: String = "claude_code.session",
 	)
 
 	fun insertEvents(tenantId: UUID, vararg events: Event) {
@@ -74,7 +75,7 @@ object SourceFixtures {
 				"member_id" to event.memberId?.toString(),
 				"team_id_as_of" to event.teamId?.toString(),
 				"session_id" to event.sessionId,
-				"session_id_namespace" to event.sessionId?.let { "claude_code.session" },
+				"session_id_namespace" to event.sessionId?.let { event.sessionIdNamespace },
 				"tokens_input" to event.tokensInput,
 				"tokens_output" to event.tokensOutput,
 				"tokens_cache_read" to event.tokensCacheRead,

@@ -1,8 +1,11 @@
 package com.team376.pulsemetry.dashboard.analytics
 
+import com.fasterxml.jackson.annotation.JsonInclude
+
 import com.team376.pulsemetry.dashboard.organization.Organization
 import com.team376.pulsemetry.dashboard.request.CompareMode
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
+import com.team376.pulsemetry.dashboard.request.TrendBucketMode
 import com.team376.pulsemetry.dashboard.snapshot.Completeness
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
 import com.team376.pulsemetry.dashboard.snapshot.SnapshotService
@@ -83,9 +86,10 @@ class AnalyticsFrames(
 		period: ComparedPeriod,
 		usesComparison: Boolean,
 		snapshotId: String?,
+		bucket: TrendBucketMode? = TrendBucketMode.DAY,
 	): Frame {
 		val history = ingest.history(organization.id)
-		val snapshot = snapshots.obtain(organization.id, requestedBy, period, usesComparison, snapshotId)
+		val snapshot = snapshots.obtain(organization.id, requestedBy, period, usesComparison, snapshotId, bucket)
 		val observed = references.observedDates(snapshot)
 		val complete = references.completeDates(snapshot)
 		val currentCoverage = Coverage.of(period.current.dates(), observed, complete)
@@ -112,7 +116,7 @@ class AnalyticsFrames(
 		)
 	}
 
-	fun meta(frame: Frame): AnalyticsPeriodMeta = AnalyticsPeriodMeta(
+	fun meta(frame: Frame, trendAggregation: TrendAggregation? = null): AnalyticsPeriodMeta = AnalyticsPeriodMeta(
 		organizationId = frame.organization.id.toString(),
 		generatedAt = frame.now.toString(),
 		dataThrough = Completeness.dataThrough(frame.period.current, frame.completeDates)?.toString(),
@@ -123,10 +127,13 @@ class AnalyticsFrames(
 		dayCount = frame.period.current.days,
 		dataState = frame.dataState,
 		currentCoverage = frame.currentCoverage,
+		snapshotId = if (frame.snapshot.queryContract == SnapshotManifestStore.AUTO_QUERY_CONTRACT) frame.snapshot.snapshotId else null,
+		trendAggregation = trendAggregation,
+		collectionPolicy = if (frame.snapshot.queryContract == SnapshotManifestStore.AUTO_QUERY_CONTRACT) CollectionPolicyAnnotations.pending(frame.snapshot) else null,
 	)
 
 	/** 요청서의 `AnalyticsMeta` — 개요 meta + snapshot ID. 목록 화면만 싣는다(개요는 싣지 않는다). */
-	fun analyticsMeta(frame: Frame): AnalyticsMeta = AnalyticsMeta.of(meta(frame), frame.snapshot.snapshotId)
+	fun analyticsMeta(frame: Frame, trendAggregation: TrendAggregation? = null): AnalyticsMeta = AnalyticsMeta.of(meta(frame, trendAggregation), frame.snapshot.snapshotId)
 
 	fun comparison(frame: Frame): AnalyticsComparison {
 		val previous = frame.period.previous
@@ -207,11 +214,15 @@ data class AnalyticsMeta(
 	val dataState: String,
 	val currentCoverage: Coverage,
 	val snapshotId: String,
+	@get:JsonInclude(JsonInclude.Include.NON_NULL)
+	val trendAggregation: TrendAggregation? = null,
+	@get:JsonInclude(JsonInclude.Include.NON_NULL)
+	val collectionPolicy: CollectionPolicyAnnotations? = null,
 ) {
 	companion object {
 		fun of(meta: AnalyticsPeriodMeta, snapshotId: String) = AnalyticsMeta(
 			meta.organizationId, meta.generatedAt, meta.dataThrough, meta.currency, meta.startDate, meta.endDate,
-			meta.timeZone, meta.dayCount, meta.dataState, meta.currentCoverage, snapshotId,
+			meta.timeZone, meta.dayCount, meta.dataState, meta.currentCoverage, snapshotId, meta.trendAggregation, meta.collectionPolicy,
 		)
 	}
 }

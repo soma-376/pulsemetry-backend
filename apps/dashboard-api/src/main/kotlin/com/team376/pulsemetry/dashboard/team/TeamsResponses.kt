@@ -1,6 +1,7 @@
 package com.team376.pulsemetry.dashboard.team
 
 import com.team376.pulsemetry.dashboard.analytics.*
+import com.fasterxml.jackson.annotation.JsonInclude
 
 import com.team376.pulsemetry.dashboard.analytics.Value
 import com.team376.pulsemetry.dashboard.analytics.Metric
@@ -26,6 +27,15 @@ data class TeamModelMix(
 	}
 }
 
+sealed interface TeamTrend
+
+data class TeamAutoTrendPoint(
+ val bucketStart: String, val bucketEnd: String, val temporalState: String, val usageRows: Long?,
+ val cumulativeEquivalentCostUsd: Value<String>, val cumulativeKnownEquivalentCostUsd: Value<String>,
+ val cumulativeTotalTokens: Value<Long>, val cumulativeSessionCount: Value<Long>,
+ val pricedUsageRows: Long?, val unpricedUsageRows: Long?,
+) : TeamTrend
+
 data class TeamTrendPoint(
 	val date: String,
 	val observation: String,
@@ -41,7 +51,7 @@ data class TeamTrendPoint(
 	val knownEquivalentCostUsd: String?,
 	val pricedUsageRows: Long,
 	val unpricedUsageRows: Long,
-)
+) : TeamTrend
 
 /** 팀 식별자와 화면 지표·모델·추이. 미배정은 [teamId] 가 null 이다. */
 data class TeamAnalytics(
@@ -49,7 +59,7 @@ data class TeamAnalytics(
 	val teamName: String,
 	val metrics: TeamMetrics,
 	val modelMix: Section<TeamModelMix>,
-	val trend: List<TeamTrendPoint>,
+	val trend: List<TeamTrend>,
 	/** 현재 기간의 카탈로그 제품별 사용(가산 — ADR 0045). 사용량 행이 있는 제품만. */
 	val products: List<ProductUsage>,
 )
@@ -134,7 +144,9 @@ data class TeamSummaryUsage(val activeUsers: Value<Long>, val sessionCount: Valu
 data class TeamMeta(
  val organizationId: String, val startDate: String, val endDate: String, val timeZone: String,
  val dayCount: Int, val dataThrough: String?, val dataState: String, val currentCoverage: Coverage, val snapshotId: String,
+ @get:JsonInclude(JsonInclude.Include.NON_NULL) val trendAggregation: TrendAggregation? = null,
+ @get:JsonInclude(JsonInclude.Include.NON_NULL) val collectionPolicy: CollectionPolicyAnnotations? = null,
 ) {
  companion object { fun of(meta: AnalyticsMeta) = TeamMeta(meta.organizationId, meta.startDate, meta.endDate, meta.timeZone,
- meta.dayCount, meta.dataThrough, meta.dataState, meta.currentCoverage, meta.snapshotId) }
+ meta.dayCount, meta.dataThrough, meta.dataState, meta.currentCoverage, meta.snapshotId, meta.trendAggregation, meta.collectionPolicy) }
 }

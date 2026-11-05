@@ -2,6 +2,7 @@ package com.team376.pulsemetry.dashboard.snapshot
 
 import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheClient
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
+import com.team376.pulsemetry.dashboard.request.TrendBucketMode
 import com.team376.pulsemetry.dashboard.store.ClickHouseParam
 import com.team376.pulsemetry.dashboard.store.StoreLimitExceededException
 import com.team376.pulsemetry.dashboard.store.StoreQueryRejectedException
@@ -10,6 +11,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.dao.DataAccessException
 import java.time.Clock
 import java.time.Duration
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 /**
@@ -55,6 +57,7 @@ class SnapshotBuilder(
 		val tenantId: UUID,
 		val requestedBy: UUID,
 		val period: ComparedPeriod,
+		val bucket: TrendBucketMode = TrendBucketMode.DAY,
 	)
 
 	data class Built(
@@ -76,7 +79,8 @@ class SnapshotBuilder(
 		val boundary = boundaries.read(request.tenantId)
 		val snapshotId = SnapshotIds.next()
 		val buildId = UUID.randomUUID()
-		val createdAt = clock.instant()
+		// 자동 집계의 SQL 경계와 PostgreSQL manifest의 마이크로초 정밀도를 일치시킨다.
+		val createdAt = clock.instant().let { if (request.bucket == TrendBucketMode.AUTO) it.truncatedTo(ChronoUnit.MICROS) else it }
 		val purgeAfter = createdAt + limits.buildTimeout + API_LIFETIME + limits.purgeGrace
 		val admitted = manifests.insertBuilding(
 			SnapshotManifestStore.NewManifest(
@@ -93,6 +97,7 @@ class SnapshotBuilder(
 				modelResolutionVersion = resolution.version,
 				createdAt = createdAt,
 				buildDeadline = createdAt + limits.buildTimeout,
+				queryContract = SnapshotManifestStore.queryContract(request.bucket),
 			),
 			limits.maxConcurrentBuilds,
 		)
@@ -119,6 +124,7 @@ class SnapshotBuilder(
 				deletedBefore = boundary.deletedBefore,
 				purgeAfter = purgeAfter,
 				asOf = createdAt,
+				cutoffAtAsOf = request.bucket == TrendBucketMode.AUTO,
 			)
 			val intakeWritten = sql.intake(scope).let { clickHouse.execute(it.sql, it.params, copySettings) }
 			val activityWritten = sql.memberActivity(scope).let { clickHouse.execute(it.sql, it.params, copySettings) }

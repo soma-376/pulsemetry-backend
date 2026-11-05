@@ -1,5 +1,7 @@
 # 개요 화면 API
 
+> `bucket=auto`는 [자동 시간 추이 계약](auto-trends.md)을 적용한다. 아래의 날짜별 추이·일별 완전성 규칙은 옵션 생략 또는 `bucket=day`에 해당한다. 자동 응답은 별도 DTO와 snapshot 계약을 사용한다.
+
 `GET /api/v1/organizations/{organizationId}/analytics/overview`
 
 브라우저는 동일 출처 BFF `/api/bff/dashboard`를 통해 호출한다. 인증·조직 인가와 기간 쿼리 계약은 유지한다.

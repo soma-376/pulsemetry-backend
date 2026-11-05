@@ -5,6 +5,7 @@ import com.team376.pulsemetry.dashboard.error.ErrorCode
 import com.team376.pulsemetry.dashboard.error.FieldErrorCode
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
 import com.team376.pulsemetry.dashboard.request.PageCursor
+import com.team376.pulsemetry.dashboard.request.TrendBucketMode
 import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.util.UUID
@@ -31,8 +32,8 @@ class SnapshotService(
 
 	private val log = LoggerFactory.getLogger(SnapshotService::class.java)
 
-	fun create(tenantId: UUID, requestedBy: UUID, period: ComparedPeriod): SnapshotManifestStore.Manifest {
-		val built = builder.build(SnapshotBuilder.Request(tenantId, requestedBy, period))
+	fun create(tenantId: UUID, requestedBy: UUID, period: ComparedPeriod, bucket: TrendBucketMode = TrendBucketMode.DAY): SnapshotManifestStore.Manifest {
+		val built = builder.build(SnapshotBuilder.Request(tenantId, requestedBy, period, bucket))
 		val now = clock.instant()
 		if (!manifests.publish(built.buildId, built.usageRows, built.observedDayRows, now, now + SnapshotBuilder.API_LIFETIME)) {
 			manifests.markFailed(built.buildId, PUBLISH_REJECTED, now)
@@ -50,7 +51,7 @@ class SnapshotService(
 			manifest.status == READY &&
 			manifest.invalidatedAt == null &&
 			manifest.expiresAt != null && now.isBefore(manifest.expiresAt) &&
-			manifest.queryContract == SnapshotManifestStore.QUERY_CONTRACT &&
+			manifest.queryContract in setOf(SnapshotManifestStore.QUERY_CONTRACT, SnapshotManifestStore.AUTO_QUERY_CONTRACT) &&
 			manifest.policyEpoch == boundaries.read(tenantId).policyEpoch
 		if (!valid) throw expired()
 		return manifest
@@ -65,11 +66,14 @@ class SnapshotService(
 		comparedPeriod: ComparedPeriod,
 		usesComparison: Boolean,
 		snapshotId: String?,
+		bucket: TrendBucketMode? = TrendBucketMode.DAY,
 	): SnapshotManifestStore.Manifest {
-		if (snapshotId == null) return create(tenantId, requestedBy, comparedPeriod)
+		if (snapshotId == null) return create(tenantId, requestedBy, comparedPeriod, bucket ?: TrendBucketMode.DAY)
 		val manifest = requireReady(snapshotId, tenantId)
 		val sameScope = manifest.current == comparedPeriod.current && (!usesComparison || manifest.compareMode == comparedPeriod.mode)
-		if (!sameScope) throw expired()
+		// users의 null만 기존 모드를 계승한다. 목록·상세에서 day/auto를 바꾸면 새 snapshot이 필요하다.
+		val sameContract = bucket == null || manifest.queryContract == SnapshotManifestStore.queryContract(bucket)
+		if (!sameScope || !sameContract) throw expired()
 		return manifest
 	}
 

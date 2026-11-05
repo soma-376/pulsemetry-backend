@@ -8,12 +8,12 @@ import java.math.BigDecimal
 import java.time.Instant
 
 /**
- * **공통 계산기** — ready snapshot 의 payload(`dashboard_cache.snapshot_usage`) 하나에서 축별 [UsageTotals] 를 센다.
- * 원천 `FINAL` 을 다시 읽지 않는다. 같은 snapshot 을 읽는 모든 endpoint 가 이것을 쓰므로 여러 번 불러도 값이 갈라지지 않는다.
- *
- * 축은 [Axis] 의 키 식이다. 조직 축은 키가 없어 항상 한 행이다(행이 없으면 카운터가 전부 0 인 한 행).
- * 기간은 현재·비교 중 하나다 — 겹친 기간의 관측은 한 행이 두 기간에 모두 세인다.
- */
+	* **공통 계산기** — ready snapshot 의 payload(`dashboard_cache.snapshot_usage`) 하나에서 축별 [UsageTotals] 를 센다.
+	* 원천 `FINAL` 을 다시 읽지 않는다. 같은 snapshot 을 읽는 모든 endpoint 가 이것을 쓰므로 여러 번 불러도 값이 갈라지지 않는다.
+	*
+	* 축은 [Axis] 의 키 식이다. 조직 축은 키가 없어 항상 한 행이다(행이 없으면 카운터가 전부 0 인 한 행).
+	* 기간은 현재·비교 중 하나다 — 겹친 기간의 관측은 한 행이 두 기간에 모두 세인다.
+	*/
 class UsageAggregator(
 	private val clickHouse: ClickHouseCacheClient,
 ) {
@@ -103,6 +103,47 @@ class UsageAggregator(
 		return clickHouse.query(sql, params) { row -> (text(row, "k0") to text(row, "k1")!!) to long(row, "sessions") }.toMap()
 	}
 
+	/** 버킷 수·팀 수와 무관하게 한 번 조회한다. 발생 시각은 나노초 정밀도로 경계를 비교한다. */
+	fun bucketTotals(snapshot: SnapshotManifestStore.Manifest, plan: TrendBucketPlan, byTeam: Boolean = false): Map<List<String?>, UsageTotals> {
+		val keys = if (byTeam) listOf("team_id_as_of", bucketIndex("source_time")) else listOf(bucketIndex("source_time"))
+		val sql = """
+			SELECT ${(keys.mapIndexed { i, key -> "$key AS k$i" } + COUNTERS).joinToString(",\n")}
+			FROM snapshot_usage
+			WHERE $BUCKET_FILTER
+			GROUP BY ${keys.indices.joinToString(", ") { "k$it" }}
+		""".trimIndent()
+		return clickHouse.query(sql, bucketParams(snapshot, plan)) { row -> keys.indices.map { text(row, "k$it") } to totals(row) }.toMap()
+	}
+
+	/** 팀·제품·namespace·ID의 최초 발생 버킷에서만 고유 세션을 한 번 더한다. */
+	fun firstSessionBuckets(snapshot: SnapshotManifestStore.Manifest, plan: TrendBucketPlan): Map<Pair<String?, Int>, Long> {
+		val sql = """
+			SELECT team AS k0, ${bucketIndex("first_time")} AS k1, count() AS sessions
+			FROM (
+				SELECT team_id_as_of AS team, min(source_time) AS first_time
+				FROM snapshot_usage
+				WHERE $BUCKET_FILTER AND isNotNull(session_id)
+				GROUP BY team, product, session_id_namespace, session_id
+			)
+			GROUP BY k0, k1
+		""".trimIndent()
+		return clickHouse.query(sql, bucketParams(snapshot, plan)) { row -> (text(row, "k0") to long(row, "k1").toInt()) to long(row, "sessions") }.toMap()
+	}
+
+	private fun bucketIndex(time: String) = "arrayCount(boundary -> boundary <= toUnixTimestamp64Nano($time), {bucketStarts:Array(Int64)}) - 1"
+
+	private fun bucketParams(snapshot: SnapshotManifestStore.Manifest, plan: TrendBucketPlan) = mapOf(
+		"tenant" to ClickHouseParam.string(snapshot.tenantId.toString()),
+		"snapshot" to ClickHouseParam.string(snapshot.snapshotId),
+		"build" to ClickHouseParam.string(snapshot.buildId.toString()),
+		"rangeStart" to ClickHouseParam.instant(plan.period.from),
+		"rangeEnd" to ClickHouseParam.instant(plan.period.until),
+		"asOf" to ClickHouseParam.instant(plan.asOf),
+		"bucketStarts" to ClickHouseParam("Array(Int64)", plan.plannedStarts.joinToString(",", "[", "]") {
+			Math.addExact(Math.multiplyExact(it.epochSecond, 1_000_000_000L), it.nano.toLong()).toString()
+		}),
+	)
+
 	private fun teamCondition(team: TeamScope?): String = when {
 		team == null -> ""
 		team.teamId == null -> " AND isNull(team_id_as_of)"
@@ -127,6 +168,7 @@ class UsageAggregator(
 		unpricedRows = long(row, "unpriced_rows"),
 		multiTeamRows = long(row, "multi_team_rows"),
 		lastSourceTime = text(row, "last_source_time")?.let(Instant::parse),
+		semanticsGroups = row.path("semantics_groups").let { groups -> (0 until groups.size()).map { groups.get(it).asString() }.toSet() },
 	)
 
 	private fun component(row: JsonNode, name: String) = UsageTotals.Component(text(row, name)?.toLong(), long(row, "${name}_missing"))
@@ -139,6 +181,8 @@ class UsageAggregator(
 		/** 제품 축에서 매핑 없는 관측의 키. 카탈로그 제품 ID 와 겹치지 않는다. */
 		const val UNMAPPED_PRODUCT = ""
 		private const val PRODUCT_KEY = "{product}"
+		private const val BUCKET_FILTER = "tenant_id = {tenant:String} AND snapshot_id = {snapshot:String} AND build_id = {build:String} AND in_current " +
+			"AND source_time >= {rangeStart:DateTime64(9, 'UTC')} AND source_time < {rangeEnd:DateTime64(9, 'UTC')} AND source_time < {asOf:DateTime64(9, 'UTC')}"
 
 		/** 조회 골격의 카운터. 합은 `sumOrNull` — 값이 전부 없으면 0 이 아니라 NULL 이다. */
 		private val COUNTERS = listOf(
@@ -164,6 +208,8 @@ class UsageAggregator(
 			// 그 밖의 프로파일은 서로 다른 그룹으로 남겨 임의 혼합 합산을 막는다.
 			"uniqExact(if(semantics_profile IN ('claude-code-exclusive-v1', 'codex-responses-inclusive-v1'), " +
 				"'canonical:nonoverlapping-v1', concat('profile:', semantics_profile))) AS semantics_profiles",
+			"groupUniqArray(if(semantics_profile IN ('claude-code-exclusive-v1', 'codex-responses-inclusive-v1'), " +
+				"'canonical:nonoverlapping-v1', concat('profile:', semantics_profile))) AS semantics_groups",
 			"sumOrNull(cost_estimated_usd) AS cost",
 			"countIf(isNull(cost_estimated_usd)) AS unpriced_rows",
 			"countIf(has(quality_flags, 'multi_team_membership')) AS multi_team_rows",

@@ -35,6 +35,7 @@ Authorization: Bearer <Pulsemetry access_token>
   startDate: string; // 필수 YYYY-MM-DD
   endDate: string; // 필수, 종료일 포함, 1~366일
   timeZone?: "Asia/Seoul"; // 기본 Asia/Seoul
+  bucket?: "day" | "auto"; // 생략/day는 기존 일별 계약, auto는 자동 시간 버킷
   compare?: "prev_week" | "prev_period" | "none"; // 기본 prev_week
 }
 ```
@@ -65,3 +66,7 @@ Authorization: Bearer <Pulsemetry access_token>
 ### JSON 예시
 
 [전체 응답 예시](../examples/overview-response.example.json) — 가상 데이터이며 실서버 응답 캡처가 아니다.
+
+## 자동 추이
+
+`bucket=auto`의 metadata·point·snapshot·상태·CSV는 [자동 시간 추이 계약](../reference/auto-trends.md)을 따른다. 지원하지 않는 bucket은 400이며, 팀 목록·상세에서 요청 모드와 snapshot 계약이 다르면 409 `snapshot_expired`다.

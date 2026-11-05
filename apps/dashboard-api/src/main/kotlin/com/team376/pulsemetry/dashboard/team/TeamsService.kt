@@ -10,20 +10,22 @@ import com.team376.pulsemetry.dashboard.error.DashboardException
 import com.team376.pulsemetry.dashboard.error.ErrorCode
 import com.team376.pulsemetry.dashboard.organization.Organization
 import com.team376.pulsemetry.dashboard.request.ComparedPeriod
+import com.team376.pulsemetry.dashboard.request.TrendBucketMode
+import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
 import com.team376.pulsemetry.dashboard.request.OffsetPageRequest
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.UUID
 
 /**
- * 팀 분석 화면 (팀 분석 명세). 목록 → 상세 → 사용자 요청이 **같은 snapshot ID** 로 같은 입력을 읽는다(ADR 0023 §4). 처음 보는 endpoint 라서
- * 409 를 내지 않는다 — snapshot 이 유효하면 어느 endpoint 든 그 payload 의 부분 집합을 계산한다.
- *
- * - 팀 합계는 이벤트 당시 대표 팀(`team_id_as_of`)으로 한 번만 귀속한다. 미배정은 목록에 섞지 않고 `unassigned` 로 따로 낸다.
- * - 목록 정렬은 선택 지표 내림차순(null 마지막) + 팀 ID 오름차순. 같은 snapshot에서 offset으로 이어 읽는다.
- *   사용자 목록도 전체 정렬 후 offset으로 나누고, 정렬 변경 시 첫 페이지부터 요청한다.
- * - 조직 합계와 모델 산점도는 페이지와 무관한 전체 권한 범위의 집계다.
- */
+	* 팀 분석 화면 (팀 분석 명세). 목록 → 상세 → 사용자 요청이 **같은 snapshot ID** 로 같은 입력을 읽는다(ADR 0023 §4). 처음 보는 endpoint 라서
+	* 409 를 내지 않는다 — snapshot 이 유효하면 어느 endpoint 든 그 payload 의 부분 집합을 계산한다.
+	*
+	* - 팀 합계는 이벤트 당시 대표 팀(`team_id_as_of`)으로 한 번만 귀속한다. 미배정은 목록에 섞지 않고 `unassigned` 로 따로 낸다.
+	* - 목록 정렬은 선택 지표 내림차순(null 마지막) + 팀 ID 오름차순. 같은 snapshot에서 offset으로 이어 읽는다.
+	*   사용자 목록도 전체 정렬 후 offset으로 나누고, 정렬 변경 시 첫 페이지부터 요청한다.
+	* - 조직 합계와 모델 산점도는 페이지와 무관한 전체 권한 범위의 집계다.
+	*/
 class TeamsService(
 	private val frames: AnalyticsFrames,
 	private val aggregator: UsageAggregator,
@@ -71,9 +73,11 @@ class TeamsService(
 		sort: Sort,
 		page: OffsetPageRequest,
 		snapshotId: String?,
+		bucket: TrendBucketMode = TrendBucketMode.DAY,
 	): TeamsResponse {
-		val frame = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId)
-		val data = TeamData.load(frame, aggregator, references)
+		val frame = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId, bucket)
+		val plan = if (bucket == TrendBucketMode.AUTO) TrendBucketPlan(period.current, frame.snapshot.asOf) else null
+		val data = TeamData.load(frame, aggregator, references, plan)
 
 		val ranked = data.teamIds().sortedWith(
 			compareBy<String, BigDecimal?>(nullsLast(reverseOrder())) { metric(data.current.getValue(listOf(it)), sort) }
@@ -83,7 +87,7 @@ class TeamsService(
 
 
 		return TeamsResponse(
-			meta = TeamMeta.of(frames.analyticsMeta(frame)),
+			meta = TeamMeta.of(frames.analyticsMeta(frame, plan?.aggregation("cumulative"))),
 			comparison = frames.comparison(frame),
 			attributionBasis = ATTRIBUTION_BASIS,
 			totals = TeamScreenValues.metrics(frame, data.organization, data.previousOrganization),
@@ -94,11 +98,12 @@ class TeamsService(
 		)
 	}
 
-	fun team(organization: Organization, requestedBy: UUID, key: TeamKey, period: ComparedPeriod, snapshotId: String?): TeamDetailResponse {
-		val frame = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId)
-		val data = TeamData.load(frame, aggregator, references)
+	fun team(organization: Organization, requestedBy: UUID, key: TeamKey, period: ComparedPeriod, snapshotId: String?, bucket: TrendBucketMode = TrendBucketMode.DAY): TeamDetailResponse {
+		val frame = frames.frame(organization, requestedBy, period, usesComparison = true, snapshotId, bucket)
+		val plan = if (bucket == TrendBucketMode.AUTO) TrendBucketPlan(period.current, frame.snapshot.asOf) else null
+		val data = TeamData.load(frame, aggregator, references, plan)
 		data.requireKnown(key)
-		return TeamDetailResponse(TeamMeta.of(frames.analyticsMeta(frame)), frames.comparison(frame), data.analytics(key))
+		return TeamDetailResponse(TeamMeta.of(frames.analyticsMeta(frame, plan?.aggregation("cumulative"))), frames.comparison(frame), data.analytics(key))
 	}
 
 	fun users(
@@ -111,11 +116,12 @@ class TeamsService(
 		sort: UserSort = UserSort.COST,
 		order: UserOrder = UserOrder.DESC,
 	): TeamUsersResponse {
-		val frame = frames.frame(organization, requestedBy, period, usesComparison = false, snapshotId)
+		val frame = frames.frame(organization, requestedBy, period, usesComparison = false, snapshotId, bucket = null)
 		val teamScope = TeamScope((key as? TeamKey.Team)?.id?.toString())
 		val directory = references.teams(frame.snapshot).associateBy { it.id.toString() }
 
 		val snapshot = frame.snapshot
+		val trend = if (snapshot.queryContract == SnapshotManifestStore.AUTO_QUERY_CONTRACT) TrendBucketPlan(period.current, snapshot.asOf).aggregation("cumulative") else null
 		val team = if (frame.empty) UsageTotals.EMPTY else aggregator.totals(snapshot, Side.CURRENT, Axis.ORGANIZATION, teamScope).getValue(emptyList())
 		if (key is TeamKey.Team && key.id.toString() !in directory && !team.hasUsage) throw DashboardException(ErrorCode.NOT_FOUND)
 		val members = if (frame.empty) emptyMap() else aggregator.totals(snapshot, Side.CURRENT, Axis.MEMBER, teamScope)
@@ -149,7 +155,7 @@ class TeamsService(
 
 		val unidentified = members[listOf(null)]
 		return TeamUsersResponse(
-			meta = TeamMeta.of(frames.analyticsMeta(frame)),
+			meta = TeamMeta.of(frames.analyticsMeta(frame, trend)),
 			team = teamRef(key, directory),
 			summary = TeamUsersSummary(
 				// 완전한 기간이면 사용이 없는 팀도 0 이다 — 팀 상세와 같은 기준이다.
@@ -199,6 +205,9 @@ class TeamsService(
 		val firstSessions: Map<Pair<String?, String>, Long>,
 		val products: List<SnapshotReferences.Product>,
 		val directory: Map<String, SnapshotReferences.Team>,
+		val plan: TrendBucketPlan?,
+		val teamBuckets: Map<List<String?>, UsageTotals>,
+		val firstBucketSessions: Map<Pair<String?, Int>, Long>,
 	) {
 
 		fun teamIds(): List<String> = current.keys.mapNotNull { it.single() }
@@ -224,7 +233,7 @@ class TeamsService(
 				teamName = ref.teamName,
 				metrics = TeamScreenValues.metrics(frame, totals, if (frame.comparable) previous[listOf(id)] ?: UsageTotals.EMPTY else null),
 				modelMix = section(models) { TeamModelMix.of(models) },
-				trend = frame.period.current.dates().map { date ->
+				trend = if (plan != null) autoTrend(id, plan) else frame.period.current.dates().map { date ->
 					val day = teamDays[listOf(id, date.toString())] ?: UsageTotals.EMPTY
 					val observation = frame.observation(date)
 					if (observation != Coverage.COMPLETE) {
@@ -237,6 +246,21 @@ class TeamsService(
 				},
 				products = Products.usages(teamProducts.filterKeys { it[0] == id }.mapKeys { it.key[1] ?: UsageAggregator.UNMAPPED_PRODUCT }, products),
 			)
+		}
+
+		private fun autoTrend(id: String?, plan: TrendBucketPlan): List<TeamAutoTrendPoint> {
+			val cumulative = TrendCumulativeTotals()
+			return plan.buckets.map { bucket ->
+				val totals = teamBuckets[listOf(id, bucket.index.toString())] ?: UsageTotals.EMPTY
+				val values = UsageValues.recorded(cumulative.add(totals, firstBucketSessions[id to bucket.index] ?: 0L))
+				TeamAutoTrendPoint(bucket.start.toString(), bucket.end.toString(), bucket.temporalState,
+					totals.usageRows,
+					values.cost,
+					values.knownCost,
+					values.tokens,
+					values.sessions,
+					values.pricedUsageRows, values.unpricedUsageRows)
+			}
 		}
 
 		/**
@@ -270,7 +294,7 @@ class TeamsService(
 		}
 
 		companion object {
-			fun load(frame: AnalyticsFrames.Frame, aggregator: UsageAggregator, references: SnapshotReferences): TeamData {
+			fun load(frame: AnalyticsFrames.Frame, aggregator: UsageAggregator, references: SnapshotReferences, plan: TrendBucketPlan?): TeamData {
 				val snapshot = frame.snapshot
 				val empty = frame.empty
 				val products = references.products(snapshot)
@@ -282,12 +306,15 @@ class TeamsService(
 					current = totals(Axis.TEAM),
 					previous = if (frame.comparable) totals(Axis.TEAM, Side.PREVIOUS) else emptyMap(),
 					teamModels = totals(Axis.TEAM_MODEL),
-					teamDays = totals(Axis.TEAM_DAY),
+					teamDays = if (plan == null) totals(Axis.TEAM_DAY) else emptyMap(),
 					models = totals(Axis.MODEL),
 					teamProducts = totals(Axis.TEAM_PRODUCT),
-					firstSessions = if (empty) emptyMap() else aggregator.firstSessionDays(snapshot, Side.CURRENT),
+					firstSessions = if (empty || plan != null) emptyMap() else aggregator.firstSessionDays(snapshot, Side.CURRENT),
 					products = products,
 					directory = references.teams(snapshot).associateBy { it.id.toString() },
+					plan = plan,
+					teamBuckets = if (empty || plan == null) emptyMap() else aggregator.bucketTotals(snapshot, plan, byTeam = true),
+					firstBucketSessions = if (empty || plan == null) emptyMap() else aggregator.firstSessionBuckets(snapshot, plan),
 				)
 			}
 
