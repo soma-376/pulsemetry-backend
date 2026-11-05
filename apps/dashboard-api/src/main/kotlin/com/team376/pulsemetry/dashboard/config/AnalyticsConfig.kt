@@ -94,13 +94,17 @@ class AnalyticsConfig {
 		references: SnapshotReferences,
 		ingest: IngestStatusReader,
 		comparison: ComparisonPolicy,
-		properties: DashboardApiProperties,
+		thresholds: IngestThresholds,
 		clock: Clock,
 	): AnalyticsFrames = AnalyticsFrames(
 		snapshots, references, ingest, comparison,
-		IngestThresholds(properties.ingest.window, properties.ingest.delayedAfter, properties.ingest.downAfter),
+		thresholds,
 		clock,
 	)
+
+	@Bean
+	fun ingestThresholds(properties: DashboardApiProperties): IngestThresholds =
+		IngestThresholds(properties.ingest.window, properties.ingest.delayedAfter, properties.ingest.downAfter)
 
 	@Bean
 	fun teamsService(

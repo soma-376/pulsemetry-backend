@@ -6,7 +6,6 @@ import com.team376.pulsemetry.dashboard.analytics.AnalyticsFrames
 import com.team376.pulsemetry.dashboard.authentication.DashboardPrincipal
 import com.team376.pulsemetry.dashboard.authorization.DashboardAction
 import com.team376.pulsemetry.dashboard.authorization.OrganizationAccess
-import com.team376.pulsemetry.dashboard.config.DashboardApiProperties
 import com.team376.pulsemetry.dashboard.error.DashboardException
 import com.team376.pulsemetry.dashboard.error.FieldErrorCode
 import com.team376.pulsemetry.dashboard.request.PageCursorCodec
@@ -28,7 +27,7 @@ class IngestStatusController(
     private val clock: Clock,
     private val losses: TransmissionLossReader,
     private val codec: PageCursorCodec,
-    private val properties: DashboardApiProperties,
+    private val thresholds: IngestThresholds,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     @GetMapping("/api/v1/organizations/{organizationId}/ingest-status")
@@ -40,7 +39,7 @@ class IngestStatusController(
         val status = try { frames.status(organization, now) } catch (e: RuntimeException) {
             log.warn("현재 수집 상태 조회 실패 — 손실 집계는 보존한다", e)
             return IngestStatusResponse(organization.id.toString(), "unknown", "source_query_failed", now.toString(), null,
-                properties.ingest.window.toMinutes().toInt(), null, null, null, null, null, null, loss)
+                thresholds.window.toMinutes().toInt(), null, null, null, null, null, null, loss)
         }
         val ingest = status.ingest
         return IngestStatusResponse(organization.id.toString(), ingest.status, ingest.reason, ingest.asOf, ingest.lastReceivedAt,

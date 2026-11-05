@@ -140,7 +140,8 @@ class TransmissionLossApiTest : AbstractDashboardApiTest() {
 
     @Test fun `창 시작을 가로지른 중단도 부분 집계로 표시한다`() {
         val tenant = DashboardTestStores.insertTenant()
-        val end = Instant.now()
+        // PostgreSQL 저장 정밀도로 입력을 고정해 나노초 반올림과 기대값 버림의 차이를 없앤다.
+        val end = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)
         event(tenant, installation(tenant), end.minusSeconds(1), 4)
         val previous = writer.sql("SELECT id,started_at FROM enrollment.installation_loss_tracking WHERE stopped_at IS NULL")
             .query { rs, _ -> rs.getObject(1, UUID::class.java) to rs.getTimestamp(2).toInstant() }.single()
@@ -155,7 +156,7 @@ class TransmissionLossApiTest : AbstractDashboardApiTest() {
             assertThat(result.availability).isEqualTo("partial")
             assertThat(result.payloadCount).isEqualTo(4)
             assertThat(result.reasons).containsExactly("tracking_interrupted")
-            assertThat(Instant.parse(result.availableFrom)).isEqualTo(end.minus(Duration.ofDays(6)).truncatedTo(java.time.temporal.ChronoUnit.MICROS))
+            assertThat(Instant.parse(result.availableFrom)).isEqualTo(end.minus(Duration.ofDays(6)))
         } finally {
             writer.sql("DELETE FROM enrollment.installation_loss_tracking WHERE id=:id").param("id", resumed).update()
             writer.sql("UPDATE enrollment.installation_loss_tracking SET started_at=:at,stopped_at=NULL WHERE id=:id")
