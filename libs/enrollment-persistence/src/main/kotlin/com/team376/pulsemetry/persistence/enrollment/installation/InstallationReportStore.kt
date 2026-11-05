@@ -49,6 +49,7 @@ class InstallationReportStore(private val jdbc: JdbcClient, private val retentio
      * [appliedManifestId] 는 보고한 판이 그 조직의 manifest 일 때만 준다.
      */
     fun record(installationId: UUID, enrolledAt: Instant, report: InstallationReport, appliedManifestId: UUID?, receivedAt: Instant) {
+        InstallationLossStore(jdbc, retention).record(installationId, report, receivedAt)
         // 데몬 시계의 절대값을 쓰지 않는다. 보낸 시각과의 차이만 쓴다.
         val offset = Duration.between(report.sentAt, receivedAt)
         val receivingSince = report.receivingSince?.plus(offset)

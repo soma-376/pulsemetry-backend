@@ -6,7 +6,7 @@
 
 <!-- endpoint: dashboard-api GET /api/v1/organizations/{organizationId}/alerts -->
 
-서버: **dashboard-api** · 성공: **200** · [구현](../../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/api/AlertController.kt)
+서버: **dashboard-api** · 성공: **200** · [구현](../../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/alert/AlertController.kt)
 
 ## Request
 
@@ -31,7 +31,7 @@ Authorization: Bearer <Pulsemetry access_token>
 ```ts
 {
   status?: "unacknowledged" | "acknowledged" | "all"; // 기본 unacknowledged
-  category?: "security" | "cost"; // 생략: 전체
+  category?: "security" | "cost" | "collection"; // 생략: 전체
   limit?: number; // 기본 20, 정수 1~100
   cursor?: string; // 응답 nextCursor
   snapshotId?: string; // 다음 페이지에 이전 응답 값 유지

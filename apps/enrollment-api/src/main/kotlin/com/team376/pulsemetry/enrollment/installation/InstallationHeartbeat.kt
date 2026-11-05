@@ -8,6 +8,7 @@ import com.team376.pulsemetry.enrollment.installation.InstallationCredentialVeri
 import com.team376.pulsemetry.persistence.enrollment.installation.CollectionMode
 import com.team376.pulsemetry.persistence.enrollment.installation.InstallationReport
 import com.team376.pulsemetry.persistence.enrollment.installation.InstallationReportStore
+import com.team376.pulsemetry.persistence.enrollment.installation.InstallationLossTrackingPaused
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationManifestAssignmentRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.ManifestRepository
@@ -155,7 +156,7 @@ class HeartbeatController(private val service: HeartbeatService, private val map
 @RestControllerAdvice(assignableTypes = [HeartbeatController::class])
 @ConditionalOnProperty(prefix = "pulsemetry.heartbeat", name = ["enabled"], havingValue = "true")
 class HeartbeatErrors(private val service: HeartbeatService) {
-    @ExceptionHandler(DataAccessException::class, TransactionException::class)
+    @ExceptionHandler(DataAccessException::class, TransactionException::class, InstallationLossTrackingPaused::class)
     fun unavailable(): ResponseEntity<ErrorResponse> = ResponseEntity.status(503)
         .header(HttpHeaders.RETRY_AFTER, service.retryAfterSeconds.toString()).header(HttpHeaders.CACHE_CONTROL, "no-store")
         .body(ErrorResponse("heartbeat_unavailable", "설치 보고를 기록하지 못했습니다. 잠시 후 다시 시도합니다."))

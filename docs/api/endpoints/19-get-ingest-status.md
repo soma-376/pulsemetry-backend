@@ -6,7 +6,7 @@
 
 <!-- endpoint: dashboard-api GET /api/v1/organizations/{organizationId}/ingest-status -->
 
-서버: **dashboard-api** · 성공: **200** · [구현](../../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/api/IngestStatusController.kt)
+서버: **dashboard-api** · 성공: **200** · [구현](../../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/ingest/IngestStatusController.kt)
 
 ## Request
 
@@ -35,7 +35,15 @@ Authorization: Bearer <Pulsemetry access_token>
   reason: string | null; asOf: string; lastReceivedAt: string | null; windowMinutes: number;
   activeInstallations: number | null; observedMembers: number | null; eligibleMembers: number | null;
   coverageRatio: number | null; coverageTargetMembers: number | null; coverageObservedMembers: number | null;
+  transmissionLoss: TransmissionLoss;
 }
+type TransmissionLoss = {
+  payloadCount: number | null;
+  windowStart: string; windowEnd: string; availableFrom: string | null;
+  availability: "complete" | "partial" | "unavailable";
+  reasons: string[];
+  affectedInstallationCount: number | null;
+};
 ```
 
 [IngestStatusResponse 전체 스키마·중첩 타입](../reference/ingest-status.md#schema-IngestStatusResponse)

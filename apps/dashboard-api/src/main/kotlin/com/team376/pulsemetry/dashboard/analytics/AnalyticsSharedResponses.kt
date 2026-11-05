@@ -45,4 +45,5 @@ data class AnalyticsAlerts(
 	val unacknowledgedTotal: Long?,
 	val security: Long?,
 	val cost: Long?,
+	val collection: Long? = null,
 )

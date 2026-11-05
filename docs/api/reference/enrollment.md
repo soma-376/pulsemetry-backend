@@ -241,6 +241,10 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 | `installations.client_version` | 데몬 버전(50자까지). `updated_at`은 바꾸지 않는다 |
 | `installation_heartbeats` | 설치당 한 행 — 마지막 보고의 값 전부(프로세스 식별자, 버전·아키텍처, 보고한 판과 그 manifest, 수집 경로, 누적 개수, 시각)와 전달 대기가 이어지기 시작한 시각(`pending_since`) |
 | `installation_collection_segments` | 수집 중이었다고 보고로 확인된 구간. 손실이 보고된 구간은 따로 남긴다(`lost` > 0) |
+| `installation_loss_runs` | 설치·실행별 최고 누적 손실, 역사 실행 표시와 관측 근거 |
+| `installation_loss_events` | 양수 손실 증가분과 서버 확인 시각 |
+| `installation_loss_tracking` | 추적 epoch의 시작·중단 시각 |
+| `installation_loss_limitations` | 같은 실행 카운터 감소 등 집계 제한 이력 |
 | `installation_manifest_assignments.applied_at` | 보고한 판이 그 조직의 manifest일 때, 그 판을 **처음** 보고받은 시각. 배정 행이 없으면 만든다 |
 
 - 본문의 시각은 (받은 시각 − `sent_at`)만큼 옮겨 저장한다. 데몬 시계가 틀려도 구간의 길이는 맞다.
@@ -252,6 +256,16 @@ manifest **밖**, 응답 봉투 상위에 둔다. manifest 안에 넣지 않는 
 - 구간은 끝 시각이 `history-retention`보다 오래되면 그 설치의 다음 보고 때 지운다.
 - `pending_since`는 전달 대기(`pending`)가 0이 아닌 보고가 **이어지기 시작한** 보고의 수신 시각이다(ADR 0041). 같은 프로세스가 다음 보고에서도 대기를 말하면 그대로 두고,
   대기가 0이면 비우고, 프로세스가 바뀌면 그 보고부터 다시 센다. 조회 쪽이 "대기가 이어지는 중"과 "보고 순간에 마침 전송 중"을 가르는 데 쓴다.
+
+**손실 증가분 (ADR 0076)**
+
+heartbeat·실행별 커서·손실 원장·제한 이력은 설치 행 잠금 트랜잭션 안에서 함께 갱신한다.
+`mode=local && forwarding=true`인 보고만 관측하며 수신기 가동 시각은 추가 조건이 아니다.
+새 실행의 기준은 0이고 기존 실행의 기준은 최고 누적값이다. 양수 차이만 기록하고 감소 보고에서도 최고값은 낮추지 않는다.
+초기화 시 새 run_id를 쓴다. 전환의 최신 보고·보존된 과거 실행은 기준값이며 과거 구간 손실은 백필하지 않는다.
+실행별 커서는 창이 지났다고 삭제하지 않는다. 손실·제한 이력 보존은 상세 조회 유효기간을 포함해 최소 168시간 + 10분이다.
+추적 활성 epoch가 없으면 신규 writer는 heartbeat 전체를 503으로 거부한다. 집계만 빠진 성공 보고를 만들지 않는다.
+rollback 전 `scripts/installation-loss-pause.sql`, 구 writer 종료 후 재개 전 `scripts/installation-loss-resume.sql`을 사용한다.
 
 **응답**
 

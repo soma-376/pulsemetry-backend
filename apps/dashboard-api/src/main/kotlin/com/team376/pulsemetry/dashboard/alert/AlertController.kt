@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController
 
 /**
  * 알림 목록·단건 (ADR 0051 §6). 개요의 `alerts` 와 같은 계산이다. 받는 파라미터: `status`(`unacknowledged` 기본·`acknowledged`·`all`),
- * `category`(`security`·`cost`), `limit`(기본 20, 최대 100)·`cursor`·`snapshotId`(현재 상태 토큰). 확인은 enrollment-api 의 명령이다.
+ * `category`(`security`·`cost`·`collection`), `limit`(기본 20, 최대 100)·`cursor`·`snapshotId`(현재 상태 토큰). 확인은 enrollment-api 의 명령이다.
  */
 @RestController
 class AlertController(

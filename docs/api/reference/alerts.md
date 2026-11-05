@@ -56,7 +56,7 @@ product_not_registered는 1 events·rolling_24_hours다. 기존 비용 규칙의
 | --- | --- |
 | `availability`·`reason` | 켠 규칙마다 지금 판의 평가 기록이 있으면 `available`·null. 켠 규칙 가운데 지금 판의 평가 기록이 없는 것이 있으면 `unavailable`·`evaluation_pending` — 첫 평가 회차 도중이나 규칙을 다시 켠 직후도 그 규칙이 평가될 때까지다(평가하지 않은 규칙을 0건으로 읽히게 하지 않는다). 켠 규칙이 없고 평가 기록도 없으면 `unavailable`·`evaluation_not_configured`, 켠 규칙이 없어도 앞의 평가 기록이 있으면 `available` |
 | `asOf` | 마지막 평가 시각. 평가 기록이 없으면 응답 시각 |
-| `unacknowledgedTotal`·`security`·`cost` | 미확인 수. `security` = 미등록 제품과 이전 모델·도구 알림 이력, `cost` = 급증·한도. `total = security + cost`. unavailable 이면 null |
+| `unacknowledgedTotal`·`security`·`cost`·`collection` | 미확인 수. `security` = 미등록 제품과 이전 모델·도구 알림 이력, `cost` = 급증·한도. `collection` = 설치 보고 공백, `total = security + cost + collection`. unavailable 이면 null |
 
 **목록·단건** (가산 — 조직 분석 권한):
 
@@ -69,7 +69,7 @@ product_not_registered는 1 events·rolling_24_hours다. 기존 비용 규칙의
 <a id="schema-Alert"></a>
 
 ```ts
-// GET O/alerts?status=unacknowledged(기본)|acknowledged|all&category=security|cost&limit=20(최대 100)&cursor&snapshotId
+// GET O/alerts?status=unacknowledged(기본)|acknowledged|all&category=security|cost|collection&limit=20(최대 100)&cursor&snapshotId
 type AlertsResponse = {
   meta: AlertsMeta;
   evaluation: { status: "complete" | "partial" | "unavailable";
@@ -78,13 +78,16 @@ type AlertsResponse = {
 };
 type Alert = {
   alertId: string; version: number;        // 확인 명령의 expectedVersion
-  ruleId: string; category: "security" | "cost"; status: "open" | "closed";
+  ruleId: string; category: "security" | "cost" | "collection"; status: "open" | "closed";
   occurredAt: string; lastSeenAt: string; windowStart: string; windowEnd: string;
   subject: string | null; eventCount: number | null; memberCount: number | null;   // 급증은 null
   members: { memberId: string; account: string | null }[];
   evidence: { kind: "usage"; targetName: string }
     | { kind: "spend"; startDate: string; endDate: string;
         currentCostUsd: string; previousCostUsd: string; increaseRatio: number }
+    | { kind: "installation_report_gap"; installationId: string; deviceName: string | null;
+        basisAt: string; thresholdReachedAt: string; lastReceivedAt: string | null;
+        resolutionDetectedAt: string | null; resolutionReason: "report_resumed" | "installation_revoked" | null }
     | null;                              // 과거 비용 근거가 불완전하면 null, 0으로 만들지 않는다
   acknowledgement: { acknowledgedAt: string } | null;
 };
@@ -169,3 +172,27 @@ type AlertResponse = { meta: AlertsMeta; alert: Alert };
 
 - [AlertService.kt](../../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/alert/AlertService.kt)
 - [AlertEvaluator.kt](../../../apps/dashboard-api/src/main/kotlin/com/team376/pulsemetry/dashboard/alert/AlertEvaluator.kt)
+
+
+## 설치 보고 공백 시스템 규칙 (ADR 0076)
+
+`installation_report_gap`은 `collection` 범주의 자동 규칙이다. 조직별 설정 토글과 사용자 `alertRules` 목록에는 넣지 않는다.
+활성 설치가 있는 조직은 사용자 규칙이 없어도 기존 평가 주기로 검사한다. 열린 사건이 있는 조직은 설치 폐기 후에도 해소를 평가한다.
+기준은 마지막 heartbeat 서버 수신 시각이며 최초 미보고 설치는 등록 시각이다. 정확히 기준 + 168시간에 발생한다.
+정상 heartbeat를 보내는 AI 미사용 설치는 공백이 아니다. 최초 발생 대상에서 폐기 설치는 제외한다.
+
+사건 키는 조직·설치·기준 시각이다. 같은 사건의 반복 평가는 중복 알림이나 불필요한 버전 변경을 만들지 않는다.
+새 보고로 기준이 바뀌면 이전 사건을 `report_resumed`로 해소한다. 새 기준도 168시간을 넘겼으면 별도 사건을 생성한다.
+폐기는 `installation_revoked`로 닫는다. 이전 사건 종료·새 사건 생성·평가 기록은 cache 트랜잭션에서 함께 처리하며
+그 안에서 선점 소유자·만료를 재확인한다. 선점을 잃은 회차의 결과는 쓰지 않는다.
+
+`resolutionDetectedAt`은 평가기가 해소를 확인한 시각이며 최초 보고 재개 시각이 아니다.
+`lastReceivedAt`과 구분한다. 보고 공백의 `eventCount`는 null이며 페이로드·사용 이벤트 수로 표시하지 않는다.
+확인과 해소는 독립이다. 확인한 공백도 `open`일 수 있고, 해소된 사건도 미확인일 수 있다. 재발 사건은 이전 확인을 승계하지 않는다.
+평가 중단 중 발생했다가 이미 해소된 과거 사건은 복원하지 않는다. 조회 후 도착한 보고는 다음 성공 평가에 반영한다.
+
+공통 미확인 수는 collection을 포함하며 보안 전용 목록은 제외한다. category=collection은 시스템 규칙의 평가 상태를 요약하고,
+category 생략은 기존 사용자 규칙과 시스템 규칙을 함께 요약한다. 시스템 평가 대기는 `evaluation_pending`이며 0건으로 위장하지 않는다. 현재 시스템 평가가
+`failed` 또는 `not_evaluated`이면 개요 미확인 수는 `unavailable`과 해당 사유를 반환하고 범주별 수량도 null로 둔다.
+이미 발생한 알림 목록과 확인 동작은 유지한다.
+화면은 `보고 공백 지속`/`보고 재개로 해소`/폐기 종료 상태와 `미확인`/`확인함`을 따로 표시한다.

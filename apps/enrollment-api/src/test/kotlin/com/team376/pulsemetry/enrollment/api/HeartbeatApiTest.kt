@@ -494,6 +494,69 @@ class HeartbeatApiTest {
 
     // ── 장애 ─────────────────────────────────────────────────────────────────
 
+    private fun reportedLoss(): Long = jdbc.sql("SELECT COALESCE(sum(payload_count),0) FROM enrollment.installation_loss_events WHERE installation_id=:id")
+        .param("id", installation).query(Long::class.java).single()
+
+    @Test fun `추적 중단 중 heartbeat는 503과 재시도 안내를 반환하고 아무것도 기록하지 않는다`() {
+        val active = jdbc.sql("SELECT id FROM enrollment.installation_loss_tracking WHERE stopped_at IS NULL").query(UUID::class.java).single()
+        jdbc.sql("UPDATE enrollment.installation_loss_tracking SET stopped_at=clock_timestamp() WHERE id=:id").param("id", active).update()
+        try {
+            val response = post(report(lost = 3))
+            rejected(response, 503, "heartbeat_unavailable")
+            assertThat(response.headers().firstValue("Retry-After")).hasValue("7")
+            assertThat(lastSeen()).isNull()
+            assertThat(data.countRows("installation_heartbeats")).isZero()
+            assertThat(data.countRows("installation_loss_runs")).isZero()
+        } finally { jdbc.sql("UPDATE enrollment.installation_loss_tracking SET stopped_at=NULL WHERE id=:id").param("id", active).update() }
+    }
+
+    @Test fun `손실 원장은 실행별 최고 누계로 계산하여 재보고와 감소를 중복 합산하지 않는다`() {
+        for (lost in listOf(5L, 5L, 8L, 5L, 8L)) {
+            clock.now = clock.now.plusSeconds(60)
+            ok(post(report(lost = lost, delivered = 0, pending = 100)))
+        }
+        ok(post(report(run = "b".repeat(32), lost = 0)))
+        clock.now = clock.now.plusSeconds(60)
+        ok(post(report(run = "b".repeat(32), lost = 2)))
+        // 이전 실행을 다시 보내도 최고 누계가 남아 있다.
+        ok(post(report(lost = 8)))
+        assertThat(reportedLoss()).isEqualTo(10)
+        assertThat(jdbc.sql("SELECT reason FROM enrollment.installation_loss_limitations WHERE installation_id=:id")
+            .param("id", installation).query(String::class.java).list()).containsExactly("counter_decreased")
+    }
+
+    @Test fun `직결과 전달 비활성은 관측 근거가 아니며 수신기 시각은 손실 관측 필수가 아니다`() {
+        ok(post(report(mode = "direct", lost = 9)))
+        ok(post(report(forwarding = false, lost = 9)))
+        assertThat(reportedLoss()).isZero()
+        assertThat(data.countRows("installation_loss_runs")).isZero()
+        clock.now = clock.now.plusSeconds(60)
+        ok(post(report(receivingFor = null, lost = 5, skew = Duration.ofHours(5))))
+        assertThat(reportedLoss()).isEqualTo(5)
+        assertThat(jdbc.sql("SELECT observed_at FROM enrollment.installation_loss_events WHERE installation_id=:id")
+            .param("id", installation).query { rs, _ -> rs.getTimestamp(1).toInstant() }.single()).isEqualTo(clock.now)
+        assertThat(segments()).isEmpty()
+    }
+
+    @Test fun `원장 보존이 지난 뒤 이전 실행을 재보고해도 새 손실이 되지 않는다`() {
+        ok(post(report(lost = 8)))
+        clock.now = clock.now.plus(Duration.ofDays(31))
+        ok(post(report(lost = 8)))
+        assertThat(reportedLoss()).isZero()
+        assertThat(jdbc.sql("SELECT high_water_lost FROM enrollment.installation_loss_runs WHERE installation_id=:id")
+            .param("id", installation).query(Long::class.java).single()).isEqualTo(8)
+    }
+
+    @Test fun `손실 저장 실패도 heartbeat와 설치 생존을 함께 롤백한다`() {
+        jdbc.sql("ALTER TABLE enrollment.installation_loss_events RENAME TO installation_loss_events_unavailable").update()
+        try {
+            rejected(post(report(lost = 3)), 503, "heartbeat_unavailable")
+            assertThat(lastSeen()).isNull()
+            assertThat(data.countRows("installation_heartbeats")).isZero()
+            assertThat(data.countRows("installation_loss_runs")).isZero()
+        } finally { jdbc.sql("ALTER TABLE enrollment.installation_loss_events_unavailable RENAME TO installation_loss_events").update() }
+    }
+
     @Test fun `저장소 장애는 401이나 403이 아니라 503과 Retry-After이고 아무것도 남기지 않는다`() {
         data.activeManifest(tenant, member, version = 3)
         jdbc.sql("ALTER TABLE enrollment.installation_heartbeats RENAME TO installation_heartbeats_unavailable").update()

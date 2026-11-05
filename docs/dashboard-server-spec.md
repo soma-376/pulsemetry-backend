@@ -36,6 +36,7 @@ dev 백엔드의 EKS 전용 실행과 이미지 공급·수동 배포 분리는 
 | 17 | [GET `/api/v1/organizations/{organizationId}/alerts/{alertId}`](api/endpoints/17-get-alert.md) | 알림 상세 |
 | 18 | [GET `/api/v1/organizations/{organizationId}/operations/{operationId}`](api/endpoints/18-get-operation.md) | 작업 상태 |
 | 19 | [GET `/api/v1/organizations/{organizationId}/ingest-status`](api/endpoints/19-get-ingest-status.md) | 현재 수집 상태 |
+| 77 | [GET `/api/v1/organizations/{organizationId}/ingest-status/loss-installations`](api/endpoints/77-list-loss-installations.md) | 손실 영향 기기 |
 | 20 | [GET `/api/v1/vendor-catalog`](api/endpoints/20-list-vendor-catalog.md) | 카탈로그 검색 |
 | 21 | [GET `/api/v1/vendor-catalog/{vendorId}/plans`](api/endpoints/21-list-vendor-plans.md) | 제품 플랜 조회 |
 | 76 | [GET `/api/v1/healthz`](api/endpoints/76-get-dashboard-health.md) | 생존 확인 |

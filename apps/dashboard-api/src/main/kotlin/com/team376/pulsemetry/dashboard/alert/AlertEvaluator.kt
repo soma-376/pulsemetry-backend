@@ -27,7 +27,8 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 /**
- * 켜진 알림 규칙을 평가한다 (ADR 0051 §5·§6). 원천은 읽기만 하고 결과는 [AlertStore] 에 남긴다.
+ * 사용자 알림 규칙(ADR 0051)과 자동 설치 보고 공백(ADR 0076)을 평가한다. 원천은 읽기만 한다.
+ * 공백 사건은 원천 조회 후 cache 선점을 재검사해 종료·재발·평가 기록을 함께 반영한다.
  *
  * - **급증**: 하루 D 마다 D 로 끝나는 7일과 그 앞 7일을 개요와 같은 snapshot·같은 비용 계산으로 본다. 두 기간이 모두 완전하지 않거나(ADR 0042),
  *   비용을 모르거나, 앞 7일이 0 이면 그날은 **평가하지 않는다**(사유를 남긴다). 증가율이 임계값 이상이면 (급증, D) 알림이다. D 는 확정 대기가 지난 날만이다.
@@ -52,27 +53,51 @@ class AlertEvaluator(
 ) {
 	private val log = LoggerFactory.getLogger(AlertEvaluator::class.java)
 
-	/** 켜진 규칙 또는 아직 열린 알림이 있는 조직을 하나씩 선점해 평가한다. 평가한 조직 수. */
+	/** 활성 설치·켜진 사용자 규칙·열린 알림이 있는 조직을 하나씩 선점해 평가한다. 평가한 조직 수. */
 	fun runOnce(): Int {
 		val enabledTenants = source.sql("SELECT DISTINCT r.tenant_id FROM enrollment.organization_alert_rules r JOIN enrollment.alert_rule_definitions d USING (rule_id) WHERE r.enabled AND d.active ORDER BY r.tenant_id")
 			.query { rs, _ -> rs.getObject("tenant_id", UUID::class.java) }.list()
-		val tenants = (enabledTenants + store.tenantsWithOpenAlerts()).distinct().sortedBy(UUID::toString)
+		val activeTenants = source.sql("SELECT DISTINCT tenant_id FROM enrollment.installations WHERE status = 'active'")
+			.query { rs, _ -> rs.getObject("tenant_id", UUID::class.java) }.list()
+		val tenants = (enabledTenants + activeTenants + store.tenantsWithOpenAlerts()).distinct().sortedBy(UUID::toString)
 		var evaluated = 0
 		for (tenant in tenants) {
-			val now = clock.instant()
-			if (!store.claim(tenant, owner, now, now.plus(lease))) continue
-			try {
-				evaluate(tenant)
-				evaluated++
-			} finally {
-				store.release(tenant, owner)
-			}
+			if (evaluate(tenant)) evaluated++
 		}
 		return evaluated
 	}
 
-	/** 한 조직의 켜진 규칙을 평가한다. 규칙 하나의 실패는 그 규칙의 기록(`failed`)으로 남기고 나머지를 계속한다. */
-	fun evaluate(tenant: UUID) {
+	/** 조직 선점 아래 공백을 먼저 평가하고 기존 사용자 규칙을 이어서 평가한다. 선점하지 못하거나 잃으면 false다. */
+	fun evaluate(tenant: UUID): Boolean {
+		val now = clock.instant()
+		// 같은 프로세스의 동시 실행도 서로 다른 선점 소유자다.
+		val claimOwner = "$owner/${UUID.randomUUID()}"
+		if (!store.claim(tenant, claimOwner, now, now.plus(lease))) return false
+		try {
+			if (!reportGaps(tenant, claimOwner)) return false
+			evaluateUserRules(tenant)
+			return true
+		} finally {
+			store.release(tenant, claimOwner)
+		}
+	}
+
+	private fun reportGaps(tenant: UUID, claimOwner: String): Boolean {
+		val installations = try {
+			InstallationReportGaps.read(source, tenant)
+		} catch (e: Exception) {
+			log.error("설치 보고 공백 조회 실패 tenant={}", tenant, e)
+			return store.withLease(tenant, claimOwner, clock) {
+				store.record(tenant, Evaluation(InstallationReportGaps.RULE, InstallationReportGaps.VERSION, null, null,
+					clock.instant(), FAILED, EVALUATION_ERROR, null, null))
+			}
+		}
+		return store.withLease(tenant, claimOwner, clock) {
+			InstallationReportGaps.reconcile(store, tenant, installations, clock.instant())
+		}
+	}
+
+	private fun evaluateUserRules(tenant: UUID) {
 		val rules = AlertRules.rules(source, tenant)
 		for (rule in rules) {
 			val now = clock.instant()
