@@ -45,3 +45,8 @@ out/
 /archive/
 /apps/*/archive/
 /binaries/
+
+# 로컬 이미지 계약 검사 산출물
+/.deployment-contracts/
+__pycache__/
+*.pyc

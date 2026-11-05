@@ -26,7 +26,7 @@ env:
   ECR_REPO_TELEMETRY_INGEST: ${{ secrets.ECR_REPO_TELEMETRY_INGEST_DEV }}
   ECR_REPO_DASHBOARD_API: ${{ secrets.ECR_REPO_DASHBOARD_API_DEV }}
   # telemetry-gateway 는 EKS workload 다(ADR 0066). 이미지만 게시하고 ECS 로 배포하지 않는다.
-  # 선택 Secret 이다 — 등록되지 않으면 Gateway 빌드를 건너뛰고 나머지 배포는 그대로 돈다.
+  # 네 앱 완료 묶음의 필수 입력이며 누락하면 이미지 게시를 시작하지 않는다.
   ECR_REPO_TELEMETRY_GATEWAY: ${{ secrets.ECR_REPO_TELEMETRY_GATEWAY_DEV }}
 
   AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN_DEV }}
@@ -44,6 +44,9 @@ jobs:
 
       - name: Test dev image publication
         run: python3 .github/tests/test_deploy_dev.py
+
+      - name: Test GitOps completion and source verification
+        run: python3 -m unittest discover -s scripts/gitops -p 'test_*.py'
 
       - name: Test published CLI supply
         run: python3 -m unittest discover -s scripts/releases -p 'test_*.py'
@@ -83,7 +86,7 @@ jobs:
   deploy:
     name: Build and publish images to ECR
     needs: validate
-    # EKS 수동 배포 절차가 읽는 Gateway 이미지 digest. 저장소 Secret 이 없으면 비어 있다.
+    # 수동 인계 및 완료 묶음이 같은 build output digest를 사용한다.
     outputs:
       telemetry-gateway-digest: ${{ steps.build-gateway.outputs.digest }}
     # dev EKS 노드가 ARM64이므로 linux/arm64 이미지를 네이티브 ARM 러너에서 만든다.
@@ -106,6 +109,7 @@ jobs:
             ECR_REPO_ENROLLMENT_API:ECR_REPO_ENROLLMENT_API_DEV \
             ECR_REPO_TELEMETRY_INGEST:ECR_REPO_TELEMETRY_INGEST_DEV \
             ECR_REPO_DASHBOARD_API:ECR_REPO_DASHBOARD_API_DEV \
+            ECR_REPO_TELEMETRY_GATEWAY:ECR_REPO_TELEMETRY_GATEWAY_DEV \
             AWS_DEPLOY_ROLE_ARN:AWS_DEPLOY_ROLE_ARN_DEV; do
             env_name="${mapping%%:*}"
             secret_name="${mapping#*:}"
@@ -131,7 +135,7 @@ jobs:
             exit 1
           fi
 
-          # telemetry-gateway 이미지 공급은 선택이다. 저장소가 있으면 세 앱의 저장소와 겹치면 안 된다.
+          # Gateway도 필수이며 다른 세 앱의 repository와 겹치면 안 된다.
           if [[ -n "${ECR_REPO_TELEMETRY_GATEWAY:-}" ]]; then
             if [[ "$ECR_REPO_TELEMETRY_GATEWAY" == "$ECR_REPO_ENROLLMENT_API" \
                || "$ECR_REPO_TELEMETRY_GATEWAY" == "$ECR_REPO_TELEMETRY_INGEST" \
@@ -139,8 +143,6 @@ jobs:
               echo '::error::telemetry-gateway의 ECR 저장소는 세 앱의 저장소와 달라야 한다.'
               exit 1
             fi
-          else
-            echo '::notice::ECR_REPO_TELEMETRY_GATEWAY_DEV가 없어 telemetry-gateway 이미지 공급을 건너뛴다.'
           fi
 
           echo "이미지 게시 설정 확인 완료"
@@ -164,6 +166,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/releases/telemetryctl_release.py download binaries
 
+      - name: Generate deployment contracts
+        id: deployment-contracts
+        run: |
+          python3 scripts/gitops/contract.py contracts --output .deployment-contracts --backend-commit "$GITHUB_SHA"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import hashlib
+          from pathlib import Path
+          for path in sorted(Path('.deployment-contracts').glob('*.json')):
+              print(path.stem + '=' + hashlib.sha256(path.read_bytes()).hexdigest())
+          PY
+
       # 장기 액세스 키를 쓰지 않는다(인프라 ADR-0024). 신뢰 정책이 develop ref를
       # StringEquals로 고정하므로 이 잡에 environment를 붙이지 않는다.
       - name: Configure AWS credentials (OIDC)
@@ -180,9 +193,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      # Dockerfile과 빌드 컨텍스트는 레포 루트다. 이미지 게시 역할에 ECR pull 권한이 없으므로
-      # registry cache 대신 GitHub Actions cache만 쓴다.
-      # 필수 세 SHA 이미지와 설정된 Gateway 이미지가 모두 게시되기 전에는 호환용 dev 태그를 갱신하지 않는다.
+      # Dockerfile과 빌드 컨텍스트는 레포 루트다. 네 repository의 manifest/config 읽기는
+      # 완료 묶음 검증에만 쓰며 build cache는 GitHub Actions cache를 유지한다.
+      # 필수 네 SHA 이미지가 모두 게시되기 전에는 호환용 dev 태그를 갱신하지 않는다.
       - name: Build and push enrollment-api
         id: build-enrollment
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -190,6 +203,9 @@ jobs:
           context: .
           file: Dockerfile
           target: enrollment-api
+          build-args: |
+            BACKEND_COMMIT=${{ github.sha }}
+            DEPLOYMENT_CONTRACT_SHA256=${{ steps.deployment-contracts.outputs.enrollment-api }}
           build-contexts: |
             telemetry-contracts=./telemetryctl/contracts
             telemetry-binaries=./binaries
@@ -227,6 +243,9 @@ jobs:
           context: .
           file: Dockerfile
           target: telemetry-ingest
+          build-args: |
+            BACKEND_COMMIT=${{ github.sha }}
+            DEPLOYMENT_CONTRACT_SHA256=${{ steps.deployment-contracts.outputs.telemetry-ingest }}
           platforms: linux/arm64
           provenance: false
           push: true
@@ -242,6 +261,9 @@ jobs:
           context: .
           file: Dockerfile
           target: dashboard-api
+          build-args: |
+            BACKEND_COMMIT=${{ github.sha }}
+            DEPLOYMENT_CONTRACT_SHA256=${{ steps.deployment-contracts.outputs.dashboard-api }}
           platforms: linux/arm64
           provenance: false
           push: true
@@ -252,15 +274,16 @@ jobs:
 
       # telemetry-gateway 는 EKS workload 다(ADR 0066). SHA 이미지를 게시하고 digest 를 수동 배포 절차로 넘긴다.
       # dev 태그는 옮기지 않는다. Gateway 빌드가 실패하면 세 앱의 dev 태그 승격도 시작하지 않는다.
-      # 저장소 Secret 이 없으면 Gateway 게시만 건너뛴다.
       - name: Build and push telemetry-gateway
         id: build-gateway
-        if: ${{ env.ECR_REPO_TELEMETRY_GATEWAY != '' }}
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: Dockerfile
           target: telemetry-gateway
+          build-args: |
+            BACKEND_COMMIT=${{ github.sha }}
+            DEPLOYMENT_CONTRACT_SHA256=${{ steps.deployment-contracts.outputs.telemetry-gateway }}
           platforms: linux/arm64
           provenance: false
           push: true
@@ -271,7 +294,6 @@ jobs:
 
       # digest 는 비밀이 아니다. 저장소 이름(Secret)은 출력하지 않는다.
       - name: Report telemetry-gateway image digest
-        if: ${{ env.ECR_REPO_TELEMETRY_GATEWAY != '' }}
         env:
           GATEWAY_IMAGE_DIGEST: ${{ steps.build-gateway.outputs.digest }}
         run: |
@@ -336,3 +358,26 @@ jobs:
           promote_image "$ECR_REPO_TELEMETRY_INGEST" "$INGEST_IMAGE_DIGEST"
 
           promote_image "$ECR_REPO_DASHBOARD_API" "$DASHBOARD_IMAGE_DIGEST"
+
+      # 완료 manifest는 같은 실행의 모든 필수 게시·호환 태그 처리 뒤에만 만든다.
+      - name: Verify and emit immutable completion bundle
+        env:
+          IMAGE_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          ENROLLMENT_REPOSITORY: ${{ env.ECR_REPO_ENROLLMENT_API }}
+          INGEST_REPOSITORY: ${{ env.ECR_REPO_TELEMETRY_INGEST }}
+          GATEWAY_REPOSITORY: ${{ env.ECR_REPO_TELEMETRY_GATEWAY }}
+          DASHBOARD_REPOSITORY: ${{ env.ECR_REPO_DASHBOARD_API }}
+          ENROLLMENT_IMAGE_DIGEST: ${{ steps.build-enrollment.outputs.digest }}
+          INGEST_IMAGE_DIGEST: ${{ steps.build-ingest.outputs.digest }}
+          GATEWAY_IMAGE_DIGEST: ${{ steps.build-gateway.outputs.digest }}
+          DASHBOARD_IMAGE_DIGEST: ${{ steps.build-dashboard.outputs.digest }}
+        run: python3 scripts/gitops/contract.py completion --contracts .deployment-contracts --output "$RUNNER_TEMP/image-bundle"
+
+      - name: Preserve original completion bytes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dev-image-bundle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/image-bundle/
+          retention-days: 90
+          if-no-files-found: error
+          overwrite: false
