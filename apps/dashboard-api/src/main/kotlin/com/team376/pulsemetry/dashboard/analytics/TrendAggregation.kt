@@ -5,11 +5,14 @@ import com.team376.pulsemetry.dashboard.snapshot.SnapshotManifestStore
 /** 버킷의 배치와 값의 의미. asOf는 수신 이력 복원 시각이 아닌 발생 시각의 배타적 상한이다. */
 data class TrendAggregation(
 	val mode: String,
-	val intervalSeconds: Long,
+	val intervalSeconds: Long?,
 	val valueMode: String,
 	val rangeStart: String,
 	val rangeEnd: String,
 	val asOf: String,
+	val policyVersion: String,
+	val intervalMonths: Int?,
+	val effectiveEnd: String,
 )
 
 /** PROJ-315 인계용 공통 계약. 사용량 Value의 지표 결손과 수집 상태를 분리한다. */

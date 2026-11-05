@@ -130,7 +130,8 @@ class UsageAggregator(
 		return clickHouse.query(sql, bucketParams(snapshot, plan)) { row -> (text(row, "k0") to long(row, "k1").toInt()) to long(row, "sessions") }.toMap()
 	}
 
-	private fun bucketIndex(time: String) = "intDiv(toUnixTimestamp64Nano($time) - toUnixTimestamp64Nano({rangeStart:DateTime64(9, 'UTC')}), {intervalNanos:UInt64})"
+	private fun bucketIndex(time: String) = "arrayCount(boundary -> boundary <= toUnixTimestamp64Nano($time), {bucketStarts:Array(Int64)}) - 1"
+
 	private fun bucketParams(snapshot: SnapshotManifestStore.Manifest, plan: TrendBucketPlan) = mapOf(
 		"tenant" to ClickHouseParam.string(snapshot.tenantId.toString()),
 		"snapshot" to ClickHouseParam.string(snapshot.snapshotId),
@@ -138,7 +139,9 @@ class UsageAggregator(
 		"rangeStart" to ClickHouseParam.instant(plan.period.from),
 		"rangeEnd" to ClickHouseParam.instant(plan.period.until),
 		"asOf" to ClickHouseParam.instant(plan.asOf),
-		"intervalNanos" to ClickHouseParam.uint64(plan.intervalSeconds * 1_000_000_000L),
+		"bucketStarts" to ClickHouseParam("Array(Int64)", plan.plannedStarts.joinToString(",", "[", "]") {
+			Math.addExact(Math.multiplyExact(it.epochSecond, 1_000_000_000L), it.nano.toLong()).toString()
+		}),
 	)
 
 	private fun teamCondition(team: TeamScope?): String = when {

@@ -79,11 +79,11 @@ class OverviewService(private val frames: AnalyticsFrames, private val aggregato
    val t = totals[listOf(bucket.index.toString())] ?: UsageTotals.EMPTY
    val values = UsageValues.recorded(t)
    AutoTrendPoint(bucket.start.toString(), bucket.end.toString(), bucket.temporalState,
-    if (bucket.upcoming) null else t.usageRows,
-    if (bucket.upcoming) value(null, listOf("upcoming")) else values.cost,
-    if (bucket.upcoming) value(null, listOf("upcoming")) else values.tokens,
-    if (bucket.upcoming) value(null, listOf("upcoming")) else values.knownCost,
-    if (bucket.upcoming) null else values.pricedUsageRows, if (bucket.upcoming) null else values.unpricedUsageRows)
+    t.usageRows,
+    values.cost,
+    values.tokens,
+    values.knownCost,
+    values.pricedUsageRows, values.unpricedUsageRows)
   })
  }
  private fun modelMix(f: AnalyticsFrames.Frame): ModelMix {

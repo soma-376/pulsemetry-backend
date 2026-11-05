@@ -35,7 +35,7 @@ class AutoTrendApiTest : AbstractDashboardApiTest() {
   val query = "startDate=$date&endDate=$date&compare=none"
   val overview = get(tenant, "overview", "$query&bucket=auto")
   assertThat(overview.at("/meta/trendAggregation/valueMode").asString()).isEqualTo("interval")
-  assertThat(overview.at("/trend/points").size()).isEqualTo(24)
+  assertThat(overview.at("/trend/points").size()).isEqualTo(8)
   assertThat(overview.at("/trend/points/0").has("date")).isFalse()
   assertThat(overview.at("/summary/equivalentCostUsd/value").asString()).isEqualTo("3.500000000001")
   assertThat(overview.at("/summary/equivalentCostUsd/status").asString()).isEqualTo("complete")
@@ -44,10 +44,10 @@ class AutoTrendApiTest : AbstractDashboardApiTest() {
   val detail = get(tenant, "teams/$team", "$query&bucket=auto&snapshotId=$snapshot")
   assertThat(detail.at("/meta/trendAggregation")).isEqualTo(list.at("/meta/trendAggregation"))
   assertThat(detail.at("/team/trend")).isEqualTo(list.at("/teams/items/0/trend"))
-  assertThat(detail.at("/team/trend/23/cumulativeEquivalentCostUsd/value")).isEqualTo(detail.at("/team/metrics/equivalentCostUsd/value"))
-  assertThat(detail.at("/team/trend/23/cumulativeSessionCount/value").asLong()).isEqualTo(1)
+  assertThat(detail.at("/team/trend/7/cumulativeEquivalentCostUsd/value")).isEqualTo(detail.at("/team/metrics/equivalentCostUsd/value"))
+  assertThat(detail.at("/team/trend/7/cumulativeSessionCount/value").asLong()).isEqualTo(1)
   assertThat(detail.at("/team/trend/1/usageRows").asLong()).isZero()
-  assertThat(detail.at("/team/trend/1/cumulativeEquivalentCostUsd/value").asString()).isEqualTo("1.000000000001")
+  assertThat(detail.at("/team/trend/1/cumulativeEquivalentCostUsd/value").asString()).isEqualTo("3.000000000001")
   val users = get(tenant, "teams/$team/users", "$query&snapshotId=$snapshot")
   assertThat(users.at("/meta/trendAggregation")).isEqualTo(list.at("/meta/trendAggregation"))
   assertThat(users.at("/meta/collectionPolicy")).isEqualTo(list.at("/meta/collectionPolicy"))
@@ -65,14 +65,15 @@ class AutoTrendApiTest : AbstractDashboardApiTest() {
   assertThat(day.at("/meta").has("snapshotId")).isFalse()
   for (route in listOf("overview", "teams", "teams/$team")) get(tenant, route, "$query&bucket=hour", 400)
  }
- @Test fun emptyTodayStillHas24TemporalBucketsWithoutInventingZeros() {
+ @Test fun emptyTodayOnlyHasElapsedAndCurrentBucketsWithoutInventingZeros() {
   val tenant = DashboardTestStores.insertTenant()
   val today = LocalDate.now(QueryReader.SEOUL)
   val body = get(tenant, "overview", "startDate=$today&endDate=$today&compare=none&bucket=auto")
   val points = body.at("/trend/points")
-  assertThat(points.size()).isEqualTo(24)
+  assertThat(points.size()).isBetween(0, 8)
   val states = (0 until points.size()).map { points.get(it).path("temporalState").asString() }
-  assertThat(states.count { it == "in_progress" }).isEqualTo(1)
+  assertThat(states.count { it == "in_progress" }).isLessThanOrEqualTo(1)
+  assertThat(states).doesNotContain("upcoming")
   for (i in 0 until points.size()) {
    val point = points.get(i)
    assertThat(point.at("/equivalentCostUsd/value").isNull).isTrue()

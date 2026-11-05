@@ -252,14 +252,14 @@ class TeamsService(
 			val cumulative = TrendCumulativeTotals()
 			return plan.buckets.map { bucket ->
 				val totals = teamBuckets[listOf(id, bucket.index.toString())] ?: UsageTotals.EMPTY
-				val values = UsageValues.recorded(if (bucket.upcoming) UsageTotals.EMPTY else cumulative.add(totals, firstBucketSessions[id to bucket.index] ?: 0L))
+				val values = UsageValues.recorded(cumulative.add(totals, firstBucketSessions[id to bucket.index] ?: 0L))
 				TeamAutoTrendPoint(bucket.start.toString(), bucket.end.toString(), bucket.temporalState,
-					if (bucket.upcoming) null else totals.usageRows,
-					if (bucket.upcoming) UsageValues.value(null, listOf("upcoming")) else values.cost,
-					if (bucket.upcoming) UsageValues.value(null, listOf("upcoming")) else values.knownCost,
-					if (bucket.upcoming) UsageValues.value(null, listOf("upcoming")) else values.tokens,
-					if (bucket.upcoming) UsageValues.value(null, listOf("upcoming")) else values.sessions,
-					if (bucket.upcoming) null else values.pricedUsageRows, if (bucket.upcoming) null else values.unpricedUsageRows)
+					totals.usageRows,
+					values.cost,
+					values.knownCost,
+					values.tokens,
+					values.sessions,
+					values.pricedUsageRows, values.unpricedUsageRows)
 			}
 		}
 

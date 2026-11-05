@@ -7,34 +7,47 @@ import org.junit.jupiter.api.Test
 import java.time.LocalDate
 
 class TrendBucketPlanTest {
- private val start = LocalDate.parse("2026-01-02")
- @Test fun intervalsAndClippedBoundaries() {
-  val cases = listOf(1 to 1, 2 to 1, 3 to 3, 7 to 3, 8 to 6, 15 to 6, 16 to 12,
-   30 to 12, 31 to 24, 60 to 24, 61 to 72, 180 to 72, 181 to 168, 366 to 168)
-  for ((days, hours) in cases) {
-   val period = DatePeriod(start, start.plusDays(days - 1L), QueryReader.SEOUL)
-   val plan = TrendBucketPlan(period, period.until)
-   assertThat(plan.intervalSeconds).describedAs("%s일", days).isEqualTo(hours * 3600L)
-   assertThat(plan.buckets).hasSize((days * 24 + hours - 1) / hours).hasSizeLessThanOrEqualTo(60)
-   assertThat(plan.buckets.first().start).isEqualTo(period.from)
-   assertThat(plan.buckets.last().end).isEqualTo(period.until)
+ private fun period(start: String, days: Int) = LocalDate.parse(start).let { DatePeriod(it, it.plusDays(days - 1L), QueryReader.SEOUL) }
+ @Test fun everySupportedPeriodHasSixToTwelveContiguousBuckets() {
+  for (start in listOf("2024-01-31", "2024-02-29", "2025-01-01", "2026-08-31")) for (days in 1..366) {
+   val p = period(start, days); val plan = TrendBucketPlan(p, p.until)
+   assertThat(plan.buckets.size).describedAs("%s %s일", start, days).isBetween(6, 12)
+   assertThat(plan.buckets.first().start).isEqualTo(p.from)
+   assertThat(plan.buckets.last().end).isEqualTo(p.until)
    assertThat(plan.buckets.map { it.temporalState }).containsOnly("elapsed")
    plan.buckets.zipWithNext().forEach { (a, next) -> assertThat(a.end).isEqualTo(next.start) }
   }
-  val clipped = TrendBucketPlan(DatePeriod(start, start.plusDays(60), QueryReader.SEOUL), start.atStartOfDay(QueryReader.SEOUL).toInstant())
-  assertThat(clipped.buckets.last().end.epochSecond - clipped.buckets.last().start.epochSecond).isEqualTo(86400)
  }
- @Test fun todayKeeps24BucketsAtEveryBoundary() {
-  val period = DatePeriod(start, start, QueryReader.SEOUL)
-  for (asOf in listOf(period.from.minusNanos(1), period.from, period.from.plusSeconds(3600).minusNanos(1), period.from.plusSeconds(3600), period.until)) {
-   val plan = TrendBucketPlan(period, asOf)
-   assertThat(plan.buckets).hasSize(24)
-   assertThat(plan.intervalSeconds).isEqualTo(3600)
+ @Test fun policyThresholdsAreExplicit() {
+  val cases = listOf(1 to 3, 2 to 6, 3 to 12, 6 to 12, 7 to 24, 12 to 24, 13 to 48, 24 to 48,
+   25 to 72, 36 to 72, 37 to 168, 84 to 168, 85 to 336, 168 to 336)
+  for ((days, hours) in cases) {
+   val p = period("2026-01-01", days)
+   assertThat(TrendBucketPlan(p, p.until).intervalSeconds).isEqualTo(hours * 3600L)
   }
-  val midnight = TrendBucketPlan(period, period.from)
-  assertThat(midnight.buckets.first().temporalState).isEqualTo("in_progress")
-  assertThat(midnight.buckets.drop(1).map { it.temporalState }).containsOnly("upcoming")
-  val next = TrendBucketPlan(period, period.from.plusSeconds(3600))
-  assertThat(next.buckets.take(2).map { it.temporalState }).containsExactly("elapsed", "in_progress")
+  val p = period("2026-01-01", 169)
+  assertThat(TrendBucketPlan(p, p.until).intervalMonths).isEqualTo(1)
+ }
+ @Test fun currentBoundaryHasNoFutureOrZeroLengthBucket() {
+  val p = period("2026-11-05", 1)
+  for (asOf in listOf(p.from.minusNanos(1), p.from)) assertThat(TrendBucketPlan(p, asOf).buckets).isEmpty()
+  val exact = TrendBucketPlan(p, p.from.plusSeconds(10800))
+  assertThat(exact.buckets).hasSize(1)
+  assertThat(exact.buckets.single().temporalState).isEqualTo("elapsed")
+  val after = TrendBucketPlan(p, p.from.plusSeconds(10800).plusNanos(1))
+  assertThat(after.buckets).hasSize(2)
+  assertThat(after.buckets.last().end).isEqualTo(after.asOf)
+  assertThat(after.buckets.last().temporalState).isEqualTo("in_progress")
+  assertThat(after.plannedStarts).hasSize(8)
+  assertThat(after.intervalSeconds).isEqualTo(10800)
+ }
+ @Test fun calendarMonthsKeepOriginalDayAndMergeThirteenthRemainder() {
+  val p = period("2024-01-31", 366); val plan = TrendBucketPlan(p, p.until)
+  assertThat(plan.intervalSeconds).isNull()
+  assertThat(plan.buckets[1].start).isEqualTo(LocalDate.parse("2024-02-29").atStartOfDay(QueryReader.SEOUL).toInstant())
+  assertThat(plan.buckets[2].start).isEqualTo(LocalDate.parse("2024-03-31").atStartOfDay(QueryReader.SEOUL).toInstant())
+  val extra = period("2025-01-01", 366); val merged = TrendBucketPlan(extra, extra.until)
+  assertThat(merged.buckets).hasSize(12)
+  assertThat(merged.buckets.last().end).isEqualTo(LocalDate.parse("2026-01-02").atStartOfDay(QueryReader.SEOUL).toInstant())
  }
 }

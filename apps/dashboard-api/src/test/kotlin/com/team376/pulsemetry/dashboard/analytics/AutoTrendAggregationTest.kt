@@ -86,9 +86,9 @@ class AutoTrendAggregationTest {
     assertThat(point.at("/cumulativeEquivalentCostUsd/value").isNull).isTrue()
     assertThat(point.at("/cumulativeEquivalentCostUsd/reasons/0").asString()).isEqualTo("no_data")
     assertThat(point.path("usageRows").asLong()).isZero()
-    assertThat(team.at("/team/trend/4/usageRows").isNull).isTrue()
+    assertThat(team.at("/team/trend").size()).isEqualTo(4)
     val overview = json(s.overview.overview(s.org, s.member, period, TrendBucketMode.AUTO))
-    assertThat(overview.at("/trend/points").size()).isEqualTo(24)
+    assertThat(overview.at("/trend/points").size()).isEqualTo(4)
    }
   }
  }
@@ -97,10 +97,10 @@ class AutoTrendAggregationTest {
   val events = listOf(
    Event("before", start.minusNanos(1), teamId = team),
    Event("start", start, teamId = team, costEstimatedUsd = BigDecimal("1")),
-   Event("last", start.plusSeconds(3600).minusNanos(1), teamId = team, costEstimatedUsd = BigDecimal("2")),
-   Event("next", start.plusSeconds(3600), teamId = team, costEstimatedUsd = BigDecimal("3"), semanticsProfile = "other-v1"),
-   Event("after", start.plusSeconds(3600).plusNanos(1), teamId = team, costEstimatedUsd = BigDecimal("4"), sessionId = null),
-   Event("valid-later", start.plusSeconds(7200), teamId = team, costEstimatedUsd = BigDecimal("5")),
+   Event("last", start.plusSeconds(10800).minusNanos(1), teamId = team, costEstimatedUsd = BigDecimal("2")),
+   Event("next", start.plusSeconds(10800), teamId = team, costEstimatedUsd = BigDecimal("3"), semanticsProfile = "other-v1"),
+   Event("after", start.plusSeconds(10800).plusNanos(1), teamId = team, costEstimatedUsd = BigDecimal("4"), sessionId = null),
+   Event("valid-later", start.plusSeconds(21600), teamId = team, costEstimatedUsd = BigDecimal("5")),
    Event("asof", asOf, teamId = team), Event("end", period.current.until, teamId = team))
   SourceFixtures.insertEvents(tenant, *events.toTypedArray())
   val snapshot = assembly.service.create(tenant, UUID.randomUUID(), period, TrendBucketMode.AUTO)
@@ -109,7 +109,7 @@ class AutoTrendAggregationTest {
   assertThat(totals.mapValues { it.value.usageRows }).containsAllEntriesOf(mapOf(listOf(team.toString(), "0") to 2L, listOf(team.toString(), "1") to 2L, listOf(team.toString(), "2") to 1L))
   val first = aggregator.firstSessionBuckets(snapshot, plan)
   val cumulative = TrendCumulativeTotals()
-  for (bucket in plan.buckets.filterNot { it.upcoming }) cumulative.add(totals[listOf(team.toString(), bucket.index.toString())] ?: UsageTotals.EMPTY, first[team.toString() to bucket.index] ?: 0)
+  for (bucket in plan.buckets) cumulative.add(totals[listOf(team.toString(), bucket.index.toString())] ?: UsageTotals.EMPTY, first[team.toString() to bucket.index] ?: 0)
   val actual = UsageValues.recorded(cumulative.totals)
   assertThat(actual.cost.value).isEqualTo("15.000000")
   assertThat(actual.cost.status).isEqualTo("complete")
@@ -121,15 +121,36 @@ class AutoTrendAggregationTest {
   assertThat(actual.cost).isEqualTo(UsageValues.recorded(periodTotal).cost)
   assertThat(actual.tokens).isEqualTo(UsageValues.recorded(periodTotal).tokens)
  }
+ @Test fun calendarMonthBoundariesKeepNanosecondsAndCountSessionsOnlyOnce() {
+  val tenant = UUID.randomUUID(); val team = UUID.randomUUID()
+  val selected = ComparedPeriod(DatePeriod(LocalDate.parse("2024-01-31"), LocalDate.parse("2024-07-30"), QueryReader.SEOUL), CompareMode.NONE)
+  val boundary = LocalDate.parse("2024-02-29").atStartOfDay(QueryReader.SEOUL).toInstant()
+  SourceFixtures.insertEvents(tenant,
+   Event("before-month", boundary.minusNanos(1), teamId = team, sessionId = "same", costEstimatedUsd = BigDecimal("0.1")),
+   Event("at-month", boundary, teamId = team, sessionId = "same", costEstimatedUsd = BigDecimal("0.2")),
+   Event("after-month", boundary.plusNanos(1), teamId = team, sessionId = "other", costEstimatedUsd = BigDecimal("0.3")),
+   Event("excluded-end", selected.current.until, teamId = team))
+  val snapshot = assembly.service.create(tenant, UUID.randomUUID(), selected, TrendBucketMode.AUTO)
+  val plan = TrendBucketPlan(selected.current, snapshot.asOf)
+  val totals = aggregator.bucketTotals(snapshot, plan, true)
+  assertThat(plan.intervalMonths).isEqualTo(1)
+  assertThat(totals.mapValues { it.value.usageRows }).containsExactlyInAnyOrderEntriesOf(mapOf(listOf(team.toString(), "0") to 1L, listOf(team.toString(), "1") to 2L))
+  val first = aggregator.firstSessionBuckets(snapshot, plan)
+  assertThat(first).containsExactlyInAnyOrderEntriesOf(mapOf((team.toString() to 0) to 1L, (team.toString() to 1) to 1L))
+  val cumulative = TrendCumulativeTotals()
+  for (bucket in plan.buckets) cumulative.add(totals[listOf(team.toString(), bucket.index.toString())] ?: UsageTotals.EMPTY, first[team.toString() to bucket.index] ?: 0)
+  val whole = aggregator.totals(snapshot, UsageAggregator.Side.CURRENT, UsageAggregator.Axis.ORGANIZATION).getValue(emptyList())
+  assertThat(UsageValues.recorded(cumulative.totals).cost).isEqualTo(UsageValues.recorded(whole).cost)
+ }
  @Test fun firstSessionsAreDistinctPerTeamProductAndNamespaceAndQueriesAreBatched() {
   val tenant = UUID.randomUUID(); val team = UUID.randomUUID(); val other = UUID.randomUUID(); val start = period.current.from
   SourceFixtures.insertEvents(tenant,
    Event("one", start, teamId = team, sessionId = "same"),
-   Event("repeat", start.plusSeconds(3600), teamId = team, sessionId = "same"),
-   Event("product", start.plusSeconds(3600), teamId = team, sessionId = "same", product = "codex"),
-   Event("namespace", start.plusSeconds(7200), teamId = team, sessionId = "same", sessionIdNamespace = "other"),
-   Event("team", start.plusSeconds(3600), teamId = other, sessionId = "same"),
-   Event("unassigned", start.plusSeconds(3600), sessionId = "same"))
+   Event("repeat", start.plusSeconds(10800), teamId = team, sessionId = "same"),
+   Event("product", start.plusSeconds(10800), teamId = team, sessionId = "same", product = "codex"),
+   Event("namespace", start.plusSeconds(21600), teamId = team, sessionId = "same", sessionIdNamespace = "other"),
+   Event("team", start.plusSeconds(10800), teamId = other, sessionId = "same"),
+   Event("unassigned", start.plusSeconds(10800), sessionId = "same"))
   val snapshot = assembly.service.create(tenant, UUID.randomUUID(), period, TrendBucketMode.AUTO)
   val client = Mockito.spy(assembly.clickHouse)
   val batched = UsageAggregator(client)

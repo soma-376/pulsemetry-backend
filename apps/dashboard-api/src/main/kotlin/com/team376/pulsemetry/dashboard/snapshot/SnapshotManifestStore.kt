@@ -225,7 +225,7 @@ class SnapshotManifestStore(
 	companion object {
 		/** 조회 계약의 판. 응답 의미를 바꾸면 올린다 — 다른 판의 snapshot 은 재사용하지 않는다. */
 		const val QUERY_CONTRACT = "dashboard-v7"
-		const val AUTO_QUERY_CONTRACT = "dashboard-auto-trend-v1"
+		const val AUTO_QUERY_CONTRACT = "dashboard-auto-trend-v2"
 
 		fun queryContract(bucket: TrendBucketMode): String = when (bucket) {
 			TrendBucketMode.DAY -> QUERY_CONTRACT
