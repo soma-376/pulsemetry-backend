@@ -187,7 +187,7 @@ public class ObservationNormalizer(
 			)
 			val mapped = if (name != null) mapper?.map(name, view, base) else null
 			accept(
-				mapped, base, resource, selection, ObservationSignal.LOG, providerEvidence(mapped, mapper?.providerEvidenceKeys, attributes),
+				mapped, base, resource, selection, ObservationSignal.LOG,
 				usageCandidate = UsageContractDiagnostics.isCandidate(base.envelope.product, name, attributes),
 			)
 		}
@@ -230,7 +230,7 @@ public class ObservationNormalizer(
 				spanKind = SPAN_KINDS.getOrElse(Otlp.enumNumber(record, "kind")) { SpanKind.UNSPECIFIED },
 				spanStatusCode = STATUS_CODES.getOrElse(status?.let { Otlp.enumNumber(it, "code") } ?: 0) { SpanStatusCode.UNSET },
 			)
-			accept(spans.map(view, base), base, resource, selection, ObservationSignal.SPAN, emptySet())
+			accept(spans.map(view, base), base, resource, selection, ObservationSignal.SPAN)
 		}
 
 		fun metric(resource: Resource, profile: ProductProfile?, scope: Scope, metric: Message, path: List<Int>) {
@@ -279,10 +279,9 @@ public class ObservationNormalizer(
 			resource: Resource,
 			selection: SourceTimeSelection.Selected,
 			signal: ObservationSignal,
-			flags: Set<QualityFlag>,
 			usageCandidate: Boolean = false,
 		) {
-			var observation = (mapped?.observation ?: base).withFlags(*flags.toTypedArray())
+			var observation = mapped?.observation ?: base
 			mapped?.nativeIdentity?.let { native ->
 				val id = ObservationIds.native(material(resource, selection, signal), native.namespace, native.id)
 				observation = observation.copy(
@@ -295,17 +294,6 @@ public class ObservationNormalizer(
 				)
 			}
 			events += NormalizedEvent(observation, mapped?.semantics, usageCandidate)
-		}
-
-		/**
-		 * 사용량 관측의 공급자 근거(ADR 0020 §4). 검증된 키의 문자열 값이 정확히 하나로 모이면 근거가 있다 — 값은
-		 * allowlist metadata 에 이미 남아 있다. 없거나 서로 다르면 `provider_unresolved`. `product` 로 채우지 않는다.
-		 */
-		private fun providerEvidence(mapped: MappedEvent?, keys: List<String>?, attributes: List<TypedAttribute>): Set<QualityFlag> {
-			if (mapped?.observation?.eventType != EventType.MODEL_RESPONSE_USAGE) return emptySet()
-			val values = attributes.filter { it.key in keys.orEmpty() }.map { it.value }.toSet()
-			val resolved = values.size == 1 && (values.single() as? TypedValue.Str)?.value?.isNotEmpty() == true
-			return if (resolved) emptySet() else setOf(QualityFlag.PROVIDER_UNRESOLVED)
 		}
 
 		private fun material(resource: Resource, selection: SourceTimeSelection.Selected, signal: ObservationSignal) =
