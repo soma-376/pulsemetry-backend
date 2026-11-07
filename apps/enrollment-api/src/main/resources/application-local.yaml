@@ -7,6 +7,11 @@ spring:
 server:
   address: 127.0.0.1
 
+# 호스트에서 여러 앱을 함께 띄우므로 관리 포트를 앱마다 나눈다(enrollment 9405 · dashboard 9406, ADR 0079).
+management:
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:9405}
+
 pulsemetry:
   user-auth:
     enabled: true

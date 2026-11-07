@@ -6,6 +6,7 @@ Proposed — PROJ-256. 채택되면 [ADR 0068](0068-수집-운영-계측은-전�
 "분산 추적·새 요청 문맥을 추가하지 않는다"를 대체한다. 0068의 계측 조립·label 금지·평문 로그 형식 보존은 그대로 유효하다.
 [ADR 0066](0066-OTLP-수신은-Gateway가-JWT만-검증해-Kafka에-접수하고-ingest가-RDB로-다시-검증한다.md) Decision 4
 (Bearer·신원을 envelope·key·header·로그에 싣지 않는다)도 그대로다. header에는 플랫폼 trace 문맥 하나만 더한다.
+범위의 "enrollment·dashboard는 제외한다"는 [ADR 0079](0079-API-앱도-관리-포트-지표와-플랫폼-trace를-수집-앱과-같은-규칙으로-켠다.md)(Proposed)가 두 API 앱까지 넓히기를 제안한다.
 
 ## Context
 

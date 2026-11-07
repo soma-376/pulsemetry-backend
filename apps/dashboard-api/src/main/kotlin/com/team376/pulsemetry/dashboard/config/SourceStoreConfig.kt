@@ -3,6 +3,9 @@ package com.team376.pulsemetry.dashboard.config
 import com.team376.pulsemetry.dashboard.source.ClickHouseSourceReader
 import com.team376.pulsemetry.dashboard.store.ClickHouseConnection
 import com.zaxxer.hikari.HikariDataSource
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.tracing.Tracer
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Primary
@@ -23,14 +26,17 @@ class SourceStoreConfig {
 	 */
 	@Bean
 	@Primary
-	fun sourceDataSource(properties: DashboardApiProperties): HikariDataSource =
-		StoreDataSources.hikari("dashboard-rds-source", properties.rds.source, readOnly = true)
+	fun sourceDataSource(properties: DashboardApiProperties, registry: ObjectProvider<MeterRegistry>): HikariDataSource =
+		StoreDataSources.hikari("dashboard-rds-source", properties.rds.source, readOnly = true, registry.ifAvailable)
 
 	@Bean
-	fun clickHouseSourceReader(properties: DashboardApiProperties, mapper: ObjectMapper): ClickHouseSourceReader {
+	fun clickHouseSourceReader(properties: DashboardApiProperties, mapper: ObjectMapper, tracer: ObjectProvider<Tracer>): ClickHouseSourceReader {
 		val source = properties.clickhouse.source
 		return ClickHouseSourceReader(
-			connection = ClickHouseConnection(source.url, source.database, source.username, source.password, source.queryTimeout, mapper),
+			connection = ClickHouseConnection(
+				source.url, source.database, source.username, source.password, source.queryTimeout, mapper,
+				tracer = tracer.getIfAvailable { Tracer.NOOP },
+			),
 			queryTimeout = source.queryTimeout,
 			maxResultRows = source.maxResultRows,
 			maxResultBytes = source.maxResultBytes,

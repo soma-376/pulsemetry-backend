@@ -1,7 +1,7 @@
 package com.team376.pulsemetry.telemetry.observability
 
 /**
- * 플랫폼 trace의 공통 규칙(ADR 0069). Spring·OpenTelemetry 타입 없이 값과 판정만 둔다 — Gateway와 ingest가 같은 규칙으로 조립한다.
+ * 플랫폼 trace의 공통 규칙(ADR 0069·0079). Spring·OpenTelemetry 타입 없이 값과 판정만 둔다 — Gateway·ingest와 두 API 앱이 같은 규칙으로 조립한다.
  *
  * 고객이 보낸 OTLP의 trace와 섞이지 않도록 공개 요청의 trace header는 받지 않고, 플랫폼 span의 resource는 아래 값으로만 정한다.
  */
@@ -14,6 +14,10 @@ public object PlatformTracing {
 
     public const val GATEWAY_SERVICE: String = "telemetry-gateway"
     public const val INGEST_SERVICE: String = "telemetry-ingest"
+
+    /** API 앱의 `service.name`(ADR 0079). Kubernetes workload 이름과 같다. */
+    public const val ENROLLMENT_SERVICE: String = "enrollment-api"
+    public const val DASHBOARD_SERVICE: String = "dashboard-api"
 
     /** Kafka record에 싣는 유일한 trace header다. W3C trace context의 `traceparent`는 55자 고정이다. */
     public const val TRACEPARENT: String = "traceparent"

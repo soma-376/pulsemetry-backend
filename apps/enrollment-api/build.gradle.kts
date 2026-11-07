@@ -37,8 +37,20 @@ dependencies {
 	// manifest 재동기화가 저장된 정책을 telemetryctl 원본 스키마로 검증한다 (ADR 0019).
 	// 계약 테스트도 같은 검증기를 쓴다.
 	implementation(libs.json.schema.validator)
+	// 관리 포트 9404 의 Prometheus scrape 와 플랫폼 trace(ADR 0068·0069·0079). trace 는 기본 꺼짐이고 OTLP/HTTP 로만 보낸다.
+	implementation(project(":libs:telemetry-observability"))
+	implementation(libs.spring.boot.starter.actuator)
+	implementation(libs.micrometer.registry.prometheus)
+	implementation(libs.spring.boot.micrometer.tracing.opentelemetry)
+	implementation(libs.micrometer.tracing.bridge.otel)
+	implementation(libs.opentelemetry.exporter.otlp) {
+		exclude(group = "io.opentelemetry", module = "opentelemetry-exporter-sender-okhttp")
+	}
+	runtimeOnly(libs.opentelemetry.exporter.sender.jdk)
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
+	testImplementation(libs.spring.boot.micrometer.tracing.test)
+	testImplementation(libs.opentelemetry.sdk.testing)
 	testImplementation(libs.archunit)
 	// PostgresContainerConfig 는 영속성 모듈이 testFixtures 로 노출한다.
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))

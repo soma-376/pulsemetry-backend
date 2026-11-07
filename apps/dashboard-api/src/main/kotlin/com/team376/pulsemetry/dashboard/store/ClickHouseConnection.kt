@@ -1,5 +1,8 @@
 package com.team376.pulsemetry.dashboard.store
 
+import com.team376.pulsemetry.telemetry.observability.PlatformTracing
+import io.micrometer.tracing.Span
+import io.micrometer.tracing.Tracer
 import org.slf4j.LoggerFactory
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
@@ -34,6 +37,13 @@ import java.time.Duration
  * 2. 읽기 전용 위반(READONLY) → [StoreQueryRejectedException](500) — 이 앱이 쓰기를 보냈거나 계정 프로필이 `readonly=1` 이다.
  * 3. 인증 실패, 연결·제한 시간, 5xx·429·408 → [StoreUnavailableException](503).
  * 4. 그 밖의 4xx(없는 테이블 404·문법 400 등) → [StoreQueryRejectedException](500 — 이 앱의 문장 결함).
+ *
+ * ## 플랫폼 trace (ADR 0079)
+ *
+ * 현재 span(요청·예약 작업)이 있으면 요청마다 `clickhouse <operation> <table>` client span 을 만든다. 부모가 없는 호출(기동 때 스키마
+ * 적용)은 span 을 만들지 않는다. operation·table 은 문장의 첫 키워드와 대상 이름을 [OPERATIONS]·[TABLES] 에 대어 정하고,
+ * 목록 밖은 `other` 다 — SQL·URL·`param_*` 값·응답 본문은 span 에 싣지 않는다. 실패는 예외 단순 이름(`error.type`)과
+ * 메시지 없는 표식([PlatformTracing.SPAN_FAILURE])뿐이다.
  */
 class ClickHouseConnection(
 	private val baseUrl: String,
@@ -43,6 +53,7 @@ class ClickHouseConnection(
 	private val timeout: Duration,
 	private val mapper: ObjectMapper,
 	private val httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(timeout).build(),
+	private val tracer: Tracer = Tracer.NOOP,
 ) {
 
 	private val log = LoggerFactory.getLogger(ClickHouseConnection::class.java)
@@ -69,6 +80,35 @@ class ClickHouseConnection(
 	private data class Sent(val body: String, val writtenRows: Long)
 
 	private fun send(sql: String, settings: Map<String, String>, params: Map<String, ClickHouseParam>): Sent {
+		val span = clientSpan(sql)
+		var outcome = "failed"
+		try {
+			return exchange(sql, settings, params).also { outcome = "success" }
+		} catch (failure: RuntimeException) {
+			outcome = outcomeOf(failure)
+			runCatching { span.tag(PlatformTracing.ERROR_TYPE, failure.javaClass.simpleName).error(PlatformTracing.SPAN_FAILURE) }
+			throw failure
+		} finally {
+			runCatching { span.tag("pulsemetry.outcome", outcome).end() }
+		}
+	}
+
+	/** 현재 span 의 자식 client span. 부모가 없거나 trace 구현이 실패하면 [Span.NOOP] 이다 — 호출을 막지 않는다. */
+	private fun clientSpan(sql: String): Span = runCatching {
+		if (tracer.currentSpan() == null) return@runCatching Span.NOOP
+		val operation = operationOf(sql)
+		val table = tableOf(sql)
+		tracer.spanBuilder()
+			.name("clickhouse $operation $table")
+			.kind(Span.Kind.CLIENT)
+			.remoteServiceName("clickhouse")
+			.tag("db.system.name", "clickhouse")
+			.tag("pulsemetry.operation", operation)
+			.tag("pulsemetry.table", table)
+			.start()
+	}.getOrDefault(Span.NOOP)
+
+	private fun exchange(sql: String, settings: Map<String, String>, params: Map<String, ClickHouseParam>): Sent {
 		val request = HttpRequest.newBuilder(uri(settings, params))
 			.timeout(timeout)
 			.header(USER_HEADER, username)
@@ -128,6 +168,38 @@ class ClickHouseConnection(
 	companion object {
 		/** 파라미터 이름·DB 이름처럼 SQL 에 식별자로 들어가는 값의 허용 형식. */
 		val IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
+
+		/** span 의 `pulsemetry.operation` 값. 첫 키워드로 정한다(ADR 0079). */
+		val OPERATIONS: Set<String> = setOf("select", "insert", "delete", "schema", "other")
+
+		/** span 의 `pulsemetry.table` 값 — 원천 분석 테이블과 `dashboard_cache` 의 snapshot 테이블·뷰. 밖의 이름은 `other` 다. */
+		val TABLES: Set<String> = setOf(
+			"telemetry_events", "telemetry_metric_points", "telemetry_ingest_ledger",
+			"snapshot_intake", "snapshot_intake_days", "snapshot_intake_usage",
+			"snapshot_usage", "snapshot_observed_days", "snapshot_member_activity",
+		)
+
+		private val FIRST_WORD = Regex("""^\s*([A-Za-z]+)""")
+		private val TABLE_REFERENCE = Regex("""\b(?:FROM|INTO|JOIN|EXISTS)\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)""", RegexOption.IGNORE_CASE)
+
+		internal fun operationOf(sql: String): String = when (FIRST_WORD.find(sql)?.groupValues?.get(1)?.lowercase()) {
+			"select", "with" -> "select"
+			"insert" -> "insert"
+			"delete" -> "delete"
+			"create", "alter", "drop" -> "schema"
+			else -> "other"
+		}
+
+		/** `FROM`·`INTO`·`JOIN`·`IF NOT EXISTS` 뒤의 이름 중 [TABLES] 에 있는 첫 이름. DB 접두사는 뗀다. */
+		internal fun tableOf(sql: String): String =
+			TABLE_REFERENCE.findAll(sql).map { it.groupValues[1].lowercase() }.firstOrNull { it in TABLES } ?: "other"
+
+		private fun outcomeOf(failure: RuntimeException): String = when (failure) {
+			is StoreLimitExceededException -> "limit_exceeded"
+			is StoreUnavailableException -> "unavailable"
+			is StoreQueryRejectedException -> "rejected"
+			else -> "failed"
+		}
 
 		private const val USER_HEADER = "X-ClickHouse-User"
 		private const val KEY_HEADER = "X-ClickHouse-Key"

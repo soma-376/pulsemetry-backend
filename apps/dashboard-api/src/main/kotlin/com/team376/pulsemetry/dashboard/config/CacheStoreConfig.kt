@@ -6,6 +6,9 @@ import com.team376.pulsemetry.dashboard.cache.ClickHouseCacheSchema
 import com.team376.pulsemetry.dashboard.cache.RdsCacheSchema
 import com.team376.pulsemetry.dashboard.store.ClickHouseConnection
 import com.zaxxer.hikari.HikariDataSource
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.tracing.Tracer
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -19,14 +22,17 @@ class CacheStoreConfig {
 
 	/** RDS `dashboard_cache`. **주 DataSource 가 아니다** — 쓰는 코드가 이 이름으로 받는다. */
 	@Bean(CACHE_DATA_SOURCE)
-	fun cacheDataSource(properties: DashboardApiProperties): HikariDataSource =
-		StoreDataSources.hikari("dashboard-rds-cache", properties.rds.cache, readOnly = false)
+	fun cacheDataSource(properties: DashboardApiProperties, registry: ObjectProvider<MeterRegistry>): HikariDataSource =
+		StoreDataSources.hikari("dashboard-rds-cache", properties.rds.cache, readOnly = false, registry.ifAvailable)
 
 	@Bean
-	fun clickHouseCacheClient(properties: DashboardApiProperties, mapper: ObjectMapper): ClickHouseCacheClient {
+	fun clickHouseCacheClient(properties: DashboardApiProperties, mapper: ObjectMapper, tracer: ObjectProvider<Tracer>): ClickHouseCacheClient {
 		val cache = properties.clickhouse.cache
 		return ClickHouseCacheClient(
-			connection = ClickHouseConnection(cache.url, cache.database, cache.username, cache.password, cache.queryTimeout, mapper),
+			connection = ClickHouseConnection(
+				cache.url, cache.database, cache.username, cache.password, cache.queryTimeout, mapper,
+				tracer = tracer.getIfAvailable { Tracer.NOOP },
+			),
 			queryTimeout = cache.queryTimeout,
 		)
 	}
