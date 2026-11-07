@@ -28,6 +28,13 @@ class PlatformTracingTest {
     }
 
     @Test
+    fun apiServiceNamesMatchWorkloadNames() {
+        // infra 의 Collector 수신 정책·Grafana 변수가 같은 이름을 쓴다(ADR 0079).
+        assertThat(PlatformTracing.ENROLLMENT_SERVICE).isEqualTo("enrollment-api")
+        assertThat(PlatformTracing.DASHBOARD_SERVICE).isEqualTo("dashboard-api")
+    }
+
+    @Test
     fun probesAndManagementAreNotTraced() {
         assertThat(PlatformTracing.tracesServerPath("/v1/logs")).isTrue()
         assertThat(PlatformTracing.tracesServerPath("/api/v1/healthz")).isFalse()

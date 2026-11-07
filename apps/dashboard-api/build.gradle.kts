@@ -25,7 +25,20 @@ dependencies {
 	implementation(libs.spring.boot.starter.security)
 	implementation(libs.jackson.module.kotlin)
 
+	// 관리 포트 9404 의 Prometheus scrape 와 플랫폼 trace(ADR 0068·0069·0079). trace 는 기본 꺼짐이고 OTLP/HTTP 로만 보낸다.
+	implementation(project(":libs:telemetry-observability"))
+	implementation(libs.spring.boot.starter.actuator)
+	implementation(libs.micrometer.registry.prometheus)
+	implementation(libs.spring.boot.micrometer.tracing.opentelemetry)
+	implementation(libs.micrometer.tracing.bridge.otel)
+	implementation(libs.opentelemetry.exporter.otlp) {
+		exclude(group = "io.opentelemetry", module = "opentelemetry-exporter-sender-okhttp")
+	}
+	runtimeOnly(libs.opentelemetry.exporter.sender.jdk)
+
 	testImplementation(libs.spring.boot.starter.webmvc.test)
+	testImplementation(libs.spring.boot.micrometer.tracing.test)
+	testImplementation(libs.opentelemetry.sdk.testing)
 	testImplementation(testFixtures(project(":libs:enrollment-persistence")))
 	// 분석 테이블(ClickHouse) 스키마를 테스트 저장소에 세운다. 운영에서는 ingest 가 적용한다.
 	testImplementation(project(":libs:telemetry-persistence"))

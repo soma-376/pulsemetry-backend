@@ -18,7 +18,7 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 공통 tag는 `application`, `service=gateway|ingest`, `environment=${PULSEMETRY_OBSERVABILITY_ENVIRONMENT:local}`다. Kubernetes의 cluster/namespace/pod/job/instance는 Infra target label이다. Infra scrape는 `service=telemetry-gateway|telemetry-ingest` target label을 쓰므로 충돌한 앱 service tag는 `exported_service`가 될 수 있다. Grafana/alert는 Infra의 service 값을 사용하고 raw 앱 scrape의 값과 구별한다. 사용자·tenant·설치·run·message·request ID, URL, exception message를 custom metric label에 넣지 않는다. `MicrometerTelemetryObserver`가 유한 목록으로 값을 다시 제한한다. 알려지지 않은 값은 `other`/`unknown`으로 합친다.
 
 - Actuator: `jvm_*`, `process_*`, `system_*`, `http_server_requests_seconds_*`.
-- Tomcat: `server.tomcat.mbeanregistry.enabled=true`로 `tomcat_threads_busy_threads`, `tomcat_threads_current_threads`, `tomcat_threads_config_max_threads` 등을 실제 노출한다. 업무 listener와 management listener를 name label로 구분한다.
+- Tomcat: `server.tomcat.mbeanregistry.enabled=true`로 `tomcat_threads_busy_threads`, `tomcat_threads_current_threads`, `tomcat_threads_config_max_threads` 등을 실제 노출한다. 대상은 업무 포트 listener 하나다(로컬 scrape 기준 `name` label 하나). 관리 포트(9404) listener는 Tomcat 지표에 잡히지 않는다.
 - ingest RDB: Boot 관리 Hikari DataSource의 자동 binder가 `hikaricp_connections_*`, `jdbc_connections_*`를 노출한다. 같은 pool에 수동 binder를 중복 등록하지 않는다. Gateway에는 DB가 없다.
 - Kafka: 수동 producer는 `KafkaClientMetrics`, 수동 consumer factory는 `MicrometerConsumerListener`를 명시 연결한다. client 종료 시 binder도 닫혀 meter가 해제되고, Consumer를 멈췄다 다시 띄우면 같은 `client.id`로 다시 등록된다(`consumerMetersFollowLifecycle`). `kafka_producer_*`, `kafka_consumer_*`를 native 값으로 쓴다. broker 지표와 group의 committed lag는 Infra exporter가 소유한다. consumer client lag는 commit 완료 증거가 아니다.
 - JVM GC pause는 기본 sum/count/max를 쓴다. client percentile과 추가 GC histogram은 켜지 않았다. consumer의 `pulsemetry_pipeline_listener_running`은 container의 running/expected state이며 처리 성공이나 lag=0을 보장하지 않는다. http 모드에서는 0이다.
@@ -120,6 +120,29 @@ NOTE: Picked up JDK_JAVA_OPTIONS: -Xlog:gc,safepoint:stderr:utctime,level,tags
 - 전송은 비동기 batch(queue 2048, timeout 10초)다. Collector 장애·queue 초과 때 span을 버리고 업무 응답·Kafka ack·commit은 기다리지 않는다.
   trace가 없다는 것만으로 처리 실패를 판단하지 않는다.
 
+## API 앱 (ADR 0079)
+
+enrollment-api와 dashboard-api도 위 관리 포트·플랫폼 trace 규칙을 그대로 쓴다([ADR 0079](adr/0079-API-앱도-관리-포트-지표와-플랫폼-trace를-수집-앱과-같은-규칙으로-켠다.md), Proposed). 다른 점만 적는다.
+
+| 항목 | enrollment-api | dashboard-api |
+|---|---|---|
+| 관리 포트 | `MANAGEMENT_SERVER_PORT`(기본 9404, local 프로필 9405) | 같은 키(기본 9404, local 프로필 9406) |
+| 지표 tag | `application=pulsemetry-enrollment-api`, `service=enrollment` | `application=pulsemetry-dashboard-api`, `service=dashboard` |
+| `service.name` | `enrollment-api` | `dashboard-api` |
+| 관리 포트 밖 요청 | 404 `text/plain`(`404 not found`, 관리 Security 체인) | 같다 |
+| 업무 포트 `/actuator` | 404 `{"error":"not_found",…}`(알 수 없는 경로와 같다) | 404 `{"error":{"code":"not_found",…}}`(기본 닫힘 체인) |
+| 수동 span | 없다 | ClickHouse 요청 `clickhouse <operation> <table>` |
+
+- 업무 지표(`pulsemetry_*`)와 `PULSEMETRY_OBSERVABILITY_ENABLED`는 없다. Boot 기본 binder(JVM·process·Tomcat·Hikari/JDBC·`http_server_requests_seconds_*`·Spring Data repository)만 낸다.
+- `http.server.requests`는 SLO 버킷 8개(50ms·100ms·250ms·500ms·1s·2.5s·5s·10s)로 `_bucket`을 낸다. route별 p95는 `histogram_quantile`로 본다.
+- dashboard-api의 RDS 풀 둘(`pool="dashboard-rds-source"`·`"dashboard-rds-cache"`)은 생성 때 Hikari 지표를 붙인다. Boot binder는 이미 열린 풀에 붙지 못한다.
+- 서버 span에서 `http.url`(요청 경로 원문)을 뺀다. 경로에 조직·설치 ID가 있다. span 이름과 `uri` label은 경로 템플릿이다.
+- dashboard-api ClickHouse span의 operation·table은 SQL 첫 키워드와 대상 이름을 고정 목록(`ClickHouseConnection.OPERATIONS`·`TABLES`)에 대어 정한다. 목록 밖은 `other`다. 부모 span이 없는 호출(기동 때 스키마 적용)은 span을 만들지 않는다.
+- 완료 로그는 `event=platform_trace_completed stage=enrollment|dashboard method=GET route=/api/v1/organizations/{organizationId}/… status=200 outcome=success`다. route는 지표의 `uri`와 같은 값이다.
+- dashboard-api 로그는 `[requestId] trace_id=… span_id=…` 순서다. 요청 ID는 그대로 앞에 둔다.
+- `@Scheduled` 작업(알림 평가·snapshot 정리)은 Spring observation root span을 만들고 같은 sampling을 받는다.
+- RDS(JDBC) 구간은 span이 없다. 요청 span에서 ClickHouse child span을 뺀 구간이 앱·RDS 시간이다.
+
 ## 독립 smoke 실행
 
 `scripts/observability-smoke/smoke.py`는 Python3 표준 라이브러리만 쓰고 미완성 k6 runner와 독립적이다. 실행자는 **유효한 telemetry JWT**, 그 JWT의 tenant/installation UUID, retention 범위 안 현재 source time, 접근 가능한 Gateway·각 metrics·ClickHouse endpoint를 준비한다. 인증/시드는 기존 [로컬 Kafka E2E](telemetry-kafka-e2e.md)를 따른다. 이 도구는 토큰·tenant를 발급하거나 인프라를 배포하지 않는다. JWT 파일은 제한된 권한으로 만들고 저장소 밖에 둔다.
@@ -155,12 +178,13 @@ HTTP200과 논리 행 일치가 모두 있어야 종료코드0이다. 200만 받
 ```bash
 ./gradlew :apps:telemetry-gateway:test :apps:telemetry-ingest:test \
   :libs:telemetry-observability:test :libs:telemetry-collector:test :libs:telemetry-persistence:test
+./gradlew :apps:enrollment-api:test :apps:dashboard-api:test   # API 앱(ADR 0079)
 python3 -m unittest discover -s scripts/observability-smoke -p 'test_*.py'
 ```
 
 테스트는 실제 분리한 **random management 포트**에서 scrape, 업무 포트 actuator 차단과 기존404 바이트 계약을 확인한다. JVM·Tomcat·Hikari/JDBC·Kafka binder 노출을 확인하고 실제 Kafka/PostgreSQL/ClickHouse에서 completed/empty/소진4회/commit 실패·재전달과 smoke 논리 행을 검증한다. Kafka 경로에서 logs·traces·metrics 세 signal이 기대 `observation_id` 집합과 같은 `FINAL` 논리 행이 되는지(`allSignalsPersistExpectedLogicalRows`), 분석·ledger INSERT 뒤 실패한 시도를 다시 처리하면 `rows_submitted`는 두 번 오르고 논리 행은 하나인지(`retryAfterPartialWriteSubmitsTwiceButStoresOnce`) 본다. Gateway를 거친 3 signal 관통은 실환경 smoke의 몫이다. no-op/실패 observer 반환·재시도 경계, 유한 label, canary, 음수 age도 검증한다. Python fixture ID와 JVM canonical ID를 교차검증한다.
 
-재생성되는 fixture는 `libs/telemetry-observability/build/metrics-contract.prom`(실제 Prometheus registry에서 시나리오를 주입한 계약 fixture), `apps/telemetry-{gateway,ingest}/build/management-scrape.prom`(로컬 실제 앱 HTTP scrape)다. 로컬 client는 Kafka4.2.1, broker Testcontainers3.9.2이며 실제 dev Strimzi와 동일하다고 주장하지 않는다. 실제 배포9404·Strimzi mTLS·내부 Security Group/ClusterIP·CloudWatch/Loki와 GC/OOM 로그·Grafana query와 alert·standalone smoke의 배포 endpoint 실행은 로컬 검증과 별도 인수 확인이다. 기존 `telemetry-kafka-e2e/run.sh` verifier는 유지했고 관리 포트 충돌만 피하도록39416/39482를 지정했다.
+재생성되는 fixture는 `libs/telemetry-observability/build/metrics-contract.prom`(실제 Prometheus registry에서 시나리오를 주입한 계약 fixture), `apps/{telemetry-gateway,telemetry-ingest,enrollment-api,dashboard-api}/build/management-scrape.prom`(로컬 실제 앱 HTTP scrape)다. 로컬 client는 Kafka4.2.1, broker Testcontainers3.9.2이며 실제 dev Strimzi와 동일하다고 주장하지 않는다. 실제 배포9404·Strimzi mTLS·내부 Security Group/ClusterIP·CloudWatch/Loki와 GC/OOM 로그·Grafana query와 alert·standalone smoke의 배포 endpoint 실행은 로컬 검증과 별도 인수 확인이다. 기존 `telemetry-kafka-e2e/run.sh` verifier는 유지했고 관리 포트 충돌만 피하도록39416/39482를 지정했다.
 
 ## 현재 배포 상태
 
