@@ -1,10 +1,16 @@
 server:
   # 8080(enrollment-api) · 4316(telemetry-ingest) 과 겹치지 않는 로컬 편의값이다 (ADR 0022 §1).
   port: ${PULSEMETRY_DASHBOARD_PORT:8081}
+  tomcat:
+    mbeanregistry:
+      enabled: true
 
 spring:
   application:
     name: pulsemetry-dashboard-api
+  autoconfigure:
+    # Prometheus exemplar에 trace ID를 싣지 않는다(ADR 0069). 지표 노출 형식을 바꾸지 않는다.
+    exclude: org.springframework.boot.micrometer.tracing.autoconfigure.prometheus.PrometheusExemplarsAutoConfiguration
 
   web:
     resources:
@@ -30,10 +36,70 @@ spring:
 logging:
   pattern:
     # 요청 ID(X-Request-Id)를 로그 상관 키로 싣는다 — RequestIds.MDC_KEY 와 맞춘다.
-    correlation: "[%X{requestId:-}] "
+    # 활성 span 안의 로그에만 trace_id·span_id를 이어 붙인다(ADR 0069·0079). span이 없으면 두 필드를 지운다.
+    correlation: "[%X{requestId:-}] %replace(trace_id=%X{traceId} span_id=%X{spanId} ){'^trace_id= span_id= $', ''}"
+
+# 운영 계측은 공개 HTTP 서버와 분리한다(ADR 0068·0079). 네트워크 접근은 infra가 제한한다.
+management:
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:9404}
+  # 플랫폼 trace(ADR 0069·0079). 기본은 끔이다. 켜면 OTLP/HTTP(`/v1/traces`까지 쓴 전체 URL)로 Collector에 보낸다.
+  # 전송은 비동기 batch이고 queue가 차거나 Collector가 죽으면 span을 버린다 — 응답은 기다리지 않는다.
+  tracing:
+    export:
+      enabled: ${PULSEMETRY_TRACING_ENABLED:false}
+    sampling:
+      probability: ${PULSEMETRY_TRACING_SAMPLE_PROBABILITY:0.1}
+    # W3C traceparent만 쓴다. 공개 요청의 trace header는 TracingConfig가 지운다.
+    propagation:
+      consume: w3c
+      produce: w3c
+    baggage:
+      enabled: false
+  opentelemetry:
+    # OTEL_* 환경변수가 설정을 바꾸지 않게 한다. 출처는 위 PULSEMETRY_TRACING_* 하나다.
+    map-environment-variables: false
+    tracing:
+      export:
+        max-queue-size: 2048
+        timeout: 10s
+        otlp:
+          endpoint: ${PULSEMETRY_TRACING_OTLP_TRACES_ENDPOINT:}
+          timeout: 10s
+  # 로그는 stdout → Fluent Bit 경로를 유지한다. OTLP 로그 내보내기를 켜지 않는다.
+  logging:
+    export:
+      otlp:
+        enabled: false
+  observations:
+    enable:
+      # Security filter chain의 내부 span·지표는 쓰지 않는다. 업무 요청 span 하나에 하위 span이 줄줄이 붙는다.
+      spring.security: false
+  endpoints:
+    web:
+      exposure:
+        include: prometheus
+      discovery:
+        enabled: false
+  metrics:
+    use-global-registry: false
+    tags:
+      application: ${spring.application.name}
+      service: dashboard
+      environment: ${PULSEMETRY_OBSERVABILITY_ENVIRONMENT:local}
+    distribution:
+      # route별 p95와 수 초 단위 조회(개요 1년 등)를 함께 덮는 고정 버킷이다. 버킷 수를 고정해 series를 묶는다(ADR 0079).
+      slo:
+        http.server.requests: 50ms,100ms,250ms,500ms,1s,2500ms,5s,10s
 
 # 기본값이 없는 값은 비어 있으면 기동이 실패한다 (ADR 0022 §4·§5). 계정·상한은 infra 가 정한다.
 pulsemetry:
+  # 플랫폼 trace resource 값(ADR 0069·0079). 비어 있으면 그 속성을 넣지 않는다. namespace·pod는 Downward API가 준다.
+  tracing:
+    environment: ${PULSEMETRY_OBSERVABILITY_ENVIRONMENT:local}
+    cluster: ${PULSEMETRY_TRACING_CLUSTER:}
+    namespace: ${POD_NAMESPACE:}
+    pod: ${POD_NAME:}
   user-auth:
     enabled: ${PULSEMETRY_USER_AUTH_ENABLED:false}
     issuer: ${PULSEMETRY_USER_AUTH_ISSUER:}
