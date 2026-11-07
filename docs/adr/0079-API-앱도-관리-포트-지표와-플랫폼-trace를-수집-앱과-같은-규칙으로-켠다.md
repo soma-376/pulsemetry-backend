@@ -50,6 +50,8 @@ infra 쪽 sender 확장은 infra ADR 0039의 개정이 같이 다룬다.
 - 업무 observer(`TelemetryObserver`, `pulsemetry_*`)는 수집 전용이라 쓰지 않는다.
   - Boot 기본 binder만 노출한다: JVM, process, Tomcat, Hikari·JDBC, `http.server.requests`, Spring Data repository.
   - `PULSEMETRY_OBSERVABILITY_ENABLED`는 두 앱에 없다.
+  - dashboard-api는 RDS 풀 둘(`dashboard-rds-source`·`dashboard-rds-cache`)을 직접 만들고 생성자가 풀을 바로 연다.
+    Boot의 Hikari binder는 열린 풀에 붙지 못하고 경고만 남기므로, 풀을 만들 때 Micrometer tracker를 함께 넘긴다.
 - `http.server.requests`는 고정 SLO 버킷 8개(50ms·100ms·250ms·500ms·1s·2.5s·5s·10s)로 히스토그램을 낸다.
   route별 p95와 수 초 단위 조회를 함께 덮으면서 series 수를 고정한다.
 - common tag는 `application=pulsemetry-<앱>`, `service=enrollment|dashboard`, `environment`다.
@@ -66,17 +68,23 @@ infra 쪽 sender 확장은 infra ADR 0039의 개정이 같이 다룬다.
 - dashboard-api ClickHouse span:
   - 이름은 `clickhouse <operation> <table>`이다.
   - 속성은 0069의 ClickHouse 속성 넷뿐이다(`db.system.name`, `pulsemetry.operation`, `pulsemetry.table`, `pulsemetry.outcome`).
-  - operation과 table은 호출부가 넘기는 고정 값이다. 앱의 허용 목록 밖은 `other`다.
+  - operation은 문장의 첫 키워드(`select`·`insert`·`delete`·`schema`)이고, table은 `FROM`·`INTO`·`JOIN`·`IF NOT EXISTS`
+    뒤의 이름 중 앱의 허용 목록(원천 분석 테이블·snapshot 테이블)에 있는 첫 이름이다. 목록 밖은 `other`다.
+    SQL은 코드가 쓴 문자열이고 span에는 목록의 상수만 남는다. 호출부 스무 곳에 인자를 늘리지 않는다.
+  - outcome은 `success`·`rejected`·`limit_exceeded`·`unavailable`·`failed`다.
   - URL, SQL, `param_*` 값, 응답 본문은 싣지 않는다.
   - 실패는 `error.type`(예외 단순 이름)과 `PlatformTracing.SPAN_FAILURE`로 표시한다.
+  - 현재 span이 없는 호출(기동 때 스키마 적용)은 span을 만들지 않는다. 부모 없는 root가 sampling 예산을 쓰지 않게 한다.
 
 ### 로그
 
 - 평문 형식을 유지한다. 활성 span 안의 로그에만 `trace_id=<32 hex> span_id=<16 hex>`를 붙인다.
   dashboard-api는 `[requestId]` 뒤에 붙인다.
 - sampled 요청은 서버 span 안에서 완료 로그를 한 줄 남긴다:
-  `event=platform_trace_completed stage=enrollment|dashboard method=<메서드> route=<경로 템플릿> status=<코드> outcome=<success|client_error|server_error>`.
-  - route는 경로 템플릿이다. 실제 ID·query는 싣지 않는다.
+  `event=platform_trace_completed stage=enrollment|dashboard method=<메서드> route=<경로 템플릿> status=<코드> outcome=<값>`.
+  - outcome은 상태 코드 계열이다: `success`·`redirection`·`client_error`·`server_error`(OIDC 로그인은 3xx다).
+  - route는 지표의 `uri` label과 같은 값이다. 경로 템플릿이거나 `NOT_FOUND`·`UNKNOWN` 같은 고정 값이고, 실제 ID·query는 싣지 않는다.
+  - 서버 observation filter 안쪽의 서블릿 필터가 남긴다. 처리되지 않은 예외는 500으로 적는다.
   - 로그 → trace 이동의 기준점이다. 경보 대상이 아니다.
 
 ### 조립
