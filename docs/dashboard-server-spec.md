@@ -93,8 +93,8 @@ enrollment-api와 같은 값을 준다(local 프로필은 둘 다 true).
 | `PULSEMETRY_DASHBOARD_SNAPSHOT_BUILD_TIMEOUT` | ≥ 1초 | snapshot build와 복사 SQL 제한 시간 |
 | `PULSEMETRY_DASHBOARD_SNAPSHOT_PURGE_GRACE` | ≥ 0 | 만료 후 물리 복사본을 남길 유예 |
 | `PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_CONCURRENT_BUILDS` | ≥ 1 | tenant별 동시 build 수 |
-| `PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_COPY_ROWS` | ≥ 1 | 복사 문장의 읽기 행 상한 |
-| `PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_COPY_BYTES` | ≥ 1 | 복사 문장의 읽기 바이트 상한 |
+| `PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_COPY_ROWS` | ≥ 0 (0 = 상한 없음, ADR 0080) | 복사 문장의 읽기 행 상한 |
+| `PULSEMETRY_DASHBOARD_SNAPSHOT_MAX_COPY_BYTES` | ≥ 0 (0 = 상한 없음, ADR 0080) | 복사 문장의 읽기 바이트 상한 |
 | `PULSEMETRY_DASHBOARD_SNAPSHOT_CLEANUP_INTERVAL` | ≥ 1초 | failed·abandoned·만료 캐시 정리 주기 |
 | `PULSEMETRY_DASHBOARD_MEMBERS_IDLE_DAYS` | 7·14·30·60 중 하나 | 조직 저장 정책이 없을 때 회수 후보 기준 |
 | `PULSEMETRY_DASHBOARD_INGEST_WINDOW` | ≥ 1분이며 정수 분 | enrollment `pulsemetry.heartbeat.report-interval`보다 길게 |
