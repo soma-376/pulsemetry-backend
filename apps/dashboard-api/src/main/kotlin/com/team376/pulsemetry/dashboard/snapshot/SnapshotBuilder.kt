@@ -68,6 +68,10 @@ class SnapshotBuilder(
 		val policyEpoch: Long,
 	)
 
+	/**
+	 * 복사 문장의 상한. 행·바이트의 0 도 그대로 넘긴다 — ClickHouse 의 0 은 제한 없음이고,
+	 * 설정을 빼면 서버·프로필의 기본값이 대신 걸린다(ADR 0080).
+	 */
 	private val copySettings: Map<String, String> = mapOf(
 		"max_rows_to_read" to limits.maxCopyRows.toString(),
 		"max_bytes_to_read" to limits.maxCopyBytes.toString(),
