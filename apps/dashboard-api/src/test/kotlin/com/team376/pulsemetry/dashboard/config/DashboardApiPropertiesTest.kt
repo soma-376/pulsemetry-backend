@@ -154,6 +154,30 @@ class DashboardApiPropertiesTest {
 		runner.withPropertyValues(*complete, "pulsemetry.dashboard.completeness.settle-after=$value").run { assertThat(it).hasFailed() }
 	}
 
+	@Test
+	@DisplayName("복사 행·바이트 상한은 각각 0 으로 뜬다 — 0 은 상한 없음이다 (ADR 0080)")
+	fun copyLimitsAcceptZero() {
+		runner.withPropertyValues(*complete, "pulsemetry.dashboard.snapshot.max-copy-rows=0").run {
+			assertThat(it).hasNotFailed()
+			val snapshot = it.getBean(DashboardApiProperties::class.java).snapshot
+			assertThat(snapshot.maxCopyRows).isZero()
+			assertThat(snapshot.maxCopyBytes).isEqualTo(1_000_000_000)
+		}
+		runner.withPropertyValues(*complete, "pulsemetry.dashboard.snapshot.max-copy-bytes=0").run {
+			assertThat(it).hasNotFailed()
+			val snapshot = it.getBean(DashboardApiProperties::class.java).snapshot
+			assertThat(snapshot.maxCopyRows).isEqualTo(1_000_000)
+			assertThat(snapshot.maxCopyBytes).isZero()
+		}
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = ["pulsemetry.dashboard.snapshot.max-copy-rows", "pulsemetry.dashboard.snapshot.max-copy-bytes"])
+	@DisplayName("복사 행·바이트 상한이 음수면 기동이 실패한다 (ADR 0080)")
+	fun negativeCopyLimitFails(key: String) {
+		runner.withPropertyValues(*complete, "$key=-1").run { assertThat(it).hasFailed() }
+	}
+
 	@ParameterizedTest
 	@ValueSource(strings = ["pulsemetry.dashboard.ingest.window", "pulsemetry.dashboard.ingest.delayed-after", "pulsemetry.dashboard.ingest.down-after"])
 	@DisplayName("수집 상태 판정의 임계값이 없거나 비면 기동이 실패한다 — 기본값이 없다 (ADR 0041)")

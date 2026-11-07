@@ -121,9 +121,12 @@ data class DashboardApiProperties(
 		val purgeGrace: Duration,
 		/** tenant 별 동시 build 수. 차 있으면 새 build 를 시작하지 않는다(503). */
 		val maxConcurrentBuilds: Int,
-		/** 복사 문장이 원본에서 읽을 수 있는 행 수(`max_rows_to_read`). 넘으면 잘라 내지 않고 실패한다. */
+		/**
+		 * 복사 문장이 원본에서 읽을 수 있는 행 수(`max_rows_to_read`). 넘으면 잘라 내지 않고 실패한다.
+		 * 0 이면 상한을 걸지 않는다 — ClickHouse 의 0 은 제한 없음이다(ADR 0080).
+		 */
 		val maxCopyRows: Long,
-		/** 복사 문장이 원본에서 읽을 수 있는 바이트(`max_bytes_to_read`). */
+		/** 복사 문장이 원본에서 읽을 수 있는 바이트(`max_bytes_to_read`). 0 이면 상한을 걸지 않는다(ADR 0080). */
 		val maxCopyBytes: Long,
 		/** 정리 작업의 주기. */
 		val cleanupInterval: Duration,
@@ -132,8 +135,8 @@ data class DashboardApiProperties(
 			require(buildTimeout.toSeconds() >= 1) { "pulsemetry.dashboard.snapshot.build-timeout 은 1초 이상이어야 한다." }
 			require(!purgeGrace.isNegative) { "pulsemetry.dashboard.snapshot.purge-grace 는 음수일 수 없다." }
 			require(maxConcurrentBuilds >= 1) { "pulsemetry.dashboard.snapshot.max-concurrent-builds 는 1 이상이어야 한다." }
-			require(maxCopyRows >= 1) { "pulsemetry.dashboard.snapshot.max-copy-rows 는 1 이상이어야 한다." }
-			require(maxCopyBytes >= 1) { "pulsemetry.dashboard.snapshot.max-copy-bytes 는 1 이상이어야 한다." }
+			require(maxCopyRows >= 0) { "pulsemetry.dashboard.snapshot.max-copy-rows 는 0 이상이어야 한다." }
+			require(maxCopyBytes >= 0) { "pulsemetry.dashboard.snapshot.max-copy-bytes 는 0 이상이어야 한다." }
 			require(cleanupInterval.toSeconds() >= 1) { "pulsemetry.dashboard.snapshot.cleanup-interval 은 1초 이상이어야 한다." }
 		}
 	}

@@ -253,6 +253,21 @@ class SnapshotLifecycleTest {
 	}
 
 	@Test
+	@DisplayName("복사 행·바이트 상한이 0 이면 상한 없이 복사해 ready 가 된다 — 0 은 제한 없음이다 (ADR 0080)")
+	fun zeroCopyLimitsMeanNoLimit() {
+		val tenant = UUID.randomUUID()
+		seed(tenant, count = 5)
+		val assembly = SnapshotAssembly(limits = SnapshotAssembly.DEFAULT_LIMITS.copy(maxCopyRows = 0, maxCopyBytes = 0))
+
+		val ready = assembly.service.create(tenant, UUID.randomUUID(), week)
+
+		assertThat(ready.status).isEqualTo("ready")
+		assertThat(ready.usageRows).isEqualTo(5)
+		assertThat(physicalUsageRows(ready.buildId)).isEqualTo(5)
+		assertThat(statusesOf(tenant)).containsExactly("ready" to null)
+	}
+
+	@Test
 	@DisplayName("사례 30 — tenant 의 진행 중 build 가 한도에 차 있으면 새 build 를 시작하지 않고, 마감이 지난 build 는 세지 않는다")
 	fun concurrencyLimit() {
 		val clock = MutableClock()
