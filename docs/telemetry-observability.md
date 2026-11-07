@@ -18,7 +18,7 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 공통 tag는 `application`, `service=gateway|ingest`, `environment=${PULSEMETRY_OBSERVABILITY_ENVIRONMENT:local}`다. Kubernetes의 cluster/namespace/pod/job/instance는 Infra target label이다. Infra scrape는 `service=telemetry-gateway|telemetry-ingest` target label을 쓰므로 충돌한 앱 service tag는 `exported_service`가 될 수 있다. Grafana/alert는 Infra의 service 값을 사용하고 raw 앱 scrape의 값과 구별한다. 사용자·tenant·설치·run·message·request ID, URL, exception message를 custom metric label에 넣지 않는다. `MicrometerTelemetryObserver`가 유한 목록으로 값을 다시 제한한다. 알려지지 않은 값은 `other`/`unknown`으로 합친다.
 
 - Actuator: `jvm_*`, `process_*`, `system_*`, `http_server_requests_seconds_*`.
-- Tomcat: `server.tomcat.mbeanregistry.enabled=true`로 `tomcat_threads_busy_threads`, `tomcat_threads_current_threads`, `tomcat_threads_config_max_threads` 등을 실제 노출한다. 업무 listener와 management listener를 name label로 구분한다.
+- Tomcat: `server.tomcat.mbeanregistry.enabled=true`로 `tomcat_threads_busy_threads`, `tomcat_threads_current_threads`, `tomcat_threads_config_max_threads` 등을 실제 노출한다. 대상은 업무 포트 listener 하나다(로컬 scrape 기준 `name` label 하나). 관리 포트(9404) listener는 Tomcat 지표에 잡히지 않는다.
 - ingest RDB: Boot 관리 Hikari DataSource의 자동 binder가 `hikaricp_connections_*`, `jdbc_connections_*`를 노출한다. 같은 pool에 수동 binder를 중복 등록하지 않는다. Gateway에는 DB가 없다.
 - Kafka: 수동 producer는 `KafkaClientMetrics`, 수동 consumer factory는 `MicrometerConsumerListener`를 명시 연결한다. client 종료 시 binder도 닫혀 meter가 해제되고, Consumer를 멈췄다 다시 띄우면 같은 `client.id`로 다시 등록된다(`consumerMetersFollowLifecycle`). `kafka_producer_*`, `kafka_consumer_*`를 native 값으로 쓴다. broker 지표와 group의 committed lag는 Infra exporter가 소유한다. consumer client lag는 commit 완료 증거가 아니다.
 - JVM GC pause는 기본 sum/count/max를 쓴다. client percentile과 추가 GC histogram은 켜지 않았다. consumer의 `pulsemetry_pipeline_listener_running`은 container의 running/expected state이며 처리 성공이나 lag=0을 보장하지 않는다. http 모드에서는 0이다.
@@ -139,7 +139,7 @@ enrollment-api와 dashboard-api도 위 관리 포트·플랫폼 trace 규칙을 
 - 서버 span에서 `http.url`(요청 경로 원문)을 뺀다. 경로에 조직·설치 ID가 있다. span 이름과 `uri` label은 경로 템플릿이다.
 - dashboard-api ClickHouse span의 operation·table은 SQL 첫 키워드와 대상 이름을 고정 목록(`ClickHouseConnection.OPERATIONS`·`TABLES`)에 대어 정한다. 목록 밖은 `other`다. 부모 span이 없는 호출(기동 때 스키마 적용)은 span을 만들지 않는다.
 - 완료 로그는 `event=platform_trace_completed stage=enrollment|dashboard method=GET route=/api/v1/organizations/{organizationId}/… status=200 outcome=success`다. route는 지표의 `uri`와 같은 값이다.
-- dashboard-api 로그는 `[requestId] trace_id=… span_id=… ` 순서다. 요청 ID는 그대로 앞에 둔다.
+- dashboard-api 로그는 `[requestId] trace_id=… span_id=…` 순서다. 요청 ID는 그대로 앞에 둔다.
 - `@Scheduled` 작업(알림 평가·snapshot 정리)은 Spring observation root span을 만들고 같은 sampling을 받는다.
 - RDS(JDBC) 구간은 span이 없다. 요청 span에서 ClickHouse child span을 뺀 구간이 앱·RDS 시간이다.
 
