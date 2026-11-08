@@ -35,7 +35,7 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 		SourceFixtures.completeBackfill()
 	}
 
-	private val week = "startDate=2026-09-07&endDate=2026-09-13"
+	private val week = "bucket=day&startDate=2026-09-07&endDate=2026-09-13"
 
 	private fun kst(dateTime: String): Instant = LocalDateTime.parse(dateTime).atZone(QueryReader.SEOUL).toInstant()
 
@@ -165,7 +165,8 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 			Event("$tenant-c", kst("2026-09-09T11:00:00"), teamId = small, memberId = carol, sessionId = "c", costEstimatedUsd = BigDecimal("80")),
 		)
 		for (bucket in listOf("day", "auto")) {
-			val query = "$week&compare=none&bucket=$bucket"
+			val period = week.removePrefix("bucket=day&")
+			val query = "$period&compare=none&bucket=$bucket"
 			// 비용 순서와 반대인 세션 순서를 검증해 sort 옵션 무시를 잡는다.
 			val list = ok(tenant, "/analytics/teams?$query&sort=session")
 			assertThat(list.at("/sort").asString()).isEqualTo("session")
@@ -182,7 +183,7 @@ class TeamsApiTest : AbstractDashboardApiTest() {
 			if (bucket == "auto") assertThat(detail.path("trend").list().last().at("/cumulativeSessionCount/value").asLong()).isEqualTo(3)
 			for (order in listOf("asc", "desc")) {
 				// users는 bucket 옵션 없이 목록 snapshot의 일별·자동 입력을 그대로 계승한다.
-				val path = "/analytics/teams/$rich/users?$week&sort=session&order=$order&limit=1&snapshotId=$snapshot"
+				val path = "/analytics/teams/$rich/users?$period&sort=session&order=$order&limit=1&snapshotId=$snapshot"
 				val first = ok(tenant, path)
 				val second = ok(tenant, "$path&offset=${first.at("/users/nextOffset").asInt()}")
 				val users = first.at("/users/items").list() + second.at("/users/items").list()

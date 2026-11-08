@@ -1,6 +1,6 @@
 # 개요 화면 API
 
-> `bucket=auto`는 [자동 시간 추이 계약](auto-trends.md)을 적용한다. 아래의 날짜별 추이·일별 완전성 규칙은 옵션 생략 또는 `bucket=day`에 해당한다. 자동 응답은 별도 DTO와 snapshot 계약을 사용한다.
+> `bucket=auto`는 [자동 시간 추이 계약](auto-trends.md)을 적용한다. 아래의 날짜별 추이·일별 완전성 규칙은 명시적 `bucket=day`에 해당한다. 자동 응답은 별도 DTO와 snapshot 계약을 사용한다.
 
 PROJ-318은 팀 세션 탭 선택만 정리한다. 개요 세션 카드·배치와 sessionCount·sessionsPerUser·equivalentCostPerSessionUsd, 기존 CSV의 세션 값·상태·사유는 유지한다. [구독료 대비 사용 환산액](../../subscription-usage-value-design.md)은 후속 설계이며 현재 응답에는 subscriptionUsageValue를 추가하지 않는다.
 
