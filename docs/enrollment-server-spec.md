@@ -310,7 +310,7 @@ DB 주소·계정·권한을 준비한다. 계약은 [공유 데이터 계약](.
 `sha-<commit>`도 재실행으로 이동할 수 있으므로 완료 묶음의 immutable digest와 원본 실행을 기준으로 삼는다.
 
 별도 `.github/workflows/promote_dev.yml`은 완료 묶음을 검증한 뒤 이미지 선택을 private Git에 기록하고
-Argo CD가 적용한다. [ADR 0079](adr/0079-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)와
+Argo CD가 적용한다. [ADR 0081](adr/0081-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)와
 [GitOps 이미지 공급 안내](dev-gitops-image-delivery.md)의 고정 infra tooling·공통 CAS·Argo 상태 판정·단일 이미지 복구를 따른다.
 backend workflow는 CDK·Helm을 실행하거나 Kubernetes·Argo API에 쓰지 않는다.
 

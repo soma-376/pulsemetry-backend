@@ -1,4 +1,4 @@
-# 0079. dev 앱 이미지는 검증한 묶음으로 GitOps에 인계한다.
+# 0081. dev 앱 이미지는 검증한 묶음으로 GitOps에 인계한다.
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted — PROJ-286의 backend 이미지 공급·Git 발행 설계다. Image U
 이미지 values 승격과 조건부 자동 rollback을 맡도록 개정한다. 레포 간 계약은
 [허브 ADR 0035](https://github.com/soma-376/docs/blob/docs/PROJ-311-gitops-delivery-contract/adr/0035-dev-gitops-delivery.md)과
 [generated values 동기화 계약](https://github.com/soma-376/docs/blob/docs/PROJ-311-gitops-delivery-contract/contracts/generated-values-sync.md)이 소유한다.
-PROJ-286의 미병합 초안을 현재 develop에 가져오며 이미 사용 중인 0076~0078과의 충돌을 피하려고 0079를 사용한다.
+PROJ-286의 미병합 초안을 현재 develop에 가져오며 이미 사용 중인 0076~0080과의 충돌을 피하려고 0081을 사용한다.
 PROJ-311은 backend 공급·승격과 Argo 상태 기반 판정을 구현한다. PostSync 검증 Job·실환경 호환성 검사를 제거하고 기능 미탐지와 migration 후 비호환 복구 위험을 수용한다. 일반 infra 설정 publisher는 후속이다.
 ADR 0005·0009·0016의 dev 이미지 공급·배포 관련 서술만 부분 대체하며 설치·스키마·조립 규칙은 유지한다.
 문서 채택은 workflow·Git 발행·Argo CD 구현 또는 실제 dev 인계 완료를 뜻하지 않는다.

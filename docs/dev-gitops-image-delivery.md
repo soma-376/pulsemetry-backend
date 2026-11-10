@@ -1,6 +1,6 @@
 # dev 이미지 완료 묶음과 GitOps 승격
 
-[ADR 0079](adr/0079-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)는 backend 공급 결정을,
+[ADR 0081](adr/0081-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)는 backend 공급 결정을,
 [허브 ADR 0035](https://github.com/soma-376/docs/blob/docs/PROJ-311-gitops-delivery-contract/adr/0035-dev-gitops-delivery.md)는
 C/B/V/P·공통 CAS·실패 fence를 소유한다. PROJ-311은 backend 생산·승격과 필수 infra 연동을 구현한다.
 일반 infra 설정 publisher는 후속이다. PROJ-310 실제 인계와 publisher/CAS 운영 수락 전에는 기존 수동 Helm을 유지한다.

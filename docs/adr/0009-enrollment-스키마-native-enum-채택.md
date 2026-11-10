@@ -6,7 +6,7 @@ Accepted ([ADR 0004](0004-Flyway-마이그레이션과-varchar-CHECK-스키마-�
 dev 의 마이그레이션 실행 순서는 [허브 ADR 0023](../../../docs/adr/0023-dev-backend-eks-only.md)을 따른다.
 아래 Context 는 native enum 채택 당시의 공유 DB·구 파이프라인 상태이며 현재 배포 상태를 뜻하지 않는다.
 
-dev 이미지 공급·GitOps 승격·조건부 복구 부분은 [ADR 0079](0079-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)가 개정한다.
+dev 이미지 공급·GitOps 승격·조건부 복구 부분은 [ADR 0081](0081-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)가 개정한다.
 기존 설치·schema·앱 조립 결정은 유지하며 실제 인계 전 수동 운영을 따른다.
 
 ## Context

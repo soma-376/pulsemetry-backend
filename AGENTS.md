@@ -71,7 +71,7 @@ backend dev CI는 enrollment-api·telemetry-ingest·telemetry-gateway·dashboard
 배포 선택에 사용하지 않는다. PROJ-311 별도 승격은 검토된 default branch 코드·고정 infra tooling으로만 실행하며
 `DEV_GITOPS_ENABLED` 미설정/false와 `config/gitops-tooling.json`의 null revision에서는 실행하지 않는다.
 네 이미지의 `/app/deployment-contract.json`은 실행 없이 읽어 B 원문과 대조한다. 공급 artifact에는 계정·ECR 전체 URL·runtime 값을 넣지 않는다.
-[ADR 0079](docs/adr/0079-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)와 [운영 안내](docs/dev-gitops-image-delivery.md)를 따른다.
+[ADR 0081](docs/adr/0081-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)와 [운영 안내](docs/dev-gitops-image-delivery.md)를 따른다.
 PROJ-310 실제 인계와 publisher/CAS 수락 전에는 [infra EKS 런북](../infra/docs/runbooks/dev-eks-manual-deployment.md)의
 수동 배포를 유지한다. 자동 배포는 현재 revision의 Argo Synced·Healthy·진행/현재 실패 operation 부재와 root P 이력으로 판정한다.
 PostSync Job·DB/기능 검증은 제거하고 현재 Argo 확정 실패에서 이전 정상 이미지로 한 번 복구한다.
