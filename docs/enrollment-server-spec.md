@@ -304,18 +304,25 @@ DB 주소·계정·권한을 준비한다. 계약은 [공유 데이터 계약](.
 
 ### 9.6 dev 이미지 공급과 배포 책임
 
-`.github/workflows/deploy_dev.yml`은 enrollment-api·telemetry-ingest·dashboard-api 세 앱의 `linux/arm64`
-이미지를 검증·빌드해 ECR에 게시한다. 세 `sha-<commit>` 이미지 게시가 모두 성공한 뒤 각 build digest로
-`dev` 태그를 enrollment → ingest → dashboard 순서로 승격한다. 승격 도중 실패하면 이후 앱은 중단하고
-이미 바뀐 태그는 유지한다. 같은 digest의 재실행은 멱등 처리하며 태그 갱신은 원자적 배포가 아니다.
+`.github/workflows/deploy_dev.yml`은 enrollment-api·telemetry-ingest·telemetry-gateway·dashboard-api
+네 앱의 `linux/arm64` 이미지를 검증·빌드해 ECR에 게시하고, 동일 SHA/run/attempt의 완료 묶음 B를 남긴다.
+기존 세 앱의 `dev` 태그는 호환용으로 유지하며 GitOps 배포 선택에는 사용하지 않는다. Gateway에는 `dev` 태그를 만들지 않는다.
+`sha-<commit>`도 재실행으로 이동할 수 있으므로 완료 묶음의 immutable digest와 원본 실행을 기준으로 삼는다.
 
-CI는 ECS 조회·재배포·안정화 대기나 CDK·Helm·kubectl 실행을 하지 않는다. 운영자는 앱별 **immutable digest**와
-runtime/workload 입력을 확인해 infra 런북으로 수동 배포한다. `sha-<commit>`도 재실행으로 이동할 수 있으므로
-commit·태그·digest의 대응을 함께 기록한다. retention-worker는 이 CI의 이미지 게시 대상이 아니다.
+별도 `.github/workflows/promote_dev.yml`은 완료 묶음을 검증한 뒤 이미지 선택을 private Git에 기록하고
+Argo CD가 적용한다. [ADR 0079](adr/0079-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)와
+[GitOps 이미지 공급 안내](dev-gitops-image-delivery.md)의 고정 infra tooling·공통 CAS·Argo 상태 판정·단일 이미지 복구를 따른다.
+backend workflow는 CDK·Helm을 실행하거나 Kubernetes·Argo API에 쓰지 않는다.
 
-CDK는 AWS 자원·IAM, Helm과 운영 절차는 Kubernetes workload·runtime 공급·배포, EKS Auto Mode는 노드를 소유한다.
-§9.4의 기동 순서를 따르며 이미지 게시·Pod readiness·기능 검증 성공은 각각 기록한다.
-prod의 기존 ECS와 별도 frontend ECS는 이 dev 백엔드 정리의 대상이 아니다. 실제 ECS 철거·Snapshot은
+`DEV_GITOPS_ENABLED` 미설정/false에서는 승격하지 않지만 완료 묶음은 계속 생산한다. PROJ-310 실제 인계와
+publisher/CAS 운영 수락 전에는 앱별 immutable digest와 runtime/workload 입력을 확인해
+[infra EKS 수동 배포 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다.
+인계 후 일반 이미지 변경·복구는 GitOps 경로를 사용하며 같은 release를 수동 Helm으로 동시에 변경하지 않는다.
+
+CDK는 AWS 자원·IAM, infra는 Kubernetes workload·runtime 공급과 Argo 운영, EKS Auto Mode는 노드를 소유한다.
+enrollment → ingest → Gateway → dashboard 순서를 유지하며 §9.4의 원천/캐시 DDL 책임은 바꾸지 않는다.
+Git 게시·Argo Synced/Healthy와 실제 기능 성공은 구분한다. 자동 배포는 DB·기능·실환경 호환성을 검사하지 않는다.
+retention-worker·prod의 기존 ECS·별도 frontend ECS는 이 dev 이미지 묶음 대상 밖이다. 실제 ECS 철거·Snapshot은
 [infra 철거 런북](../../infra/docs/runbooks/dev-ecs-retirement.md)의 별도 작업이다.
 
 ## 10. 로컬 실행
