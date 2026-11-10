@@ -7,7 +7,7 @@ Accepted — PROJ-286의 backend 이미지 공급·Git 발행 설계다. Image U
 [허브 ADR 0035](https://github.com/soma-376/docs/blob/docs/PROJ-311-gitops-delivery-contract/adr/0035-dev-gitops-delivery.md)과
 [generated values 동기화 계약](https://github.com/soma-376/docs/blob/docs/PROJ-311-gitops-delivery-contract/contracts/generated-values-sync.md)이 소유한다.
 PROJ-286의 미병합 초안을 현재 develop에 가져오며 이미 사용 중인 0076~0078과의 충돌을 피하려고 0079를 사용한다.
-PROJ-311은 아래 설계의 backend 공급·승격과 필수 infra 연동을 구현한다. 일반 infra 설정 publisher는 후속이다.
+PROJ-311은 backend 공급·승격과 Argo 상태 기반 판정을 구현한다. PostSync 검증 Job·실환경 호환성 검사를 제거하고 기능 미탐지와 migration 후 비호환 복구 위험을 수용한다. 일반 infra 설정 publisher는 후속이다.
 ADR 0005·0009·0016의 dev 이미지 공급·배포 관련 서술만 부분 대체하며 설치·스키마·조립 규칙은 유지한다.
 문서 채택은 workflow·Git 발행·Argo CD 구현 또는 실제 dev 인계 완료를 뜻하지 않는다.
 
@@ -25,7 +25,7 @@ dev 공개 수집 경로는 Gateway → Strimzi Kafka → ingest다. 앱별 최�
 기존 설계의 Image Updater는 후보를 발견한 뒤 별도 검증·승격을 요구했다. 이미지 생산 workflow가
 이미 정확한 build digest를 알고 있으므로, 완료한 산출물을 직접 Git 발행 workflow에 넘길 수 있다.
 다만 backend 이미지 발행과 infra 설정 발행이 같은 private 저장소를 쓰므로 두 실행의 경쟁을 제어해야 한다.
-Git 선택의 원자성은 앱 교체·Flyway·Kafka backlog·분석 저장소의 호환성을 대신하지 않는다.
+Git 선택의 원자성은 앱 교체·Flyway·Kafka backlog·분석 저장소의 호환성을 대신하지 않는다. 공유 dev 운영을 단순화하기 위해 자동 배포는 Argo 상태만 판정하며 실제 기능·호환성 검증은 하지 않는다.
 
 ## Decision
 
@@ -62,7 +62,7 @@ Git 선택의 원자성은 앱 교체·Flyway·Kafka backlog·분석 저장소�
 - backend workflow는 private Git에 제한된 변경을 기록하며 Kubernetes·Argo API에 쓰지 않는다.
   Argo CD는 Git을 읽어 적용한다. infra는 chart·생성·검증 정책과 Argo 운영을 계속 소유한다.
   정상 이미지는 검증 뒤 자동 승격하며 매번 별도 사람 승인을 추가하지 않는다.
-- 고정 C의 전체 파일 목록·허용 image 필드·렌더 결과·비밀 원문 부재와 현재 runtime/schema/key 호환성을 검증한다.
+- 고정 C의 전체 파일 목록·허용 image 필드·렌더 결과·비밀 원문 부재와 immutable 이미지의 packaged contract를 검증한다. 실환경 runtime/schema/key 호환성은 검사하지 않는다.
   재생성 중 변경이나 출처 불일치를 마지막 writer의 값으로 덮지 않고 최신 기준에서 다시 검증한다.
 
 ### 3. 두 publisher는 Git CAS 잠금을 배포·복구 종료까지 유지한다
@@ -74,8 +74,8 @@ Git 선택의 원자성은 앱 교체·Flyway·Kafka backlog·분석 저장소�
 - backend 이미지/rollback과 infra 설정 발행은 같은 private main HEAD를 expected ref로 확인한
   정상 fast-forward compare-and-swap으로 잠금을 얻는다. 저장소별 GitHub concurrency는 이 공유 잠금을 대체하지 않는다.
   owner와 generation을 각 전이에서 확인하고 force push하지 않는다. 상태 기록 commit은 배포 선택 P와 구별한다.
-- 잠금은 V/P 게시뿐 아니라 해당 rollout과 가능한 한 번의 rollback·기능 확인까지 유지한다.
-  정상 기능 검증을 마치면 lastKnownGood을 검증된 C/V/B/P로 갱신하고 idle로 잠금을 해제한다.
+- 잠금은 V/P 게시뿐 아니라 현재 Argo 상태 판정과 가능한 한 번의 rollback까지 유지한다.
+  Argo 상태가 성공이면 lastKnownGood을 검증된 C/V/B/P로 갱신하고 idle로 잠금을 해제한다.
   충돌은 최신 main·desired·source·C·B를 다시 읽어 재검증하며 다른 owner를 덮지 않는다.
   V 게시 뒤 P 실패나 응답 유실은 실제 선택을 조회하여 중복 선택과 혼합 조합을 막는다.
 - owner 취소·runner 소실 등으로 진행을 입증하지 못하면 자동 lease 만료·잠금 탈취 없이 `blocked`로 처리한다.
@@ -83,42 +83,35 @@ Git 선택의 원자성은 앱 교체·Flyway·Kafka backlog·분석 저장소�
   기록 갱신조차 불가능하면 기존 잠금도 닫힌 상태로 유지한다. 운영자가 원인과 실제 상태를 대조해 명시적으로 복구한다.
   잠금 owner가 살아서 관측한 rollout 실패와 owner 자체의 소실을 같은 실패 경로로 다루지 않는다.
 
-### 4. 실제 배포와 기능 결과를 읽기 전용으로 판정한다
+### 4. 현재 Argo 상태를 읽기 전용으로 판정한다
 
-- 저장소·권한·runtime 준비 뒤 enrollment-api의 원천 Flyway 성공과 기동을 확인하고
-  telemetry-ingest → telemetry-gateway → dashboard-api 순으로 진행한다. 앞 단계 실패는 다음 앱 진행을 막는다.
-  ingest는 원천 Flyway를 실행하지 않고 dashboard는 자기 캐시 DDL만 적용한다.
-  기존 ClickHouse 초기화·재시도 정책을 유지하며 GitOps 도입을 위해 Flyway Job·hook을 새로 만들지 않는다.
-- 관측자는 대상 P/C/V/B, Argo의 실제 resolved revisions·진행 중 operation·상태, 기대 repository/digest와
-  ARM64 manifest에 대응하는 Pod imageID, 해당 배포에 귀속된 기능 결과를 읽기 전용으로 대조한다.
-  index digest와 ARM64 child digest의 단순 문자열 일치를 요구하지 않는다. 이전 배포의 Healthy나 smoke 결과는 재사용하지 않는다.
-- enrollment 발급·bootstrap 공급, 공개 수집의 Kafka ACK → consume → commit·S3/ClickHouse 기대 결과,
-  dashboard 조회를 확인한다. Gateway health는 Kafka, ingest health는 저장소 성공을 보증하지 않는다.
-  Git 게시·Argo sync/health·Pod readiness·기능 성공을 따로 기록하며 이 증거를 SLO·최대 처리량으로 확대하지 않는다.
-- 관측 경로 인증/연결 실패, stale·상충 상태, 진행 여부 불명, 증거 누락은 `unknown`으로 보아 `blocked`로 멈춘다.
-  관측 timeout을 확정된 배포 실패로 바꾸지 않는다. 자동 실패 판정은 해당 P에 귀속된 terminal 실패나
-  종료된 rollout의 기능 실패를 확인하고, 이를 되돌릴 진행 중 operation이 없음을 확인했을 때만 한다.
-  관측·기능 검증 산출물에 비밀 원문을 저장하지 않는다.
+- 플랫폼·runtime·데이터 준비 뒤 enrollment → ingest → Gateway → dashboard 순서를 유지한다. Flyway는
+  기존 앱 기동 경로에 남기며 PostSync 검증 Job을 만들지 않는다.
+- infra의 전용 observer는 root·18개 child Application만 읽는다. 현재 spec·comparedTo·resolved C/V,
+  Synced·Healthy·진행 중/현재 revision 실패 operation 부재를 성공 기준으로 삼는다. root의
+  resolved revision Git 이력에 현재 P가 포함돼야 한다. 이전 revision의 Healthy를 재사용하지 않는다.
+- Job UID·실제 Pod imageID·Flyway 이력·인증·로그인·수집·Kafka commit·S3/ClickHouse 적재를 검사하지 않는다.
+  Job·probe·DB reader·Prometheus/S3/Secret 조회 권한과 실환경 fingerprint를 제거한다. immutable 이미지의
+  packaged contract·ARM64·출처 검증은 생산·승격 경로에 유지한다.
+- 조회 장애·stale 상태·진행 중 operation·timeout은 unknown/blocked다. 현재 목표 C/V와 완료 operation의
+  revision이 일치하는 Failed/Error만 확정 실패이며 root와 모든 child의 진행 중 operation이 없어야 한다.
+  Argo 정상 상태가 실제 기능 성공을 보장하지 못하는 위험을 수용한다. 증거는 정제된 revision·UID·시각·결과다.
 
-### 5. 확인된 이미지 실패만 같은 owner가 한 번 자동 rollback한다
+### 5. Argo 확정 실패만 같은 owner가 한 번 자동 rollback한다
 
-- 이미지 승격 직전에 기능까지 검증된 last-known-good B와 당시 P/C/V 및 복구 근거를 기록한다.
-  실패가 대상 이미지 P에 귀속되고 진행 중 operation이 없으며, 이 B가 현재 C·runtime·키·TLS와
-  **실제로 적용된 DB schema**에 호환됨을 확인한 경우에만 같은 lock owner가 `rolling_back`으로 전이한다.
-  새 이미지의 Flyway 적용 뒤에는 배포 전 호환성 판정만 재사용하지 않는다. 확정 실패 B·전체 이미지 조합·source와
-  failure fence를 먼저 공통 state의 durable CAS commit으로 보존하고 복구한다.
-- 복구는 이전 네 이미지와 현재 비이미지 설정으로 새 V를 검증하고 새 P를 발행한다.
-  과거 values 전체 revert, 만료된 키·인증서·폐기 MSK 경로 복원, DB migration·PVC·Kafka offset·업무 데이터 역연산을 하지 않는다.
-  일반 이미지 rollback 동안 Argo auto sync/self-heal을 유지해 복구 P를 소비하게 한다. backend는 Argo/Kubernetes를 직접 조작하지 않는다.
-- 자동 rollback은 한 번뿐이다. last-known-good 부재, 호환성 미확인, 설정 발행 실패, unknown,
-  owner 소실 또는 rollback 자체 실패는 `blocked`로 멈춘다. 더 오래된 B를 차례로 시도하거나 재귀 복구하지 않는다.
-  수동 복구도 대상 B·현재 P·사유와 실제 호환성을 명시하고 같은 Git 제어·검증 경로를 따른다.
-- offset reset·키/인증서 교체·데이터 작업의 유지보수는 infra 운영 절차다. 이 경우 필요한 parent/child
-  self-heal 중지·재개를 일반 이미지 rollback과 구별한다. 전체 dev 중지를 이미지 복구의 필수 단계로 삼지 않는다.
+- 이미지 승격 직전에 마지막 Argo 정상 B를 고정한다. 현재 revision의 Argo 확정 실패이면 같은 owner가
+  실패 B·이미지 벡터·source와 fence를 먼저 CAS로 기록하고 이전 네 이미지로 한 번 복구한다.
+- 현재 C와 비이미지 바이트를 유지한 새 V/P를 게시한다. 실제 schema/migration·runtime·키·TLS·Kafka backlog
+  호환성은 재조회하거나 비교하지 않는다. 이미 적용된 migration과 이전 코드가 비호환일 수 있는 위험을 수용한다.
+- 일반 rollback은 Argo auto sync/self-heal을 유지하며 backend가 Kubernetes·Argo에 직접 쓰지 않는다.
+  DB downgrade·PVC·Kafka offset 복원·과거 values 전체 revert는 하지 않는다.
+- 정상 B 부재·config 실패·unknown·owner 소실·복구 실패는 blocked다. 복구 revision도 §4의 Argo 성공 기준을
+  통과해야 lastKnownGood을 갱신하고 잠금을 해제한다. 두 번째 자동 rollback은 하지 않는다.
+- offset reset·키/인증서 교체·데이터 작업은 infra의 별도 maintenance 절차를 따른다.
 
 ### 6. 복구 성공 뒤에는 실패 이후의 새 정상 묶음만 자동 재개한다
 
-- 복구 desired·실제 상태·기능 성공이 일치하면 복구 조합을 lastKnownGood으로 기록한 뒤 잠금을 해제한다.
+- 복구 desired·현재 revision·Argo 상태가 성공이면 복구 조합을 lastKnownGood으로 기록한 뒤 잠금을 해제한다.
   실패 이력과 resume fence를 보존하며 후속 실패로 이전 거부 항목을 덮어쓰지 않는다. 실패 B와 정확히 같은 앱 key별
   repository/digest 전체 조합은 B·SHA를 새로 포장해도 다시 승격하지 않는다.
 - 자동 재개 후보는 허용 `develop` 계보에서 실패 source의 strict descendant이며,
@@ -133,12 +126,18 @@ Git 선택의 원자성은 앱 교체·Flyway·Kafka backlog·분석 저장소�
 
 - 네 이미지 묶음의 Git 선택이 원자적이어도 앱 교체에는 구·신 버전 공존과 중단이 있다.
   DB·JWT/keyring·runtime, Gateway envelope·ingest backlog, ClickHouse·dashboard 계약의 호환성을 유지한다.
-  안전한 공존이나 복구를 확인할 수 없는 변경은 일반 자동 승격에서 제외하고 별도 전환 절차를 따른다.
+  하위 호환성을 깨는 변경은 작성자가 배포 전 검토에서 분리하고 별도 전환 절차를 따른다. 자동 승격기는
+  이 호환성을 실환경에서 검사하지 않으며 이전 이미지로 복구할 때도 같은 한계가 적용된다.
   [ADR 0074](0074-producer-버전-대신-이벤트-계약으로-정규화한다.md)의 이벤트 계약도 유지한다.
 - manifest·두 publisher·읽기 전용 상태 판정·자동 복구·소유권 인계 검증이 끝나기 전에는
   [EKS 수동 배포 런북](../../../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다.
   완료 B가 없는 기존 이미지는 허브 계약의 고정 C와 별도 handoff snapshot H로 수동 인수하며 B로 위장하지 않는다.
   인계 후 같은 release를 수동 Helm과 Argo가 동시에 변경하지 않는다.
+
+같은 manifest의 새 V나 main 상태-only commit에서는 새 sync가 없을 수 있다. 성공은 현재 spec·comparedTo·
+resolved revision과 Synced·Healthy·진행 중/현재 실패 operation 부재로 판정한다. operationState 부재나 과거
+terminal operation은 성공을 막지 않는다. 현재 revision에 귀속된 완료 Failed/Error만 확정 실패로 우선한다.
+root는 P ancestry와 해당 resolved revision의 desired/Application 파일이 현재 선택과 같은지도 확인한다.
 
 ## Alternatives Considered
 
@@ -164,7 +163,7 @@ Git 선택의 원자성은 앱 교체·Flyway·Kafka backlog·분석 저장소�
 
 - 장점: 구현과 조작이 짧다.
 - 단점: 현재 schema·키·TLS와 맞지 않는 과거 설정을 복원하거나 관측 불능 상태에서 잘못된 복구를 수행한다.
-- 탈락 이유: 확인된 이미지 실패와 현재 상태에 호환되는 사전 기록 B에만 한 번의 자동 rollback을 허용한다.
+- 탈락 이유: 현재 C·비이미지 설정은 유지하고 현재 Argo 확정 실패에서 마지막 정상 이미지만 한 번 복구한다. 실환경 호환성 위험은 수용한다.
 
 ## Consequences/Tradeoffs
 
@@ -178,7 +177,7 @@ Git 선택의 원자성은 앱 교체·Flyway·Kafka backlog·분석 저장소�
 
 - backend에 private Git의 제한된 쓰기 권한과 배포 상태를 읽는 경로가 필요하다.
 - 두 publisher가 상태 전이·CAS·증거 보존·잠금 복구를 함께 구현해야 한다. owner 소실은 운영자 복구가 필요하다.
-- 네 앱 중 하나의 실패가 묶음을 막으며, 비호환 migration·상태 불명·설정 실패는 자동 rollback으로 해결하지 못한다.
+- 네 앱 중 하나의 실패가 묶음을 막으며, 상태 불명·설정 실패는 자동 rollback하지 않는다. Argo Healthy여도 기능 장애가 남을 수 있고 migration 이후 이전 이미지 복구가 비호환으로 실패하거나 장애를 악화시킬 수 있다.
 - 엄격한 재개 fence는 실패 전에 시작한 새 source 빌드도 제외하므로 새 원본 게시 run이 필요할 수 있다.
 
 ## Follow-up
@@ -186,7 +185,7 @@ Git 선택의 원자성은 앱 교체·Flyway·Kafka backlog·분석 저장소�
 - [운영 안내](../dev-gitops-image-delivery.md)의 비활성 기본값을 유지하고 검토된 infra tooling commit을 고정한다.
 - PROJ-310 실제 인계, GitHub Environment·전용 역할·publisher App·private 활성화 구성을 운영 수락한다.
 - 일반 infra 설정 publisher는 공통 CAS를 재사용해 후속으로 구현한다. 기존 PROJ-279 writer의 종료가 선행한다.
-- 순차 배포·실제 기능 증거·조건부 rollback·실패 fence·잠금 해제 후 재평가를 실제 환경에서 수락한다. 로컬 테스트 통과를 운영 인수로 간주하지 않는다.
+- 순차 배포·Argo 상태 증거·한 번의 Argo 기반 rollback·실패 fence·잠금 해제 후 재평가를 실제 환경에서 수락한다. 로컬 테스트 통과를 운영 인수로 간주하지 않는다.
 
 ## Acceptance Criteria
 
@@ -194,8 +193,8 @@ Git 선택의 원자성은 앱 교체·Flyway·Kafka backlog·분석 저장소�
 - Gateway 누락·부분 게시·혼합 attempt·출처 누락은 새 P를 만들지 않는다. 같은 SHA의 새 B는 재검증한다.
 - 이미지 발행은 C·비이미지 값을, 설정 재생성은 현재 B를 보존한다. 동시 요청은 같은 CAS 잠금에서 한쪽만 진행한다.
 - 상태 commit과 P를 구분하고 V 이후 P 실패·응답 유실·stale expected revision을 최신 상태 조회로 복구한다.
-- 이전 Healthy/smoke, 관측 불능·진행 상태 불명은 자동 rollback을 일으키지 않는다. owner 소실 시 잠금을 자동 탈취하지 않는다.
-- 실제 적용 schema와 현재 설정에 호환되는 사전 last-known-good B에만 한 번 복구하고, 조건 누락·설정 실패·복구 실패는 blocked다.
+- 이전 revision의 Healthy, 관측 불능·진행 상태 불명은 자동 rollback을 일으키지 않는다. owner 소실 시 잠금을 자동 탈취하지 않는다.
+- 현재 revision의 Argo 확정 실패에서 사전 last-known-good B로 한 번 복구하고, 정상 B 부재·설정 실패·복구 실패는 blocked다. 실환경 호환성 검사는 하지 않는다.
 - 일반 rollback에서 Argo 자동 적용을 유지하며 DB/PVC/offset·현재 키/TLS를 보존한다.
 - 실패 B·같은 전체 이미지 조합·이전 run/재시도는 재승격하지 않는다. 새 source·실패 이후 원본 run만 복구 후 재개한다.
 - rollback 중 도착한 허용 후보를 해제 시 재조회하고, blocked를 새로운 backend run으로 우회하지 못한다.

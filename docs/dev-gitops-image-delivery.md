@@ -29,7 +29,7 @@ false여도 develop 생산 실행마다 수행된다. backend-dev 역할의 기�
   지정 observer 역할 assume만 허용하며 기존 이미지 push 역할, CDK deploy 역할, Argo Git reader를 재사용하지 않는다.
 - publisher App을 `infra-generated-values` 하나에 Contents write로 설치하고 `GITOPS_PUBLISHER_APP_ID` variable과
   `GITOPS_PUBLISHER_PRIVATE_KEY` Secret을 준비한다. Argo reader App의 키를 쓰지 않는다.
-- private activation 구성·C/H/18개 inventory·digest로 고정한 verifier image·전용 테스트 조직과 설치·읽기 전용 observer를 준비하고
+- private activation 구성·C/H/18개 inventory·Application 읽기 전용 observer를 준비하고
   기존 PROJ-279 writer 종료, 초기 last-known-good B 확보, 공통 CAS 충돌·rollback·resume를 실제로 수락한다.
 - review 완료한 infra commit을 tooling lock에 기록하고, 마지막으로 repository variable `DEV_GITOPS_ENABLED=true`를 설정한다.
 
@@ -44,7 +44,7 @@ enrollment-api·telemetry-ingest·telemetry-gateway·dashboard-api 중 하나라
 각 이미지의 `/app/deployment-contract.json`에는 다음 입력 지문을 담는다.
 
 - enrollment·telemetry_ops·dashboard_cache Flyway migration의 version/script/원문 SHA-256/부호 있는 CRC32 checksum.
-  CRC32는 UTF-8 BOM과 CR/LF를 제거한 Flyway 규칙이다. 실제 적용 목록은 배포 후 verifier가 별도로 확인한다.
+  CRC32는 UTF-8 BOM과 CR/LF를 제거한 Flyway 규칙이다. 실제 적용 목록은 자동 배포에서 조회하지 않는다.
 - telemetry·dashboard_cache ClickHouse DDL 파일의 version/script/SHA-256. 선언 입력 지문이며 실제 schema
   fingerprint나 migration 적용 성공을 뜻하지 않는다.
 - Gateway/ingest envelope v1 protobuf 원문의 SHA-256과 telemetryctl CLI 6종·GUI 6종·SHA256SUMS lock 원문의 SHA-256.
@@ -53,7 +53,7 @@ enrollment-api·telemetry-ingest·telemetry-gateway·dashboard-api 중 하나라
 정확한 바이트를 보존하고 그 바이트의 `sha256`을 기록한다. 이미지 label의 backend SHA·계약 hash와 실제 ARM64
 config를 확인한 뒤 immutable digest를 pull/create/cp하여 계약 파일을 대조한다. container를 start/run/exec하지 않는다.
 manifest가 index라면 고유한 linux/arm64 child descriptor를 확인해 `images.<app>.arm64ManifestDigest`로 보존한다.
-일반 manifest는 root digest와 같다. 승격 때 root→child 대응을 다시 확인하며 Pod imageID는 이 child와 비교한다.
+일반 manifest는 root digest와 같다. 승격 때 root→child 대응을 다시 확인하며 실제 Pod imageID는 자동 배포에서 조회하지 않는다.
 tar의 추가 파일·경로 이탈·symlink·hardlink·256 KiB 초과 계약은 거부한다. 검사 container와 임시 인증 설정은 정리한다.
 
 완료 artifact 이름은 `dev-image-bundle-<run>-<attempt>`이며 overwrite 없이 90일 보존한다.
@@ -81,17 +81,20 @@ artifact ID·run/SHA·이름·만료·GitHub ZIP digest와 내부 B hash를 검�
 다시 확인한 뒤 publisher token을 발급한다. 직전 준비와 같은 원본 artifact인지 재검사한 후 공통 실행기에 전달한다.
 
 Node 24와 lockfile로 설치한 검토된 infra의 `scripts/dev-gitops/promote.mjs --candidate <원본> --provenance <API증거>`만 호출한다.
-runner에는 Python 3·AWS CLI·명시 설치한 PostgreSQL client와 고정 Session Manager plugin을 준비한다. job은 55분 제한이며
+runner에는 Python 3·AWS CLI·고정 Session Manager plugin을 준비한다. job은 55분 제한이며
 정상 관측·가능한 한 번의 복구가 publisher token의 1시간 수명 안에서 끝나도록 한다. 제한 중단은 잠금 탈취 근거가 아니다.
 `GH_TOKEN`은 원본 GitHub 조회, `VALUES_GH_TOKEN`은 private 게시용으로 분리한다. backend는 shared CAS를 복사하지 않는다.
 공통 실행기가 현재 C·비이미지 설정·owner/generation·expected P/main HEAD·누적 실패 fence를 검증하고 V 뒤 P를 발행한다.
-확정된 이미지 실패에서만 같은 owner가 실제 schema·runtime·키/TLS 호환성을 재확인하고 한 번 복구한다.
+현재 revision의 Argo Failed/Error가 확정되고 전체 operation이 끝난 경우 같은 owner가 이전 Argo 정상 이미지로 한 번 복구한다. 실제 schema·runtime·키/TLS 호환성은 검사하지 않는다.
 관측 불능·owner 소실·복구 실패는 잠금을 자동 탈취하지 않고 보류한다. 잠금 해제 뒤 최신 후보를 다시 평가하며
 3회 연속 처리 한도 또는 token 발급 직후 실행을 시작한 지 5분이 지난 뒤 남은 후보는 다음 완료 이벤트나 schedule이 이어받는다.
 새 관측·복구 한 회의 시간을 남기지 못한 상태로 두 번째 배포 잠금을 잡지 않는다.
 
-배포·복구·schema·기능 증거는 private 전달 경로에만 보존한다. public workflow artifact로 올리는 단계는 없다.
-Git 게시, Argo Synced/Healthy, Pod imageID/Ready, OIDC 로그인·설치·실제 수집·dashboard 성공을 서로 다른 증거로 남긴다.
+배포·복구의 정제된 Argo 상태 증거는 private 전달 경로에만 보존한다. public workflow artifact로 올리는 단계는 없다.
+현재 spec/comparedTo/resolved C/V, Synced·Healthy·진행 중/현재 revision 실패 operation 부재와 root의 P 이력·desired/Application 파일 동일성을
+성공 기준으로 삼는다. 같은 manifest의 새 V는 새 sync가 없을 수 있으므로 operationState 부재나 과거 terminal
+operation을 허용하며 현재 revision의 완료 Failed/Error만 확정 실패로 우선 처리한다. PostSync Job·Pod imageID·DB·기능·실환경 fingerprint 검사는 제거한다. Argo 정상 상태의
+기능 미탐지와 migration 이후 이전 이미지의 비호환 복구 위험을 수용한다.
 timeout이나 오래된 Healthy를 새 이미지 확정 실패나 성공으로 바꾸지 않는다.
 
 ## 로컬 확인
@@ -103,4 +106,4 @@ python3 -m unittest discover -s scripts/releases -p 'test_*.py'
 ```
 
 이 테스트는 원본 출처·archive·계약 지문·보호 경계를 모의 검증한다. 실제 ECR image pull·GitHub webhook/Environment·OIDC·SSM·
-private CAS·Argo 순차 배포·실제 DB/기능·자동 복구와 재개는 활성화 전 운영 수락으로 남는다.
+private CAS·Argo 순차 배포·자동 이미지 복구와 재개는 활성화 전 운영 수락으로 남는다.

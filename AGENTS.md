@@ -73,7 +73,9 @@ backend dev CI는 enrollment-api·telemetry-ingest·telemetry-gateway·dashboard
 네 이미지의 `/app/deployment-contract.json`은 실행 없이 읽어 B 원문과 대조한다. 공급 artifact에는 계정·ECR 전체 URL·runtime 값을 넣지 않는다.
 [ADR 0079](docs/adr/0079-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)와 [운영 안내](docs/dev-gitops-image-delivery.md)를 따른다.
 PROJ-310 실제 인계와 publisher/CAS 수락 전에는 [infra EKS 런북](../infra/docs/runbooks/dev-eks-manual-deployment.md)의
-수동 배포를 유지한다. 이미지 게시·Git 선택·Pod readiness·기능 검증은 각각 확인한다.
+수동 배포를 유지한다. 자동 배포는 현재 revision의 Argo Synced·Healthy·진행/현재 실패 operation 부재와 root P 이력으로 판정한다.
+PostSync Job·DB/기능 검증은 제거하고 현재 Argo 확정 실패에서 이전 정상 이미지로 한 번 복구한다.
+실환경 schema·키·TLS 호환성은 검사하지 않으며 기능 미탐지·migration 후 비호환 위험을 수용한다.
 
 **이 레포가 소유하지 않는 것** — 요청이 오면 올바른 레포를 알린다.
 
