@@ -52,6 +52,7 @@ def archive(raw, files=None):
 class GithubFixture:
     def __init__(self, raw):
         self.run = copy.deepcopy(RUN)
+        self.original_run = copy.deepcopy(RUN)
         self.archive = archive(raw)
         self.jobs = [{"id": 1 + index, "name": name, "run_id": 123, "run_attempt": 2,
                       "head_sha": COMMIT, "status": "completed", "conclusion": "success"}
@@ -71,7 +72,9 @@ class GithubFixture:
         if "/workflows/456" in path:
             return {"id": 456, "path": ".github/workflows/deploy_dev.yml"}
         if "/runs?" in path:
-            return {"total_count": 1, "workflow_runs": [self.run]}
+            return {"total_count": 1, "workflow_runs": [self.original_run]}
+        if path.endswith("/runs/123"):
+            return self.original_run
         if path.endswith("/runs/123/attempts/2"):
             return self.run
         raise AssertionError(path)
@@ -163,6 +166,36 @@ class ProducerEvidenceTest(unittest.TestCase):
         self.assertEqual(evidence["workflowRunAttempt"], "2")
         self.assertEqual(evidence["artifactSha256"], c.sha256(self.github.archive))
         self.assertEqual(evidence["createdAt"], RUN["created_at"])
+
+    def test_retry_keeps_original_run_creation_time(self):
+        self.github.run["created_at"] = "2026-11-02T03:00:00Z"
+        for run_id, attempt in ((None, None), (123, 2)):
+            with self.subTest(explicit=run_id is not None):
+                raw, evidence = p.prepare(self.github, run_id, attempt)
+                self.assertEqual(raw, self.raw)
+                self.assertEqual(evidence["createdAt"], self.github.original_run["created_at"])
+                self.assertNotEqual(evidence["createdAt"], self.github.run["created_at"])
+                self.assertEqual(evidence["workflowRunAttempt"], "2")
+
+    def test_original_run_and_latest_successful_attempt_must_agree(self):
+        for key, value in (("id", 124), ("run_attempt", 3), ("head_sha", "f" * 40),
+                           ("workflow_id", 457), ("event", "workflow_dispatch"),
+                           ("conclusion", "failure"), ("status", "in_progress"),
+                           ("head_branch", "feature/unsafe"),
+                           ("repository", {"full_name": "fork/backend"}),
+                           ("head_repository", {"full_name": "fork/backend"}),
+                           ("path", ".github/workflows/other.yml")):
+            changed = copy.deepcopy(self.github)
+            changed.original_run[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                p.prepare(changed, 123, 2)
+
+    def test_original_creation_time_must_be_valid_utc(self):
+        for value in (None, "invalidZ", "2026-11-01T00:00:00+00:00"):
+            changed = copy.deepcopy(self.github)
+            changed.original_run["created_at"] = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                p.prepare(changed, 123, 2)
 
     def test_entire_producer_and_each_required_job_must_succeed(self):
         for conclusion in ("failure", "cancelled", "skipped", None):

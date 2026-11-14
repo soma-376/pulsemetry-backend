@@ -215,9 +215,11 @@ def prepare(github, run_id=None, attempt=None, now=None):
         run_id, attempt = selected["id"], selected["run_attempt"]
     if not isinstance(run_id, int) or run_id < 1 or not isinstance(attempt, int) or attempt < 1:
         raise ValueError("run/attempt 입력 오류")
+    original = validate_run(github.get(f"{PREFIX}/runs/{run_id}"))
     run = validate_run(github.get(f"{PREFIX}/runs/{run_id}/attempts/{attempt}"))
-    if run["id"] != run_id or run["run_attempt"] != attempt:
-        raise ValueError("원본 attempt 불일치")
+    if original["id"] != run_id or original["run_attempt"] != attempt or any(
+            original[key] != run[key] for key in ("id", "run_attempt", "head_sha", "workflow_id", "event")):
+        raise ValueError("원본 run과 최신 성공 attempt 불일치")
     workflow = github.get(f"{PREFIX}/workflows/{run['workflow_id']}")
     if workflow.get("path") != ".github/workflows/deploy_dev.yml" or workflow.get("id") != run["workflow_id"]:
         raise ValueError("허용 workflow ID 불일치")
@@ -242,7 +244,7 @@ def prepare(github, run_id=None, attempt=None, now=None):
     raw = unpack_archive(archive)
     validate_completion(raw, run)
     provenance = {"repository": REPOSITORY, "workflowRef": WORKFLOW, "workflowRunId": str(run_id),
-                  "workflowRunAttempt": str(attempt), "backendCommit": run["head_sha"], "createdAt": run["created_at"],
+                  "workflowRunAttempt": str(attempt), "backendCommit": run["head_sha"], "createdAt": original["created_at"],
                   "conclusion": "success", "event": run["event"], "headBranch": "develop",
                   "artifactId": str(artifact["id"]), "artifactSha256": archive_sha}
     return raw, provenance

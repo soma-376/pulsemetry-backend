@@ -77,6 +77,10 @@ backend가 공개 저장소이므로 artifact에는 canonical repository(`soma-3
 API에서 허용 repository/workflow ID·develop·event·SHA·원본 run/attempt 전체 성공 및 필수 두 job 성공을 다시 확인한다.
 artifact ID·run/SHA·이름·만료·GitHub ZIP digest와 내부 B hash를 검증한다. 현재 develop 계보 밖 source는 거부한다.
 부분 job 재실행으로 검증 job이 이전 attempt에 남으면 혼합 증거로 거부한다. 완료 B를 다시 만들 때는 전체 job을 재실행한다.
+API 증거의 `createdAt`은 `/actions/runs/<id>`의 원본 run 생성 시각이다. attempt 상세의 `created_at`은
+재시도 시각일 수 있으므로 최신 후보 순서와 실패 후 재개 판정에 사용하지 않는다. 원본 run과 선택 attempt의
+ID·SHA·workflow·event·최신 성공 여부를 대조한다. attempt 시각으로 만든 기존 증거는 자동 보정하지 않고
+새 도구로 다시 생성하며, `completion.json` 원문과 완료 묶음 B는 유지한다.
 실행 시 계정은 STS로 알아내고 전체 ECR URL을 메모리에서 조립한다. 별도 임시 Docker 인증으로 같은 digest의 패키지 계약·ARM64·label을
 다시 확인한 뒤 publisher token을 발급한다. 직전 준비와 같은 원본 artifact인지 재검사한 후 공통 실행기에 전달한다.
 
