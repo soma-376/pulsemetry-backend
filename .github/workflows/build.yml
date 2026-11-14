@@ -46,7 +46,11 @@ jobs:
       # 통합 테스트는 실제 PostgreSQL 로만 돈다 (Testcontainers).
       # ubuntu-latest 러너에는 Docker 데몬이 이미 떠 있다. H2 등으로 대체하지 않는다.
       - name: Build
-        run: ./gradlew build --no-daemon
+        # 테스트 소스 컴파일 중 힙 부족을 막도록 Gradle과 Kotlin 데몬의 힙 상한을 각각 지정한다.
+        run: >-
+          ./gradlew build --no-daemon
+          -Dorg.gradle.jvmargs=-Xmx1g
+          -Pkotlin.daemon.jvmargs=-Xmx2g
         env:
           PULSEMETRY_CONTRACTS_DIR: ${{ github.workspace }}/telemetryctl/contracts
 
