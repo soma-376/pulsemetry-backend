@@ -71,7 +71,11 @@ jobs:
 
       # 통합 테스트는 Testcontainers로 실제 PostgreSQL을 띄운다.
       - name: Build
-        run: ./gradlew build --no-daemon
+        # 테스트 소스 컴파일 중 힙 부족을 막도록 Gradle과 Kotlin 데몬의 힙 상한을 각각 지정한다.
+        run: >-
+          ./gradlew build --no-daemon
+          -Dorg.gradle.jvmargs=-Xmx1g
+          -Pkotlin.daemon.jvmargs=-Xmx2g
         env:
           PULSEMETRY_CONTRACTS_DIR: ${{ github.workspace }}/telemetryctl/contracts
 
