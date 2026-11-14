@@ -10,7 +10,9 @@ HTTP 명세는 [페이지·기능별 API 문서](api/README.md)로 이전했다.
 레포 간 확정 계약은 [문서 허브](../../docs/contracts/README.md)가 우선한다.
 현행 공통 계약은 [dashboard API 계약](../../docs/contracts/dashboard-api.md), 채택 근거는 [허브 ADR 0021](../../docs/adr/0021-dashboard-runtime-and-deployment-contract.md)이다.
 JWT 키 원본·버전 고정·파일 공급은 [허브 ADR 0022](../../docs/adr/0022-user-jwt-key-provisioning.md)가 보완한다.
-dev 백엔드의 EKS 전용 실행과 이미지 공급·수동 배포 분리는 [허브 ADR 0023](../../docs/adr/0023-dev-backend-eks-only.md)이 정한다. backend dev CI는 세 앱의 ARM64 이미지를 게시하며, 운영자는 확인한 immutable digest로 [infra EKS 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)에 따라 배포한다. enrollment의 원천 Flyway 적용을 확인한 뒤 ingest·dashboard를 배포한다. prod와 별도 frontend의 ECS 배포는 이 dev 전환 범위 밖이다.
+dev 백엔드의 EKS 전용 실행은 [허브 ADR 0023](../../docs/adr/0023-dev-backend-eks-only.md)을 따른다. backend dev CI는 enrollment·ingest·Gateway·dashboard 네 앱의 ARM64 이미지를 같은 SHA/run/attempt의 완료 묶음으로 게시한다.
+이미지 공급·별도 GitOps 승격은 [ADR 0081](adr/0081-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)와 [운영 안내](dev-gitops-image-delivery.md)를 따른다. PROJ-310 실제 인계·publisher/CAS 운영 수락과 `DEV_GITOPS_ENABLED` 활성화 전에는 확인한 immutable digest로 [infra EKS 런북](../../infra/docs/runbooks/dev-eks-manual-deployment.md)에 따라 수동 배포한다.
+인계 후에는 backend가 Git에 선택한 이미지를 Argo가 적용하며 enrollment → ingest → Gateway → dashboard 순서와 원천/캐시 DDL 책임을 유지한다. Argo 정상 상태는 실제 DB·조회 기능 성공의 증거가 아니다. prod와 별도 frontend ECS는 이 dev 전환 범위 밖이다.
 이 문서는 그 계약을 구현하는 설정과 코드 근거를 기록한다. 문서 채택은 AWS 배포·실 DB 권한 적용·E2E 완료를 뜻하지 않는다.
 
 ## API 목록

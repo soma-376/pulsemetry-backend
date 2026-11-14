@@ -137,6 +137,7 @@ class ImagePublicationWorkflowTest(unittest.TestCase):
         "ECR_REPO_ENROLLMENT_API": "ECR_REPO_ENROLLMENT_API_DEV",
         "ECR_REPO_TELEMETRY_INGEST": "ECR_REPO_TELEMETRY_INGEST_DEV",
         "ECR_REPO_DASHBOARD_API": "ECR_REPO_DASHBOARD_API_DEV",
+        "ECR_REPO_TELEMETRY_GATEWAY": "ECR_REPO_TELEMETRY_GATEWAY_DEV",
     }
     OLD_DIGEST = "sha256:" + "d" * 64
     # AWS CLI 대신 함수가 호출을 기록하고 ECR의 dev 태그 상태를 임시 파일에서 모의한다.
@@ -289,7 +290,7 @@ with open(sys.argv[1], "a") as log:
         self.assertIn("ECR_REPO_TELEMETRY_GATEWAY: ${{ secrets.ECR_REPO_TELEMETRY_GATEWAY_DEV }}", workflow)
         build = workflow_step(self.GATEWAY_BUILD)
         for line in (
-            "id: build-gateway", "if: ${{ env.ECR_REPO_TELEMETRY_GATEWAY != '' }}", "context: .", "file: Dockerfile",
+            "id: build-gateway", "context: .", "file: Dockerfile",
             "target: telemetry-gateway", "platforms: linux/arm64", "provenance: false", "push: true",
             "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO_TELEMETRY_GATEWAY }}:sha-${{ github.sha }}",
             "cache-from: type=gha,scope=telemetry-gateway", "cache-to: type=gha,mode=max,scope=telemetry-gateway",
@@ -301,14 +302,15 @@ with open(sys.argv[1], "a") as log:
         self.assertLess(workflow.index(f"- name: {self.GATEWAY_REPORT}"), workflow.index(f"- name: {self.PROMOTE}"))
         self.assertNotIn("GATEWAY", workflow_step(self.PROMOTE))
         self.assertIn("telemetry-gateway-digest: ${{ steps.build-gateway.outputs.digest }}", workflow)
-        self.assertIn("if: ${{ env.ECR_REPO_TELEMETRY_GATEWAY != '' }}", workflow_step(self.GATEWAY_REPORT))
+        self.assertNotIn("        if:", workflow_step(self.GATEWAY_REPORT))
+        self.assertNotIn("        if:", build)
 
-    def test_missing_gateway_repository_skips_only_the_gateway(self):
+    def test_missing_gateway_repository_stops_before_any_publication(self):
         result, calls, state = self.run_steps(ECR_REPO_TELEMETRY_GATEWAY="")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(result.returncode, 0)
         self.assertIn("ECR_REPO_TELEMETRY_GATEWAY_DEV", result.stdout)
-        self.assertEqual(self.lifecycle(calls), self.expected_lifecycle())
-        self.assertEqual(state, self.expected_state(("enrollment", "ingest", "dashboard")))
+        self.assertEqual(calls, [])
+        self.assertEqual(state, self.expected_state())
 
     def test_gateway_repository_must_differ_from_promoted_repositories(self):
         for setting, _ in self.APPS:

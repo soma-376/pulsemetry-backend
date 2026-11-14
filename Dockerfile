@@ -26,6 +26,15 @@ RUN python /supply/scripts/releases/telemetryctl_release.py verify /binaries \
     && chmod 755 /binaries /binaries/* \
     && chmod 644 /binaries/*/*
 
+# 네 앱에 같은 소스의 배포 계약을 넣는다. 로컬 빌드의 빈 SHA는 자동 승격 대상이 아니다.
+FROM --platform=$BUILDPLATFORM python:3.13-slim AS deployment-contracts
+ARG BACKEND_COMMIT=""
+COPY scripts/gitops/contract.py /source/scripts/gitops/contract.py
+COPY config/telemetryctl-release.json /source/config/telemetryctl-release.json
+COPY libs /source/libs
+COPY apps /source/apps
+RUN python /source/scripts/gitops/contract.py contracts --root /source --output /contracts --backend-commit "$BACKEND_COMMIT"
+
 FROM --platform=$BUILDPLATFORM eclipse-temurin:25-jdk AS build-base
 
 WORKDIR /workspace
@@ -177,6 +186,12 @@ ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "org.springframework.boot.loade
 
 FROM runtime-base AS telemetry-ingest
 
+ARG BACKEND_COMMIT=""
+ARG DEPLOYMENT_CONTRACT_SHA256=""
+LABEL io.pulsemetry.backend-commit=$BACKEND_COMMIT \
+      io.pulsemetry.deployment-contract-sha256=$DEPLOYMENT_CONTRACT_SHA256
+COPY --from=deployment-contracts --chown=pulsemetry:pulsemetry /contracts/telemetry-ingest.json /app/deployment-contract.json
+
 COPY --from=telemetry-ingest-build --chown=pulsemetry:pulsemetry /extracted/dependencies/ ./
 COPY --from=telemetry-ingest-build --chown=pulsemetry:pulsemetry /extracted/spring-boot-loader/ ./
 COPY --from=telemetry-ingest-build --chown=pulsemetry:pulsemetry /extracted/snapshot-dependencies/ ./
@@ -189,6 +204,12 @@ EXPOSE 4316
 # OTLP 접수 Gateway (ADR 0066). telemetry JWT 공개키(mount)와 Kafka 접속 환경변수만 받는다. EKS workload 다 — ECS 배포 목록에는 없다.
 FROM runtime-base AS telemetry-gateway
 
+ARG BACKEND_COMMIT=""
+ARG DEPLOYMENT_CONTRACT_SHA256=""
+LABEL io.pulsemetry.backend-commit=$BACKEND_COMMIT \
+      io.pulsemetry.deployment-contract-sha256=$DEPLOYMENT_CONTRACT_SHA256
+COPY --from=deployment-contracts --chown=pulsemetry:pulsemetry /contracts/telemetry-gateway.json /app/deployment-contract.json
+
 COPY --from=telemetry-gateway-build --chown=pulsemetry:pulsemetry /extracted/dependencies/ ./
 COPY --from=telemetry-gateway-build --chown=pulsemetry:pulsemetry /extracted/spring-boot-loader/ ./
 COPY --from=telemetry-gateway-build --chown=pulsemetry:pulsemetry /extracted/snapshot-dependencies/ ./
@@ -200,6 +221,12 @@ EXPOSE 8082
 
 # 분석 조회 API (ADR 0022). 배포는 허브의 소재 결정과 사용자 인증 연결 뒤다 — 그 전에는 조직 경로가 전부 401 이다.
 FROM runtime-base AS dashboard-api
+
+ARG BACKEND_COMMIT=""
+ARG DEPLOYMENT_CONTRACT_SHA256=""
+LABEL io.pulsemetry.backend-commit=$BACKEND_COMMIT \
+      io.pulsemetry.deployment-contract-sha256=$DEPLOYMENT_CONTRACT_SHA256
+COPY --from=deployment-contracts --chown=pulsemetry:pulsemetry /contracts/dashboard-api.json /app/deployment-contract.json
 
 COPY --from=dashboard-api-build --chown=pulsemetry:pulsemetry /extracted/dependencies/ ./
 COPY --from=dashboard-api-build --chown=pulsemetry:pulsemetry /extracted/spring-boot-loader/ ./
@@ -224,6 +251,12 @@ USER pulsemetry
 
 # 기존 target 없는 빌드도 enrollment-api를 만들도록 마지막에 둔다.
 FROM runtime-base AS enrollment-api
+
+ARG BACKEND_COMMIT=""
+ARG DEPLOYMENT_CONTRACT_SHA256=""
+LABEL io.pulsemetry.backend-commit=$BACKEND_COMMIT \
+      io.pulsemetry.deployment-contract-sha256=$DEPLOYMENT_CONTRACT_SHA256
+COPY --from=deployment-contracts --chown=pulsemetry:pulsemetry /contracts/enrollment-api.json /app/deployment-contract.json
 
 COPY --from=enrollment-api-build --chown=pulsemetry:pulsemetry /extracted/dependencies/ ./
 COPY --from=enrollment-api-build --chown=pulsemetry:pulsemetry /extracted/spring-boot-loader/ ./

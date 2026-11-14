@@ -66,11 +66,16 @@ libs/vendor-connector/       벤더 좌석 커넥터 — 포트 · 커넥터 설
 [telemetry ingest 계약](../docs/contracts/telemetry-ingest.md)을 따른다. dev OTLP 검증은 이 앱에 조립한 `:libs:security`가 맡는다.
 과거 auth-proxy·collector 경로와 prod의 기존 ECS 계약은 dev EKS 실행 계약과 구분한다. 이 설명은 실제 트래픽 전환·철거 완료의 증거가 아니다.
 
-backend dev CI는 enrollment-api·telemetry-ingest·dashboard-api와 저장소 Secret이 등록된 telemetry-gateway의
-`linux/arm64` SHA 이미지를 ECR에 게시한다. 설정된 이미지 게시가 모두 끝난 뒤 앞 세 앱만 build digest로
-`dev` 태그를 순차 승격하고, Gateway는 SHA 태그와 workflow summary의 digest를 제공한다. 실제 EKS 배포는 infra가 확인한
-immutable digest로 수동 수행한다. enrollment의 원천 Flyway 적용 확인 → ingest → dashboard 순서와 실패·복구는
-[infra EKS 런북](../infra/docs/runbooks/dev-eks-manual-deployment.md)을 따른다. 이미지 게시·Pod readiness·기능 검증은 각각 확인한다.
+backend dev CI는 enrollment-api·telemetry-ingest·telemetry-gateway·dashboard-api의 네 `linux/arm64` SHA 이미지를
+필수로 게시하고 동일 SHA/run/attempt의 완료 묶음 B를 남긴다. 기존 세 앱의 호환용 `dev` 태그는 유지하지만
+배포 선택에 사용하지 않는다. PROJ-311 별도 승격은 검토된 default branch 코드·고정 infra tooling으로만 실행하며
+`DEV_GITOPS_ENABLED` 미설정/false와 `config/gitops-tooling.json`의 null revision에서는 실행하지 않는다.
+네 이미지의 `/app/deployment-contract.json`은 실행 없이 읽어 B 원문과 대조한다. 공급 artifact에는 계정·ECR 전체 URL·runtime 값을 넣지 않는다.
+[ADR 0081](docs/adr/0081-dev-앱-이미지는-검증한-묶음으로-GitOps에-인계한다.md)와 [운영 안내](docs/dev-gitops-image-delivery.md)를 따른다.
+PROJ-310 실제 인계와 publisher/CAS 수락 전에는 [infra EKS 런북](../infra/docs/runbooks/dev-eks-manual-deployment.md)의
+수동 배포를 유지한다. 자동 배포는 현재 revision의 Argo Synced·Healthy·진행/현재 실패 operation 부재와 root P 이력으로 판정한다.
+PostSync Job·DB/기능 검증은 제거하고 현재 Argo 확정 실패에서 이전 정상 이미지로 한 번 복구한다.
+실환경 schema·키·TLS 호환성은 검사하지 않으며 기능 미탐지·migration 후 비호환 위험을 수용한다.
 
 **이 레포가 소유하지 않는 것** — 요청이 오면 올바른 레포를 알린다.
 
