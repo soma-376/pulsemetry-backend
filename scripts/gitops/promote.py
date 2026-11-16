@@ -7,9 +7,8 @@ import re
 import subprocess
 import sys
 import tempfile
-import time
 from contract import REPOSITORY, encode, strict_json
-from prepare_promotion import Github, prepare
+from prepare_promotion import Github, prepare, select_run
 from verify_image_contracts import verify_candidate
 
 
@@ -26,10 +25,10 @@ def trusted_context(env, event):
     default = event.get("repository", {}).get("default_branch")
     if env.get("DELIVERY_ENABLED") != "true" or env.get("GITHUB_REPOSITORY") != REPOSITORY:
         raise ValueError("GitOps 승격 비활성 또는 repository 불일치")
-    if not default or env.get("GITHUB_REF") != "refs/heads/" + default or env.get("GITHUB_WORKFLOW_REF") != REPOSITORY + "/.github/workflows/promote_dev.yml@refs/heads/" + default:
-        raise ValueError("검토된 default branch 승격 workflow가 필요하다")
+    if default != "develop" or env.get("GITHUB_REF") != "refs/heads/develop" or env.get("GITHUB_WORKFLOW_REF") != REPOSITORY + "/.github/workflows/promote_dev.yml@refs/heads/develop":
+        raise ValueError("검토된 develop 기본 브랜치 게시 workflow가 필요하다")
     kind = env.get("GITHUB_EVENT_NAME")
-    if kind not in ("workflow_run", "workflow_dispatch", "schedule"):
+    if kind not in ("workflow_run", "workflow_dispatch"):
         raise ValueError("허용하지 않은 승격 이벤트")
     if kind == "workflow_run":
         producer = event.get("workflow_run", {})
@@ -38,13 +37,21 @@ def trusted_context(env, event):
 
 
 def check_ancestry(provenance):
-    # 한 배포의 잠금 해제 뒤 새 commit의 후보를 고를 수 있으므로 checkout 시점 이력을 재사용하지 않는다.
+    # 게시 직전 현재 develop 이력을 다시 읽어 강제 변경으로 이탈한 생산 source를 거부한다.
     fetched = subprocess.run(["git", "fetch", "--no-tags", "origin", "+refs/heads/develop:refs/remotes/origin/develop"],
                              capture_output=True, timeout=60, check=False)
     if fetched.returncode:
         raise ValueError("현재 develop 이력 조회 실패")
     if subprocess.run(["git", "merge-base", "--is-ancestor", provenance["backendCommit"], "refs/remotes/origin/develop"], capture_output=True, timeout=30).returncode:
         raise ValueError("생산 source가 현재 develop 이력 밖에 있다")
+
+
+def prepare_latest(github, run_id=None, attempt=None):
+    selected = select_run(github)
+    identity = (selected["id"], selected["run_attempt"])
+    if run_id is not None and (run_id, attempt) != identity:
+        raise ValueError("최신 성공 생산 실행만 게시할 수 있다")
+    return prepare(github, *identity)
 
 
 def main():
@@ -74,57 +81,37 @@ def main():
     github = Github(os.environ.get("GH_TOKEN"))
     prepared = Path(os.environ["RUNNER_TEMP"]) / "verified-gitops-candidate"
     if args.prepare:
-        raw, provenance = prepare(github, run_id, attempt)
+        raw, provenance = prepare_latest(github, run_id, attempt)
         check_ancestry(provenance)
         verify_candidate(strict_json(raw))
         prepared.mkdir(mode=0o700, exist_ok=False)
         (prepared / "completion.json").write_bytes(raw)
         (prepared / "producer-evidence.json").write_bytes(encode(provenance))
         return
-    seen = set()
-    started = time.monotonic()
-    # 매번 최신 적격성을 재평가한다. 나머지 후보는 schedule 또는 다음 완료 이벤트가 이어받는다.
-    for index in range(3):
-        if index and time.monotonic() - started > 300:
-            # token 수명·job 제한 안에서 한 번의 복구 시간을 남긴다. 다음 schedule이 이어받는다.
-            return
-        if index == 0:
-            raw = (prepared / "completion.json").read_bytes()
-            provenance = strict_json((prepared / "producer-evidence.json").read_bytes())
-            # token 생성 전 검사와 같은 원본 run/attempt·artifact인지 다시 확인한다.
-            current, evidence = prepare(github, int(provenance["workflowRunId"]), int(provenance["workflowRunAttempt"]))
-            if raw != current or provenance != evidence:
-                raise ValueError("승격 준비 후 원본 증거 변경")
-        else:
-            raw, provenance = prepare(github, run_id, attempt)
-        identity = (provenance["workflowRunId"], provenance["workflowRunAttempt"])
-        if identity in seen:
-            return
-        seen.add(identity)
-        if index != 0:
-            verify_candidate(strict_json(raw))
-            if time.monotonic() - started > 300:
-                return
-        check_ancestry(provenance)
-        if index and time.monotonic() - started > 300:
-            return
-        with tempfile.TemporaryDirectory(prefix="gitops-candidate-") as temporary:
-            candidate = Path(temporary) / "completion.json"
-            evidence = Path(temporary) / "producer-evidence.json"
-            candidate.write_bytes(raw)
-            evidence.write_bytes(encode(provenance))
-            # 고정 실행기만 호출하고 입력은 파일 인자로 전달한다. shell을 사용하지 않는다.
-            result = subprocess.run(["node", str(infra / "scripts/dev-gitops/promote.mjs"),
-                                     "--candidate", str(candidate), "--provenance", str(evidence)], check=False)
-            if result.returncode:
-                raise ValueError("승격 결과 확인 필요")
-        if run_id is not None:
-            return
+    raw = (prepared / "completion.json").read_bytes()
+    provenance = strict_json((prepared / "producer-evidence.json").read_bytes())
+    # token 발급 전 검증한 정확한 최신 run/attempt와 artifact인지 다시 확인한다.
+    current, evidence = prepare_latest(github, int(provenance["workflowRunId"]), int(provenance["workflowRunAttempt"]))
+    if raw != current or provenance != evidence:
+        raise ValueError("게시 준비 후 원본 증거 변경")
+    if run_id is not None and (run_id, attempt) != (int(provenance["workflowRunId"]), int(provenance["workflowRunAttempt"])):
+        raise ValueError("검토한 수동 생산 입력이 달라졌다")
+    check_ancestry(provenance)
+    with tempfile.TemporaryDirectory(prefix="gitops-candidate-") as temporary:
+        candidate = Path(temporary) / "completion.json"
+        evidence = Path(temporary) / "producer-evidence.json"
+        candidate.write_bytes(raw)
+        evidence.write_bytes(encode(provenance))
+        # 공통 실행기가 Git 충돌과 최신성을 재검사한다. Argo 적용 완료는 기다리지 않는다.
+        result = subprocess.run(["node", str(infra / "scripts/dev-gitops/publish.mjs"),
+                                 "--candidate", str(candidate), "--provenance", str(evidence)], check=False)
+        if result.returncode:
+            raise ValueError("Git 게시 결과 확인 필요")
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception:
-        print("GitOps 승격 중단: 입력·도구 고정·공통 상태를 확인한다", file=sys.stderr)
+        print("GitOps 게시 중단: 최신 생산 입력·도구 고정·Git 결과를 확인한다", file=sys.stderr)
         sys.exit(1)

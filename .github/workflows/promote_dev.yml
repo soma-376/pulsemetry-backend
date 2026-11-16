@@ -15,9 +15,6 @@ on:
         description: '원본 생산 attempt. run_id와 함께 지정한다.'
         required: false
         type: string
-  schedule:
-    # 다른 publisher의 잠금 때문에 보류된 완료 후보를 다시 평가한다. 만료 잠금은 탈취하지 않는다.
-    - cron: '17,47 * * * *'
 
 permissions:
   contents: read
@@ -33,7 +30,7 @@ jobs:
       vars.DEV_GITOPS_ENABLED == 'true' &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 25
     environment: dev-gitops
     permissions:
       contents: read
@@ -78,15 +75,6 @@ jobs:
       - name: Set up Docker Buildx for immutable manifest inspection
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - name: Install pinned Session Manager plugin
-        run: |
-          mkdir -p "$RUNNER_TEMP/session-manager-plugin"
-          cd "$RUNNER_TEMP/session-manager-plugin"
-          curl --fail --silent --show-error --location --retry 3 https://s3.amazonaws.com/session-manager-downloads/plugin/1.2.896.0/ubuntu_64bit/session-manager-plugin.deb -o plugin.deb
-          echo '53f51fcc67314a4bf85888a38a3967cd41f8d0f28a60a9469a63acf935ba713e  plugin.deb' | sha256sum --check
-          sudo dpkg -i plugin.deb
-          test "$(session-manager-plugin --version)" = '1.2.896.0'
-
       - name: Assume promotion read role
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
@@ -108,7 +96,7 @@ jobs:
           repositories: infra-generated-values
           permission-contents: write
 
-      - name: Verify source and promote with shared CAS
+      - name: Publish verified image selection to Git
         env:
           VALUES_GH_TOKEN: ${{ steps.publisher.outputs.token }}
         run: python3 scripts/gitops/promote.py --infra .gitops-infra

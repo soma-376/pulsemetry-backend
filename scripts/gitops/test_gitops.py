@@ -253,41 +253,78 @@ class PromotionTrustTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             promote.trusted_context({}, {})
 
-    def test_only_reviewed_default_branch_workflow_is_privileged(self):
-        env = {"DELIVERY_ENABLED": "true", "GITHUB_REPOSITORY": c.REPOSITORY, "GITHUB_EVENT_NAME": "schedule",
-               "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW_REF": c.REPOSITORY + "/.github/workflows/promote_dev.yml@refs/heads/main"}
-        event = {"repository": {"default_branch": "main"}}
+    def test_only_reviewed_develop_default_branch_can_publish(self):
+        env = {"DELIVERY_ENABLED": "true", "GITHUB_REPOSITORY": c.REPOSITORY, "GITHUB_EVENT_NAME": "workflow_dispatch",
+               "GITHUB_REF": "refs/heads/develop", "GITHUB_WORKFLOW_REF": c.REPOSITORY + "/.github/workflows/promote_dev.yml@refs/heads/develop"}
+        event = {"repository": {"default_branch": "develop"}}
         promote.trusted_context(env, event)
-        for field, value in (("GITHUB_REF", "refs/heads/develop"), ("GITHUB_EVENT_NAME", "pull_request"), ("DELIVERY_ENABLED", "false"), ("GITHUB_WORKFLOW_REF", c.WORKFLOW)):
-            with self.subTest(field=field), self.assertRaises(ValueError):
+        for field, value in (("GITHUB_REF", "refs/heads/main"), ("GITHUB_EVENT_NAME", "schedule"),
+                             ("GITHUB_EVENT_NAME", "pull_request"), ("DELIVERY_ENABLED", "false"), ("GITHUB_WORKFLOW_REF", c.WORKFLOW)):
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
                 promote.trusted_context({**env, field: value}, event)
+        with self.assertRaises(ValueError):
+            promote.trusted_context(env, {"repository": {"default_branch": "main"}})
+        producer = {"conclusion": "success", "head_branch": "develop", "head_repository": {"full_name": c.REPOSITORY}}
+        promote.trusted_context({**env, "GITHUB_EVENT_NAME": "workflow_run"}, {**event, "workflow_run": producer})
+        for field, value in (("conclusion", "failure"), ("head_branch", "main"), ("head_repository", {"full_name": "fork/backend"})):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                promote.trusted_context({**env, "GITHUB_EVENT_NAME": "workflow_run"},
+                                        {**event, "workflow_run": {**producer, field: value}})
 
-    def test_shared_engine_blocked_exit_stops_without_retry(self):
+    def test_manual_candidate_cannot_replace_newer_successful_producer(self):
+        github = GithubFixture(c.encode(fixture()))
+        raw, evidence = promote.prepare_latest(github, 123, 2)
+        self.assertEqual(evidence["workflowRunId"], "123")
+        self.assertEqual(raw, c.encode(fixture()))
+        for run_id, attempt in ((122, 2), (123, 1)):
+            with self.subTest(run_id=run_id, attempt=attempt), self.assertRaisesRegex(ValueError, "최신 성공"):
+                promote.prepare_latest(github, run_id, attempt)
+
+    def publication(self, *, result_code=0, changed=False):
         raw = c.encode(fixture()); _, evidence = p.prepare(GithubFixture(raw))
         commands = []
         with tempfile.TemporaryDirectory() as directory:
             prepared = Path(directory) / "verified-gitops-candidate"; prepared.mkdir()
             (prepared / "completion.json").write_bytes(raw)
             (prepared / "producer-evidence.json").write_bytes(c.encode(evidence))
-            event = Path(directory) / "event.json"; event.write_bytes(c.encode({"repository": {"default_branch": "main"}}))
-            env = {"DELIVERY_ENABLED": "true", "GITHUB_REPOSITORY": c.REPOSITORY, "GITHUB_EVENT_NAME": "schedule",
-                   "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW_REF": c.REPOSITORY + "/.github/workflows/promote_dev.yml@refs/heads/main",
+            event = Path(directory) / "event.json"; event.write_bytes(c.encode({"repository": {"default_branch": "develop"}}))
+            env = {"DELIVERY_ENABLED": "true", "GITHUB_REPOSITORY": c.REPOSITORY, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                   "GITHUB_REF": "refs/heads/develop", "GITHUB_WORKFLOW_REF": c.REPOSITORY + "/.github/workflows/promote_dev.yml@refs/heads/develop",
                    "GITHUB_EVENT_PATH": str(event), "RUNNER_TEMP": directory, "GH_TOKEN": "fixture-token"}
             def run(arguments, **kwargs):
                 commands.append(arguments)
-                return SimpleNamespace(returncode=2 if arguments[0] == "node" else 0, stdout=COMMIT + "\n")
+                if arguments[0] == "node":
+                    self.assertEqual(Path(arguments[3]).read_bytes(), raw)
+                    self.assertEqual(c.strict_json(Path(arguments[5]).read_bytes()), evidence)
+                return SimpleNamespace(returncode=result_code if arguments[0] == "node" else 0, stdout=COMMIT + "\n")
             infra = ROOT / ".fixture-infra"
             with patch.dict(os.environ, env, clear=True), patch("sys.argv", ["promote.py", "--infra", str(infra)]), \
                  patch.object(promote, "tooling_revision", return_value=COMMIT), \
-                 patch.object(promote, "prepare", return_value=(raw, evidence)) as prepare, \
+                 patch.object(promote, "prepare_latest", return_value=(raw + b" " if changed else raw, evidence)) as prepare, \
                  patch.object(promote.subprocess, "run", side_effect=run):
-                with self.assertRaisesRegex(ValueError, "승격 결과"):
+                if result_code or changed:
+                    with self.assertRaisesRegex(ValueError, "원본 증거" if changed else "Git 게시"):
+                        promote.main()
+                else:
                     promote.main()
-            self.assertEqual(prepare.call_count, 1)
-            node = [cmd for cmd in commands if cmd[0] == "node"]
-            self.assertEqual(len(node), 1)
-            self.assertEqual(node[0][1:3], [str(infra / "scripts/dev-gitops/promote.mjs"), "--candidate"])
-            self.assertEqual(node[0][4], "--provenance")
+            self.assertEqual(prepare.call_args.args[1:], (123, 2))
+        return commands
+
+    def test_publish_uses_one_shared_git_call_and_no_rollout_wait(self):
+        commands = self.publication()
+        node = [cmd for cmd in commands if cmd[0] == "node"]
+        self.assertEqual(len(node), 1)
+        self.assertEqual(node[0][1:3], [str(ROOT / ".fixture-infra/scripts/dev-gitops/publish.mjs"), "--candidate"])
+        self.assertEqual(node[0][4], "--provenance")
+        self.assertTrue(all(cmd[0] in ("git", "node") for cmd in commands))
+
+    def test_failed_git_publication_stops_without_rollout_or_rollback(self):
+        commands = self.publication(result_code=1)
+        self.assertEqual(len([cmd for cmd in commands if cmd[0] == "node"]), 1)
+
+    def test_changed_source_proof_prevents_git_publication(self):
+        commands = self.publication(changed=True)
+        self.assertEqual([cmd for cmd in commands if cmd[0] == "node"], [])
 
     def test_arm64_child_resolves_separately_from_index_digest(self):
         child = "sha256:" + "e" * 64
@@ -300,29 +337,6 @@ class PromotionTrustTest(unittest.TestCase):
         for choices in ([], [entry, entry], [{**entry, "digest": "invalid"}]):
             with self.assertRaises(ValueError):
                 arm64_digest({**index, "manifests": choices}, DIGEST)
-
-    def test_long_success_leaves_next_candidate_to_schedule(self):
-        raw = c.encode(fixture()); _, evidence = p.prepare(GithubFixture(raw))
-        commands = []
-        with tempfile.TemporaryDirectory() as directory:
-            prepared = Path(directory) / "verified-gitops-candidate"; prepared.mkdir()
-            (prepared / "completion.json").write_bytes(raw)
-            (prepared / "producer-evidence.json").write_bytes(c.encode(evidence))
-            event = Path(directory) / "event.json"; event.write_bytes(c.encode({"repository": {"default_branch": "main"}}))
-            env = {"DELIVERY_ENABLED": "true", "GITHUB_REPOSITORY": c.REPOSITORY, "GITHUB_EVENT_NAME": "schedule",
-                   "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW_REF": c.REPOSITORY + "/.github/workflows/promote_dev.yml@refs/heads/main",
-                   "GITHUB_EVENT_PATH": str(event), "RUNNER_TEMP": directory, "GH_TOKEN": "fixture-token"}
-            def run(arguments, **kwargs):
-                commands.append(arguments)
-                return SimpleNamespace(returncode=0, stdout=COMMIT + "\n")
-            with patch.dict(os.environ, env, clear=True), patch("sys.argv", ["promote.py"]), \
-                 patch.object(promote, "tooling_revision", return_value=COMMIT), \
-                 patch.object(promote, "prepare", return_value=(raw, evidence)) as prepare, \
-                 patch.object(promote.time, "monotonic", side_effect=[0, 301]), \
-                 patch.object(promote.subprocess, "run", side_effect=run):
-                promote.main()
-            self.assertEqual(prepare.call_count, 1)
-            self.assertEqual(len([command for command in commands if command[0] == "node"]), 1)
 
     def test_package_tar_rejects_links_traversal_extra_and_oversized_files(self):
         def tar(name="deployment-contract.json", kind=tarfile.REGTYPE, extra=False, size=None):
