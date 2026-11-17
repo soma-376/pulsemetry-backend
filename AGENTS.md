@@ -109,6 +109,7 @@ backend dev CI는 enrollment-api·telemetry-ingest·telemetry-gateway·dashboard
 | `docs/dashboard-server-spec.md` | Dashboard 설정·운영·로컬 실행 및 기존 API 절의 이전 안내 |
 | `docs/vendor-connector-evidence.md` · `docs/vendor-connector-verification.md` | 벤더 커넥터의 공식 문서 근거와 실계정 검증 절차 |
 | `tools/mock-vendor/README.md` | 로컬 모의 벤더 서버(벤더 연결·회수·복원 E2E) |
+| `tools/loadtest/README.md` | dev 파이프라인 부하 시험 도구 — 부하 tenant 시드 SQL·실제 OTLP payload 템플릿·k6 시나리오·로컬 E2E(ADR 0082) |
 | `docs/user-auth-operations.md` | 사용자 인증 활성화·키·세션 운영 |
 | `docs/telemetry-kafka-operations.md` · `docs/telemetry-kafka-e2e.md` | telemetry JWT·Gateway·Kafka 설정표·전환 순서·키 회전·보안 폐기 SQL·재처리와 중복·메모리 산정, 로컬 E2E 결과 |
 | `docs/mail-operations.md` | 메일 설정 계약·SES 인프라 인계 조건·실제 발송 확인·전환과 복구 |
