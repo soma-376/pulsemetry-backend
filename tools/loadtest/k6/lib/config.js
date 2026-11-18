@@ -22,6 +22,8 @@ export const DEFAULTS = {
 	RAMP: '30s',
 	STEP_HOLD: '5m',
 	COOLDOWN: '30s',
+	// 끝난 뒤 지표가 Prometheus 에 한 번 더 수집되도록 teardown 에서 기다리는 시간(내보내기 5s + scrape 10s 의 여유).
+	FINAL_FLUSH: '25s',
 	HOLD_DURATION: '20m',
 	MIX_SIGNAL: 'logs:70,metrics:20,traces:10',
 	MIX_PRODUCT: 'claude-code:50,codex:50',
@@ -102,6 +104,7 @@ export function loadConfig(env) {
 		rampSeconds: parseDuration(get('RAMP'), 'RAMP'),
 		stepHoldSeconds: parseDuration(get('STEP_HOLD'), 'STEP_HOLD'),
 		cooldownSeconds: parseDuration(get('COOLDOWN'), 'COOLDOWN'),
+		finalFlushSeconds: parseDuration(get('FINAL_FLUSH'), 'FINAL_FLUSH'),
 		holdRps: env.HOLD_RPS ? parseInteger(env.HOLD_RPS, 'HOLD_RPS', 1, MAX_RPS_LIMIT) : null,
 		holdSeconds: parseDuration(get('HOLD_DURATION'), 'HOLD_DURATION'),
 		mixSignal: parseMix(get('MIX_SIGNAL'), 'MIX_SIGNAL', SIGNALS),
@@ -112,6 +115,7 @@ export function loadConfig(env) {
 	// 0초 상승 구간은 ramping-arrival-rate 에서 앞 단계와 이어져 의도와 다르게 보간된다. 1초 이상만 받는다.
 	if (config.rampSeconds < 1) throw invalid('RAMP 는 1초 이상이다');
 	if (config.stepHoldSeconds < 1 || config.holdSeconds < 1) throw invalid('STEP_HOLD·HOLD_DURATION 은 1초 이상이다');
+	if (config.finalFlushSeconds > 300) throw invalid('FINAL_FLUSH 는 300초 이하다');
 	if (scenario === 'hold' && config.holdRps === null) throw invalid('SCENARIO=hold 에는 HOLD_RPS 가 필요하다');
 	return config;
 }

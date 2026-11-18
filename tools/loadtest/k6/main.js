@@ -8,7 +8,7 @@
 import http from 'k6/http';
 import crypto from 'k6/crypto';
 import exec from 'k6/execution';
-import { fail } from 'k6';
+import { fail, sleep } from 'k6';
 import { SharedArray } from 'k6/data';
 import { Counter, Gauge } from 'k6/metrics';
 import { loadConfig } from './lib/config.js';
@@ -33,12 +33,17 @@ const acceptedRequests = new Counter('loadtest_accepted_requests');
 const expectedEvents = new Counter('loadtest_expected_events');
 const expectedMetricPoints = new Counter('loadtest_expected_metric_points');
 
+// Gateway 요청만 센다. setup 의 토큰 교환(target 태그 없음)이 오류율·지연·합계를 희석하지 않게 한다.
+export const GATEWAY = 'target:gateway';
+
 function thresholds() {
 	const abort = (threshold) => ({ threshold, abortOnFail: true, delayAbortEval: '1m' });
 	const result = {
-		http_req_failed: [abort('rate<0.05')],
-		http_req_duration: [abort('p(95)<4000')],
+		[`http_req_failed{${GATEWAY}}`]: [abort('rate<0.05')],
+		[`http_req_duration{${GATEWAY}}`]: [abort('p(95)<4000')],
 		dropped_iterations: [abort('count<3000')],
+		// summary 합계용 등록(실패시키지 않는다).
+		[`http_reqs{${GATEWAY}}`]: ['count>=0'],
 	};
 	// 판정용 단계별 기록. 실패시키지 않는 값이다 — summary 에 단계별 값이 남게 하는 등록이다.
 	for (const step of plan.steps) {
@@ -88,7 +93,7 @@ export default function (data) {
 	const bytes = new Uint8Array(crypto.randomBytes(template.idChars + SEQUENCE_BYTES));
 	const base = requestBaseNanos(now, requestSequence(exec.vu.idInTest, exec.vu.iterationInScenario));
 	const token = data.tokens[exec.scenario.iterationInTest % data.tokens.length];
-	const tags = { step: where.step, phase: where.phase, signal: template.signal, product: template.product, name: template.path };
+	const tags = { target: 'gateway', step: where.step, phase: where.phase, signal: template.signal, product: template.product, name: template.path };
 
 	const params = { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, tags, timeout: '10s' };
 	if (config.gzip) params.compression = 'gzip';
@@ -107,6 +112,11 @@ export default function (data) {
 	if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
 		exec.test.abort(`2xx 가 아닌 응답이 ${MAX_CONSECUTIVE_FAILURES}회 이어졌다(마지막 상태 ${response.status}, ${template.path})`);
 	}
+}
+
+// 마지막 단계의 지표가 collector 를 거쳐 Prometheus 에 수집될 때까지 기다린다. Pod 는 k6 가 끝나면 collector 와 함께 끝난다.
+export function teardown() {
+	if (config.finalFlushSeconds > 0) sleep(config.finalFlushSeconds);
 }
 
 export function handleSummary(data) {

@@ -7,7 +7,7 @@ import { loadConfig, MAX_TOTAL_SECONDS, parseDuration, parseMix, SIGNALS } from 
 import { buildPlan, phaseAt } from './lib/schedule.js';
 import { makePicker, prepareTemplates, render, renderWith, requestBaseNanos, requestSequence, SEQUENCE_BYTES } from './lib/payload.js';
 import { installationToken, parseIdentities } from './lib/auth.js';
-import { BEGIN, buildSummary, END, wrap } from './lib/summary.js';
+import { BEGIN, buildSummary, END, wrap, stepDrops } from './lib/summary.js';
 
 export const options = { vus: 1, iterations: 1 };
 
@@ -131,10 +131,12 @@ equal('가중치 0 조합은 고르지 않는다', pickedOther, 0);
 const fakeData = {
 	setup_data: { tokens: ['eyJsecret.token.value'], campaign: 'vector-test', tenantId: 'x', installationCount: 1, tokenExchanges: 1, setupEndMs: 1800000000000 },
 	metrics: {
-		http_reqs: { values: { count: 10 } },
+		http_reqs: { values: { count: 11 } },
+		'http_reqs{target:gateway}': { values: { count: 10 } },
 		'http_reqs{step:s01,phase:hold}': { values: { count: 600 } },
 		'http_req_duration{step:s01,phase:hold}': { values: { 'p(95)': 12.5, 'p(99)': 30 }, thresholds: { 'p(95)<600000': { ok: true } } },
-		http_req_failed: { values: { rate: 0 }, thresholds: { 'rate<0.05': { ok: false } } },
+		http_req_failed: { values: { rate: 0.5 } },
+		'http_req_failed{target:gateway}': { values: { rate: 0 }, thresholds: { 'rate<0.05': { ok: false } } },
 		loadtest_expected_events: { values: { count: 42 } },
 	},
 	state: { testRunDurationMs: 61000 },
@@ -146,7 +148,12 @@ check('summary 표지', wrapped.indexOf(`${BEGIN}\n`) === 0 && wrapped.endsWith(
 equal('summary 단계', [summary.steps[0].holdStart, summary.steps[0].holdEnd, summary.steps[0].holdActualRps, summary.steps[0].p95Ms],
 	['2027-01-15T08:00:00.000Z', '2027-01-15T08:01:00.000Z', 10, 12.5]);
 equal('summary 합계', [summary.totals.expectedEvents, summary.totals.expectedMetricPoints, summary.thresholdsPassed, summary.failedThresholds],
-	[42, 0, false, ['http_req_failed: rate<0.05']]);
+	[42, 0, false, ['http_req_failed{target:gateway}: rate<0.05']]);
+equal('summary 합계는 Gateway 요청만 센다(setup 제외)', [summary.totals.requests, summary.totals.errorRate], [10, 0]);
+equal('summary 단계 drop(실행 전체 drop 0)', [summary.steps[0].scheduledIterations, summary.steps[0].droppedIterations], [60, 0]);
+equal('단계 drop 계산', [stepDrops(600, 600, 0), stepDrops(600, 598, 0), stepDrops(600, 590, 12), stepDrops(600, 605, 3), stepDrops(600, null, 5)], [0, 0, 10, 0, null]);
+equal('FINAL_FLUSH 기본값과 상한', [loadConfig({ TESTID: 't' }).finalFlushSeconds, loadConfig({ TESTID: 't', FINAL_FLUSH: '0' }).finalFlushSeconds], [25, 0]);
+check('FINAL_FLUSH 300초 초과 거부', (() => { try { loadConfig({ TESTID: 't', FINAL_FLUSH: '301' }); return false; } catch (e) { return true; } })());
 
 if (failures.length > 0) {
 	throw new Error(`selftest 실패 ${failures.length}건:\n- ${failures.join('\n- ')}`);
