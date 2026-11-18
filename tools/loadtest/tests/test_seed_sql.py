@@ -75,9 +75,30 @@ class SqlTest(unittest.TestCase):
         self.assertEqual(sql.count("BEGIN;"), 1)
         inserts = re.findall(r"^INSERT INTO enrollment\.(\w+) ", sql, flags=re.MULTILINE)
         self.assertEqual(inserts, ["tenants", "teams", "members", "team_memberships", "invitations", "installations", "installation_credentials"])
-        self.assertEqual(sql.count("ON CONFLICT DO NOTHING;"), len(inserts))
+        # 충돌 대상은 id만이다 — credential_hash 같은 다른 UNIQUE 충돌은 오류로 낸다.
+        self.assertEqual(sql.count("ON CONFLICT (id) DO NOTHING;"), len(inserts))
+        self.assertNotIn("ON CONFLICT DO NOTHING", sql)
         self.assertIn("<> 60 THEN", sql)
         self.assertEqual(sql, seed_sql.seed_sql(self.plan, SECRET))
+
+    def test_seed_sql_rejects_changed_installation_set_before_inserts(self):
+        sql = seed_sql.seed_sql(self.plan, SECRET)
+        guard = sql.index("기존 설치 집합이 계획")
+        self.assertLess(guard, sql.index("INSERT INTO enrollment.tenants"))
+        self.assertIn("(SELECT count(*) FROM enrollment.installations WHERE tenant_id = ", sql)
+        self.assertIn("AND id NOT IN (", sql)
+        for seat in self.plan.seats:
+            self.assertGreaterEqual(sql.count(f"'{seat.installation_id}'::uuid"), 2)
+
+    def test_seed_sql_checks_each_installation_hash_before_commit(self):
+        sql = seed_sql.seed_sql(self.plan, SECRET)
+        check = sql.index("시드 비밀과 맞지 않는다")
+        self.assertGreater(check, sql.index("INSERT INTO enrollment.installation_credentials"))
+        self.assertLess(check, sql.index("COMMIT;"))
+        self.assertIn("count(DISTINCT c.installation_id)", sql)
+        self.assertIn("ON c.installation_id = p.installation_id AND c.credential_hash = p.credential_hash", sql)
+        for seat, token in zip(self.plan.seats, all_tokens(self.plan)):
+            self.assertIn(f"('{seat.installation_id}'::uuid, '{identities.sha256_hex(token)}')", sql)
 
     def test_seed_sql_rows(self):
         sql = seed_sql.seed_sql(self.plan, SECRET)
@@ -93,10 +114,16 @@ class SqlTest(unittest.TestCase):
 
     def test_verify_sql_counts_expected_rows_and_secret_match(self):
         sql = seed_sql.verify_sql(self.plan, SECRET)
-        self.assertNotRegex(sql, r"(?i)\b(insert|update|delete|begin|commit)\b")
+        # 쓰기 문장과 트랜잭션은 없다. DO 블록의 BEGIN…END는 PL/pgSQL 블록이지 트랜잭션이 아니다.
+        self.assertNotRegex(sql, r"(?i)\b(insert|update|delete|commit)\b")
+        self.assertNotIn("BEGIN;", sql)
         self.assertIn("'credential_matches_secret' AS kind, 60 AS expected", sql)
         self.assertIn("'tenant_active' AS kind, 1 AS expected", sql)
-        self.assertEqual(sql.count("AS kind"), 8)
+        # 표로 보여 주고(SELECT), 같은 검사를 DO 블록이 다시 해 하나라도 틀리면 오류로 끝낸다.
+        self.assertEqual(sql.count("AS kind"), 16)
+        self.assertIn("RAISE EXCEPTION", sql)
+        self.assertIn("WHERE expected <> actual", sql)
+        self.assertIn("ON c.installation_id = p.installation_id AND c.credential_hash = p.credential_hash", sql)
 
     def test_revoke_sql_is_scoped_to_campaign_tenant(self):
         sql = seed_sql.revoke_sql(self.plan)
@@ -149,6 +176,18 @@ class CliTest(unittest.TestCase):
             code, sql, _ = self.run_cli("--campaign", CAMPAIGN, "--revoke")
             self.assertEqual(code, 0)
             self.assertIn("SET status = 'revoked'", sql)
+
+    def test_identities_out_must_not_be_the_secret_file(self):
+        with tempfile.TemporaryDirectory() as work:
+            secret = Path(work, "secret")
+            secret.write_bytes(SECRET)
+            link = Path(work, "link")
+            link.symlink_to(secret)
+            for target in (secret, link, Path(work, ".", "secret")):
+                code, sql, err = self.run_cli("--campaign", CAMPAIGN, "--secret-file", str(secret), "--identities-out", str(target))
+                self.assertEqual((code, sql), (2, ""))
+                self.assertIn("시드 비밀을 덮어쓰지 않도록", err)
+                self.assertEqual(secret.read_bytes(), SECRET)
 
     def test_bad_inputs_fail_without_sql(self):
         with tempfile.TemporaryDirectory() as work:

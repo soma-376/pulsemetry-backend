@@ -145,8 +145,48 @@ def _header(plan: Plan, purpose: str) -> str:
     )
 
 
+def _planned_pairs(plan: Plan, secret: bytes) -> str:
+    """계획한 (installation_id, credential_hash) 쌍 — 확인·커밋 전 검사가 설치별로 대조한다."""
+    rows = []
+    for seat in plan.seats:
+        token = identities.installation_token(secret, plan.campaign, seat.installation_id)
+        rows.append(f"({_q(seat.installation_id)}::uuid, {_q(identities.sha256_hex(token))})")
+    return "(VALUES " + ", ".join(rows) + ") AS p(installation_id, credential_hash)"
+
+
+def _matched_credentials(plan: Plan, secret: bytes) -> str:
+    """활성 자격증명 중 계획한 쌍과 설치·해시가 모두 맞는 설치 수. 해시가 바뀌거나 빠진 설치는 세지 않는다."""
+    return (
+        "SELECT count(DISTINCT c.installation_id) FROM enrollment.installation_credentials c JOIN "
+        + _planned_pairs(plan, secret)
+        + " ON c.installation_id = p.installation_id AND c.credential_hash = p.credential_hash WHERE c.revoked_at IS NULL"
+    )
+
+
+def _guard_existing_campaign(plan: Plan) -> str:
+    """이미 있는 캠페인이면 설치 집합이 계획과 같을 때만 계속한다(설치 수 변경 거부). 처음 시드는 통과한다."""
+    tenant = _q(plan.tenant_id)
+    planned = ", ".join(f"{_q(seat.installation_id)}::uuid" for seat in plan.seats)
+    message = (
+        f"부하 tenant {plan.tenant_id}의 기존 설치 집합이 계획(설치 {len(plan.seats)}개)과 다르다 — "
+        "다른 설치 수로 시드했다. 새 캠페인 ID를 쓴다"
+    )
+    return (
+        "DO $$ BEGIN\n"
+        f"    IF EXISTS (SELECT 1 FROM enrollment.tenants WHERE id = {tenant}) AND (\n"
+        f"        (SELECT count(*) FROM enrollment.installations WHERE tenant_id = {tenant}) <> {len(plan.seats)}\n"
+        f"        OR EXISTS (SELECT 1 FROM enrollment.installations WHERE tenant_id = {tenant} AND id NOT IN ({planned}))\n"
+        "    ) THEN\n"
+        f"        RAISE EXCEPTION {_q(message)};\n"
+        "    END IF;\n"
+        "END $$;\n\n"
+    )
+
+
 def seed_sql(plan: Plan, secret: bytes) -> str:
-    """한 트랜잭션의 시드. 모든 INSERT가 `ON CONFLICT DO NOTHING`이라 같은 입력은 다시 적용해도 안전하다."""
+    """한 트랜잭션의 시드. 같은 입력은 다시 적용해도 안전하다(`ON CONFLICT (id) DO NOTHING`).
+    설치 수가 다르거나(INSERT 전 검사), 시드 비밀이 다르거나(커밋 전 설치별 해시 대조), 폐기한 캠페인이면 롤백한다.
+    충돌 대상을 id로 한정해 credential_hash 같은 다른 UNIQUE 충돌은 조용히 넘기지 않고 오류로 낸다."""
     tenant, team, owner = _q(plan.tenant_id), _q(plan.team_id), _q(plan.owner_id)
     members, memberships, invitations, installations, credentials = [], [], [], [], []
     for seat in plan.seats:
@@ -167,34 +207,43 @@ def seed_sql(plan: Plan, secret: bytes) -> str:
 
     expected = len(plan.seats)
     mismatch = (
-        f"부하 tenant {plan.tenant_id}의 활성 설치가 {expected}개가 아니다 — 다른 설치 수로 시드했거나 이미 폐기한 캠페인이다. 새 캠페인 ID를 쓴다"
+        f"부하 tenant {plan.tenant_id}의 활성 설치가 {expected}개가 아니다 — 이미 폐기한 캠페인이다. 새 캠페인 ID를 쓴다"
+    )
+    wrong_secret = (
+        f"부하 tenant {plan.tenant_id}의 설치별 자격증명 해시가 이 시드 비밀과 맞지 않는다 — 이 캠페인을 처음 시드한 비밀 파일을 쓴다"
     )
     return (
         _header(plan, "부하 tenant 시드")
-        + "-- 재적용에 안전하다(ON CONFLICT DO NOTHING). 설치 토큰 원문은 없다 — credential_hash(SHA-256)만 있다.\n"
+        + "-- 재적용에 안전하다(ON CONFLICT (id) DO NOTHING). 설치 토큰 원문은 없다 — credential_hash(SHA-256)만 있다.\n"
         "BEGIN;\n"
         "SET LOCAL lock_timeout = '5s';\n"
         "SET LOCAL statement_timeout = '60s';\n\n"
-        "INSERT INTO enrollment.tenants (id, name, status) VALUES\n"
-        + _values([[tenant, _q(plan.tenant_name), "'active'"]]) + "\nON CONFLICT DO NOTHING;\n\n"
+        + _guard_existing_campaign(plan)
+        + "INSERT INTO enrollment.tenants (id, name, status) VALUES\n"
+        + _values([[tenant, _q(plan.tenant_name), "'active'"]]) + "\nON CONFLICT (id) DO NOTHING;\n\n"
         "INSERT INTO enrollment.teams (id, tenant_id, name, status) VALUES\n"
-        + _values([[team, tenant, "'loadtest'", "'active'"]]) + "\nON CONFLICT DO NOTHING;\n\n"
+        + _values([[team, tenant, "'loadtest'", "'active'"]]) + "\nON CONFLICT (id) DO NOTHING;\n\n"
         "INSERT INTO enrollment.members (id, tenant_id, email, display_name, role, status) VALUES\n"
-        + _values(members) + "\nON CONFLICT DO NOTHING;\n\n"
+        + _values(members) + "\nON CONFLICT (id) DO NOTHING;\n\n"
         "-- 하루 전부터 소속 — 보강이 관측 시각 기준(joined_at <= t < left_at)으로 팀을 찾는다.\n"
         "INSERT INTO enrollment.team_memberships (id, team_id, member_id, joined_at) VALUES\n"
-        + _values(memberships) + "\nON CONFLICT DO NOTHING;\n\n"
+        + _values(memberships) + "\nON CONFLICT (id) DO NOTHING;\n\n"
         "-- 이미 소비한 초대다. code_hash는 시드 비밀에서 파생한 값이고 원문 코드는 없다.\n"
         "INSERT INTO enrollment.invitations (id, tenant_id, target_member_id, created_by_member_id, code_hash, used_at, expires_at) VALUES\n"
-        + _values(invitations) + "\nON CONFLICT DO NOTHING;\n\n"
+        + _values(invitations) + "\nON CONFLICT (id) DO NOTHING;\n\n"
         "INSERT INTO enrollment.installations (id, tenant_id, member_id, invitation_id, hostname, platform, architecture, client_version, status) VALUES\n"
-        + _values(installations) + "\nON CONFLICT DO NOTHING;\n\n"
+        + _values(installations) + "\nON CONFLICT (id) DO NOTHING;\n\n"
         "INSERT INTO enrollment.installation_credentials (id, installation_id, credential_hash) VALUES\n"
-        + _values(credentials) + "\nON CONFLICT DO NOTHING;\n\n"
+        + _values(credentials) + "\nON CONFLICT (id) DO NOTHING;\n\n"
         + _guard_tenant(plan)
         + "DO $$ BEGIN\n"
         f"    IF (SELECT count(*) FROM enrollment.installations WHERE tenant_id = {tenant} AND status = 'active' AND revoked_at IS NULL) <> {expected} THEN\n"
         f"        RAISE EXCEPTION {_q(mismatch)};\n"
+        "    END IF;\n"
+        f"    IF ({_matched_credentials(plan, secret)}) <> {expected}\n"
+        "       OR (SELECT count(*) FROM enrollment.installation_credentials c JOIN enrollment.installations i ON i.id = c.installation_id\n"
+        f"           WHERE i.tenant_id = {tenant} AND c.revoked_at IS NULL) <> {expected} THEN\n"
+        f"        RAISE EXCEPTION {_q(wrong_secret)};\n"
         "    END IF;\n"
         "END $$;\n"
         "COMMIT;\n"
@@ -202,12 +251,10 @@ def seed_sql(plan: Plan, secret: bytes) -> str:
 
 
 def verify_sql(plan: Plan, secret: bytes) -> str:
-    """읽기만 하는 확인. 모든 행의 `ok`가 true여야 한다. 마지막 행은 시드 비밀이 맞는지(해시 일치)를 본다."""
+    """읽기만 하는 확인. 모든 행의 `ok`가 true여야 하고, 하나라도 아니면 마지막 DO 블록이 오류로 끝낸다
+    (`psql -v ON_ERROR_STOP=1`이면 종료 코드 3). 마지막 행은 설치별로 시드 비밀의 해시가 맞는지 본다."""
     tenant = _q(plan.tenant_id)
     expected = len(plan.seats)
-    hashes = ", ".join(
-        _q(identities.sha256_hex(identities.installation_token(secret, plan.campaign, seat.installation_id))) for seat in plan.seats
-    )
     tenant_rows = f"(SELECT id FROM enrollment.tenants WHERE id = {tenant} AND name = {_q(plan.tenant_name)})"
     installs = f"(SELECT id FROM enrollment.installations WHERE tenant_id IN {tenant_rows})"
     checks = [
@@ -223,19 +270,23 @@ def verify_sql(plan: Plan, secret: bytes) -> str:
          f"SELECT count(*) FROM enrollment.installations WHERE tenant_id IN {tenant_rows} AND status = 'active' AND revoked_at IS NULL"),
         ("credential_active", expected,
          f"SELECT count(*) FROM enrollment.installation_credentials WHERE installation_id IN {installs} AND revoked_at IS NULL"),
-        ("credential_matches_secret", expected,
-         f"SELECT count(*) FROM enrollment.installation_credentials WHERE installation_id IN {installs} "
-         f"AND revoked_at IS NULL AND credential_hash IN ({hashes})"),
+        ("credential_matches_secret", expected, _matched_credentials(plan, secret) + f" AND c.installation_id IN {installs}"),
     ]
     union = "\nUNION ALL\n".join(
         f"SELECT {order} AS ord, {_q(kind)} AS kind, {want} AS expected, ({query}) AS actual"
         for order, (kind, want, query) in enumerate(checks, start=1)
     )
+    failed = f"부하 tenant {plan.tenant_id} 확인 실패 — 위 표에서 ok가 f인 행을 본다"
     return (
         _header(plan, "부하 tenant 확인(읽기 전용)")
         + "SELECT kind, expected, actual, expected = actual AS ok FROM (\n"
         + union
         + "\n) checks ORDER BY ord;\n"
+        + "DO $$ BEGIN\n"
+        + "    IF EXISTS (SELECT 1 FROM (\n" + union + "\n    ) checks WHERE expected <> actual) THEN\n"
+        + f"        RAISE EXCEPTION {_q(failed)};\n"
+        + "    END IF;\n"
+        + "END $$;\n"
     )
 
 
@@ -282,6 +333,14 @@ def write_identities(path: Path, plan: Plan) -> None:
         raise
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    """두 경로가 같은 파일인지(심볼릭 링크·상대 경로 포함). 출력 파일이 아직 없으면 경로만 비교한다."""
+    try:
+        return os.path.samefile(a, b)
+    except FileNotFoundError:
+        return a.resolve() == b.resolve()
+
+
 def parse_args(argv: list) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="부하 캠페인 전용 tenant의 시드·확인·폐기 SQL을 stdout에 쓴다(ADR 0082).")
     parser.add_argument("--campaign", required=True, help="캠페인 ID, ^[a-z0-9-]{3,40}$")
@@ -313,6 +372,8 @@ def main(argv: list | None = None, stdout=None, stderr=None) -> int:
             if args.verify:
                 sql = verify_sql(plan, secret)
             else:
+                if _same_file(args.secret_file, args.identities_out):
+                    raise ValueError("--identities-out이 --secret-file과 같은 파일이다 — 시드 비밀을 덮어쓰지 않도록 다른 경로를 준다")
                 sql = seed_sql(plan, secret)
                 write_identities(args.identities_out, plan)
     except (ValueError, RuntimeError, OSError) as error:

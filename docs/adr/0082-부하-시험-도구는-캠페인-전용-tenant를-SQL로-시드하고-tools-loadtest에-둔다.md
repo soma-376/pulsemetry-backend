@@ -25,7 +25,7 @@ PROJ-192는 dev 파이프라인(gateway → Kafka → ingest → ClickHouse)의 
 
 1. **대상.** 부하는 dev 파이프라인에 직접 건다. 복제 환경을 만들지 않는다. backend는 부하 발생 도구만 소유한다.
 2. **캠페인 전용 tenant.** 캠페인마다 tenant를 새로 만든다. 캠페인 ID는 `^[a-z0-9-]{3,40}$`, tenant 이름은 `loadtest-<campaign>`이다.
-   - SQL 생성기가 tenant → team 1개 → 구성원 N명 → 팀 소속 → 소비된 초대 → 설치(`linux`, active) → 설치 자격을 한 트랜잭션으로 넣는다. `ON CONFLICT DO NOTHING`으로 재적용해도 안전하다.
+   - SQL 생성기가 tenant → team 1개 → 구성원 N명 → 팀 소속 → 소비된 초대 → 설치(`linux`, active) → 설치 자격을 한 트랜잭션으로 넣는다. `ON CONFLICT (id) DO NOTHING`으로 같은 입력은 재적용해도 안전하다. 기존 캠페인과 설치 집합이 다르거나(INSERT 전 검사) 설치별 자격증명 해시가 시드 비밀과 다르면(커밋 전 검사) 롤백한다.
    - ID는 캠페인·종류·순번으로 만든 결정적 UUID(uuid5)다. 같은 입력은 같은 SQL을 만든다.
    - 설치는 Kafka 기본 partitioner로 key `"<tenantId>:<installationId>"`를 계산해 partition마다 같은 수로 고른다.
    - 사람이 DB 터널로 적용한다. 생성기는 DB에 접속하지 않는다.
