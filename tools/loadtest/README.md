@@ -19,18 +19,24 @@ Gateway 200은 Kafka 접수다 — 저장은 ClickHouse `FINAL` 조회로 따로
 ## 시드
 
 ```bash
-openssl rand 32 > $HOME/loadtest/<campaign>/seed-secret && chmod 600 $HOME/loadtest/<campaign>/seed-secret
+# 새 캠페인에서만 만든다. 이미 있으면 noclobber(set -C)가 덮어쓰기를 거부한다 — 재적용에는 그 파일을 그대로 쓴다.
+(set -C; umask 077; openssl rand 32 > $HOME/loadtest/<campaign>/seed-secret)
 python3 tools/loadtest/generator/seed_sql.py --campaign <campaign> --installations 60 --partitions 6 \
   --secret-file $HOME/loadtest/<campaign>/seed-secret --identities-out $HOME/loadtest/<campaign>/identities.json > seed.sql
 psql -v ON_ERROR_STOP=1 -f seed.sql                                     # 사람이 DB 터널로 적용한다
 python3 tools/loadtest/generator/seed_sql.py --campaign <campaign> --installations 60 --partitions 6 \
-  --secret-file $HOME/loadtest/<campaign>/seed-secret --verify | psql -At   # 8행 모두 ok = t
+  --secret-file $HOME/loadtest/<campaign>/seed-secret --verify | psql -v ON_ERROR_STOP=1 -At   # 8행 모두 t, 하나라도 f 면 종료 코드 3
 python3 tools/loadtest/generator/seed_sql.py --campaign <campaign> --revoke | psql -v ON_ERROR_STOP=1   # 배수(lag 0) 뒤에만
 ```
 
 - 캠페인 ID는 `^[a-z0-9-]{3,40}$`, tenant 이름은 `loadtest-<campaign>`이다. 같은 입력은 같은 SQL이다(재적용 안전).
 - 설치 수는 partition 수의 배수다. key `"<tenantId>:<installationId>"`가 partition마다 같은 수로 가도록 고른다.
-- 다른 설치 수로 다시 시드하거나 폐기한 캠페인을 다시 시드하면 SQL이 `RAISE`로 롤백된다 — 새 캠페인 ID를 쓴다.
+- 다음은 SQL이 `RAISE`로 롤백된다. 새 캠페인 ID를 쓰거나(설치 수·폐기) 처음 쓴 비밀 파일을 쓴다(비밀).
+  - 기존 캠페인과 설치 집합이 다르다(설치 수 변경) — INSERT 전에 검사한다.
+  - 설치별 활성 자격증명 해시가 이 시드 비밀과 다르다 — 커밋 전에 (설치, 해시) 쌍으로 대조한다.
+  - 폐기한 캠페인이다.
+- 충돌은 `ON CONFLICT (id)`로만 넘긴다. `credential_hash` 같은 다른 UNIQUE 충돌은 오류다.
+- `--identities-out`이 `--secret-file`과 같은 파일이면 아무것도 쓰지 않고 실패한다.
 - **시드 비밀**: 정확히 32바이트 원시 파일(`openssl rand 32`, `-hex` 아님). 저장소 밖에 두고 캠페인마다 새로 만든다.
   SQL에는 `sha256_hex(pit_)`만, identities에는 ID만 있다. 비밀을 잃으면 그 캠페인의 `pit_`을 다시 만들 수 없다 — 새 캠페인으로 시드한다.
 - 데이터 삭제는 retention-worker다. `--as-of`를 미래로 줘야 하고, 그 뒤 그 tenant는 재사용할 수 없다(ADR 0082 Decision 5).
@@ -57,6 +63,7 @@ python3 tools/loadtest/generator/build_templates.py --check   # 커밋본과 같
 | `IDENTITIES_FILE`·`SEED_SECRET_FILE` | (실행에 필수) | seed_sql.py `--identities-out` · 32바이트 시드 비밀 |
 | `START_RPS`·`STEP_RPS`·`MAX_RPS` | 5 · 5 · 60 | stair 단계. `MAX_RPS` ≤ 1000 |
 | `RAMP`·`STEP_HOLD`·`COOLDOWN` | 30s · 5m · 30s | stair 상승·유지·끝 정리(0 RPS로) |
+| `FINAL_FLUSH` | 25s | 끝난 뒤 teardown 에서 기다리는 시간. 마지막 지표가 collector 를 거쳐 Prometheus 에 수집되게 한다(내보내기 5s + scrape 10s). 0~300s |
 | `HOLD_RPS`·`HOLD_DURATION` | (hold에 필수) · 20m | |
 | `MIX_SIGNAL` | `logs:70,metrics:20,traces:10` | |
 | `MIX_PRODUCT` | `claude-code:50,codex:50` | |
@@ -64,11 +71,12 @@ python3 tools/loadtest/generator/build_templates.py --check   # 커밋본과 같
 | `TEMPLATES_FILE`·`SUMMARY_FILE` | `./data/templates.json` · (없음) | summary JSON을 파일로도 쓴다 |
 
 - 계획 시간(stage 합)이 10200s(JWT 3h − 600s)를 넘으면 init에서 끝난다. VU는 `preAllocated = max(10, ⌈peak×0.4⌉)`, `max = max(50, peak×2)`.
-- 안전 정지: 오류율 ≥ 5%·p95 ≥ 4s·dropped ≥ 3000(1분 지연 평가), 401 즉시, 같은 VU에서 non-2xx 50회 연속.
+- 안전 정지: Gateway 요청(`target:gateway`)의 오류율 ≥ 5%·p95 ≥ 4s, dropped ≥ 3000(1분 지연 평가), 401 즉시, 같은 VU에서 non-2xx 50회 연속. setup 의 토큰 교환은 임계값·합계에 넣지 않는다.
 - 종료 코드: 0 통과 · 99 threshold 실패 · 107 설정·setup 오류 · 108 abort.
-- 태그: `testid`·`step`(s01…)·`phase`(ramp·hold·cooldown·setup)·`signal`·`product`. 단계별 판정 값은 `phase:hold` 구간만 본다.
+- 태그: `testid`·`target`(Gateway 요청만 `gateway`)·`step`(s01…)·`phase`(ramp·hold·cooldown·setup)·`signal`·`product`. 단계별 판정 값은 `phase:hold` 구간만 본다.
 - summary: stdout의 `===LOADTEST-SUMMARY-BEGIN===` / `===LOADTEST-SUMMARY-END===` 사이 JSON 한 줄. 단계별 절대 시각·목표·실제 RPS·p95·p99·오류율,
-  기대 events·metric points 합계. 토큰은 없다.
+  기대 events·metric points 합계, 단계별 drop(`droppedIterations` = 예정 반복 `목표 RPS × 유지 초` − 유지 구간 요청 수, 실행 전체 drop 이
+  0이면 0). 반복 하나가 요청 하나라 Prometheus 수집 시점과 무관한 k6 자체 집계다 — 결과 판정은 단계별 drop 을 여기서 읽는다. 토큰은 없다.
 - `k6 inspect`는 시스템 env를 넘기지 않는다 — `--include-system-env-vars` 또는 `-e`로 준다.
 
 OTel 출력 env: `K6_OTEL_EXPORTER_TYPE=http`, `K6_OTEL_HTTP_EXPORTER_ENDPOINT=127.0.0.1:4318`, `K6_OTEL_HTTP_EXPORTER_INSECURE=true`,
