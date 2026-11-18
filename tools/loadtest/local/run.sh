@@ -81,8 +81,18 @@ cleanup() {
 	docker rm -f "$PROJECT-k6" > /dev/null 2>&1 || true
 	for name in $APPS; do stop_app "$name" || true; done
 	if [[ "${LOADTEST_KEEP:-0}" != 1 ]]; then "${COMPOSE[@]}" down -v --remove-orphans > /dev/null 2>&1 || true; fi
+	rm -rf "$LOCK_DIR"
 	exit "$rc"
 }
+
+# 같은 호스트의 실행은 Compose 프로젝트·컨테이너 이름·포트를 공유한다. 잠금을 잡은 실행만 환경을 만들고 지운다.
+# 정리 훅보다 먼저 잡아, 잠금을 못 잡은 실행은 남의 환경을 건드리지 않고 끝난다(macOS 에 flock 이 없어 mkdir 을 쓴다).
+LOCK_DIR="${TMPDIR:-/tmp}/$PROJECT.lock"
+if ! mkdir "$LOCK_DIR" 2> /dev/null; then
+	echo "다른 로컬 E2E 가 실행 중이다(잠금 $LOCK_DIR, pid $(cat "$LOCK_DIR/pid" 2> /dev/null || echo '?')). 끝난 뒤 다시 실행한다 — 프로세스가 없는데 남은 잠금이면 그 디렉터리를 지운다"
+	exit 1
+fi
+echo $$ > "$LOCK_DIR/pid"
 trap cleanup EXIT
 
 wait_http() {
@@ -138,7 +148,7 @@ run_k6() {
 		--user "$(id -u):$(id -g)" \
 		-v "$ROOT/tools/loadtest/k6:/scripts:ro" -v "$WORK/k6-input:/input:ro" -v "$WORK/evidence:/evidence" \
 		-e K6_NO_USAGE_REPORT=true -e K6_OTEL_EXPORTER_TYPE=http -e K6_OTEL_HTTP_EXPORTER_ENDPOINT=otel-collector:4318 \
-		-e K6_OTEL_HTTP_EXPORTER_INSECURE=true -e K6_OTEL_METRIC_PREFIX=k6_ -e K6_OTEL_FLUSH_INTERVAL=1s -e K6_OTEL_EXPORT_INTERVAL=2s \
+		-e K6_OTEL_HTTP_EXPORTER_INSECURE=true -e K6_OTEL_METRIC_PREFIX=k6_ -e K6_OTEL_FLUSH_INTERVAL=1s -e K6_OTEL_EXPORT_INTERVAL=2s -e FINAL_FLUSH=3s \
 		-e TESTID="local-$label" -e GATEWAY_URL="${K6_GATEWAY_URL:-http://host.docker.internal:$GATEWAY_PORT}" -e ENROLLMENT_URL="http://host.docker.internal:$ENROLLMENT_PORT" \
 		-e IDENTITIES_FILE=/input/identities.json -e SEED_SECRET_FILE=/input/seed-secret -e SUMMARY_FILE="/evidence/summary-$label.json" \
 		"$@" "$K6_IMAGE" run -q -o opentelemetry /scripts/main.js > "$WORK/logs/k6-$label.log" 2>&1
@@ -146,8 +156,11 @@ run_k6() {
 
 consumer_lag() {
 	"${COMPOSE[@]}" exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:49092 --describe --group $GROUP 2> /dev/null \
-		| tee "$WORK/evidence/consumer-group.txt" | awk '$2 == "'$TOPIC'" { lag += $6; end += $5; n += 1 } END { if (n == 0) print "none"; else print end "/" lag }'
+		| tee "$WORK/evidence/consumer-group.txt" | awk '$2 == "'$TOPIC'" { n += 1; end += $5; if ($6 ~ /^[0-9]+$/) lag += $6; else if ($5 != 0) unknown += 1 }
+			END { if (n == 0) print "none"; else if (unknown > 0) print end "/unknown(" unknown ")"; else print end "/" lag }'
 }
+# LAG 가 숫자가 아니면(커밋한 offset 이 없음) 그 partition 은 판단할 수 없다. 레코드가 있는(LOG-END>0) partition 이면
+# 0 으로 세지 않고 unknown 으로 남겨 배수 대기를 계속하고 판정 3을 실패시킨다. 빈 partition(LOG-END=0)만 0 이다.
 
 FAILURES=0
 verdict() {
@@ -210,7 +223,10 @@ kill "$TARPIT_PID" 2> /dev/null || true; TARPIT_PID=""
 DROPPED=$(python3 -c 'import json,sys
 try: print(int(json.load(open(sys.argv[1]))["totals"]["droppedIterations"]))
 except Exception: print(0)' "$WORK/evidence/summary-drop.json")
-echo "k6 drop 종료 $DROP_RC(실패 threshold 99 가 정상), dropped_iterations ${DROPPED}"
+STEP_DROPPED=$(python3 -c 'import json,sys
+try: print(int(json.load(open(sys.argv[1]))["steps"][0]["droppedIterations"]))
+except Exception: print(-1)' "$WORK/evidence/summary-drop.json")
+echo "k6 drop 종료 $DROP_RC(실패 threshold 99 가 정상), dropped_iterations ${DROPPED}, summary 단계별 drop ${STEP_DROPPED}"
 
 step "7. 배수 대기(lag 0, 최대 120s)와 k6 지표 수집"
 curl -s "$COLLECTOR_METRICS" > "$WORK/evidence/k6-otel.prom"
@@ -248,10 +264,9 @@ echo "200 응답 ${ACCEPTED}건 — 기대 events ${EXPECTED_EVENTS}·metric poi
 	| tee "$WORK/evidence/clickhouse-compare.txt"
 if [[ "$ACTUAL_EVENTS" == "$EXPECTED_EVENTS" && "$ACTUAL_POINTS" == "$EXPECTED_POINTS" ]]; then
 	verdict 1 "4. ClickHouse 행 수 정확 일치(events $ACTUAL_EVENTS, metric points $ACTUAL_POINTS)"
-elif [[ "$ACTUAL_EVENTS" == "$EXPECTED_EVENTS" && "$ACTUAL_POINTS" -le "$EXPECTED_POINTS" && "$ACTUAL_POINTS" -gt 0 ]]; then
-	# metric point 는 누적 series 의 같은 시각 point 가 한 관측으로 합쳐질 수 있다 — events 는 정확, points 는 기대값을 넘지 않는지만 본다.
-	verdict 1 "4. ClickHouse events 정확 일치($ACTUAL_EVENTS), metric points $ACTUAL_POINTS ≤ 기대 $EXPECTED_POINTS(누적 series 병합 가능)"
 else
+	# 기대값은 어댑터의 정규화 후 기대 출력(*.expected.jsonl)에서 센 행 수이고 payload 는 요청마다 ID 를 새로 만든다 —
+	# 합쳐질 행이 없으므로 events·metric points 모두 정확히 같아야 한다. 모자라면 유실·미처리다.
 	verdict 0 "4. ClickHouse 행 수 불일치 — events $ACTUAL_EVENTS/$EXPECTED_EVENTS, metric points $ACTUAL_POINTS/$EXPECTED_POINTS"
 fi
 
@@ -272,6 +287,7 @@ for pattern in '^k6_http_reqs_total$' '^k6_http_req_duration.*_bucket$' '^k6_dro
 done
 grep -q 'testid="local-stair"' "$WORK/evidence/k6-otel.prom" || missing="$missing testid-label"
 (( DROPPED > 0 )) || missing="$missing drop-run-dropped-0"
+(( STEP_DROPPED > 0 )) || missing="$missing summary-step-dropped-$STEP_DROPPED"
 verdict $([[ -z "$missing" ]] && echo 1 || echo 0) "6. k6-otel.prom 지표$([[ -n "$missing" ]] && echo " 누락:$missing" || echo " 있음") — 이름은 evidence/k6-metric-names.txt"
 
 step "완료 — 판정 실패 ${FAILURES}건"
