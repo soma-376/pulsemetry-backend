@@ -29,6 +29,8 @@ const identitiesText = config.identitiesFile ? open(config.identitiesFile) : nul
 const seedSecret = config.seedSecretFile ? open(config.seedSecretFile, 'b') : null;
 
 const targetRps = new Gauge('loadtest_target_rps');
+// 반복 시작 시점의 시나리오 경과 초. summary 가 최댓값으로 단계 완료 여부를 정한다(중단된 단계를 완료로 세지 않게).
+const progress = new Gauge('loadtest_progress_seconds');
 const acceptedRequests = new Counter('loadtest_accepted_requests');
 const expectedEvents = new Counter('loadtest_expected_events');
 const expectedMetricPoints = new Counter('loadtest_expected_metric_points');
@@ -60,6 +62,8 @@ function thresholds() {
 export const options = {
 	scenarios: { [plan.scenarioName]: plan.scenario },
 	thresholds: thresholds(),
+	// teardown 은 FINAL_FLUSH 만큼 기다린다. 기본 제한(60s)보다 긴 값도 끝까지 기다리게 여유를 둔다.
+	teardownTimeout: `${config.finalFlushSeconds + 60}s`,
 	tags: { testid: config.testid },
 	systemTags: ['status', 'method', 'name', 'scenario', 'expected_response', 'error_code'],
 	summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
@@ -88,6 +92,7 @@ export default function (data) {
 	const now = Date.now();
 	const where = phaseAt(plan, (now - exec.scenario.startTime) / 1000);
 	targetRps.add(where.targetRps);
+	progress.add((now - exec.scenario.startTime) / 1000);
 
 	const template = templates[pick()];
 	const bytes = new Uint8Array(crypto.randomBytes(template.idChars + SEQUENCE_BYTES));

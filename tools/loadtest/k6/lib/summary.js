@@ -3,7 +3,8 @@
 export const BEGIN = '===LOADTEST-SUMMARY-BEGIN===';
 export const END = '===LOADTEST-SUMMARY-END===';
 // 2: 단계별 scheduledIterations·droppedIterations, totals 는 Gateway 요청만(setup 토큰 교환 제외).
-export const SUMMARY_VERSION = 2;
+// 3: 단계별 completed. 중단·미실행 단계의 droppedIterations 는 null 이다.
+export const SUMMARY_VERSION = 3;
 
 function iso(epochMs) {
 	return epochMs === null ? null : new Date(epochMs).toISOString();
@@ -37,6 +38,16 @@ export function stepDrops(scheduled, requests, runDropped) {
 	return Math.max(0, scheduled - requests);
 }
 
+/**
+ * 단계 완료 여부. 반복마다 남긴 시나리오 경과 초(loadtest_progress_seconds)의 최댓값이 유지 구간 끝에 닿았는지 본다.
+ * 도착률 실행기는 1/RPS 간격으로 반복을 시작하므로 끝 직전 반복까지의 간격(max(2s, 2/RPS))을 허용한다.
+ * 요청이 없거나 경과 기록이 없으면 미완료다. setup·teardown 이 들어가는 testRunDurationMs 는 쓰지 않는다.
+ */
+export function stepCompleted(holdEndSeconds, rps, progressMaxSeconds, requests) {
+	if (requests === null || progressMaxSeconds === null) return false;
+	return progressMaxSeconds >= holdEndSeconds - Math.max(2, 2 / rps);
+}
+
 function failedThresholds(data) {
 	const failed = [];
 	for (const name of Object.keys(data.metrics)) {
@@ -54,11 +65,13 @@ export function buildSummary(data, config, plan) {
 	const start = typeof setup.setupEndMs === 'number' ? setup.setupEndMs : null;
 	const at = (seconds) => (start === null ? null : iso(start + seconds * 1000));
 	const runDropped = value(data, 'dropped_iterations', 'count') || 0;
+	const progressMax = value(data, 'loadtest_progress_seconds', 'max');
 	const steps = plan.steps.map((step) => {
 		const names = stepMetricNames(step.step);
 		const holdSeconds = step.holdEnd - step.holdStart;
 		const requests = value(data, names.requests, 'count');
 		const scheduled = Math.round(step.rps * holdSeconds);
+		const completed = stepCompleted(step.holdEnd, step.rps, progressMax, requests);
 		return {
 			step: step.step,
 			targetRps: step.rps,
@@ -68,8 +81,10 @@ export function buildSummary(data, config, plan) {
 			holdSeconds,
 			holdRequests: requests,
 			holdActualRps: requests === null ? null : requests / holdSeconds,
+			completed,
 			scheduledIterations: scheduled,
-			droppedIterations: stepDrops(scheduled, requests, runDropped),
+			// 중단·미실행 단계는 실제 실행 구간을 확정할 수 없어 drop 을 내지 않는다(판정은 이 단계를 한계에서 뺀다).
+			droppedIterations: completed ? stepDrops(scheduled, requests, runDropped) : null,
 			p95Ms: value(data, names.duration, 'p(95)'),
 			p99Ms: value(data, names.duration, 'p(99)'),
 			errorRate: value(data, names.failed, 'rate'),
@@ -106,6 +121,7 @@ export function buildSummary(data, config, plan) {
 			preAllocatedVUs: plan.scenario.preAllocatedVUs,
 			maxVUs: plan.scenario.maxVUs,
 		},
+		progressSeconds: progressMax,
 		steps,
 		totals: {
 			requests: value(data, 'http_reqs{target:gateway}', 'count') || 0,

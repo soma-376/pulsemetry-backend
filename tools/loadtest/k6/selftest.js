@@ -7,7 +7,7 @@ import { loadConfig, MAX_TOTAL_SECONDS, parseDuration, parseMix, SIGNALS } from 
 import { buildPlan, phaseAt } from './lib/schedule.js';
 import { makePicker, prepareTemplates, render, renderWith, requestBaseNanos, requestSequence, SEQUENCE_BYTES } from './lib/payload.js';
 import { installationToken, parseIdentities } from './lib/auth.js';
-import { BEGIN, buildSummary, END, wrap, stepDrops } from './lib/summary.js';
+import { BEGIN, buildSummary, END, wrap, stepCompleted, stepDrops } from './lib/summary.js';
 
 export const options = { vus: 1, iterations: 1 };
 
@@ -138,6 +138,7 @@ const fakeData = {
 		http_req_failed: { values: { rate: 0.5 } },
 		'http_req_failed{target:gateway}': { values: { rate: 0 }, thresholds: { 'rate<0.05': { ok: false } } },
 		loadtest_expected_events: { values: { count: 42 } },
+		loadtest_progress_seconds: { values: { max: 59.5 } },
 	},
 	state: { testRunDurationMs: 61000 },
 };
@@ -150,7 +151,15 @@ equal('summary 단계', [summary.steps[0].holdStart, summary.steps[0].holdEnd, s
 equal('summary 합계', [summary.totals.expectedEvents, summary.totals.expectedMetricPoints, summary.thresholdsPassed, summary.failedThresholds],
 	[42, 0, false, ['http_req_failed{target:gateway}: rate<0.05']]);
 equal('summary 합계는 Gateway 요청만 센다(setup 제외)', [summary.totals.requests, summary.totals.errorRate], [10, 0]);
-equal('summary 단계 drop(실행 전체 drop 0)', [summary.steps[0].scheduledIterations, summary.steps[0].droppedIterations], [60, 0]);
+equal('summary 단계 drop(실행 전체 drop 0)', [summary.steps[0].completed, summary.steps[0].scheduledIterations, summary.steps[0].droppedIterations], [true, 60, 0]);
+equal('단계 완료 판정', [stepCompleted(60, 1, 59, 60), stepCompleted(60, 1, 57.9, 58), stepCompleted(600, 100, 598.5, 59900), stepCompleted(600, 100, 60, 5990),
+	stepCompleted(600, 100, null, 5990), stepCompleted(600, 100, 600, null)], [true, false, true, false, false, false]);
+// 100 RPS × 600s 유지를 60초에 멈춘 실행: 요청 5,990·전체 drop 10 이면 예정 대비 차감으로 54,010 이 나오던 경우다.
+const aborted = buildSummary({ setup_data: { setupEndMs: 1800000000000 }, metrics: {
+	'http_reqs{step:s01,phase:hold}': { values: { count: 5990 } }, dropped_iterations: { values: { count: 10 } },
+	loadtest_progress_seconds: { values: { max: 60 } } } }, loadConfig({ TESTID: 't', SCENARIO: 'hold', HOLD_RPS: '100', HOLD_DURATION: '600s' }),
+	buildPlan(loadConfig({ TESTID: 't', SCENARIO: 'hold', HOLD_RPS: '100', HOLD_DURATION: '600s' })));
+equal('중단된 유지 단계는 미완료이고 drop 을 내지 않는다', [aborted.steps[0].completed, aborted.steps[0].droppedIterations, aborted.progressSeconds], [false, null, 60]);
 equal('단계 drop 계산', [stepDrops(600, 600, 0), stepDrops(600, 598, 0), stepDrops(600, 590, 12), stepDrops(600, 605, 3), stepDrops(600, null, 5)], [0, 0, 10, 0, null]);
 equal('FINAL_FLUSH 기본값과 상한', [loadConfig({ TESTID: 't' }).finalFlushSeconds, loadConfig({ TESTID: 't', FINAL_FLUSH: '0' }).finalFlushSeconds], [25, 0]);
 check('FINAL_FLUSH 300초 초과 거부', (() => { try { loadConfig({ TESTID: 't', FINAL_FLUSH: '301' }); return false; } catch (e) { return true; } })());
