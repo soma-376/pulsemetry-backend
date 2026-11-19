@@ -21,12 +21,15 @@ Gateway 200은 Kafka 접수다 — 저장은 ClickHouse `FINAL` 조회로 따로
 ```bash
 # 새 캠페인에서만 만든다. 이미 있으면 noclobber(set -C)가 덮어쓰기를 거부한다 — 재적용에는 그 파일을 그대로 쓴다.
 (set -C; umask 077; openssl rand 32 > $HOME/loadtest/<campaign>/seed-secret)
+# 생성기가 성공했을 때만 psql 을 실행한다(&&). 파이프(`… | psql`)는 생성기 실패를 빈 입력의 psql 성공으로 가린다.
 python3 tools/loadtest/generator/seed_sql.py --campaign <campaign> --installations 60 --partitions 6 \
-  --secret-file $HOME/loadtest/<campaign>/seed-secret --identities-out $HOME/loadtest/<campaign>/identities.json > seed.sql
-psql -v ON_ERROR_STOP=1 -f seed.sql                                     # 사람이 DB 터널로 적용한다
+  --secret-file $HOME/loadtest/<campaign>/seed-secret --identities-out $HOME/loadtest/<campaign>/identities.json > seed.sql \
+  && psql -v ON_ERROR_STOP=1 -f seed.sql                                  # 사람이 DB 터널로 적용한다
 python3 tools/loadtest/generator/seed_sql.py --campaign <campaign> --installations 60 --partitions 6 \
-  --secret-file $HOME/loadtest/<campaign>/seed-secret --verify | psql -v ON_ERROR_STOP=1 -At   # 8행 모두 t, 하나라도 f 면 종료 코드 3
-python3 tools/loadtest/generator/seed_sql.py --campaign <campaign> --revoke | psql -v ON_ERROR_STOP=1   # 배수(lag 0) 뒤에만
+  --secret-file $HOME/loadtest/<campaign>/seed-secret --verify > verify.sql \
+  && psql -v ON_ERROR_STOP=1 -At -f verify.sql                            # 8행 모두 t, 하나라도 f 면 종료 코드 3
+python3 tools/loadtest/generator/seed_sql.py --campaign <campaign> --revoke > revoke.sql \
+  && psql -v ON_ERROR_STOP=1 -f revoke.sql                                # 배수(lag 0) 뒤에만
 ```
 
 - 캠페인 ID는 `^[a-z0-9-]{3,40}$`, tenant 이름은 `loadtest-<campaign>`이다. 같은 입력은 같은 SQL이다(재적용 안전).
@@ -63,7 +66,7 @@ python3 tools/loadtest/generator/build_templates.py --check   # 커밋본과 같
 | `IDENTITIES_FILE`·`SEED_SECRET_FILE` | (실행에 필수) | seed_sql.py `--identities-out` · 32바이트 시드 비밀 |
 | `START_RPS`·`STEP_RPS`·`MAX_RPS` | 5 · 5 · 60 | stair 단계. `MAX_RPS` ≤ 1000 |
 | `RAMP`·`STEP_HOLD`·`COOLDOWN` | 30s · 5m · 30s | stair 상승·유지·끝 정리(0 RPS로) |
-| `FINAL_FLUSH` | 25s | 끝난 뒤 teardown 에서 기다리는 시간. 마지막 지표가 collector 를 거쳐 Prometheus 에 수집되게 한다(내보내기 5s + scrape 10s). 0~300s |
+| `FINAL_FLUSH` | 25s | 끝난 뒤 teardown 에서 기다리는 시간. 마지막 지표가 collector 를 거쳐 Prometheus 에 수집되게 한다(내보내기 5s + scrape 10s). 0~300s. teardown 제한(`teardownTimeout`)은 이 값 + 60s 다 |
 | `HOLD_RPS`·`HOLD_DURATION` | (hold에 필수) · 20m | |
 | `MIX_SIGNAL` | `logs:70,metrics:20,traces:10` | |
 | `MIX_PRODUCT` | `claude-code:50,codex:50` | |
@@ -75,8 +78,12 @@ python3 tools/loadtest/generator/build_templates.py --check   # 커밋본과 같
 - 종료 코드: 0 통과 · 99 threshold 실패 · 107 설정·setup 오류 · 108 abort.
 - 태그: `testid`·`target`(Gateway 요청만 `gateway`)·`step`(s01…)·`phase`(ramp·hold·cooldown·setup)·`signal`·`product`. 단계별 판정 값은 `phase:hold` 구간만 본다.
 - summary: stdout의 `===LOADTEST-SUMMARY-BEGIN===` / `===LOADTEST-SUMMARY-END===` 사이 JSON 한 줄. 단계별 절대 시각·목표·실제 RPS·p95·p99·오류율,
-  기대 events·metric points 합계, 단계별 drop(`droppedIterations` = 예정 반복 `목표 RPS × 유지 초` − 유지 구간 요청 수, 실행 전체 drop 이
-  0이면 0). 반복 하나가 요청 하나라 Prometheus 수집 시점과 무관한 k6 자체 집계다 — 결과 판정은 단계별 drop 을 여기서 읽는다. 토큰은 없다.
+  기대 events·metric points 합계, 단계별 완료 여부(`completed`)와 drop(`droppedIterations` = 예정 반복 `목표 RPS × 유지 초` − 유지 구간 요청 수,
+  실행 전체 drop 이 0이면 0). 반복 하나가 요청 하나라 Prometheus 수집 시점과 무관한 k6 자체 집계다 — 결과 판정은 단계별 drop 을 여기서 읽는다.
+  - 완료: 반복마다 시나리오 경과 시간을 `loadtest_progress_seconds` 로 남기고, 그 최댓값이 유지 구간 끝(허용 max(2s, 2/RPS))에 닿은 단계만
+    완료로 본다. setup·teardown 이 들어가는 `testRunDurationMs` 는 쓰지 않는다.
+  - 중단·미실행 단계는 `completed: false`, `droppedIterations: null` 이다. 결과 판정은 이런 단계를 두 층 모두의 한계 산정에서 뺀다
+    (60초에 멈춘 10분 유지 단계를 통과로 세지 않는다). 토큰은 없다.
 - `k6 inspect`는 시스템 env를 넘기지 않는다 — `--include-system-env-vars` 또는 `-e`로 준다.
 
 OTel 출력 env: `K6_OTEL_EXPORTER_TYPE=http`, `K6_OTEL_HTTP_EXPORTER_ENDPOINT=127.0.0.1:4318`, `K6_OTEL_HTTP_EXPORTER_INSECURE=true`,
