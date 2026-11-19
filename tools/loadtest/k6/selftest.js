@@ -7,7 +7,7 @@ import { loadConfig, MAX_TOTAL_SECONDS, parseDuration, parseMix, SIGNALS } from 
 import { buildPlan, phaseAt } from './lib/schedule.js';
 import { makePicker, prepareTemplates, render, renderWith, requestBaseNanos, requestSequence, SEQUENCE_BYTES } from './lib/payload.js';
 import { installationToken, parseIdentities } from './lib/auth.js';
-import { BEGIN, buildSummary, END, wrap, stepCompleted, stepDrops } from './lib/summary.js';
+import { BEGIN, buildSummary, END, runAborted, wrap, stepCompleted, stepDrops } from './lib/summary.js';
 
 export const options = { vus: 1, iterations: 1 };
 
@@ -151,9 +151,31 @@ equal('summary 단계', [summary.steps[0].holdStart, summary.steps[0].holdEnd, s
 equal('summary 합계', [summary.totals.expectedEvents, summary.totals.expectedMetricPoints, summary.thresholdsPassed, summary.failedThresholds],
 	[42, 0, false, ['http_req_failed{target:gateway}: rate<0.05']]);
 equal('summary 합계는 Gateway 요청만 센다(setup 제외)', [summary.totals.requests, summary.totals.errorRate], [10, 0]);
-equal('summary 단계 drop(실행 전체 drop 0)', [summary.steps[0].completed, summary.steps[0].scheduledIterations, summary.steps[0].droppedIterations], [true, 60, 0]);
+// 안전 정지 임계값이 실패한 실행은 중단이다 — 끝 0.5초 전까지만 반복한 단계를 허용 오차로 완료 처리하지 않는다.
+equal('임계값 중단 실행의 단계', [summary.aborted, summary.steps[0].completed, summary.steps[0].droppedIterations], [true, false, null]);
+const normalMetrics = Object.assign({}, fakeData.metrics, { 'http_req_failed{target:gateway}': { values: { rate: 0 }, thresholds: { 'rate<0.05': { ok: true } } } });
+const normal = buildSummary(Object.assign({}, fakeData, { metrics: normalMetrics }), loadConfig({ TESTID: 't' }), smoke);
+equal('summary 단계 drop(정상 종료, 실행 전체 drop 0)', [normal.aborted, normal.steps[0].completed, normal.steps[0].scheduledIterations, normal.steps[0].droppedIterations],
+	[false, true, 60, 0]);
 equal('단계 완료 판정', [stepCompleted(60, 1, 59, 60), stepCompleted(60, 1, 57.9, 58), stepCompleted(600, 100, 598.5, 59900), stepCompleted(600, 100, 60, 5990),
 	stepCompleted(600, 100, null, 5990), stepCompleted(600, 100, 600, null)], [true, false, true, false, false, false]);
+// 중단된 실행은 허용 오차가 없다: 유지 1초 단계의 첫 요청 401, 300초 단계의 298.5초 중단은 미완료. 끝 뒤에 시작한 반복이 있으면 완료.
+equal('중단된 실행의 단계 완료 판정', [stepCompleted(1, 1, 0, 1, true), stepCompleted(1, 1, 0, 1), stepCompleted(300, 10, 298.5, 2985, true),
+	stepCompleted(300, 10, 300.2, 2990, true), stepCompleted(300, 10, 299.9, 2990)], [false, true, false, true, true]);
+equal('중단 판단', [
+	runAborted({ metrics: {} }),
+	runAborted({ metrics: { loadtest_aborted: { values: { count: 1 } } } }),
+	runAborted({ metrics: { 'http_req_duration{target:gateway}': { values: {}, thresholds: { 'p(95)<4000': { ok: false } } } } }),
+	runAborted({ metrics: { dropped_iterations: { values: { count: 3001 }, thresholds: { 'count<3000': { ok: false } } } } }),
+	runAborted({ metrics: { 'http_req_failed{target:gateway}': { values: {}, thresholds: { 'rate<0.05': { ok: true } } } } }),
+	runAborted({ metrics: { 'http_reqs{target:gateway}': { values: {}, thresholds: { 'count>=0': { ok: false } } } } }),
+], [false, true, true, true, false, false]);
+// 유지 1초 실행이 첫 요청 401 로 멈춘 경우(CodeRabbit 재현): 경과 0초·요청 1건이어도 완료가 아니고 drop 을 내지 않는다.
+const oneSecondConfig = loadConfig({ TESTID: 't', SCENARIO: 'hold', HOLD_RPS: '1', HOLD_DURATION: '1s' });
+const unauthorized = buildSummary({ setup_data: { setupEndMs: 1800000000000 }, metrics: {
+	'http_reqs{step:s01,phase:hold}': { values: { count: 1 } }, loadtest_aborted: { values: { count: 1 } },
+	loadtest_progress_seconds: { values: { max: 0 } } } }, oneSecondConfig, buildPlan(oneSecondConfig));
+equal('401 로 멈춘 1초 유지 단계는 미완료', [unauthorized.aborted, unauthorized.steps[0].completed, unauthorized.steps[0].droppedIterations], [true, false, null]);
 // 100 RPS × 600s 유지를 60초에 멈춘 실행: 요청 5,990·전체 drop 10 이면 예정 대비 차감으로 54,010 이 나오던 경우다.
 const aborted = buildSummary({ setup_data: { setupEndMs: 1800000000000 }, metrics: {
 	'http_reqs{step:s01,phase:hold}': { values: { count: 5990 } }, dropped_iterations: { values: { count: 10 } },

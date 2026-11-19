@@ -3,8 +3,22 @@
 export const BEGIN = '===LOADTEST-SUMMARY-BEGIN===';
 export const END = '===LOADTEST-SUMMARY-END===';
 // 2: 단계별 scheduledIterations·droppedIterations, totals 는 Gateway 요청만(setup 토큰 교환 제외).
-// 3: 단계별 completed. 중단·미실행 단계의 droppedIterations 는 null 이다.
+// 3: 단계별 completed·실행 aborted. 중단·미실행 단계의 droppedIterations 는 null 이다.
 export const SUMMARY_VERSION = 3;
+
+// Gateway 요청만 센다. setup 의 토큰 교환(target 태그 없음)이 오류율·지연·합계를 희석하지 않게 한다.
+export const GATEWAY = 'target:gateway';
+
+// 안전 정지 임계값. main.js 가 abortOnFail 로 등록하고, summary 는 같은 표로 중단 여부를 본다.
+export const ABORT_THRESHOLDS = {
+	[`http_req_failed{${GATEWAY}}`]: 'rate<0.05',
+	[`http_req_duration{${GATEWAY}}`]: 'p(95)<4000',
+	dropped_iterations: 'count<3000',
+};
+
+// main.js 가 exec.test.abort 직전에 올리는 카운터. handleSummary 의 data 에는 중단 사유가 없어서 따로 남긴다
+// (중단한 반복에서 올린 값도 summary 에 실린다 — k6 1.8.2 확인).
+export const ABORT_COUNTER = 'loadtest_aborted';
 
 function iso(epochMs) {
 	return epochMs === null ? null : new Date(epochMs).toISOString();
@@ -39,12 +53,28 @@ export function stepDrops(scheduled, requests, runDropped) {
 }
 
 /**
+ * 실행이 중단됐는지. 스크립트 중단(401·연속 non-2xx)은 ABORT_COUNTER 로, 임계값 중단은 ABORT_THRESHOLDS 의 실패로 본다.
+ * 임계값이 끝 평가에서만 실패한 실행(중단 없음)도 중단으로 읽는다 — 마지막 단계가 미완료로 빠질 뿐이라 판정은 보수 쪽이다.
+ */
+export function runAborted(data) {
+	if ((value(data, ABORT_COUNTER, 'count') || 0) > 0) return true;
+	return Object.keys(ABORT_THRESHOLDS).some((name) => {
+		const thresholds = (data.metrics[name] && data.metrics[name].thresholds) || {};
+		const result = thresholds[ABORT_THRESHOLDS[name]];
+		return result !== undefined && !result.ok;
+	});
+}
+
+/**
  * 단계 완료 여부. 반복마다 남긴 시나리오 경과 초(loadtest_progress_seconds)의 최댓값이 유지 구간 끝에 닿았는지 본다.
- * 도착률 실행기는 1/RPS 간격으로 반복을 시작하므로 끝 직전 반복까지의 간격(max(2s, 2/RPS))을 허용한다.
+ * - 정상 종료: 도착률 실행기는 1/RPS 간격으로 반복을 시작하므로 끝 직전 반복까지의 간격(max(2s, 2/RPS))을 허용한다.
+ * - 중단: 허용 없이 유지 구간 끝 이후에 시작한 반복이 있어야 완료다. 끝 2초 안에서 멈춘 단계나 유지 2초 이하 단계를
+ *   완료로 세지 않는다. 다음 단계로 넘어가기 직전에 멈춘 단계도 미완료로 빠진다 — 보수 쪽이다.
  * 요청이 없거나 경과 기록이 없으면 미완료다. setup·teardown 이 들어가는 testRunDurationMs 는 쓰지 않는다.
  */
-export function stepCompleted(holdEndSeconds, rps, progressMaxSeconds, requests) {
+export function stepCompleted(holdEndSeconds, rps, progressMaxSeconds, requests, aborted = false) {
 	if (requests === null || progressMaxSeconds === null) return false;
+	if (aborted) return progressMaxSeconds >= holdEndSeconds;
 	return progressMaxSeconds >= holdEndSeconds - Math.max(2, 2 / rps);
 }
 
@@ -66,12 +96,13 @@ export function buildSummary(data, config, plan) {
 	const at = (seconds) => (start === null ? null : iso(start + seconds * 1000));
 	const runDropped = value(data, 'dropped_iterations', 'count') || 0;
 	const progressMax = value(data, 'loadtest_progress_seconds', 'max');
+	const aborted = runAborted(data);
 	const steps = plan.steps.map((step) => {
 		const names = stepMetricNames(step.step);
 		const holdSeconds = step.holdEnd - step.holdStart;
 		const requests = value(data, names.requests, 'count');
 		const scheduled = Math.round(step.rps * holdSeconds);
-		const completed = stepCompleted(step.holdEnd, step.rps, progressMax, requests);
+		const completed = stepCompleted(step.holdEnd, step.rps, progressMax, requests, aborted);
 		return {
 			step: step.step,
 			targetRps: step.rps,
@@ -122,6 +153,7 @@ export function buildSummary(data, config, plan) {
 			maxVUs: plan.scenario.maxVUs,
 		},
 		progressSeconds: progressMax,
+		aborted,
 		steps,
 		totals: {
 			requests: value(data, 'http_reqs{target:gateway}', 'count') || 0,

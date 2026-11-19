@@ -82,6 +82,8 @@ python3 tools/loadtest/generator/build_templates.py --check   # 커밋본과 같
   실행 전체 drop 이 0이면 0). 반복 하나가 요청 하나라 Prometheus 수집 시점과 무관한 k6 자체 집계다 — 결과 판정은 단계별 drop 을 여기서 읽는다.
   - 완료: 반복마다 시나리오 경과 시간을 `loadtest_progress_seconds` 로 남기고, 그 최댓값이 유지 구간 끝(허용 max(2s, 2/RPS))에 닿은 단계만
     완료로 본다. setup·teardown 이 들어가는 `testRunDurationMs` 는 쓰지 않는다.
+  - 중단(`aborted: true`): 401·연속 non-2xx 로 멈추면 `loadtest_aborted` 카운터를, 안전 정지 임계값은 그 실패를 본다. 중단된 실행은 허용 없이
+    유지 구간 끝 이후에 시작한 반복이 있는 단계만 완료다 — 끝 2초 안에서 멈춘 단계나 유지 2초 이하 단계를 완료로 세지 않는다.
   - 중단·미실행 단계는 `completed: false`, `droppedIterations: null` 이다. 결과 판정은 이런 단계를 두 층 모두의 한계 산정에서 뺀다
     (60초에 멈춘 10분 유지 단계를 통과로 세지 않는다). 토큰은 없다.
 - `k6 inspect`는 시스템 env를 넘기지 않는다 — `--include-system-env-vars` 또는 `-e`로 준다.

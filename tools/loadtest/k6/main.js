@@ -15,7 +15,7 @@ import { loadConfig } from './lib/config.js';
 import { buildPlan, phaseAt } from './lib/schedule.js';
 import { makePicker, prepareTemplates, render, requestBaseNanos, requestSequence, SEQUENCE_BYTES } from './lib/payload.js';
 import { exchangeTokens, parseIdentities, SECRET_BYTES } from './lib/auth.js';
-import { buildSummary, stepMetricNames, wrap } from './lib/summary.js';
+import { ABORT_COUNTER, ABORT_THRESHOLDS, buildSummary, GATEWAY, stepMetricNames, wrap } from './lib/summary.js';
 
 // 같은 VU 에서 2xx 가 아닌 응답이 이만큼 이어지면 시험을 멈춘다(k6 thresholds 는 1분 지연 평가라 그 사이의 폭주를 막는다).
 const MAX_CONSECUTIVE_FAILURES = 50;
@@ -34,19 +34,17 @@ const progress = new Gauge('loadtest_progress_seconds');
 const acceptedRequests = new Counter('loadtest_accepted_requests');
 const expectedEvents = new Counter('loadtest_expected_events');
 const expectedMetricPoints = new Counter('loadtest_expected_metric_points');
-
-// Gateway 요청만 센다. setup 의 토큰 교환(target 태그 없음)이 오류율·지연·합계를 희석하지 않게 한다.
-export const GATEWAY = 'target:gateway';
+const abortCount = new Counter(ABORT_COUNTER);
 
 function thresholds() {
-	const abort = (threshold) => ({ threshold, abortOnFail: true, delayAbortEval: '1m' });
 	const result = {
-		[`http_req_failed{${GATEWAY}}`]: [abort('rate<0.05')],
-		[`http_req_duration{${GATEWAY}}`]: [abort('p(95)<4000')],
-		dropped_iterations: [abort('count<3000')],
 		// summary 합계용 등록(실패시키지 않는다).
 		[`http_reqs{${GATEWAY}}`]: ['count>=0'],
 	};
+	// 안전 정지. Gateway 요청만 본다 — setup 의 토큰 교환(target 태그 없음)이 오류율·지연을 희석하지 않게 한다.
+	for (const [name, threshold] of Object.entries(ABORT_THRESHOLDS)) {
+		result[name] = [{ threshold, abortOnFail: true, delayAbortEval: '1m' }];
+	}
 	// 판정용 단계별 기록. 실패시키지 않는 값이다 — summary 에 단계별 값이 남게 하는 등록이다.
 	for (const step of plan.steps) {
 		const names = stepMetricNames(step.step);
@@ -88,6 +86,12 @@ export function setup() {
 
 let consecutiveFailures = 0;
 
+// summary 가 중단을 알 수 있게 카운터를 먼저 올리고 멈춘다(중단된 단계를 완료로 세지 않게).
+function abortTest(reason) {
+	abortCount.add(1);
+	exec.test.abort(reason);
+}
+
 export default function (data) {
 	const now = Date.now();
 	const where = phaseAt(plan, (now - exec.scenario.startTime) / 1000);
@@ -112,10 +116,10 @@ export default function (data) {
 		expectedMetricPoints.add(template.expected.metricPoints, counted);
 		return;
 	}
-	if (response.status === 401) exec.test.abort(`401 — Gateway 가 telemetry JWT 를 거부했다(${template.path}). 공개키·kid·토큰 수명을 확인한다`);
+	if (response.status === 401) abortTest(`401 — Gateway 가 telemetry JWT 를 거부했다(${template.path}). 공개키·kid·토큰 수명을 확인한다`);
 	consecutiveFailures += 1;
 	if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-		exec.test.abort(`2xx 가 아닌 응답이 ${MAX_CONSECUTIVE_FAILURES}회 이어졌다(마지막 상태 ${response.status}, ${template.path})`);
+		abortTest(`2xx 가 아닌 응답이 ${MAX_CONSECUTIVE_FAILURES}회 이어졌다(마지막 상태 ${response.status}, ${template.path})`);
 	}
 }
 
