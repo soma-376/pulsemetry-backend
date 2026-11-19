@@ -1,0 +1,28 @@
+# k6 OTel 출력 → Prometheus 형식 :9404 (ADR 0082, infra ADR 0064). dev Job sidecar 와 같은 내용이다.
+# core 배포판(otel/opentelemetry-collector)을 쓴다 — infra 가 고정한 k8s 배포판에는 prometheus exporter 가 없다.
+# k6 는 같은 Pod(로컬은 같은 compose 네트워크)에서만 보내므로 수신은 OTLP HTTP 하나다.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:9404
+    # k6 가 끝난 뒤에도 마지막 scrape 가 값을 읽도록 넉넉히 둔다.
+    metric_expiration: 10m
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+  telemetry:
+    logs:
+      level: warn
