@@ -33,7 +33,7 @@ class ObservabilityConfig(private val environment: Environment) {
     @Bean
     fun telemetryObserver(registry: MeterRegistry): TelemetryObserver =
         if (environment.getProperty(ENABLED, Boolean::class.java, true)) {
-            MicrometerTelemetryObserver(registry, gauges = setOf(TelemetryMetric.PIPELINE_INFLIGHT)).also { observer ->
+            MicrometerTelemetryObserver(registry, gauges = setOf(TelemetryMetric.PIPELINE_INFLIGHT, TelemetryMetric.PIPELINE_BREAKERS_OPEN)).also { observer ->
                 // 첫 불일치도 scrape 사이 increase로 잡히도록 ingest의 유한한 조합만 0으로 준비한다.
                 for (product in listOf(Product.CODEX, Product.CLAUDE_CODE)) {
                     for (outcome in UsageContractOutcome.entries) {

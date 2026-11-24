@@ -13,8 +13,18 @@ class TelemetryLogEventTest {
 		assertThat(TelemetryLogEvent.entries.map { it.code }).containsExactly(
 			"telemetry_gateway_rejected", "telemetry_publish_failed", "telemetry_permanent_failure",
 			"telemetry_transient_failure", "telemetry_retry_exhausted", "telemetry_commit_failed", "platform_trace_completed",
-			"platform_trace_context_replaced",
+			"platform_trace_context_replaced", "telemetry_archive_handoff", "telemetry_batch_waiting", "telemetry_batch_unexpected_failure",
+			"telemetry_batch_stalled", "ingest_batch_recovered", "ingest_breaker_opened", "ingest_breaker_closed", "kafka_rebalance_ack_skipped",
 		)
+	}
+
+	@Test
+	@DisplayName("경보 코드는 다른 코드의 부분 문자열이 아니다 — infra 의 term match 가 코드끼리 겹쳐 세지 않는다")
+	fun codesDoNotOverlap() {
+		val codes = TelemetryLogEvent.entries.map { "event=${it.code}" }
+		for (code in codes) {
+			assertThat(codes.filter { it != code && it.contains(code) }).describedAs(code).isEmpty()
+		}
 	}
 
 	@Test

@@ -65,7 +65,7 @@ public class MicrometerTelemetryObserver(
         val DURATION_BUCKETS = listOf(5L, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000).map(Duration::ofMillis).toTypedArray()
         val AGE_BUCKETS = listOf(100L, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000, 300000, 600000).map(Duration::ofMillis).toTypedArray()
         val STAGES = PipelineStage.entries.map { it.label }.toSet() + setOf("authenticate", "request", "publish", "envelope", "pipeline", "process", "commit", "container")
-        val OUTCOMES = setOf("accepted", "rejected", "failed", "acknowledged", "success", "failure", "completed", "permanent_rejected", "transient_failed", "permanent_error", "transient_error", "compatible", "incomplete", "invalid", "unverified")
+        val OUTCOMES = setOf("accepted", "rejected", "failed", "acknowledged", "success", "failure", "completed", "permanent_rejected", "transient_failed", "permanent_error", "transient_error", "compatible", "incomplete", "invalid", "unverified", "handed_off")
         val REASONS = setOf(
             "none", "unavailable", "unexpected", "pipeline_rejected", "commit_failed", "method_not_allowed", "path_unknown", "unsupported_media_type",
             "unsupported_content_encoding", "payload_too_large", "body_too_large", "decompress_failed", "decode_failed", "masking_failed",
@@ -76,6 +76,8 @@ public class MicrometerTelemetryObserver(
             "envelope_unparseable", "envelope_version", "envelope_accepted_at", "envelope_auth", "envelope_payload", "envelope_issued_at", "envelope_expires_at", "envelope_issuer",
             "envelope_key_id", "envelope_signal", "envelope_content_type", "envelope_content_encoding", "envelope_message_id", "envelope_credential_id", "envelope_tenant_id", "envelope_installation_id",
             "source_time", "excluded_span", "retention",
+            // Kafka 배치 경로(PROJ-341) — 호출 실패 종류와 넘김 사유.
+            "clickhouse", "dependency", "deadline_progress", "deadline_stalled", "breaker_open", "budget_exhausted", "single_record",
         )
     }
 }

@@ -41,6 +41,36 @@ public enum class TelemetryLogEvent(public val code: String) {
 	 * Gateway trace 와 끊긴 이유를 찾는 진단 로그다. sampling 과 무관하게 시도마다 남고 경보 대상이 아니다. header 가 없으면 남기지 않는다.
 	 */
 	PLATFORM_TRACE_CONTEXT_REPLACED("platform_trace_context_replaced"),
+
+	/**
+	 * Kafka 배치가 ClickHouse 적재 없이 S3 넘김 목록에 레코드를 올리고 확정했다(PROJ-341) — ClickHouse 미적재. 배치마다 한 줄이고
+	 * 경보 대상이다. 재적재는 넘김 목록을 읽는 별도 모듈의 몫이다.
+	 */
+	ARCHIVE_HANDOFF("telemetry_archive_handoff"),
+
+	/** Kafka 배치가 넘길 근거가 없는 장애(인증 DB·S3·넘김 목록 쓰기)로 긴 대기에 들어갔다(PROJ-341). 배치마다 한 번이다. */
+	BATCH_WAITING("telemetry_batch_waiting"),
+
+	/** Kafka 배치가 분류하지 않은 예외로 실패했다(PROJ-341). 같은 배치에서 처음 났을 때 한 번 남긴다. 레코드를 건너뛰지 않는다. */
+	BATCH_UNEXPECTED_FAILURE("telemetry_batch_unexpected_failure"),
+
+	/** Kafka 배치가 호출 마감에 닿았는데 진척이 없었다(PROJ-341). 같은 배치에서 반복되면 남긴다. */
+	BATCH_STALLED("telemetry_batch_stalled"),
+
+	/** 대기하던 Kafka 배치가 실제 쓰기로 복구해 확정했다(PROJ-341). 경보 대상이 아니다. */
+	BATCH_RECOVERED("ingest_batch_recovered"),
+
+	/** 소비자의 ClickHouse 차단기가 열렸다 — 이후 배치는 탐침 전까지 넘김으로 간다(PROJ-341). 경보 대상이 아니다(넘김 줄이 경보다). */
+	BREAKER_OPENED("ingest_breaker_opened"),
+
+	/** 소비자의 ClickHouse 차단기가 실제 쓰기 성공으로 닫혔다(PROJ-341). 경보 대상이 아니다. */
+	BREAKER_CLOSED("ingest_breaker_closed"),
+
+	/**
+	 * 미완료 배치의 재시도 중 재할당이 일어나 옛 배치의 ack 등록을 건너뛰었다(PROJ-341). 커밋 시도는 0건이고 다음 소유자가 확정
+	 * 위치부터 이어간다. 경보 대상이 아니다.
+	 */
+	REBALANCE_ACK_SKIPPED("kafka_rebalance_ack_skipped"),
 	;
 
 	/** 값이 null 이면 `-` 다. 순서는 넘긴 순서 그대로다. */

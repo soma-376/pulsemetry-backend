@@ -21,6 +21,14 @@ public enum class TelemetryMetric(public val meterName: String, public val kind:
     PIPELINE_EXCLUDED_OBSERVATIONS("pulsemetry.pipeline.excluded.observations", Kind.COUNTER, "reason"),
     PIPELINE_USAGE_CONTRACT("pulsemetry.pipeline.usage.contract", Kind.COUNTER, "product", "outcome"),
     CLOCK_SKEW("pulsemetry.pipeline.clock.skew", Kind.COUNTER),
+    /** Kafka 배치 리스너 호출 하나의 결과(PROJ-341). outcome 은 completed·transient_failed, reason 은 실패 종류다. */
+    PIPELINE_BATCH_INVOCATIONS("pulsemetry.pipeline.batch.invocations", Kind.COUNTER, "outcome", "reason"),
+    /** ClickHouse 적재 없이 S3 넘김 목록에 올리고 확정한 레코드 수(PROJ-341). */
+    PIPELINE_HANDOFF_RECORDS("pulsemetry.pipeline.handoff.records", Kind.COUNTER, "reason"),
+    /** 열려 있는 소비자별 ClickHouse 차단기 수(PROJ-341). */
+    PIPELINE_BREAKERS_OPEN("pulsemetry.pipeline.breakers.open", Kind.GAUGE),
+    /** 재시도 중 재할당이 일어나 옛 배치의 ack 등록을 건너뛴 횟수(PROJ-341). */
+    PIPELINE_REBALANCE_ACK_SKIPPED("pulsemetry.pipeline.rebalance.ack.skipped", Kind.COUNTER),
     CLICKHOUSE_REQUESTS("pulsemetry.clickhouse.requests", Kind.COUNTER, "operation", "table", "outcome"),
     CLICKHOUSE_REQUEST_DURATION("pulsemetry.clickhouse.request.duration", Kind.TIMER, "operation", "table", "outcome"),
     CLICKHOUSE_ROWS_SUBMITTED("pulsemetry.clickhouse.rows.submitted", Kind.COUNTER, "table"),
@@ -32,6 +40,8 @@ public enum class TelemetryMetric(public val meterName: String, public val kind:
 public enum class PipelineStage(public val label: String) {
     AUTHORIZE("authorize"), DECODE("decode"), MASK("mask"), ARCHIVE("archive"), NORMALIZE("normalize"),
     ENRICH("enrich"), RETENTION("retention"), INSERT("insert"), OPS("ops"),
+    /** S3 넘김 목록 쓰기(PROJ-341). */
+    HANDOFF("handoff"),
 }
 
 /** value는 timer의 경우 초, bytes는 byte, counter/gauge는 개수다. gauge만 음수 증감을 허용한다. */
