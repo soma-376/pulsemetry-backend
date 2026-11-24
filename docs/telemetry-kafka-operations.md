@@ -141,7 +141,8 @@ ClickHouse 장애가 단기 예산(위 `retry-intervals`, 최초 포함 4회)을
 | `partial-defect` | `REJECT` | 팀 결정 3번(미정) — 일부 적재된 결함 레코드. `HOLD` 면 확정하지 않고 기다린다 |
 | `single-record-failure` | `HANDOFF` | 팀 결정 4번 — 한 레코드만 반복 실패. `HOLD` 면 기다린다 |
 
-**넘김 목록.** 원본과 같은 버킷·접두사의 `handoff/<group>/<topic>/p<n>-<첫>-<끝>_….json`(로컬은 아카이브 디렉터리). 배치마다 하나이고 같은 메모리 배치는 덮어쓴다.
+**넘김 목록.** 원본과 같은 버킷·접두사의 `handoff/<group>/<topic>/<해시>.json`(로컬은 아카이브 디렉터리). 해시는 group·토픽·파티션별 offset 범위의 SHA-256 이고,
+범위는 본문과 넘김 로그의 `p<n>=<첫>-<끝>`·`key` 에 있다. 배치마다 하나이고 같은 메모리 배치는 덮어쓴다.
 레코드마다 receipt(`receiptId`·`receivedAt`·signal·tenant·installation·버전), 문서별 S3 URI·받은 수, Kafka 위치·message ID, 사유, 끝낸 쓰기(분석 테이블·ledger)를 담는다.
 재적재는 이 목록을 읽는 별도 모듈의 몫이다. 넘긴 receipt 의 ledger·요약은 쓰지 않는다(ADR 0083 Follow-up).
 
@@ -176,7 +177,8 @@ ClickHouse 장애가 단기 예산(위 `retry-intervals`, 최초 포함 4회)을
 | `ingest_batch_recovered` · `ingest_breaker_opened` · `ingest_breaker_closed` · `kafka_rebalance_ack_skipped` | ingest(배치) | 대기 복구·차단기 열림/닫힘·재할당으로 옛 배치 ack 생략 | — | 아니오 |
 
 배치 모드의 `telemetry_commit_failed` 는 저장 완료 뒤 동기 커밋 실패다. 컨테이너가 WARN 머리말(`Error handler threw an exception`)을 쓰고 **다음 예외 설명 줄**에
-`event=telemetry_commit_failed cause=<클래스> topic=<토픽> p<n>=<첫>-<끝>` 을 남긴다 — 재호출 없이 다음 poll 로 가며 같은 배치는 재전달된다(중복만).
+`event=telemetry_commit_failed cause=<클래스> topic=<토픽> p<n>=<첫>-<끝>` 을 남긴다 — 재호출·seek 없이 다음 poll 로 간다. 소비 위치는 poll 에서 이미 전진했으므로 같은 배치를 곧바로 다시 받지 않는다.
+같은 파티션의 뒤 배치 커밋이 성공하면 따라잡고, 그 전에 재할당·재시작되면 마지막 커밋 위치부터 다시 받는다(중복만).
 배치 모드의 `telemetry_transient_failure` 는 레코드가 아니라 리스너 호출 하나의 실패이고 `p<n>` 범위·`failures`·`waitMillis` 를 싣는다.
 
 `reason` 값: Gateway 401 은 `TelemetryJwtRejection` 코드(`missing_bearer`·`malformed_bearer`·`jwt_malformed`·`jwt_algorithm`·`jwt_type`·`jwt_header`·`jwt_kid_unknown`·

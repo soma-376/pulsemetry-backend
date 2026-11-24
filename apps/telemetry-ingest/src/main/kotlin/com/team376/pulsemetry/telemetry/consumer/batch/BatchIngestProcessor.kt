@@ -43,7 +43,9 @@ import java.time.Instant
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.Future
 import java.util.concurrent.Semaphore
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Kafka 배치 하나를 끝까지 처리한다(PROJ-341 · ADR 0083). 리스너 호출 하나가 [process] 한 번이고, 미완료면 예외를 던져 오류 처리기의
@@ -164,15 +166,20 @@ class BatchIngestProcessor(
 		item.identity = credential.identity()
 	}
 
-	/** 아카이브를 동시에 [BatchSettings.archiveConcurrency] 개까지 진행한다. 실패한 레코드가 있어도 나머지는 끝까지 기다린다 — 성공한 PUT 을 남긴다. */
+	/**
+	 * 아카이브를 동시에 [BatchSettings.archiveConcurrency] 개까지 진행한다. 실패한 레코드가 있어도 나머지는 끝까지 기다린다 — 성공한 PUT 을 남긴다.
+	 * 기다리다 인터럽트되면 아직 시작하지 않은 PUT 은 건너뛰고 이미 시작한 PUT 이 끝난 뒤에 던진다 — 재호출이 같은 레코드의 PUT 과 겹치거나
+	 * 동시 PUT 상한을 넘지 않게 한다. 끝난 PUT 만 완료로 남는다.
+	 */
 	private fun archiveAll(work: BatchWork, call: BatchCall, todo: List<BatchRecord>) {
 		val permits = Semaphore(settings.archiveConcurrency)
+		val stop = AtomicBoolean(false)
 		val futures = todo.map { item ->
 			archiveExecutor.submit(
 				Callable {
 					permits.acquire()
 					try {
-						if (!call.hasTimeToStart()) return@Callable ArchiveOutcome.SKIPPED
+						if (stop.get() || !call.hasTimeToStart()) return@Callable ArchiveOutcome.SKIPPED
 						archiveOne(work, call, item)
 					} finally {
 						permits.release()
@@ -192,6 +199,8 @@ class BatchIngestProcessor(
 					else -> unexpected = unexpected ?: cause
 				}
 			} catch (e: InterruptedException) {
+				stop.set(true)
+				awaitAll(futures)
 				Thread.currentThread().interrupt()
 				throw DependencyCallException("archive", e)
 			}
@@ -199,6 +208,22 @@ class BatchIngestProcessor(
 		unexpected?.let { throw it }
 		dependency?.let { throw it }
 		if (skipped) throw BatchDeadlineReached(call.progressed)
+	}
+
+	/** 모든 작업이 끝날 때까지 기다린다. 인터럽트는 기다림을 끊지 않는다 — 부른 쪽이 인터럽트 상태를 되살린다. */
+	private fun awaitAll(futures: List<Future<ArchiveOutcome>>) {
+		for (future in futures) {
+			while (true) {
+				try {
+					future.get()
+					break
+				} catch (_: InterruptedException) {
+					continue
+				} catch (_: ExecutionException) {
+					break
+				}
+			}
+		}
 	}
 
 	private enum class ArchiveOutcome { DONE, SKIPPED }
@@ -244,7 +269,8 @@ class BatchIngestProcessor(
 
 	private fun writeClickHouse(work: BatchWork, call: BatchCall) {
 		if (work.items.any { it.writable || (it.ledgerPending && !it.handoffPending) }) {
-			// 테이블이 없는 채로 INSERT 하면 404 다. 그 앞에서 적용을 확인한다.
+			// 테이블이 없는 채로 INSERT 하면 404 다. 그 앞에서 적용을 확인한다. 미적용이면 DDL 을 시작하므로 남은 시간부터 본다.
+			call.ensureTime()
 			clickHouse("schema") { schema.ensureApplied() }
 		}
 		val byTenant = work.items.filter { it.writable }.groupBy { checkNotNull(it.prepared).receipt.tenantId!! }
@@ -385,11 +411,17 @@ class BatchIngestProcessor(
 				succeeded(write, live)
 			} catch (e: RuntimeException) {
 				val code = (e as? TelemetrySinkUnavailableException)?.code ?: (e as? TelemetrySinkRejectedException)?.code
-				if ((e !is TelemetrySinkUnavailableException && e !is TelemetrySinkRejectedException) || code != ClickHouseErrorCodes.MEMORY_LIMIT_EXCEEDED) {
-					throw commonFailure(e, live, "diagnosis_other")
-				}
 				val records = live.map { it.owner }.distinct()
-				if (records.size == 1) {
+				if (code != null && code in ClickHouseErrorCodes.INPUT_DEFECT_CODES) {
+					// 큰 쓰기는 결함 행을 읽기 전에 메모리 한도에 닿을 수 있다. 작은 조각의 입력 결함은 일반 전송처럼 그 레코드의 문제다.
+					if (records.size > 1) {
+						halves(live).let { (left, right) -> queue.addFirst(right); queue.addFirst(left) }
+					} else {
+						defect(write.work, write.call, records.single(), "insert", code)
+					}
+				} else if ((e !is TelemetrySinkUnavailableException && e !is TelemetrySinkRejectedException) || code != ClickHouseErrorCodes.MEMORY_LIMIT_EXCEEDED) {
+					throw commonFailure(e, live, "diagnosis_other")
+				} else if (records.size == 1) {
 					failedSingles += records.single()
 					if (failedSingles.size >= 2) throw commonFailure(e, live, "diagnosis_common")
 				} else {
@@ -424,7 +456,10 @@ class BatchIngestProcessor(
 		if (items.isEmpty()) return
 		call.ensureTime()
 		clickHouse("ledger", items) { observer.measure(PipelineStage.OPS) { ops.writeLedger(items.flatMap { it.ledgerEntries }) } }
-		items.forEach { it.ledgerPending = false }
+		items.forEach {
+			it.ledgerPending = false
+			it.ledgerWritten = true
+		}
 		call.progressed = true
 		work.clickHouseSuccesses++
 		if (call.probing) {
@@ -486,6 +521,7 @@ class BatchIngestProcessor(
 		call.progressed = true
 		if (item.partiallyWritten && settings.partialDefect == PartialDefectPolicy.HOLD) {
 			item.held = true
+			item.holdDecided = true
 			item.rejection = stage to "partial_defect_held"
 			log.warn(
 				TelemetryLogEvent.BATCH_WAITING.format(
@@ -507,6 +543,7 @@ class BatchIngestProcessor(
 			}
 			SingleRecordFailurePolicy.HOLD -> {
 				item.held = true
+				item.holdDecided = true
 				item.rejection = reason.stage to "single_record_held"
 			}
 		}
@@ -544,10 +581,13 @@ class BatchIngestProcessor(
 		openAndHandoff(work, call, reason)
 	}
 
-	/** 같은 원본 한 건만 반복 실패했고 그 배치의 다른 쓰기는 성공했다. */
+	/**
+	 * 같은 원본 한 건만 반복 실패했고 그 배치의 다른 쓰기는 성공했다. 단기 예산은 다른 장애와 함께 쓰므로, 예산이 다 됐어도 그 한 건의
+	 * ClickHouse 실패가 한 번뿐이면 그 레코드의 문제로 판정하지 않는다(11차 개정안 3절 — 원인 불명이면 특정 레코드를 단정하지 않는다).
+	 */
 	private fun isolatedRecord(work: BatchWork): BatchRecord? {
 		val failed = work.clickHouseFailureRecords
-		if (failed.isEmpty() || work.clickHouseSuccesses == 0) return null
+		if (failed.size < 2 || work.clickHouseSuccesses == 0) return null
 		val single = failed.first().singleOrNull() ?: return null
 		if (failed.any { it != setOf(single) }) return null
 		return work.items[single].takeIf { it.status == BatchRecord.Status.PENDING }
@@ -575,7 +615,10 @@ class BatchIngestProcessor(
 	 * 넘김 목록을 쓰고 레코드를 [BatchRecord.Status.HANDED_OFF] 로 끝낸다. 순서는 목록 쓰기 → 완료 표시 → 정상 반환 → 커밋이다. 목록 쓰기가
 	 * 실패하면 넘기지 않고 기다린다. key 는 배치 전체의 파티션 범위라, 같은 배치에서 여러 번 넘기면 이미 넘긴 레코드까지 담아 덮어쓴다.
 	 */
-	private fun handoff(work: BatchWork, call: BatchCall, reason: HandoffReason, items: List<BatchRecord>) {
+	private fun handoff(work: BatchWork, call: BatchCall, reason: HandoffReason, candidates: List<BatchRecord>) {
+		// 이 배치에서 보류로 정한 레코드는 넘기지 않고 이번 호출의 보류로 되돌린다 — 넘기면 offset 이 확정돼 보류가 무너진다.
+		candidates.filter { it.holdDecided && it.status == BatchRecord.Status.PENDING }.forEach { it.held = true }
+		val items = candidates.filter { !it.held }
 		if (items.isEmpty()) return
 		val unprepared = items.firstOrNull { it.prepared == null }
 		check(unprepared == null) { "아카이브 영수증 없는 레코드는 넘길 수 없다: $unprepared" }

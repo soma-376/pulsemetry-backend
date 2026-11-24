@@ -49,7 +49,18 @@ data class TelemetryIngestProperties(
 		val clickhouse: ClickHouse = ClickHouse(),
 		val ingest: Ingest = Ingest(),
 		val kafka: Kafka = Kafka(),
-	)
+	) {
+		init {
+			// 배치 모드의 ClickHouse 요청은 남은 시간이 min-remaining-to-start 일 때도 시작할 수 있고 clickhouse.timeout 까지 걸린다.
+			// 그래도 max-poll-interval 안에 끝나야 그룹에서 밀려나 같은 배치를 다시 받지 않는다.
+			val consumer = kafka.consumer
+			val batch = consumer.batch
+			require(!batch.enabled || batch.callDeadline.minus(batch.minRemainingToStart).plus(clickhouse.timeout) < consumer.maxPollInterval) {
+				"pulsemetry.telemetry.kafka.consumer.batch.call-deadline - min-remaining-to-start + pulsemetry.telemetry.clickhouse.timeout 은 " +
+					"pulsemetry.telemetry.kafka.consumer.max-poll-interval 보다 짧아야 한다"
+			}
+		}
+	}
 
 	/**
 	 * Kafka Consumer 설정(ADR 0066 Decision 6·9). 접속 값은 Gateway 와 같은 키다(`PULSEMETRY_KAFKA_*`).

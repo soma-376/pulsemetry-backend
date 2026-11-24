@@ -26,7 +26,7 @@ import java.time.Duration
  *
  * | 진입 | 처리 |
  * |---|---|
- * | 이번 전달이 완료 표시돼 있다 — 리스너가 정상 반환한 뒤 동기 커밋이 실패했다 | 재호출·seek·커밋 없이 `telemetry_commit_failed` 를 실은 WARN 예외를 던진다. Spring 은 ack 등록을 건너뛰고 다음 poll 로 간다. 쓰기는 끝났으므로 누락은 없고 재전달(중복)만 남는다 |
+ * | 이번 전달이 완료 표시돼 있다 — 리스너가 정상 반환한 뒤 동기 커밋이 실패했다 | 재호출·seek·커밋 없이 `telemetry_commit_failed` 를 실은 WARN 예외를 던진다. Spring 은 ack 등록을 건너뛰고 다음 poll 로 간다(위치는 이미 전진). 쓰기는 끝났으므로 누락은 없다 — 뒤 배치의 커밋이 따라잡기 전에 재할당·재시작되면 재전달(중복)만 남는다 |
  * | 그 밖 — 미완료 배치 | 배치 fallback(`super.handleBatch`)에 맡긴다. 할당 파티션을 멈추고 대기 중 poll 하며 같은 메모리 배치로 리스너를 다시 부른다 |
  *
  * 완료 여부는 예외 클래스나 할당 목록이 아니라 리스너의 완료 표시로 가른다 — 세대 오류의 `CommitFailedException` 은 핸들러 진입 때
@@ -56,6 +56,7 @@ class TelemetryBatchErrorHandler(
 		observer.observe(TelemetryMetric.PIPELINE_REBALANCE_ACK_SKIPPED, 0.0)
 		observer.observe(TelemetryMetric.PIPELINE_HANDOFF_RECORDS, 0.0, "reason" to "budget_exhausted")
 		observer.observe(TelemetryMetric.PIPELINE_HANDOFF_RECORDS, 0.0, "reason" to "breaker_open")
+		observer.observe(TelemetryMetric.PIPELINE_HANDOFF_RECORDS, 0.0, "reason" to "breaker_probe_failed")
 		observer.observe(TelemetryMetric.PIPELINE_HANDOFF_RECORDS, 0.0, "reason" to "single_record")
 	}
 

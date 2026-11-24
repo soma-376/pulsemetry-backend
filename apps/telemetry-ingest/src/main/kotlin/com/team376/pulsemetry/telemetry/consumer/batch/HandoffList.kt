@@ -8,7 +8,9 @@ import tools.jackson.databind.json.JsonMapper
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.time.Instant
+import java.util.HexFormat
 
 /** 넘김 목록 객체 하나를 쓴다(PROJ-341). 성공하면 객체의 URI 를 돌려주고, 실패하면 예외다 — 위치를 추정하지 않는다. */
 fun interface HandoffListWriter {
@@ -54,19 +56,27 @@ class FileHandoffListWriter(private val root: Path) : HandoffListWriter {
  * S3 위치·Kafka 위치를 복원할 수 있어야 한다 — S3 원본 객체에는 OTLP 문서만 있고 receipt 값이 없다.
  *
  * key 는 consumer group·토픽과 파티션별 첫·마지막 offset 으로 정한다. fallback 이 같은 메모리 배치를 다시 넘기면 같은 객체를 덮어쓴다.
- * 커밋 실패 뒤 재전달로 범위가 달라지면 같은 레코드가 두 목록에 오를 수 있다 — 재적재는 `receiptId` 와 분석 행의 `record_id` 로
- * 중복을 정리한다.
+ * 재할당·재시작으로 마지막 커밋 위치부터 다시 받아 범위가 달라지면 같은 레코드가 두 목록에 오를 수 있다 — 재적재는 `receiptId` 와
+ * 분석 행의 `record_id` 로 중복을 정리한다.
  */
 object HandoffList {
 
 	const val VERSION: Int = 1
 
-	/** `handoff/<group>/<topic>/p<n>-<첫>-<끝>_….json` — 파티션 순. 값은 S3 key 에 안전한 문자만 남긴다. */
+	/**
+	 * `handoff/<group>/<topic>/<해시>.json`. 해시는 원래 group·토픽·파티션 순 범위를 JSON 으로 직렬화한 SHA-256(hex 64자)이다 — 파티션
+	 * 수와 무관하게 S3 key 상한(1,024바이트) 안에 들고, 정규화하면 같아지는 group 끼리도 겹치지 않는다. group·토픽 경로는 목록 조회용이라
+	 * 안전한 문자만 남기고 [SEGMENT_MAX] 자로 자른다. 범위는 본문과 넘김 로그(`p<n>=<첫>-<끝>`·`key`)에 있다.
+	 */
 	fun key(consumerGroup: String, topic: String, ranges: List<PartitionRange>): String {
 		require(ranges.isNotEmpty()) { "넘길 레코드가 없다" }
-		val span = ranges.sortedBy { it.partition }.joinToString("_") { "p${it.partition}-${it.first}-${it.last}" }
-		return "handoff/${safe(consumerGroup)}/${safe(topic)}/$span.json"
+		val identity = listOf(consumerGroup, topic, ranges.sortedBy { it.partition }.map { listOf(it.partition, it.first, it.last) })
+		val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(MAPPER.writeValueAsBytes(identity)))
+		return "handoff/${safe(consumerGroup).take(SEGMENT_MAX)}/${safe(topic).take(SEGMENT_MAX)}/$digest.json"
 	}
+
+	/** key 의 group·토픽 경로 한 칸의 최대 길이. */
+	const val SEGMENT_MAX: Int = 100
 
 	/** 넘김 목록 본문(JSON). */
 	fun encode(
@@ -118,7 +128,7 @@ object HandoffList {
 			"rejection" to item.rejection?.let { (stage, reason) -> linkedMapOf("stage" to stage, "reason" to reason) },
 			"completed" to linkedMapOf(
 				"analysisTables" to item.tablesDone.sorted(),
-				"ledger" to (item.ledgerEntries.isNotEmpty() && !item.ledgerPending && item.status != BatchRecord.Status.PENDING),
+				"ledger" to item.ledgerWritten,
 				"summary" to false,
 			),
 		)

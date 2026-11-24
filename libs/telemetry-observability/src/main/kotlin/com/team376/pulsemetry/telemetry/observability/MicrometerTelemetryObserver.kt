@@ -77,7 +77,7 @@ public class MicrometerTelemetryObserver(
             "envelope_key_id", "envelope_signal", "envelope_content_type", "envelope_content_encoding", "envelope_message_id", "envelope_credential_id", "envelope_tenant_id", "envelope_installation_id",
             "source_time", "excluded_span", "retention",
             // Kafka 배치 경로(PROJ-341) — 호출 실패 종류와 넘김 사유.
-            "clickhouse", "dependency", "deadline_progress", "deadline_stalled", "breaker_open", "budget_exhausted", "single_record",
+            "clickhouse", "dependency", "deadline_progress", "deadline_stalled", "breaker_open", "breaker_probe_failed", "budget_exhausted", "single_record",
         )
     }
 }

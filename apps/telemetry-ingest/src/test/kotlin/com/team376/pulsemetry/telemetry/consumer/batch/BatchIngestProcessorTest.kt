@@ -68,7 +68,9 @@ import java.time.Instant
 import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Kafka 배치 경로(PROJ-341)의 묶음·이분할·재시도·S3 넘김·차단기를 고정한다.
@@ -99,6 +101,9 @@ class BatchIngestProcessorTest {
 
 	@Volatile
 	private var handoffFails = false
+
+	/** 남은 인가 실패 횟수 — 인증 DB 장애를 그 횟수만큼 흉내 낸다. */
+	private val authFailuresLeft = AtomicInteger()
 
 	private val summaries: TenantIngestSummaryStore = mock(TenantIngestSummaryStore::class.java)
 	private val authorizer: TelemetryCredentialAuthorizer = mock(TelemetryCredentialAuthorizer::class.java)
@@ -143,6 +148,7 @@ class BatchIngestProcessorTest {
 		}
 		server.start()
 		given(authorizer.authorize(anything(), anything())).willAnswer { invocation ->
+			if (authFailuresLeft.getAndDecrement() > 0) throw IllegalStateException("rds down")
 			val auth = invocation.getArgument<GatewayAuthContext>(0)
 			AuthorizedTelemetryCredential(auth.credentialId, auth.tenantId, auth.installationId, UUID.randomUUID())
 		}
@@ -252,7 +258,7 @@ class BatchIngestProcessorTest {
 		assertThat(state.takeCompleted(records)).isTrue()
 		assertThat(archive.puts.get()).describedAs("성공한 PUT 은 재호출에서 다시 하지 않는다").isEqualTo(10)
 		val (key, body) = handoffs.entries.single()
-		assertThat(key).isEqualTo("handoff/$GROUP/$TOPIC/p0-51-60.json")
+		assertThat(key).isEqualTo(HandoffList.key(GROUP, TOPIC, listOf(PartitionRange(0, 51, 60)))).matches("handoff/$GROUP/$TOPIC/[0-9a-f]{64}\\.json")
 		val document = JsonMapper.builder().build().readTree(body)
 		assertThat(document["records"].size()).isEqualTo(10)
 		val first = document["records"][0]
@@ -390,6 +396,102 @@ class BatchIngestProcessorTest {
 	}
 
 	@Test
+	@DisplayName("다른 장애로 단기 예산을 다 쓴 뒤 한 건이 한 번 실패하면 그 건을 단정하지 않고 공통 장애로 넘긴다")
+	fun singleFailureAfterOtherOutagesIsNotIsolated() {
+		val tenant = UUID.randomUUID()
+		authFailuresLeft.set(3)
+		failWith = { table, body -> if (table == TelemetryEventsSink.TABLE && POISON in body) StubFailure(503, null) else null }
+		val listener = listener(settings(maxInsertBytes = 1024))
+		val records = batch((0 until 3).map { record(tenant, poison = it == 1) })
+
+		repeat(3) { assertThat(catchThrowable { listener.onMessage(records, null, consumer) }).isInstanceOf(DependencyBatchFailure::class.java) }
+		listener.onMessage(records, null, consumer)
+
+		val document = JsonMapper.builder().build().readTree(handoffs.values.single())
+		assertThat(document["reason"]["trigger"].asString()).isEqualTo("budget_exhausted")
+		assertThat(document["records"].size()).isEqualTo(3)
+		assertThat(listener.processorForTest().breaker().isOpen).isTrue()
+	}
+
+	@Test
+	@DisplayName("보류한 레코드는 다른 배치 때문에 차단기가 열려도 넘기지 않고 계속 기다린다")
+	fun heldRecordIsNotHandedOffWhileBreakerOpen() {
+		val tenant = UUID.randomUUID()
+		failWith = { table, body -> if (table == TelemetryEventsSink.TABLE && POISON in body) StubFailure(503, null) else null }
+		val listener = listener(settings(maxInsertBytes = 1024, singleRecord = SingleRecordFailurePolicy.HOLD))
+		val records = batch((0 until 3).map { record(tenant, poison = it == 1) })
+		repeat(3) { catchThrowable { listener.onMessage(records, null, consumer) } }
+		assertThat(catchThrowable { listener.onMessage(records, null, consumer) }).isInstanceOf(HeldBatchFailure::class.java)
+		listener.processorForTest().breaker().open(HandoffReason("budget_exhausted", "insert", "x", null, null), "test")
+
+		val thrown = catchThrowable { listener.onMessage(records, null, consumer) }
+
+		assertThat(thrown).isInstanceOf(HeldBatchFailure::class.java)
+		assertThat(handoffs).isEmpty()
+		assertThat(state.takeCompleted(records)).isFalse()
+	}
+
+	@Test
+	@DisplayName("넘김 목록의 ledger 완료는 실제로 쓴 경우만이다 — 같은 배치의 다음 목록에 다시 실려도 그대로다")
+	fun handoffListKeepsActualLedgerState() {
+		val tenant = UUID.randomUUID()
+		val poisonFails = AtomicBoolean(true)
+		failWith = { table, body ->
+			when {
+				table == LEDGER -> StubFailure(503, null)
+				table == TelemetryEventsSink.TABLE && POISON in body && poisonFails.get() -> StubFailure(503, null)
+				else -> null
+			}
+		}
+		val listener = listener(settings(maxInsertBytes = 1024, singleRecord = SingleRecordFailurePolicy.HOLD, probeInterval = Duration.ofNanos(1)))
+		val records = batch((0 until 2).map { record(tenant, poison = it == 1) })
+		repeat(3) { catchThrowable { listener.onMessage(records, null, consumer) } }
+
+		// 넷째 호출: 1번은 보류, 0번은 ledger 가 실패해 첫 목록에 오른다.
+		assertThat(catchThrowable { listener.onMessage(records, null, consumer) }).isInstanceOf(HeldBatchFailure::class.java)
+		val first = JsonMapper.builder().build().readTree(handoffs.values.single())
+		assertThat(first["records"].size()).isEqualTo(1)
+		assertThat(first["records"][0]["completed"]["ledger"].asBoolean()).isFalse()
+
+		// 다섯째 호출: 탐침 뒤 1번은 적재되지만 ledger 가 또 실패해 같은 key 의 목록에 0번과 함께 다시 오른다.
+		poisonFails.set(false)
+		listener.onMessage(records, null, consumer)
+
+		val second = JsonMapper.builder().build().readTree(handoffs.values.single())
+		assertThat(second["records"].size()).isEqualTo(2)
+		assertThat((0 until 2).map { second["records"][it]["completed"]["ledger"].asBoolean() }).containsOnly(false)
+	}
+
+	@Test
+	@DisplayName("아카이브를 기다리다 인터럽트되면 시작한 PUT 이 끝난 뒤에 던지고, 재호출은 같은 문서를 다시 PUT 하지 않는다")
+	fun archiveInterruptWaitsForStartedPuts() {
+		archive.delay = Duration.ofMillis(300)
+		val records = batch((0 until 8).map { record(UUID.randomUUID()) })
+		val listener = listener()
+		val first = AtomicReference<Throwable?>()
+		val inFlightAtThrow = AtomicInteger(-1)
+		val completed = AtomicBoolean(false)
+		// 작업 캐시는 소비 스레드마다 하나라 두 호출을 같은 스레드에서 부른다.
+		val thread = Thread {
+			first.set(catchThrowable { listener.onMessage(records, null, consumer) })
+			inFlightAtThrow.set(archive.inFlight.get())
+			Thread.interrupted() // Spring 이 재호출 전에 인터럽트를 처리했다고 본다.
+			listener.onMessage(records, null, consumer)
+			completed.set(state.takeCompleted(records))
+		}
+		thread.start()
+		Thread.sleep(100)
+		thread.interrupt()
+		thread.join(10_000)
+
+		assertThat(first.get()).isInstanceOf(DependencyBatchFailure::class.java)
+		assertThat(inFlightAtThrow.get()).describedAs("던질 때 진행 중인 PUT 이 없다").isZero()
+		assertThat(archive.maxInFlight.get()).isLessThanOrEqualTo(4)
+		assertThat(archive.puts.get()).describedAs("같은 문서를 두 번 PUT 하지 않는다").isEqualTo(8)
+		assertThat(completed.get()).isTrue()
+	}
+
+	@Test
 	@DisplayName("큰 쓰기만 메모리 한도(241)로 실패하면 넷째 호출에서 작은 직렬 쓰기로 복구한다 — 넘김 0건")
 	fun memoryLimitDiagnosisRecovers() {
 		val tenant = UUID.randomUUID()
@@ -424,13 +526,38 @@ class BatchIngestProcessorTest {
 		assertThat(document["reason"]["memoryScope"].asString()).isEqualTo("total")
 	}
 
+	@Test
+	@DisplayName("메모리 한도 진단 중 작은 조각이 입력 결함(117)을 내면 그 레코드만 거부하고 차단기를 열지 않는다")
+	fun memoryDiagnosisIsolatesInputDefect() {
+		val tenant = UUID.randomUUID()
+		failWith = { table, body ->
+			when {
+				table != TelemetryEventsSink.TABLE -> null
+				body.lines().count { it.isNotEmpty() } > 4 -> StubFailure(500, 241, "Memory limit (for query) exceeded")
+				POISON in body -> StubFailure(400, 117)
+				else -> null
+			}
+		}
+		val listener = listener()
+		val records = batch((0 until 16).map { record(tenant, poison = it == 5) })
+
+		repeat(3) { assertThat(catchThrowable { listener.onMessage(records, null, consumer) }).isInstanceOf(ClickHouseBatchFailure::class.java) }
+		listener.onMessage(records, null, consumer)
+
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(15).noneMatch { POISON in it }
+		assertThat(rows(LEDGER)).hasSize(16)
+		assertThat(handoffs).isEmpty()
+		assertThat(listener.processorForTest().breaker().isOpen).isFalse()
+	}
+
 	// --- 마감 ---
 
 	@Test
 	@DisplayName("마감에 닿아도 진척이 있으면 장애 횟수를 늘리지 않고 짧게 기다린다")
 	fun deadlineWithProgress() {
-		val listener = listener(settings(callDeadline = Duration.ofSeconds(2), minRemaining = Duration.ofMillis(1990)))
-		archive.delay = Duration.ofMillis(30)
+		// 시작 가능 창 100ms — 첫 PUT 들은 그 안에 시작하고, 창보다 긴 PUT 뒤의 변환은 마감에 닿는다.
+		val listener = listener(settings(callDeadline = Duration.ofSeconds(2), minRemaining = Duration.ofMillis(1900)))
+		archive.delay = Duration.ofMillis(300)
 		val records = batch((0 until 3).map { record(UUID.randomUUID()) })
 
 		val thrown = catchThrowable { listener.onMessage(records, null, consumer) }
@@ -553,6 +680,8 @@ class BatchIngestProcessorTest {
 	private class MemoryArchive : ArchiveWriter {
 		val puts = AtomicInteger()
 		val succeeded = AtomicInteger()
+		val inFlight = AtomicInteger()
+		val maxInFlight = AtomicInteger()
 
 		@Volatile
 		var failing: (Int) -> Boolean = { false }
@@ -562,10 +691,15 @@ class BatchIngestProcessorTest {
 
 		override fun write(product: Product, signal: Signal, body: ByteArray): ArchivedObject {
 			val n = puts.getAndIncrement()
-			if (!delay.isZero) Thread.sleep(delay.toMillis())
-			if (failing(n)) throw IllegalStateException("s3 put failed")
-			succeeded.incrementAndGet()
-			return ArchivedObject("mem://raw/${product.archiveSegment}/${signal.name.lowercase()}/$n.json")
+			maxInFlight.accumulateAndGet(inFlight.incrementAndGet()) { a, b -> maxOf(a, b) }
+			try {
+				if (!delay.isZero) Thread.sleep(delay.toMillis())
+				if (failing(n)) throw IllegalStateException("s3 put failed")
+				succeeded.incrementAndGet()
+				return ArchivedObject("mem://raw/${product.archiveSegment}/${signal.name.lowercase()}/$n.json")
+			} finally {
+				inFlight.decrementAndGet()
+			}
 		}
 	}
 

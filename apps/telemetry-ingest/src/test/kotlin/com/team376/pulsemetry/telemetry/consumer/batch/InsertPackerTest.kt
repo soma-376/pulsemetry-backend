@@ -68,7 +68,26 @@ class InsertPackerTest {
 
 		val key = HandoffList.key("pulsemetry-dev-telemetry-ingest-main", "pulsemetry-dev-telemetry-ingress-main", ranges)
 
-		assertThat(key).isEqualTo("handoff/pulsemetry-dev-telemetry-ingest-main/pulsemetry-dev-telemetry-ingress-main/p0-51-90_p1-101-200.json")
+		assertThat(key).matches("handoff/pulsemetry-dev-telemetry-ingest-main/pulsemetry-dev-telemetry-ingress-main/[0-9a-f]{64}\\.json")
 		assertThat(HandoffList.key("pulsemetry-dev-telemetry-ingest-main", "pulsemetry-dev-telemetry-ingress-main", ranges.reversed())).isEqualTo(key)
+		assertThat(HandoffList.key("pulsemetry-dev-telemetry-ingest-main", "pulsemetry-dev-telemetry-ingress-main", listOf(PartitionRange(0, 51, 91)))).isNotEqualTo(key)
+	}
+
+	@Test
+	@DisplayName("넘김 목록 key 는 파티션 수와 무관하게 S3 key 상한(1,024바이트) 안이다")
+	fun handoffKeyLengthIsBounded() {
+		val ranges = (0 until 100).map { PartitionRange(it, 1_000_000_000_000L + it, 1_000_000_000_000L + it) }
+
+		val key = HandoffList.key("g".repeat(300), "t".repeat(249), ranges)
+
+		assertThat(key.toByteArray(Charsets.UTF_8).size).isLessThan(1024)
+	}
+
+	@Test
+	@DisplayName("정규화하면 같아지는 consumer group 도 넘김 목록 key 가 다르다")
+	fun handoffKeySeparatesGroups() {
+		val ranges = listOf(PartitionRange(0, 51, 90))
+
+		assertThat(HandoffList.key("ingest/a", "topic", ranges)).isNotEqualTo(HandoffList.key("ingest_a", "topic", ranges))
 	}
 }

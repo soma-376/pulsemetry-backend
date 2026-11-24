@@ -38,6 +38,12 @@ class BatchRecord(val index: Int, val record: ConsumerRecord<ByteArray, ByteArra
 	/** 팀 정책이 보류(HOLD)다 — 이번 호출에서는 더 쓰지 않고 배치를 확정하지 않는다. 호출마다 다시 판정한다. */
 	var held: Boolean = false
 
+	/**
+	 * 이 배치에서 보류로 정한 적이 있다. 쓰기 경로는 호출마다 다시 평가하지만, 적재·거부로 끝나기 전에는 넘김 대상에서 빼고 그 호출의
+	 * 보류로 되돌린다 — 넘기면 offset 이 확정돼 보류가 무너진다.
+	 */
+	var holdDecided: Boolean = false
+
 	/** 넘김 목록에 올릴 레코드로 정해졌다 — 더 쓰지 않는다. 목록을 쓰면 [Status.HANDED_OFF] 다. */
 	var handoffPending: Boolean = false
 
@@ -73,6 +79,9 @@ class BatchRecord(val index: Int, val record: ConsumerRecord<ByteArray, ByteArra
 	/** 적재 또는 거부 뒤 써야 할 ledger 행. 운영 기록이 꺼져 있으면 비어 있다. */
 	var ledgerEntries: List<IngestLedgerEntry> = emptyList()
 	var ledgerPending: Boolean = false
+
+	/** ledger 행을 실제로 썼다. 넘기면 [ledgerPending] 은 내려가지만 이 값은 그대로다 — 넘김 목록의 완료 표시가 이것을 옮긴다. */
+	var ledgerWritten: Boolean = false
 	var summaryPending: Boolean = false
 
 	/** 요약의 최초 유효 관측 시각 — 분석 테이블로 간 관측의 최소 `source_time`. */
