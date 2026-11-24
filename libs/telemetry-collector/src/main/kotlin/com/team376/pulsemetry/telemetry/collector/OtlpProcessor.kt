@@ -66,6 +66,28 @@ public fun interface OtlpProcessor {
 }
 
 /**
+ * 아카이브까지 마치고 다음 단계로 넘길 준비가 된 접수 하나. [OtlpIngestProcessor.prepare] 가 만든다.
+ *
+ * [message] 는 마스킹·신원 스탬프를 마친 전체 요청이고, [receipt] 는 실제로 쓴 아카이브 위치다. 다음 단계가 받는 값과 같다.
+ */
+public class PreparedIngest(
+	public val signal: Signal,
+	public val message: Message,
+	public val receipt: ArchiveReceipt,
+)
+
+/**
+ * 수집 코어의 준비 단계만 부르는 자리 — 압축 해제 → 디코딩 → 마스킹 → 신원 스탬프 → 원본 아카이브(PROJ-341).
+ *
+ * Kafka 배치 경로가 레코드마다 준비를 마치고 적재를 한꺼번에 하려고 쓴다. [archive] 를 넘기면 그 writer 로 아카이브한다 —
+ * 재호출에서 이미 성공한 문서를 다시 쓰지 않도록 부르는 쪽이 감싼 writer 를 넘길 수 있다. 레코드가 0건이면 null 이다.
+ * 실패 분류는 [OtlpProcessor.process] 와 같다.
+ */
+public fun interface OtlpPreparer {
+	public fun prepare(payload: RawOtlpPayload, context: VerifiedIngestContext, archive: ArchiveWriter?): PreparedIngest?
+}
+
+/**
  * 수집 단계의 본체. 압축 해제 → 디코딩 → 마스킹 → 신원 스탬프 → 원본 아카이브 → 다음 단계.
  *
  * 현행 collector 설정의 파이프라인 아홉을 한 경로로 접은 것이다. 실시간 스트림과 제품별 아카이브가
@@ -103,12 +125,19 @@ public class OtlpIngestProcessor(
 	private val next: SignalConsumer,
 	maxDecompressedBytes: Long = DEFAULT_MAX_DECOMPRESSED_BYTES,
 	private val observer: TelemetryObserver = TelemetryObserver.NONE,
-) : OtlpProcessor {
+) : OtlpProcessor, OtlpPreparer {
 
 	private val decoder = OtlpRequestDecoder(maxDecompressedBytes)
 	private val walker = AttributeWalker(SecretMasker())
 
 	override fun process(payload: RawOtlpPayload, context: VerifiedIngestContext) {
+		val prepared = prepare(payload, context, null) ?: return
+		next.consume(prepared.signal, prepared.message, prepared.receipt)
+	}
+
+	/** 다음 단계를 부르기 직전까지(1~3). [archive] 가 null 이면 생성자의 writer 를 쓴다. */
+	override fun prepare(payload: RawOtlpPayload, context: VerifiedIngestContext, archive: ArchiveWriter?): PreparedIngest? {
+		val writer = archive ?: this.archive
 		val signal = Signal.of(payload.signal)
 		val encoding = OtlpEncoding.of(payload.mediaType)
 
@@ -117,7 +146,7 @@ public class OtlpIngestProcessor(
 		// 상위는 레코드가 0건이면 소비자를 부르지 않고 바로 성공을 돌려준다.
 		if (recordCount(builder) == 0) {
 			observer.observe(TelemetryMetric.PIPELINE_EMPTY, 1.0, "signal" to payload.signal.name.lowercase())
-			return
+			return null
 		}
 
 		// 마스킹은 정규식 규칙이라 같은 입력이면 같게 실패한다 — 영구다(ADR 0067 Decision 1).
@@ -140,7 +169,7 @@ public class OtlpIngestProcessor(
 			ProductRouter.split(message).map { routed ->
 				ArchivedDocument(
 					product = routed.product,
-					location = archive.write(routed.product, signal, OtlpJson.toJson(routed.document)),
+					location = writer.write(routed.product, signal, OtlpJson.toJson(routed.document)),
 					resourceIndexes = routed.resourceIndexes,
 				)
 			}
@@ -155,7 +184,7 @@ public class OtlpIngestProcessor(
 			identityVersion = IdentityStamper.VERSION,
 			documents = documents,
 		)
-		next.consume(signal, message, receipt)
+		return PreparedIngest(signal, message, receipt)
 	}
 
 	private fun decode(payload: RawOtlpPayload, signal: Signal, encoding: OtlpEncoding): Message.Builder {

@@ -8,6 +8,7 @@ import com.team376.pulsemetry.persistence.telemetryops.TenantIngestSummaryStore
 import com.team376.pulsemetry.telemetry.model.ObservationSignal
 import com.team376.pulsemetry.telemetry.collector.Signal
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveReceipt
+import java.time.Instant
 import java.util.UUID
 
 /** push 하나의 수집 운영 기록을 남기는 자리. [IngestPipeline] 이 적재 결과에 따라 둘 중 하나를 부른다(ADR 0021 §1). */
@@ -18,6 +19,25 @@ interface IngestOperations {
 
 	/** 분석 테이블에 아무것도 넣지 않은 push(정규화·보강·적재의 영구 실패). 받은 것 전부가 거부다. */
 	fun unloaded(receipt: ArchiveReceipt, parts: List<ReceiptPart>)
+}
+
+/**
+ * Kafka 배치 경로의 수집 운영 기록(PROJ-341). 행을 만드는 일과 쓰는 일을 나눠, 배치의 ledger 를 INSERT 하나로 쓰고 요약을 tenant 마다
+ * 한 번 쓴다. 행의 내용·순서(ledger 먼저, 요약 다음)·실패 분류는 [IngestOperations] 와 같다.
+ */
+interface BatchIngestOperations {
+
+	/** 분석 테이블까지 적재한 push 의 ledger 행 — [IngestOperations.loaded] 가 쓰는 행과 같다. */
+	fun loadedEntries(receipt: ArchiveReceipt, parts: List<Pair<ReceiptPart, LoadedPart>>): List<IngestLedgerEntry>
+
+	/** 분석 테이블에 아무것도 넣지 않은 push 의 ledger 행 — [IngestOperations.unloaded] 가 쓰는 행과 같다. */
+	fun unloadedEntries(receipt: ArchiveReceipt, parts: List<ReceiptPart>): List<IngestLedgerEntry>
+
+	/** ledger 행 여럿을 INSERT 하나로 쓴다. 빈 목록이면 보내지 않는다. */
+	fun writeLedger(entries: List<IngestLedgerEntry>)
+
+	/** 한 tenant 의 수신 여럿을 요약에 반영한다. [firstObservedAt] 은 그 수신들이 분석 테이블로 보낸 관측의 최소 `source_time` 이다. */
+	fun writeSummary(tenantId: String, firstReceivedAt: Instant, lastReceivedAt: Instant, firstObservedAt: Instant?)
 }
 
 /**
@@ -32,36 +52,53 @@ interface IngestOperations {
 class IngestOperationsRecorder(
 	private val ledger: IngestLedgerSink,
 	private val summaries: TenantIngestSummaryStore,
-) : IngestOperations {
+) : IngestOperations, BatchIngestOperations {
 
 	override fun loaded(receipt: ArchiveReceipt, parts: List<Pair<ReceiptPart, LoadedPart>>) {
-		val ledgerReceipt = ledgerReceipt(receipt)
-		record(
-			receipt,
-			parts.map { (part, loaded) ->
-				IngestLedgerEntry.normalized(
-					ledgerReceipt,
-					part.product,
-					part.archived?.location?.uri,
-					loaded.stats,
-					beforeBoundary = loaded.beforeBoundary,
-					sourceTimeMin = loaded.sourceTimeMin,
-					sourceTimeMax = loaded.sourceTimeMax,
-				)
-			},
-		)
+		record(receipt, loadedEntries(receipt, parts))
 	}
 
 	override fun unloaded(receipt: ArchiveReceipt, parts: List<ReceiptPart>) {
+		record(receipt, unloadedEntries(receipt, parts))
+	}
+
+	override fun loadedEntries(receipt: ArchiveReceipt, parts: List<Pair<ReceiptPart, LoadedPart>>): List<IngestLedgerEntry> {
 		val ledgerReceipt = ledgerReceipt(receipt)
-		record(receipt, parts.map { IngestLedgerEntry.unnormalized(ledgerReceipt, it.product, it.archived?.location?.uri, it.recordCount) })
+		return parts.map { (part, loaded) ->
+			IngestLedgerEntry.normalized(
+				ledgerReceipt,
+				part.product,
+				part.archived?.location?.uri,
+				loaded.stats,
+				beforeBoundary = loaded.beforeBoundary,
+				sourceTimeMin = loaded.sourceTimeMin,
+				sourceTimeMax = loaded.sourceTimeMax,
+			)
+		}
+	}
+
+	override fun unloadedEntries(receipt: ArchiveReceipt, parts: List<ReceiptPart>): List<IngestLedgerEntry> {
+		val ledgerReceipt = ledgerReceipt(receipt)
+		return parts.map { IngestLedgerEntry.unnormalized(ledgerReceipt, it.product, it.archived?.location?.uri, it.recordCount) }
+	}
+
+	override fun writeLedger(entries: List<IngestLedgerEntry>) {
+		ledger.insert(entries)
+	}
+
+	override fun writeSummary(tenantId: String, firstReceivedAt: Instant, lastReceivedAt: Instant, firstObservedAt: Instant?) {
+		summary { summaries.record(UUID.fromString(tenantId), SummaryOrigin.LIVE, firstReceivedAt, lastReceivedAt, firstObservedAt) }
 	}
 
 	private fun record(receipt: ArchiveReceipt, entries: List<IngestLedgerEntry>) {
 		ledger.insert(entries)
 		val firstObserved = entries.mapNotNull { it.sourceTimeMin }.minOrNull()?.toInstant()
+		summary { summaries.record(UUID.fromString(receipt.tenantId), SummaryOrigin.LIVE, receipt.receivedAt, firstObserved) }
+	}
+
+	private inline fun summary(write: () -> Unit) {
 		try {
-			summaries.record(UUID.fromString(receipt.tenantId), SummaryOrigin.LIVE, receipt.receivedAt, firstObserved)
+			write()
 		} catch (exception: RuntimeException) {
 			throw exception
 		} catch (exception: Exception) {

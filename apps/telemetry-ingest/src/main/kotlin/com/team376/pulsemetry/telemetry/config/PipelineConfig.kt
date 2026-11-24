@@ -24,6 +24,7 @@ import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import com.team376.pulsemetry.telemetry.pipeline.ClickHouseSchema
 import com.team376.pulsemetry.telemetry.pipeline.IngestOperations
 import com.team376.pulsemetry.telemetry.pipeline.IngestPipeline
+import com.team376.pulsemetry.telemetry.pipeline.IngestStages
 import com.team376.pulsemetry.telemetry.pipeline.RdsRetentionBoundaries
 import com.team376.pulsemetry.telemetry.pipeline.RetentionBoundaries
 import org.springframework.beans.factory.ObjectProvider
@@ -74,18 +75,22 @@ class PipelineConfig {
 	@Bean
 	fun retentionBoundaries(store: TenantRetentionBoundaryStore): RetentionBoundaries = RdsRetentionBoundaries(store)
 
+	/** 정규화·보강·삭제 경계 거르기. push 경로([IngestPipeline])와 Kafka 배치 경로(PROJ-341)가 같은 인스턴스를 쓴다. */
+	@Bean
+	fun ingestStages(observations: ObservationPipeline, enricher: ObservationEnricher, observer: TelemetryObserver): IngestStages =
+		IngestStages(observations::run, enricher, observer)
+
 	/** 수집 운영 기록은 설정으로 켤 때만 있다(`OpsConfig`) — 없으면 파이프라인이 그 단계를 건너뛴다. */
 	@Bean
 	fun signalConsumer(
-		observations: ObservationPipeline,
-		enricher: ObservationEnricher,
+		stages: IngestStages,
 		events: TelemetryEventsSink,
 		metricPoints: TelemetryMetricPointsSink,
 		schema: ClickHouseSchema,
 		boundaries: RetentionBoundaries,
 		operations: ObjectProvider<IngestOperations>,
 		observer: TelemetryObserver,
-	): SignalConsumer = IngestPipeline(observations::run, enricher, events, metricPoints, schema, boundaries, operations.ifAvailable, observer)
+	): SignalConsumer = IngestPipeline(stages, events, metricPoints, schema, boundaries, operations.ifAvailable, observer)
 
 	/**
 	 * 전송 독립 수집 코어(ADR 0067). HTTP 어댑터와 Kafka Consumer 가 같은 인스턴스를 부른다 — 압축 해제 상한·마스킹·
@@ -97,7 +102,7 @@ class PipelineConfig {
 		next: SignalConsumer,
 		properties: TelemetryIngestProperties,
 		observer: TelemetryObserver,
-	): OtlpProcessor = OtlpIngestProcessor(
+	): OtlpIngestProcessor = OtlpIngestProcessor(
 		archive = archive,
 		next = next,
 		maxDecompressedBytes = properties.telemetry.ingest.maxDecompressedBytes,

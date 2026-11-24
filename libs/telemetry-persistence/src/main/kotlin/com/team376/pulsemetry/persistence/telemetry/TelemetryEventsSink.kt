@@ -26,16 +26,25 @@ import com.team376.pulsemetry.telemetry.model.EnrichedEvent
  *
  * 빈이 아니다(ADR 0011). 클라이언트를 생성자로 받는다.
  */
-public class TelemetryEventsSink(private val client: ClickHouseHttpClient) {
+public class TelemetryEventsSink(private val client: ClickHouseHttpClient) : AnalysisLinesSink {
+
+	override val table: String get() = TABLE
 
 	/** 경계 안의 행을 적재하고 그 수를 돌려준다. 실을 행이 없으면 요청을 보내지 않는다. */
 	public fun insert(events: List<EnrichedEvent>, versioning: RowVersioning, boundary: AnalysisWriteBoundary): Int {
-		val admitted = boundary.admitted(events) { it.observation.envelope }
-		if (admitted.isEmpty()) return 0
-		val body = admitted.joinToString(separator = "\n", postfix = "\n") { TelemetryEventRow.toJson(it, versioning) }
-		client.rowsSubmitted(TABLE, admitted.size)
-		AnalysisInsert.send(client, QUERY, body, boundary, TABLE)
-		return admitted.size
+		val lines = encode(events, versioning, boundary)
+		send(lines, boundary)
+		return lines.size
+	}
+
+	/** 경계 안의 행을 JSONEachRow 줄로 바꾼다. 요청은 보내지 않는다. 값이 컬럼 타입에 들어가지 않으면 [TelemetrySinkRejectedException] 이다. */
+	public fun encode(events: List<EnrichedEvent>, versioning: RowVersioning, boundary: AnalysisWriteBoundary): List<String> =
+		boundary.admitted(events) { it.observation.envelope }.map { TelemetryEventRow.toJson(it, versioning) }
+
+	override fun send(lines: List<String>, boundary: AnalysisWriteBoundary) {
+		if (lines.isEmpty()) return
+		client.rowsSubmitted(TABLE, lines.size)
+		AnalysisInsert.send(client, QUERY, AnalysisLinesSink.body(lines), boundary, TABLE)
 	}
 
 	public companion object {
