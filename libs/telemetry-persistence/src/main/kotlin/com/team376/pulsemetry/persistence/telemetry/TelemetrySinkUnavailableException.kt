@@ -20,4 +20,6 @@ package com.team376.pulsemetry.persistence.telemetry
 public class TelemetrySinkUnavailableException(
 	message: String,
 	cause: Throwable? = null,
+	/** ClickHouse 응답의 오류 코드(`X-ClickHouse-Exception-Code`). 연결 실패·코드 없는 응답이면 null 이다. */
+	public val code: Int? = null,
 ) : RuntimeException(message, cause)

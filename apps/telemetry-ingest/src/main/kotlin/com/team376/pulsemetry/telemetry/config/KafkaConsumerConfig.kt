@@ -6,18 +6,25 @@ import com.team376.pulsemetry.telemetry.consumer.RecordTracing
 import com.team376.pulsemetry.telemetry.consumer.TelemetryFailureReporter
 import com.team376.pulsemetry.telemetry.consumer.TelemetryRecordListener
 import com.team376.pulsemetry.telemetry.consumer.TelemetryRetryBackOff
+import com.team376.pulsemetry.telemetry.consumer.batch.BatchDeliveryState
+import com.team376.pulsemetry.telemetry.consumer.batch.BatchRebalanceListener
+import com.team376.pulsemetry.telemetry.consumer.batch.BatchSettings
+import com.team376.pulsemetry.telemetry.consumer.batch.TelemetryBatchErrorHandler
+import com.team376.pulsemetry.telemetry.consumer.batch.TelemetryBatchListener
 import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
 import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.tracing.Tracer
 import io.micrometer.tracing.propagation.Propagator
+import org.apache.kafka.clients.consumer.Consumer
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.kafka.core.ConsumerFactory
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory
 import org.springframework.kafka.core.MicrometerConsumerListener
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer
@@ -41,6 +48,12 @@ import java.time.Clock
  * - 소비자는 topic 을 만들지 않는다(`allow.auto.create.topics=false`). 새 group 은 보존된 가장 이른 record 부터 읽는다.
  *
  * `mode=http` 에서는 컨테이너를 시작하지 않는다(`autoStartup=false`) — 빈만 있고 broker 에 붙지 않는다.
+ *
+ * ## 배치 모드(PROJ-341 · ADR 0083)
+ *
+ * `pulsemetry.telemetry.kafka.consumer.batch.enabled=true` 면 같은 이름의 컨테이너가 배치 리스너([TelemetryBatchListener])와
+ * `AckMode.BATCH`·배치 오류 처리기([TelemetryBatchErrorHandler])·재할당 리스너로 선다. consumer group 은 그대로다. poll 은
+ * `max.poll.records`·`fetch.min.bytes`·`fetch.max.wait.ms` 를 배치 설정에서 받는다. 나머지(동기 커밋·auto commit 끔·종료·인증 재시도)는 단건과 같다.
  */
 @Configuration(proxyBeanMethods = false)
 class KafkaConsumerConfig {
@@ -50,9 +63,21 @@ class KafkaConsumerConfig {
 		ProcessTelemetry(authorizer, processor, observer)
 
 	@Bean
-	fun telemetryConsumerFactory(properties: TelemetryIngestProperties, registry: MeterRegistry): DefaultKafkaConsumerFactory<ByteArray, ByteArray> =
+	fun telemetryConsumerFactory(
+		properties: TelemetryIngestProperties,
+		registry: MeterRegistry,
+		batchState: ObjectProvider<BatchDeliveryState>,
+	): DefaultKafkaConsumerFactory<ByteArray, ByteArray> =
 		DefaultKafkaConsumerFactory(consumerProperties(properties), ByteArrayDeserializer(), ByteArrayDeserializer()).apply {
 			addListener(MicrometerConsumerListener(registry))
+			// 배치 모드의 재할당 카운터는 소비자가 정상 종료되면 바로 지운다(약한 키라 통지가 없어도 GC 를 막지 않는다).
+			batchState.ifAvailable?.let { state ->
+				addListener(object : ConsumerFactory.Listener<ByteArray, ByteArray> {
+					override fun consumerRemoved(id: String?, consumer: Consumer<ByteArray, ByteArray>) {
+						state.forget(consumer)
+					}
+				})
+			}
 		}
 
 	/** 플랫폼 trace(ADR 0069). 끄면 Boot 가 NOOP 을 주거나 빈이 없다 — 어느 쪽이든 span 을 만들지 않는다. */
@@ -82,12 +107,21 @@ class KafkaConsumerConfig {
 		registry: MeterRegistry,
 		clock: Clock,
 		tracing: RecordTracing,
+		batchListener: ObjectProvider<TelemetryBatchListener>,
+		batchState: ObjectProvider<BatchDeliveryState>,
 	): ConcurrentMessageListenerContainer<ByteArray, ByteArray> {
 		val kafka = properties.telemetry.kafka
 		val consumer = kafka.consumer
+		val batch = if (consumer.batch.enabled) checkNotNull(batchListener.ifAvailable) { "배치 모드인데 배치 리스너가 없다" } else null
 		val containerProperties = ContainerProperties(kafka.topic).apply {
-			setAckMode(ContainerProperties.AckMode.RECORD)
-			setMessageListener(TelemetryRecordListener(process, observer, clock, tracing))
+			if (batch == null) {
+				setAckMode(ContainerProperties.AckMode.RECORD)
+				setMessageListener(TelemetryRecordListener(process, observer, clock, tracing))
+			} else {
+				setAckMode(ContainerProperties.AckMode.BATCH)
+				setMessageListener(batch)
+				setConsumerRebalanceListener(BatchRebalanceListener(checkNotNull(batchState.ifAvailable), batch))
+			}
 			setStopImmediate(true)
 			setShutdownTimeout(consumer.shutdownTimeout.toMillis())
 			setAuthExceptionRetryInterval(consumer.authExceptionRetryInterval)
@@ -96,10 +130,15 @@ class KafkaConsumerConfig {
 			setMissingTopicsFatal(false)
 		}
 		val mode = properties.telemetry.ingest.mode
-		log.info("telemetry ingress consumer: mode={} {} topic={} group={}", mode, kafka.connection(), kafka.topic, kafka.consumerGroup)
+		log.info(
+			"telemetry ingress consumer: mode={} {} topic={} group={} listener={}",
+			mode, kafka.connection(), kafka.topic, kafka.consumerGroup, if (batch == null) "record" else "batch",
+		)
+		val commonErrorHandler: DefaultErrorHandler =
+			if (batch == null) errorHandler else TelemetryBatchErrorHandler(checkNotNull(batchState.ifAvailable), BatchSettings.of(properties), observer)
 		return ConcurrentMessageListenerContainer(consumerFactory, containerProperties).apply {
 			concurrency = consumer.concurrency
-			setCommonErrorHandler(errorHandler)
+			setCommonErrorHandler(commonErrorHandler)
 			isAutoStartup = mode.kafkaEnabled
 			setBeanName(CONTAINER_BEAN)
 			// 강한 참조 — 약한 참조가 풀리면 scrape 가 NaN 이 된다. container 는 앱 수명 동안 하나다.
@@ -119,7 +158,7 @@ class KafkaConsumerConfig {
 			val kafka = properties.telemetry.kafka
 			val consumer = kafka.consumer
 			val fetchMaxBytes = Math.toIntExact(consumer.fetchMaxBytes.toBytes())
-			return kafka.connection().clientProperties(CLIENT_ID) + mapOf(
+			val common = kafka.connection().clientProperties(CLIENT_ID) + mapOf(
 				ConsumerConfig.GROUP_ID_CONFIG to kafka.consumerGroup,
 				ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG to false,
 				ConsumerConfig.AUTO_OFFSET_RESET_CONFIG to "earliest",
@@ -128,6 +167,14 @@ class KafkaConsumerConfig {
 				ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG to Math.toIntExact(consumer.maxPollInterval.toMillis()),
 				ConsumerConfig.FETCH_MAX_BYTES_CONFIG to fetchMaxBytes,
 				ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG to fetchMaxBytes,
+			)
+			val batch = consumer.batch
+			if (!batch.enabled) return common
+			// Kafka 에서 모은다 — 최소 바이트를 채우거나 대기가 끝나면 브로커가 응답한다. 1초·100건을 보장하지는 않는다.
+			return common + mapOf(
+				ConsumerConfig.MAX_POLL_RECORDS_CONFIG to batch.maxPollRecords,
+				ConsumerConfig.FETCH_MIN_BYTES_CONFIG to Math.toIntExact(batch.fetchMinBytes.toBytes()),
+				ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG to Math.toIntExact(batch.fetchMaxWait.toMillis()),
 			)
 		}
 	}

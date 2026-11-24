@@ -56,15 +56,26 @@ public class TenantIngestSummaryStore(private val dataSource: DataSource) {
 	 * @param receivedAt receipt 의 서버 수신 시각.
 	 * @param firstObservedAt 그 수신에서 분석 테이블로 간 관측의 `source_time` 최솟값. 없으면 null.
 	 */
-	public fun record(tenantId: UUID, origin: SummaryOrigin, receivedAt: Instant, firstObservedAt: Instant?): Boolean {
+	public fun record(tenantId: UUID, origin: SummaryOrigin, receivedAt: Instant, firstObservedAt: Instant?): Boolean =
+		record(tenantId, origin, receivedAt, receivedAt, firstObservedAt)
+
+	/**
+	 * 같은 tenant 의 수신 여럿을 문장 하나로 반영한다(PROJ-341 Kafka 배치). 수신마다 [record] 를 부른 것과 결과가 같다 —
+	 * `LEAST`·`GREATEST` 라 여러 수신의 최초·최종 시각만 넘기면 된다.
+	 *
+	 * @param firstReceivedAt 그 수신들의 서버 수신 시각 최솟값.
+	 * @param lastReceivedAt 그 수신들의 서버 수신 시각 최댓값.
+	 */
+	public fun record(tenantId: UUID, origin: SummaryOrigin, firstReceivedAt: Instant, lastReceivedAt: Instant, firstObservedAt: Instant?): Boolean {
+		require(!firstReceivedAt.isAfter(lastReceivedAt)) { "최초 수신 시각이 최종 수신 시각보다 늦다" }
 		if (origin == SummaryOrigin.REPLAY) return false
 		classified("upsert") {
 			dataSource.connection.use { connection ->
 				connection.prepareStatement(UPSERT).use { statement ->
 					statement.setObject(1, tenantId)
-					statement.setTime(2, receivedAt)
+					statement.setTime(2, firstReceivedAt)
 					statement.setTime(3, firstObservedAt)
-					statement.setTime(4, receivedAt)
+					statement.setTime(4, lastReceivedAt)
 					statement.executeUpdate()
 				}
 			}

@@ -66,7 +66,9 @@ public class ClickHouseHttpClient(
 	 *
 	 * 타임아웃은 응답 **헤더** 도착까지만 잰다(`HttpRequest.timeout` 의 의미). 본문 수신은 재지
 	 * 않으므로 헤더만 보내고 본문을 끄는 서버에는 더 오래 매달릴 수 있다 — DDL·INSERT 응답 본문이
-	 * 짧아 실무 위험은 낮다.
+	 * 짧아 실무 위험은 낮다. [requestTimeout] 을 주면 이 호출만 그 기한을 쓴다 — 짧은 복구 확인(`SELECT 1`)용이다.
+	 *
+	 * 오류 응답의 ClickHouse 오류 코드(`X-ClickHouse-Exception-Code`)는 예외의 `code` 에 싣는다. 분류(영구·일시)는 상태로만 한다.
 	 */
 	public fun execute(
 		query: String,
@@ -75,12 +77,13 @@ public class ClickHouseHttpClient(
 		queryId: String? = null,
 		operation: String = "other",
 		table: String = "other",
+		requestTimeout: Duration? = null,
 	): String {
 		val started = System.nanoTime()
 		var outcome = "transient_error"
 		val span = clientSpan(operation, table)
 		try {
-			return request(query, body, params, queryId).also { outcome = "success" }
+			return request(query, body, params, queryId, requestTimeout ?: timeout).also { outcome = "success" }
 		} catch (failure: TelemetrySinkRejectedException) {
 			outcome = "permanent_error"
 			failed(span, failure)
@@ -120,7 +123,7 @@ public class ClickHouseHttpClient(
 		observer.observe(TelemetryMetric.CLICKHOUSE_ROWS_SUBMITTED, count.toDouble(), "table" to table)
 	}
 
-	private fun request(query: String, body: ByteArray?, params: Map<String, String>, queryId: String?): String {
+	private fun request(query: String, body: ByteArray?, params: Map<String, String>, queryId: String?, timeout: Duration): String {
 		val uri = URI.create(
 			baseUrl.trimEnd('/') +
 				"/?query=" + encode(query) +
@@ -148,10 +151,11 @@ public class ClickHouseHttpClient(
 			// 본문을 자른다. ClickHouse 의 오류 본문은 스택 트레이스까지 실려 로그를 덮는다.
 			val detail = response.body().take(MAX_ERROR_DETAIL)
 			val message = "clickhouse $status: $detail"
+			val code = response.headers().firstValue(EXCEPTION_CODE_HEADER).orElse(null)?.trim()?.toIntOrNull()
 			throw if (isTransient(status)) {
-				TelemetrySinkUnavailableException(message)
+				TelemetrySinkUnavailableException(message, code = code)
 			} else {
-				TelemetrySinkRejectedException(message)
+				TelemetrySinkRejectedException(message, code = code)
 			}
 		}
 		return response.body()
@@ -180,5 +184,8 @@ public class ClickHouseHttpClient(
 		private const val REQUEST_TIMEOUT: Int = 408
 		private const val TOO_MANY_REQUESTS: Int = 429
 		private const val MAX_ERROR_DETAIL: Int = 500
+
+		/** ClickHouse HTTP 인터페이스가 오류 응답에 싣는 오류 코드 헤더. */
+		private const val EXCEPTION_CODE_HEADER: String = "X-ClickHouse-Exception-Code"
 	}
 }

@@ -3,6 +3,9 @@ package com.team376.pulsemetry.telemetry.config
 import com.team376.pulsemetry.telemetry.collector.archive.ArchiveWriter
 import com.team376.pulsemetry.telemetry.collector.archive.FileArchiveWriter
 import com.team376.pulsemetry.telemetry.collector.archive.S3ArchiveWriter
+import com.team376.pulsemetry.telemetry.consumer.batch.FileHandoffListWriter
+import com.team376.pulsemetry.telemetry.consumer.batch.HandoffListWriter
+import com.team376.pulsemetry.telemetry.consumer.batch.S3HandoffListWriter
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -30,6 +33,11 @@ class ArchiveConfig {
 		@Bean
 		fun archiveWriter(properties: TelemetryIngestProperties): ArchiveWriter =
 			FileArchiveWriter(Path.of(properties.telemetry.archive.dir))
+
+		/** Kafka 배치의 S3 넘김 목록(PROJ-341) — 로컬은 아카이브 디렉터리 아래 `handoff/`. */
+		@Bean
+		fun handoffListWriter(properties: TelemetryIngestProperties): HandoffListWriter =
+			FileHandoffListWriter(Path.of(properties.telemetry.archive.dir))
 	}
 
 	@Configuration(proxyBeanMethods = false)
@@ -50,6 +58,11 @@ class ArchiveConfig {
 			basePrefix = properties.telemetry.archive.basePrefix,
 			clock = clock,
 		)
+
+		/** Kafka 배치의 S3 넘김 목록(PROJ-341) — 원본과 같은 버킷·접두사의 `handoff/` 아래. 보존도 원본과 같다. */
+		@Bean
+		fun handoffListWriter(s3: S3Client, properties: TelemetryIngestProperties): HandoffListWriter =
+			S3HandoffListWriter(s3, properties.telemetry.archive.bucket, properties.telemetry.archive.basePrefix)
 	}
 
 	companion object {

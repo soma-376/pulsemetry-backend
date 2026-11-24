@@ -49,7 +49,18 @@ data class TelemetryIngestProperties(
 		val clickhouse: ClickHouse = ClickHouse(),
 		val ingest: Ingest = Ingest(),
 		val kafka: Kafka = Kafka(),
-	)
+	) {
+		init {
+			// 배치 모드의 ClickHouse 요청은 남은 시간이 min-remaining-to-start 일 때도 시작할 수 있고 clickhouse.timeout 까지 걸린다.
+			// 그래도 max-poll-interval 안에 끝나야 그룹에서 밀려나 같은 배치를 다시 받지 않는다.
+			val consumer = kafka.consumer
+			val batch = consumer.batch
+			require(!batch.enabled || batch.callDeadline.minus(batch.minRemainingToStart).plus(clickhouse.timeout) < consumer.maxPollInterval) {
+				"pulsemetry.telemetry.kafka.consumer.batch.call-deadline - min-remaining-to-start + pulsemetry.telemetry.clickhouse.timeout 은 " +
+					"pulsemetry.telemetry.kafka.consumer.max-poll-interval 보다 짧아야 한다"
+			}
+		}
+	}
 
 	/**
 	 * Kafka Consumer 설정(ADR 0066 Decision 6·9). 접속 값은 Gateway 와 같은 키다(`PULSEMETRY_KAFKA_*`).
@@ -107,6 +118,8 @@ data class TelemetryIngestProperties(
 		val authExceptionRetryInterval: Duration = Duration.ofSeconds(10),
 		/** listener 스레드 수. partition 안의 순서는 스레드 수와 무관하게 유지된다. 메모리 예산이 이 값에 비례한다. */
 		val concurrency: Int = 1,
+		/** 배치 소비(PROJ-341 · ADR 0083). 꺼져 있으면 단건 listener(ADR 0066 Decision 6) 그대로다. */
+		val batch: Batch = Batch(),
 	) {
 		init {
 			require(retryIntervals.isNotEmpty() && retryIntervals.all { !it.isNegative && !it.isZero }) {
@@ -117,6 +130,77 @@ data class TelemetryIngestProperties(
 			require(maxPollInterval > retryIntervals.max()) {
 				"pulsemetry.telemetry.kafka.consumer.max-poll-interval 은 가장 긴 재시도 간격보다 길어야 한다"
 			}
+			require(!batch.enabled || batch.callDeadline < maxPollInterval) {
+				"pulsemetry.telemetry.kafka.consumer.batch.call-deadline 은 max-poll-interval 보다 짧아야 한다"
+			}
+		}
+	}
+
+	/**
+	 * Kafka 배치 소비(PROJ-341 · ADR 0083). 켜면 poll 결과를 원본 레코드 단위로 준비한 뒤 tenant·분석 테이블마다 INSERT 하나로 쓰고,
+	 * 배치 끝에서 offset 을 확정한다(`AckMode.BATCH`). 단기 재시도 간격은 단건과 같은 `retry-intervals` 다.
+	 *
+	 * 기본값은 계획서(11차 개정안)의 dev 시작값이다. 팀 결정이 정해지지 않은 두 정책은 [partialDefect]·[singleRecordFailure] 다.
+	 */
+	data class Batch(
+		val enabled: Boolean = false,
+		/** 배치 모드의 `max.poll.records`. 단건 모드의 `max-poll-records` 와 따로다. */
+		val maxPollRecords: Int = 100,
+		/** 브로커가 응답하기 전에 모을 최소 바이트(`fetch.min.bytes`). poll 은 이미 가져온 데이터를 먼저 돌려줄 수 있다. */
+		val fetchMinBytes: DataSize = DataSize.ofKilobytes(64),
+		/** [fetchMinBytes] 를 채우지 못해도 브로커가 응답하는 대기(`fetch.max.wait.ms`). */
+		val fetchMaxWait: Duration = Duration.ofSeconds(1),
+		/** INSERT 본문 하나의 상한(미만, UTF-8 바이트·줄바꿈 포함). 한 행만 담은 본문이 이 값 이상이면 그 행은 독립 INSERT 로 보낸다. */
+		val maxInsertBytes: Long = 10_000_000,
+		/** 한 배치 안에서 동시에 진행하는 원본 아카이브(S3 PUT) 수. */
+		val archiveConcurrency: Int = 8,
+		/**
+		 * 한 리스너 호출의 마감(단조 시계). 마감 뒤에는 새 외부 작업을 시작하지 않는다. 진행 중인 요청의 기한·커밋 여유를 더해도
+		 * `max-poll-interval` 안에 들도록 둔다.
+		 */
+		val callDeadline: Duration = Duration.ofSeconds(420),
+		/** 새 외부 작업을 시작하려면 마감까지 남아 있어야 하는 시간 — 요청 하나의 기한과 취소 여유다. */
+		val minRemainingToStart: Duration = Duration.ofSeconds(35),
+		/** 진척 있는 마감 뒤 다음 호출까지의 짧은 대기. */
+		val progressInterval: Duration = Duration.ofMillis(200),
+		/** 넘길 수 없는 장애·예상 밖 오류에서 단기 예산을 쓴 뒤의 긴 대기. */
+		val longWait: Duration = Duration.ofMinutes(5),
+		/** 열린 차단기의 탐침 간격. */
+		val breakerProbeInterval: Duration = Duration.ofMinutes(5),
+		/** 복구 확인 `SELECT 1` 의 기한. */
+		val probeTimeout: Duration = Duration.ofSeconds(5),
+		/** 메모리 한도 진단에서 한 호출이 보내는 작은 쓰기 수의 상한. */
+		val maxDiagnosticWrites: Int = 32,
+		/** 팀 결정 3번(미정) — 확인된 결함이 일부만 적재된 레코드. 기본은 기존 단건 경로와 같은 거부 기록이다. */
+		val partialDefect: PartialDefectPolicy = PartialDefectPolicy.REJECT,
+		/** 팀 결정 4번(기본 넘김) — 다른 조각은 저장되는데 한 레코드만 반복 실패할 때. */
+		val singleRecordFailure: SingleRecordFailurePolicy = SingleRecordFailurePolicy.HANDOFF,
+	) {
+		init {
+			require(maxPollRecords >= 1) { "pulsemetry.telemetry.kafka.consumer.batch.max-poll-records 는 1 이상이어야 한다" }
+			require(maxInsertBytes >= 1024) { "pulsemetry.telemetry.kafka.consumer.batch.max-insert-bytes 는 1024 이상이어야 한다" }
+			require(archiveConcurrency >= 1) { "pulsemetry.telemetry.kafka.consumer.batch.archive-concurrency 는 1 이상이어야 한다" }
+			require(maxDiagnosticWrites >= 2) { "pulsemetry.telemetry.kafka.consumer.batch.max-diagnostic-writes 는 2 이상이어야 한다" }
+			listOf(fetchMaxWait, callDeadline, minRemainingToStart, progressInterval, longWait, breakerProbeInterval, probeTimeout).forEach {
+				require(!it.isNegative && !it.isZero) { "pulsemetry.telemetry.kafka.consumer.batch 의 시간 설정은 양수여야 한다: $it" }
+			}
+			require(minRemainingToStart < callDeadline) { "batch.min-remaining-to-start 는 batch.call-deadline 보다 짧아야 한다" }
+		}
+
+		enum class PartialDefectPolicy {
+			/** 거부를 기록하고 확정한다. 이미 쓴 분석 행은 남는다. */
+			REJECT,
+
+			/** 확정하지 않고 긴 대기·경보로 보류한다. */
+			HOLD,
+		}
+
+		enum class SingleRecordFailurePolicy {
+			/** 그 레코드를 S3 넘김 목록에 올리고 나머지를 끝낸 뒤 확정한다. */
+			HANDOFF,
+
+			/** 확정하지 않고 긴 대기·경보로 보류한다. */
+			HOLD,
 		}
 	}
 

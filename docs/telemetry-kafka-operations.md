@@ -4,6 +4,7 @@ OTLP 를 Gateway 가 받아 Kafka 에 접수하고 ingest Consumer 가 처리하
 telemetry JWT([ADR 0065](adr/0065-telemetry-token은-전용-RS256-JWT로-발급하고-telemetry_tokens를-자격-기록으로-유지한다.md))의 **앱 쪽** 설정과 절차다.
 dev Strimzi mTLS 구현은 [ADR 0070](adr/0070-Kafka-mTLS-접속은-공통-설정에서-PKCS12-파일로-조립한다.md), 배치·접근 계약은 [허브 Kafka 계약](../../docs/contracts/telemetry-kafka.md)을 따른다.
 AWS 리소스·Helm·ALB 전환·offset 재설정 Job 은 infra 런북(`infra` 레포 `docs/runbooks/dev-telemetry-kafka.md`)이 소유한다.
+infra 작업의 실행 진입점은 infra `scripts/README.md`(스크립트 인덱스)에서 찾고, 실행 순서·권한은 인덱스가 연결한 런북을 따른다.
 이 문서는 로컬 구현 기준이며 MSK 실접속·AWS 적용은 검증하지 않았다. 로컬 E2E 결과는 [telemetry-kafka-e2e.md](telemetry-kafka-e2e.md)에 있다.
 
 ```
@@ -119,6 +120,43 @@ health 는 모든 모드에서 `GET /api/v1/healthz` 다. `dual`·`kafka` 에서
 이 경로로 보므로(infra ADR-0036), 멈춘 listener 는 약 30초 뒤 Pod 재시작으로 이어진다. 이 health 가 저장소·Kafka 를 보지 않는 것이 그 전제다.
 Gateway 의 health 는 Kafka 를 보지 않는다.
 
+### 1.5 배치 소비(PROJ-341 · ADR 0083, Proposed)
+
+기본은 꺼져 있다. 켜면 같은 consumer group 으로 배치 리스너가 서고(`AckMode.BATCH`), 레코드를 tenant·분석 테이블마다 INSERT 하나로 묶어 쓴다.
+ClickHouse 장애가 단기 예산(위 `retry-intervals`, 최초 포함 4회)을 넘기면 S3 넘김 목록을 쓰고 확정한다. 넘길 근거가 없는 장애(인증 DB·보강·경계·요약·S3·넘김 목록)는 기다린다.
+환경변수는 Spring 완화 바인딩 이름이다(예: `PULSEMETRY_TELEMETRY_KAFKA_CONSUMER_BATCH_ENABLED`).
+
+| 키(`pulsemetry.telemetry.kafka.consumer.batch.`) | 기본값 | 의미 |
+|---|---|---|
+| `enabled` | `false` | 배치 모드 |
+| `max-poll-records` | `100` | 배치 모드의 `max.poll.records`(단건의 `max-poll-records` 와 따로) |
+| `fetch-min-bytes` · `fetch-max-wait` | `64KB` · `1s` | Kafka 에서 모으는 대기 창 |
+| `max-insert-bytes` | `10000000` | INSERT 본문 상한(미만). 한 행만으로 이상이면 독립 INSERT |
+| `archive-concurrency` | `8` | 배치 안 동시 S3 PUT |
+| `call-deadline` · `min-remaining-to-start` | `420s` · `35s` | 리스너 호출 마감. 남은 시간이 모자라면 새 외부 작업을 시작하지 않는다. `max-poll-interval` 보다 짧아야 한다 |
+| `progress-interval` | `200ms` | 진척 있는 마감 뒤 대기 |
+| `long-wait` | `5m` | 넘길 수 없는 장애에서 단기 예산 뒤의 대기 |
+| `breaker-probe-interval` · `probe-timeout` | `5m` · `5s` | 열린 차단기의 탐침 간격(±10%)과 `SELECT 1` 기한 |
+| `max-diagnostic-writes` | `32` | 메모리 한도(241) 진단의 작은 쓰기 상한 |
+| `partial-defect` | `REJECT` | 팀 결정 3번(미정) — 일부 적재된 결함 레코드. `HOLD` 면 확정하지 않고 기다린다 |
+| `single-record-failure` | `HANDOFF` | 팀 결정 4번 — 한 레코드만 반복 실패. `HOLD` 면 기다린다 |
+
+**넘김 목록.** 원본과 같은 버킷·접두사의 `handoff/<group>/<topic>/<해시>.json`(로컬은 아카이브 디렉터리). 해시는 group·토픽·파티션별 offset 범위의 SHA-256 이고,
+범위는 본문과 넘김 로그의 `p<n>=<첫>-<끝>`·`key` 에 있다. 배치마다 하나이고 같은 메모리 배치는 덮어쓴다.
+레코드마다 receipt(`receiptId`·`receivedAt`·signal·tenant·installation·버전), 문서별 S3 URI·받은 수, Kafka 위치·message ID, 사유, 끝낸 쓰기(분석 테이블·ledger)를 담는다.
+재적재는 이 목록을 읽는 별도 모듈의 몫이다. 넘긴 receipt 의 ledger·요약은 쓰지 않는다(ADR 0083 Follow-up).
+
+**infra 반영(남음).** 경로는 infra 레포 기준이다.
+
+- 경보: `lib/dev/eks-telemetry-alarms.ts` 의 `DEV_TELEMETRY_LOG_EVENTS` 에 §2 의 배치 경보 코드를 더한다.
+- 표본: `scripts/observability-log-envelope-smoke.py` 의 `SAMPLES` 와 `helm/observability/tests/fluent-bit/metric-filter-samples.jsonl` 에
+  새 코드와 배치 형식 `telemetry_commit_failed`(§2 표 아래 설명 — WARN 머리말 다음 예외 줄)를 더한다. 배포 전 `scripts/observability-metric-filter-check.mjs --aws` 로
+  TestMetricFilter 를 확인한다(`docs/runbooks/dev-observability.md` 「로그 손실 경계와 회귀 검증」).
+- dev 켜기: 부하 비교 때 `helm/dev/workloads/telemetry-ingest.yaml` 의 `env` 에 `PULSEMETRY_TELEMETRY_KAFKA_CONSUMER_BATCH_ENABLED: "true"` 를 둔다.
+  infra 머지 → `Dev CDK Deploy` 게시 → Argo sync 로 반영된다. 수동 helm 은 Argo 가 되돌린다.
+- 스크립트를 더하거나 지우거나 호출 경로를 바꾸면(예: 넘김 목록 재적재 도구를 infra 에 둘 때) 같은 PR 에서 `scripts/README.md` 를 고친다.
+  지울 때는 CI·npm·import·Dockerfile·Terraform·Helm·수동 런북 순으로 참조를 대조한다. 기존 스크립트의 표본만 늘리면 인덱스는 그대로다.
+
 ## 2. 로그 이벤트
 
 한 줄 평문 `event=<code> key=value …`(`TelemetryLogEvent`). infra 가 CloudWatch Logs metric filter 의 term match 로 센다 — **코드 문자열을 바꾸면 경보가 멈춘다.**
@@ -132,6 +170,16 @@ Gateway 의 health 는 Kafka 를 보지 않는다.
 | `telemetry_transient_failure` | ingest | 한 시도의 일시 실패. 다음 시도가 남음 | `messageId` `topic` `partition` `offset` `stage` `reason=unavailable` `attempt` `cause` | 아니오 |
 | `telemetry_retry_exhausted` | ingest | 최초 + 3회 모두 실패 후 확정(미적재) | `messageId` `topic` `partition` `offset` `stage` `reason` `attempt=4` `cause` | 예 |
 | `telemetry_commit_failed` | ingest | offset commit 실패. 그 record 는 다시 처리된다 | `topic` `partition` `offset` `stage=commit` `reason=commit_failed` `attempt` `cause` | 예 |
+| `telemetry_archive_handoff` | ingest(배치) | ClickHouse 미적재로 S3 넘김 목록에 올리고 확정 | `cause` `topic` `p<n>=<첫>-<끝>` `records` `trigger` `stage` `code` `memoryScope` `key` | 예(infra 추가 필요) |
+| `telemetry_batch_waiting` | ingest(배치) | 넘길 근거가 없는 장애로 긴 대기 진입 — 배치마다 한 번 | `topic` `p<n>` `stage` `reason` `cause` `oldestAgeSeconds` `failures` | 검토 |
+| `telemetry_batch_unexpected_failure` | ingest(배치) | 분류하지 않은 예외 — 배치마다 처음 한 번. 건너뛰지 않는다 | `topic` `p<n>` `stage` `cause` `attempt` | 검토 |
+| `telemetry_batch_stalled` | ingest(배치) | 진척 없는 마감 반복 | `topic` `p<n>` `stalls` `attempt` | 검토 |
+| `ingest_batch_recovered` · `ingest_breaker_opened` · `ingest_breaker_closed` · `kafka_rebalance_ack_skipped` | ingest(배치) | 대기 복구·차단기 열림/닫힘·재할당으로 옛 배치 ack 생략 | — | 아니오 |
+
+배치 모드의 `telemetry_commit_failed` 는 저장 완료 뒤 동기 커밋 실패다. 컨테이너가 WARN 머리말(`Error handler threw an exception`)을 쓰고 **다음 예외 설명 줄**에
+`event=telemetry_commit_failed cause=<클래스> topic=<토픽> p<n>=<첫>-<끝>` 을 남긴다 — 재호출·seek 없이 다음 poll 로 간다. 소비 위치는 poll 에서 이미 전진했으므로 같은 배치를 곧바로 다시 받지 않는다.
+같은 파티션의 뒤 배치 커밋이 성공하면 따라잡고, 그 전에 재할당·재시작되면 마지막 커밋 위치부터 다시 받는다(중복만).
+배치 모드의 `telemetry_transient_failure` 는 레코드가 아니라 리스너 호출 하나의 실패이고 `p<n>` 범위·`failures`·`waitMillis` 를 싣는다.
 
 `reason` 값: Gateway 401 은 `TelemetryJwtRejection` 코드(`missing_bearer`·`malformed_bearer`·`jwt_malformed`·`jwt_algorithm`·`jwt_type`·`jwt_header`·`jwt_kid_unknown`·
 `jwt_signature`·`jwt_issuer`·`jwt_audience`·`jwt_scope`·`jwt_claim_missing`·`jwt_claim_format`·`jwt_lifetime`·`jwt_not_yet_valid`·`jwt_expired`), 요청 거부는

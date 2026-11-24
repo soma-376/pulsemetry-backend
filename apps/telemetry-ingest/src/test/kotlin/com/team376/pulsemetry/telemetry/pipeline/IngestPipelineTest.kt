@@ -326,7 +326,7 @@ class IngestPipelineTest {
 		val schema = ClickHouseSchema(ClickHouseSchemaMigrator(client), startupAttempts = startupAttempts, startupBackoff = Duration.ZERO)
 		if (startupAttempts > 0) schema.afterPropertiesSet()
 		val enricher = ObservationEnricher(installations, memberships, listOf(GithubProvider(), JiraProvider(), AiAnalysisProvider()))
-		return IngestPipeline(normalize, enricher, TelemetryEventsSink(client), TelemetryMetricPointsSink(client), schema, boundaries, operations, observer)
+		return IngestPipeline(IngestStages(normalize, enricher, observer), TelemetryEventsSink(client), TelemetryMetricPointsSink(client), schema, boundaries, operations, observer)
 	}
 
 	private class RecordingOperations : IngestOperations {
