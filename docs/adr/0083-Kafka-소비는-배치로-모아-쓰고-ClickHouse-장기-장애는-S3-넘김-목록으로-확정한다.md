@@ -84,6 +84,8 @@ Proposed — 배치 모드에서 [ADR 0066](0066-OTLP-수신은-Gateway가-JWT�
 - 허브 `contracts/telemetry-ingest.md` §8(오류 분류)을 개정한다. ADR 0024(tenant별 경계 조회)·0012(재처리 원천·넘김 목록)·0021(넘긴 receipt 의 ledger·요약)도 함께 개정한다.
 - infra: 지표 필터·경보에 `telemetry_archive_handoff`(필요하면 `telemetry_batch_waiting`·`telemetry_batch_unexpected_failure`·`telemetry_batch_stalled`)를 더하고,
   배치 형식의 `telemetry_commit_failed` 표본으로 TestMetricFilter 를 확인한다. dev 에 `PULSEMETRY_TELEMETRY_KAFKA_CONSUMER_BATCH_ENABLED` 를 켜는 것은 부하 비교 때다.
+  진입점은 infra 스크립트 인덱스(`scripts/README.md`)와 거기서 연결한 런북을 따르고, 스크립트를 더하거나 호출 경로를 바꾸면 같은 PR 에서 인덱스를 고친다.
+  파일 위치는 [telemetry Kafka 운영](../telemetry-kafka-operations.md) §1.5.
 - 배포 전 시험 중 실제 브로커가 필요한 것(재시도 중 파티션 이동의 offset 후퇴, `max.poll.interval` 초과 재가입, 커밋 타임아웃 뒤 파티션별 확정 위치, ClickHouse 10분 정지·권한 복구)은
   dev 또는 별도 시험 환경에서 한다.
 - 한 캠페인에 여러 tenant 를 만드는 부하 시드로 단건·배치를 같은 입력에서 비교한다(초당 새 part, lag 기울기, 적재 p95).

@@ -4,6 +4,7 @@ OTLP 를 Gateway 가 받아 Kafka 에 접수하고 ingest Consumer 가 처리하
 telemetry JWT([ADR 0065](adr/0065-telemetry-token은-전용-RS256-JWT로-발급하고-telemetry_tokens를-자격-기록으로-유지한다.md))의 **앱 쪽** 설정과 절차다.
 dev Strimzi mTLS 구현은 [ADR 0070](adr/0070-Kafka-mTLS-접속은-공통-설정에서-PKCS12-파일로-조립한다.md), 배치·접근 계약은 [허브 Kafka 계약](../../docs/contracts/telemetry-kafka.md)을 따른다.
 AWS 리소스·Helm·ALB 전환·offset 재설정 Job 은 infra 런북(`infra` 레포 `docs/runbooks/dev-telemetry-kafka.md`)이 소유한다.
+infra 작업의 실행 진입점은 infra `scripts/README.md`(스크립트 인덱스)에서 찾고, 실행 순서·권한은 인덱스가 연결한 런북을 따른다.
 이 문서는 로컬 구현 기준이며 MSK 실접속·AWS 적용은 검증하지 않았다. 로컬 E2E 결과는 [telemetry-kafka-e2e.md](telemetry-kafka-e2e.md)에 있다.
 
 ```
@@ -143,6 +144,17 @@ ClickHouse 장애가 단기 예산(위 `retry-intervals`, 최초 포함 4회)을
 **넘김 목록.** 원본과 같은 버킷·접두사의 `handoff/<group>/<topic>/p<n>-<첫>-<끝>_….json`(로컬은 아카이브 디렉터리). 배치마다 하나이고 같은 메모리 배치는 덮어쓴다.
 레코드마다 receipt(`receiptId`·`receivedAt`·signal·tenant·installation·버전), 문서별 S3 URI·받은 수, Kafka 위치·message ID, 사유, 끝낸 쓰기(분석 테이블·ledger)를 담는다.
 재적재는 이 목록을 읽는 별도 모듈의 몫이다. 넘긴 receipt 의 ledger·요약은 쓰지 않는다(ADR 0083 Follow-up).
+
+**infra 반영(남음).** 경로는 infra 레포 기준이다.
+
+- 경보: `lib/dev/eks-telemetry-alarms.ts` 의 `DEV_TELEMETRY_LOG_EVENTS` 에 §2 의 배치 경보 코드를 더한다.
+- 표본: `scripts/observability-log-envelope-smoke.py` 의 `SAMPLES` 와 `helm/observability/tests/fluent-bit/metric-filter-samples.jsonl` 에
+  새 코드와 배치 형식 `telemetry_commit_failed`(§2 표 아래 설명 — WARN 머리말 다음 예외 줄)를 더한다. 배포 전 `scripts/observability-metric-filter-check.mjs --aws` 로
+  TestMetricFilter 를 확인한다(`docs/runbooks/dev-observability.md` 「로그 손실 경계와 회귀 검증」).
+- dev 켜기: 부하 비교 때 `helm/dev/workloads/telemetry-ingest.yaml` 의 `env` 에 `PULSEMETRY_TELEMETRY_KAFKA_CONSUMER_BATCH_ENABLED: "true"` 를 둔다.
+  infra 머지 → `Dev CDK Deploy` 게시 → Argo sync 로 반영된다. 수동 helm 은 Argo 가 되돌린다.
+- 스크립트를 더하거나 지우거나 호출 경로를 바꾸면(예: 넘김 목록 재적재 도구를 infra 에 둘 때) 같은 PR 에서 `scripts/README.md` 를 고친다.
+  지울 때는 CI·npm·import·Dockerfile·Terraform·Helm·수동 런북 순으로 참조를 대조한다. 기존 스크립트의 표본만 늘리면 인덱스는 그대로다.
 
 ## 2. 로그 이벤트
 
