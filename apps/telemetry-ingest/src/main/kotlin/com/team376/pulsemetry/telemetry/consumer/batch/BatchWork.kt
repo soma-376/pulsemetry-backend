@@ -73,7 +73,7 @@ class BatchRecord(val index: Int, val record: ConsumerRecord<ByteArray, ByteArra
 	/** 이번 호출의 경계로 거른 문서별 적재 결과 — ledger 행이 옮긴다. */
 	var loadedParts: List<LoadedPart> = emptyList()
 
-	/** 일부 행이 쓰였을 가능성이 있다 — 결함이 확인되면 팀 결정 3번을 적용한다. */
+	/** 일부 행이 쓰였을 가능성이 있다(어느 테이블이든 조각 하나라도 성공) — 결함이 확인되면 팀 결정 3번을 적용한다. */
 	var partiallyWritten: Boolean = false
 
 	/** 적재 또는 거부 뒤 써야 할 ledger 행. 운영 기록이 꺼져 있으면 비어 있다. */

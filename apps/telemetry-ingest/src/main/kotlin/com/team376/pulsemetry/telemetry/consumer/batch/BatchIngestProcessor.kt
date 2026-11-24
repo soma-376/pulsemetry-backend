@@ -379,7 +379,9 @@ class BatchIngestProcessor(
 			val record = piece.owner
 			val sent = (write.sent[record] ?: 0) + 1
 			write.sent[record] = sent
-			if (sent >= (write.total[record] ?: 1)) record.tablesDone += write.sink.table else record.partiallyWritten = true
+			// 한 조각이라도 저장되면 그 원본은 일부 반영됐다 — 다른 테이블에서 결함이 나도 팀 결정 3번을 따른다.
+			record.partiallyWritten = true
+			if (sent >= (write.total[record] ?: 1)) record.tablesDone += write.sink.table
 		}
 	}
 
