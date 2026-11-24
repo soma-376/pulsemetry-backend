@@ -1,0 +1,579 @@
+package com.team376.pulsemetry.telemetry.consumer.batch
+
+import com.sun.net.httpserver.HttpServer
+import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
+import com.team376.pulsemetry.persistence.enrollment.repository.TeamMembershipRepository
+import com.team376.pulsemetry.persistence.telemetry.AnalysisWriteBoundary
+import com.team376.pulsemetry.persistence.telemetry.ClickHouseHttpClient
+import com.team376.pulsemetry.persistence.telemetry.ClickHouseSchemaMigrator
+import com.team376.pulsemetry.persistence.telemetry.IngestLedgerSink
+import com.team376.pulsemetry.persistence.telemetry.TelemetryEventsSink
+import com.team376.pulsemetry.persistence.telemetry.TelemetryMetricPointsSink
+import com.team376.pulsemetry.persistence.telemetryops.SummaryOrigin
+import com.team376.pulsemetry.persistence.telemetryops.TenantIngestSummaryStore
+import com.team376.pulsemetry.telemetry.adapter.observation.ObservationNormalizer
+import com.team376.pulsemetry.telemetry.adapter.observation.ObservationPipeline
+import com.team376.pulsemetry.telemetry.adapter.observation.claudecode.ClaudeCodeProfile
+import com.team376.pulsemetry.telemetry.adapter.observation.profile.ProfileRegistry
+import com.team376.pulsemetry.telemetry.collector.OtlpIngestProcessor
+import com.team376.pulsemetry.telemetry.collector.Signal
+import com.team376.pulsemetry.telemetry.collector.SignalConsumer
+import com.team376.pulsemetry.telemetry.collector.archive.ArchiveWriter
+import com.team376.pulsemetry.telemetry.collector.archive.ArchivedObject
+import com.team376.pulsemetry.telemetry.collector.archive.Product
+import com.team376.pulsemetry.telemetry.config.TelemetryIngestProperties.Batch.PartialDefectPolicy
+import com.team376.pulsemetry.telemetry.config.TelemetryIngestProperties.Batch.SingleRecordFailurePolicy
+import com.team376.pulsemetry.telemetry.credential.AuthorizedTelemetryCredential
+import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
+import com.team376.pulsemetry.telemetry.enricher.observation.ObservationEnricher
+import com.team376.pulsemetry.telemetry.enricher.provider.AiAnalysisProvider
+import com.team376.pulsemetry.telemetry.enricher.provider.GithubProvider
+import com.team376.pulsemetry.telemetry.enricher.provider.JiraProvider
+import com.team376.pulsemetry.telemetry.ingress.AcceptedTelemetry
+import com.team376.pulsemetry.telemetry.ingress.GatewayAuthContext
+import com.team376.pulsemetry.telemetry.ingress.RawOtlpPayload
+import com.team376.pulsemetry.telemetry.ingress.TelemetryEnvelopeCodec
+import com.team376.pulsemetry.telemetry.otlp.OtlpMediaType
+import com.team376.pulsemetry.telemetry.otlp.OtlpSignal
+import com.team376.pulsemetry.telemetry.pipeline.ClickHouseSchema
+import com.team376.pulsemetry.telemetry.pipeline.IngestOperationsRecorder
+import com.team376.pulsemetry.telemetry.pipeline.IngestStages
+import com.team376.pulsemetry.telemetry.pipeline.RetentionBoundaries
+import io.opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest
+import io.opentelemetry.proto.common.v1.AnyValue
+import io.opentelemetry.proto.common.v1.KeyValue
+import io.opentelemetry.proto.logs.v1.ResourceLogs
+import org.apache.kafka.clients.consumer.Consumer
+import org.apache.kafka.clients.consumer.ConsumerRecord
+import org.apache.kafka.clients.consumer.ConsumerRecords
+import org.apache.kafka.common.TopicPartition
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.catchThrowable
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.Test
+import org.mockito.ArgumentMatchers
+import org.mockito.BDDMockito.given
+import org.mockito.BDDMockito.willThrow
+import org.mockito.Mockito.mock
+import org.mockito.Mockito.times
+import org.mockito.Mockito.verify
+import tools.jackson.databind.json.JsonMapper
+import java.net.InetSocketAddress
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
+import java.time.Duration
+import java.time.Instant
+import java.util.Collections
+import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * Kafka 배치 경로(PROJ-341)의 묶음·이분할·재시도·S3 넘김·차단기를 고정한다.
+ *
+ * ClickHouse 대신 본문을 보고 상태·오류 코드를 고르는 스텁 서버를 쓰고, 인가·요약 저장은 대역이다. 실제 Kafka·Spring 오류 처리기를 거친
+ * 동작은 `BatchKafkaConsumerTest` 가 본다. 여기서는 리스너를 직접 불러 Spring 의 배치 fallback 이 같은 메모리 배치를 다시 부르는 상황을 흉내 낸다.
+ */
+class BatchIngestProcessorTest {
+
+	private lateinit var server: HttpServer
+
+	/** 성공한 INSERT 의 (테이블, 줄 수). */
+	private val inserted: MutableList<Pair<String, List<String>>> = Collections.synchronizedList(mutableListOf())
+
+	/** 분석 테이블 INSERT 시도 수(성공·실패 모두). */
+	private val analysisAttempts = AtomicInteger()
+	private val selects = AtomicInteger()
+
+	/** 본문을 보고 실패를 고른다. null 이면 성공. */
+	@Volatile
+	private var failWith: (table: String, body: String) -> StubFailure? = { _, _ -> null }
+
+	@Volatile
+	private var selectFails = false
+
+	private val archive = MemoryArchive()
+	private val handoffs: MutableMap<String, ByteArray> = Collections.synchronizedMap(linkedMapOf())
+
+	@Volatile
+	private var handoffFails = false
+
+	private val summaries: TenantIngestSummaryStore = mock(TenantIngestSummaryStore::class.java)
+	private val authorizer: TelemetryCredentialAuthorizer = mock(TelemetryCredentialAuthorizer::class.java)
+	private val state = BatchDeliveryState()
+	private val executor = Executors.newVirtualThreadPerTaskExecutor()
+	@Suppress("UNCHECKED_CAST")
+	private val consumer: Consumer<ByteArray, ByteArray> = mock(Consumer::class.java) as Consumer<ByteArray, ByteArray>
+
+	data class StubFailure(val status: Int, val code: Int?, val message: String = "simulated")
+
+	@BeforeEach
+	fun start() {
+		server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+		server.createContext("/") { exchange ->
+			val query = exchange.requestURI.rawQuery.split('&').first { it.startsWith("query=") }.removePrefix("query=")
+				.let { URLDecoder.decode(it, StandardCharsets.UTF_8) }
+			val body = exchange.requestBody.readBytes().toString(Charsets.UTF_8)
+			val table = Regex("""^INSERT INTO (\S+)""").find(query)?.groupValues?.get(1)
+			val failure = when {
+				query.startsWith("SELECT 1") -> {
+					selects.incrementAndGet()
+					if (selectFails) StubFailure(503, null) else null
+				}
+				table != null -> {
+					if (table != LEDGER) analysisAttempts.incrementAndGet()
+					failWith(table, body)
+				}
+				else -> null
+			}
+			if (failure == null) {
+				if (table != null) inserted += table to body.lines().filter { it.isNotEmpty() }
+				val response = if (query.startsWith("SELECT 1")) "1\n" else ""
+				exchange.sendResponseHeaders(200, response.length.toLong().takeIf { it > 0 } ?: -1)
+				if (response.isNotEmpty()) exchange.responseBody.use { it.write(response.toByteArray()) }
+			} else {
+				failure.code?.let { exchange.responseHeaders.add("X-ClickHouse-Exception-Code", it.toString()) }
+				val bytes = "Code: ${failure.code}. DB::Exception: ${failure.message}".toByteArray()
+				exchange.sendResponseHeaders(failure.status, bytes.size.toLong())
+				exchange.responseBody.use { it.write(bytes) }
+			}
+			exchange.close()
+		}
+		server.start()
+		given(authorizer.authorize(anything(), anything())).willAnswer { invocation ->
+			val auth = invocation.getArgument<GatewayAuthContext>(0)
+			AuthorizedTelemetryCredential(auth.credentialId, auth.tenantId, auth.installationId, UUID.randomUUID())
+		}
+	}
+
+	@AfterEach
+	fun stop() {
+		server.stop(0)
+		executor.close()
+	}
+
+	// --- 정상 ---
+
+	@Test
+	@DisplayName("고객 1명의 20건은 분석 INSERT 1회·ledger 1회·요약 1회로 끝나고 완료 표시가 남는다")
+	fun oneTenantBatch() {
+		val tenant = UUID.randomUUID()
+		val records = batch((0 until 20).map { record(tenant) })
+
+		listener().onMessage(records, null, consumer)
+
+		assertThat(analysisAttempts.get()).isEqualTo(1)
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(20)
+		assertThat(inserted.count { it.first == LEDGER }).isEqualTo(1)
+		verify(summaries, times(1)).record(anything<UUID>(), anything<SummaryOrigin>(), anything<Instant>(), anything<Instant>(), anything<Instant?>())
+		assertThat(state.takeCompleted(records)).isTrue()
+		assertThat(archive.puts.get()).isEqualTo(20)
+	}
+
+	@Test
+	@DisplayName("고객 3명이 섞이면 분석 INSERT 는 고객 수만큼, ledger 는 한 번이다")
+	fun insertsPerTenant() {
+		val tenants = List(3) { UUID.randomUUID() }
+		val records = batch((0 until 12).map { record(tenants[it % 3]) })
+
+		listener().onMessage(records, null, consumer)
+
+		assertThat(analysisAttempts.get()).isEqualTo(3)
+		assertThat(inserted.count { it.first == LEDGER }).isEqualTo(1)
+		verify(summaries, times(3)).record(anything<UUID>(), anything<SummaryOrigin>(), anything<Instant>(), anything<Instant>(), anything<Instant?>())
+	}
+
+	// --- 입력 결함 ---
+
+	@Test
+	@DisplayName("100건 중 137번 한 건만 입력 결함(코드 27)이면 최대 15회로 격리하고 정상 99건을 모두 저장한다")
+	fun bisectsOneDefect() {
+		val tenant = UUID.randomUUID()
+		failWith = { table, body -> if (table == TelemetryEventsSink.TABLE && POISON in body) StubFailure(400, 27) else null }
+		val records = batch((0 until 100).map { record(tenant, poison = it == 36) }, firstOffset = 101)
+
+		listener().onMessage(records, null, consumer)
+
+		assertThat(analysisAttempts.get()).isLessThanOrEqualTo(15)
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(99).noneMatch { POISON in it }
+		val ledger = rows(LEDGER)
+		assertThat(ledger).hasSize(100)
+		assertThat(ledger.count { """"rejected_count":1""" in it && """"record_count":1""" in it }).isGreaterThanOrEqualTo(1)
+		assertThat(state.takeCompleted(records)).isTrue()
+		assertThat(handoffs).isEmpty()
+	}
+
+	@Test
+	@DisplayName("HTTP 500 으로 오는 입력 결함(코드 131)도 코드로 판정해 이분할한다")
+	fun bisectsServerStatusDefect() {
+		val tenant = UUID.randomUUID()
+		failWith = { table, body -> if (table == TelemetryEventsSink.TABLE && POISON in body) StubFailure(500, 131) else null }
+		val records = batch((0 until 8).map { record(tenant, poison = it == 0 || it == 7) })
+
+		listener().onMessage(records, null, consumer)
+
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(6)
+		assertThat(state.takeCompleted(records)).isTrue()
+	}
+
+	@Test
+	@DisplayName("허용 목록 밖 4xx 는 레코드 결함으로 단정하지 않고 공통 장애로 재시도한다")
+	fun unlistedClientErrorIsCommon() {
+		failWith = { table, _ -> if (table == TelemetryEventsSink.TABLE) StubFailure(404, 60) else null }
+		val records = batch((0 until 4).map { record(UUID.randomUUID()) })
+
+		val thrown = catchThrowable { listener().onMessage(records, null, consumer) }
+
+		assertThat(thrown).isInstanceOf(ClickHouseBatchFailure::class.java)
+		assertThat(rows(LEDGER)).isEmpty()
+		assertThat(state.takeDelay(-1)).isEqualTo(1_000)
+	}
+
+	// --- ClickHouse 장애 · 넘김 · 차단기 ---
+
+	@Test
+	@DisplayName("ClickHouse 장애는 1·5·30초를 기다린 뒤 넷째 실패에서 S3 넘김 목록을 쓰고 확정한다 — 개별 거부 0건")
+	fun clickHouseOutageHandsOff() {
+		failWith = { table, _ -> if (table != null) StubFailure(503, null) else null }
+		selectFails = true
+		val tenant = UUID.randomUUID()
+		val records = batch((0 until 10).map { record(tenant) }, firstOffset = 51)
+		val listener = listener()
+
+		val delays = (1..3).map {
+			assertThat(catchThrowable { listener.onMessage(records, null, consumer) }).isInstanceOf(ClickHouseBatchFailure::class.java)
+			state.takeDelay(-1)
+		}
+		listener.onMessage(records, null, consumer)
+
+		assertThat(delays).containsExactly(1_000L, 5_000L, 30_000L)
+		assertThat(state.takeCompleted(records)).isTrue()
+		assertThat(archive.puts.get()).describedAs("성공한 PUT 은 재호출에서 다시 하지 않는다").isEqualTo(10)
+		val (key, body) = handoffs.entries.single()
+		assertThat(key).isEqualTo("handoff/$GROUP/$TOPIC/p0-51-60.json")
+		val document = JsonMapper.builder().build().readTree(body)
+		assertThat(document["records"].size()).isEqualTo(10)
+		val first = document["records"][0]
+		assertThat(first["kafka"]["offset"].asLong()).isEqualTo(51)
+		assertThat(first["receipt"]["receivedAt"].asString()).isEqualTo(ACCEPTED_AT.toString())
+		assertThat(first["documents"][0]["uri"].asString()).startsWith("mem://")
+		assertThat(document["reason"]["trigger"].asString()).isEqualTo("budget_exhausted")
+		assertThat(rows(LEDGER)).isEmpty()
+	}
+
+	@Test
+	@DisplayName("열린 차단기는 ClickHouse 쓰기 없이 넘기고, 탐침 차례에 SELECT 1 과 첫 쓰기가 성공하면 닫는다")
+	fun breakerSkipsClickHouseUntilProbe() {
+		failWith = { table, _ -> if (table != null) StubFailure(503, null) else null }
+		selectFails = true
+		val listener = listener(settings(probeInterval = Duration.ofHours(1)))
+		val first = batch((0 until 3).map { record(UUID.randomUUID()) })
+		repeat(3) { catchThrowable { listener.onMessage(first, null, consumer) } }
+		listener.onMessage(first, null, consumer)
+		val attemptsWhenOpened = analysisAttempts.get()
+
+		val second = batch((0 until 3).map { record(UUID.randomUUID()) }, firstOffset = 10)
+		listener.onMessage(second, null, consumer)
+
+		assertThat(analysisAttempts.get()).describedAs("열린 동안 ClickHouse 쓰기 0회").isEqualTo(attemptsWhenOpened)
+		assertThat(handoffs).hasSize(2)
+		assertThat(state.takeCompleted(second)).isTrue()
+
+		val probing = listener(settings(probeInterval = Duration.ofNanos(1)))
+		failWith = { _, _ -> null }
+		selectFails = false
+		val third = batch((0 until 3).map { record(UUID.randomUUID()) }, firstOffset = 20)
+		// 새 리스너의 소비 스레드 차단기는 닫혀 있으므로, 같은 처리기의 차단기를 직접 연다.
+		probing.processorForTest().breaker().open(HandoffReason("budget_exhausted", "insert", "x", null, null), "test")
+		Thread.sleep(5)
+		probing.onMessage(third, null, consumer)
+
+		assertThat(probing.processorForTest().breaker().isOpen).isFalse()
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(3)
+	}
+
+	@Test
+	@DisplayName("넘김 목록 쓰기가 실패하면 넘기지 않고 기다린다 — 커밋 0건")
+	fun handoffWriteFailureWaits() {
+		failWith = { table, _ -> if (table != null) StubFailure(503, null) else null }
+		selectFails = true
+		handoffFails = true
+		val records = batch((0 until 2).map { record(UUID.randomUUID()) })
+		val listener = listener()
+		repeat(3) { catchThrowable { listener.onMessage(records, null, consumer) } }
+
+		val thrown = catchThrowable { listener.onMessage(records, null, consumer) }
+
+		assertThat(thrown).isInstanceOf(DependencyBatchFailure::class.java)
+		assertThat((thrown as BatchIncompleteException).stage).isEqualTo("handoff")
+		assertThat(state.takeCompleted(records)).isFalse()
+		assertThat(handoffs).isEmpty()
+	}
+
+	// --- 넘길 수 없는 장애 ---
+
+	@Test
+	@DisplayName("S3 장애는 넘기지 않고 1·5·30초 뒤 긴 대기다. 복구되면 실패했던 PUT 만 다시 하고 끝낸다")
+	fun archiveOutageWaits() {
+		archive.failing = { it % 2 == 1 }
+		val tenant = UUID.randomUUID()
+		val records = batch((0 until 6).map { record(tenant) })
+		val listener = listener()
+
+		val delays = (1..4).map {
+			assertThat(catchThrowable { listener.onMessage(records, null, consumer) }).isInstanceOf(DependencyBatchFailure::class.java)
+			// 첫 호출은 홀수 번째 PUT 만 실패하고, 그 뒤로는 모두 실패한다.
+			archive.failing = { true }
+			state.takeDelay(-1)
+		}
+		archive.failing = { false }
+		listener.onMessage(records, null, consumer)
+
+		assertThat(delays).containsExactly(1_000L, 5_000L, 30_000L, Duration.ofMinutes(5).toMillis())
+		assertThat(handoffs).isEmpty()
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(6)
+		assertThat(archive.succeeded.get()).describedAs("성공한 문서는 한 번만 PUT 한다").isEqualTo(6)
+	}
+
+	@Test
+	@DisplayName("인증 DB 장애는 넘기지 않고 기다린다")
+	fun authorizationOutageWaits() {
+		willThrow(IllegalStateException("rds down")).given(authorizer).authorize(anything(), anything())
+		val records = batch(listOf(record(UUID.randomUUID())))
+
+		val thrown = catchThrowable { listener().onMessage(records, null, consumer) }
+
+		assertThat(thrown).isInstanceOf(DependencyBatchFailure::class.java)
+		assertThat((thrown as BatchIncompleteException).stage).isEqualTo("authorize")
+		assertThat(archive.puts.get()).isZero()
+	}
+
+	// --- 한 건 반복 실패 · 메모리 진단 ---
+
+	@Test
+	@DisplayName("다른 조각은 저장되는데 한 레코드만 반복 실패하면 그 한 건만 넘기고 나머지를 끝낸다(팀 결정 4번 기본값)")
+	fun singleRecordFailureHandsOffOnlyThatRecord() {
+		val tenant = UUID.randomUUID()
+		failWith = { table, body -> if (table == TelemetryEventsSink.TABLE && POISON in body) StubFailure(503, null) else null }
+		// 상한을 작게 둬 레코드마다 INSERT 하나가 되게 한다.
+		val listener = listener(settings(maxInsertBytes = 1024))
+		val records = batch((0 until 5).map { record(tenant, poison = it == 2) })
+
+		repeat(3) { assertThat(catchThrowable { listener.onMessage(records, null, consumer) }).isInstanceOf(ClickHouseBatchFailure::class.java) }
+		listener.onMessage(records, null, consumer)
+
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(4)
+		val document = JsonMapper.builder().build().readTree(handoffs.values.single())
+		assertThat(document["records"].size()).isEqualTo(1)
+		assertThat(document["records"][0]["kafka"]["offset"].asLong()).isEqualTo(2)
+		assertThat(listener.processorForTest().breaker().isOpen).describedAs("한 건 문제로 차단기를 열지 않는다").isFalse()
+		assertThat(rows(LEDGER)).hasSize(4)
+	}
+
+	@Test
+	@DisplayName("한 건 반복 실패 정책이 보류면 넘기지 않고 긴 대기다")
+	fun singleRecordFailureHeld() {
+		val tenant = UUID.randomUUID()
+		failWith = { table, body -> if (table == TelemetryEventsSink.TABLE && POISON in body) StubFailure(503, null) else null }
+		val listener = listener(settings(maxInsertBytes = 1024, singleRecord = SingleRecordFailurePolicy.HOLD))
+		val records = batch((0 until 3).map { record(tenant, poison = it == 1) })
+		repeat(3) { catchThrowable { listener.onMessage(records, null, consumer) } }
+
+		val thrown = catchThrowable { listener.onMessage(records, null, consumer) }
+
+		assertThat(thrown).isInstanceOf(HeldBatchFailure::class.java)
+		assertThat(state.takeDelay(-1)).isEqualTo(Duration.ofMinutes(5).toMillis())
+		assertThat(handoffs).isEmpty()
+		assertThat(state.takeCompleted(records)).isFalse()
+	}
+
+	@Test
+	@DisplayName("큰 쓰기만 메모리 한도(241)로 실패하면 넷째 호출에서 작은 직렬 쓰기로 복구한다 — 넘김 0건")
+	fun memoryLimitDiagnosisRecovers() {
+		val tenant = UUID.randomUUID()
+		failWith = { table, body ->
+			if (table == TelemetryEventsSink.TABLE && body.lines().count { it.isNotEmpty() } > 4) StubFailure(500, 241, "Memory limit (for query) exceeded") else null
+		}
+		val listener = listener()
+		val records = batch((0 until 16).map { record(tenant) })
+
+		repeat(3) { assertThat(catchThrowable { listener.onMessage(records, null, consumer) }).isInstanceOf(ClickHouseBatchFailure::class.java) }
+		listener.onMessage(records, null, consumer)
+
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(16)
+		assertThat(handoffs).isEmpty()
+		assertThat(listener.processorForTest().breaker().isOpen).isFalse()
+	}
+
+	@Test
+	@DisplayName("작은 조각들도 같은 메모리 오류를 내면 공통 장애로 차단기를 열고 넘긴다")
+	fun memoryLimitEverywhereOpensBreaker() {
+		failWith = { table, _ -> if (table == TelemetryEventsSink.TABLE) StubFailure(500, 241, "Memory limit (total) exceeded") else null }
+		val listener = listener()
+		val tenant = UUID.randomUUID()
+		val records = batch((0 until 8).map { record(tenant) })
+
+		repeat(3) { catchThrowable { listener.onMessage(records, null, consumer) } }
+		listener.onMessage(records, null, consumer)
+
+		assertThat(listener.processorForTest().breaker().isOpen).isTrue()
+		val document = JsonMapper.builder().build().readTree(handoffs.values.single())
+		assertThat(document["records"].size()).isEqualTo(8)
+		assertThat(document["reason"]["memoryScope"].asString()).isEqualTo("total")
+	}
+
+	// --- 마감 ---
+
+	@Test
+	@DisplayName("마감에 닿아도 진척이 있으면 장애 횟수를 늘리지 않고 짧게 기다린다")
+	fun deadlineWithProgress() {
+		val listener = listener(settings(callDeadline = Duration.ofSeconds(2), minRemaining = Duration.ofMillis(1990)))
+		archive.delay = Duration.ofMillis(30)
+		val records = batch((0 until 3).map { record(UUID.randomUUID()) })
+
+		val thrown = catchThrowable { listener.onMessage(records, null, consumer) }
+
+		assertThat(thrown).isInstanceOf(BatchDeadlineReached::class.java)
+		assertThat((thrown as BatchDeadlineReached).progressed).isTrue()
+		assertThat(state.takeDelay(-1)).isEqualTo(200)
+	}
+
+	// --- 시험 도구 ---
+
+	private fun settings(
+		maxInsertBytes: Long = 10_000_000,
+		probeInterval: Duration = Duration.ofMinutes(5),
+		singleRecord: SingleRecordFailurePolicy = SingleRecordFailurePolicy.HANDOFF,
+		callDeadline: Duration = Duration.ofSeconds(60),
+		minRemaining: Duration = Duration.ofSeconds(1),
+	) = BatchSettings(
+		topic = TOPIC,
+		consumerGroup = GROUP,
+		retryIntervals = listOf(Duration.ofSeconds(1), Duration.ofSeconds(5), Duration.ofSeconds(30)),
+		maxInsertBytes = maxInsertBytes,
+		archiveConcurrency = 4,
+		callDeadline = callDeadline,
+		minRemainingToStart = minRemaining,
+		progressInterval = Duration.ofMillis(200),
+		longWait = Duration.ofMinutes(5),
+		breakerProbeInterval = probeInterval,
+		probeTimeout = Duration.ofSeconds(2),
+		maxDiagnosticWrites = 32,
+		partialDefect = PartialDefectPolicy.REJECT,
+		singleRecordFailure = singleRecord,
+	)
+
+	private val processors = mutableMapOf<TelemetryBatchListener, BatchIngestProcessor>()
+
+	private fun TelemetryBatchListener.processorForTest(): BatchIngestProcessor = processors.getValue(this)
+
+	private fun listener(settings: BatchSettings = settings()): TelemetryBatchListener {
+		val client = ClickHouseHttpClient("http://127.0.0.1:${server.address.port}")
+		val schema = ClickHouseSchema(ClickHouseSchemaMigrator(client), startupAttempts = 1, startupBackoff = Duration.ZERO).also { it.afterPropertiesSet() }
+		val enricher = ObservationEnricher(
+			mock(InstallationRepository::class.java),
+			mock(TeamMembershipRepository::class.java),
+			listOf(GithubProvider(), JiraProvider(), AiAnalysisProvider()),
+		)
+		val stages = IngestStages(ObservationPipeline(ObservationNormalizer(ProfileRegistry(listOf(ClaudeCodeProfile))))::run, enricher)
+		val processor = BatchIngestProcessor(
+			authorizer = authorizer,
+			preparer = OtlpIngestProcessor(archive, SignalConsumer { _, _, _ -> error("배치 경로는 다음 단계를 직접 부르지 않는다") }),
+			archive = archive,
+			stages = stages,
+			schema = schema,
+			boundaries = RetentionBoundaries { AnalysisWriteBoundary(it, deletedBefore = null, policyEpoch = 0) },
+			events = TelemetryEventsSink(client),
+			metricPoints = TelemetryMetricPointsSink(client),
+			operations = IngestOperationsRecorder(IngestLedgerSink(client), summaries),
+			handoffs = HandoffListWriter { key, body ->
+				if (handoffFails) error("s3 down")
+				handoffs[key] = body
+				"mem://$key"
+			},
+			probe = { client.execute("SELECT 1", operation = "select", requestTimeout = Duration.ofSeconds(2)) },
+			settings = settings,
+			archiveExecutor = executor,
+		)
+		return TelemetryBatchListener(processor, state, settings).also { processors[it] = processor }
+	}
+
+	/** Mockito 의 `any()` 는 null 을 돌려줘 Kotlin 의 non-null 매개변수 검사에 걸린다 — matcher 만 등록한다. */
+	@Suppress("UNCHECKED_CAST")
+	private fun <T> anything(): T {
+		ArgumentMatchers.any<T>()
+		return null as T
+	}
+
+	private fun rows(table: String): List<String> = synchronized(inserted) { inserted.filter { it.first == table }.flatMap { it.second } }
+
+	private fun record(tenant: UUID, poison: Boolean = false): AcceptedTelemetry = AcceptedTelemetry(
+		messageId = UUID.randomUUID(),
+		acceptedAt = ACCEPTED_AT,
+		auth = GatewayAuthContext(
+			credentialId = UUID.randomUUID(),
+			tenantId = tenant,
+			installationId = UUID.randomUUID(),
+			issuer = "pulsemetry-enrollment",
+			keyId = "k1",
+			issuedAt = ACCEPTED_AT.minusSeconds(60),
+			expiresAt = ACCEPTED_AT.plusSeconds(3600),
+		),
+		payload = RawOtlpPayload(OtlpSignal.LOGS, OtlpMediaType.PROTOBUF, "", logs(if (poison) POISON else "s-${UUID.randomUUID()}").toByteArray()),
+	)
+
+	private fun batch(messages: List<AcceptedTelemetry>, firstOffset: Long = 0): ConsumerRecords<ByteArray, ByteArray> {
+		val partition = TopicPartition(TOPIC, 0)
+		val records = messages.mapIndexed { index, message ->
+			ConsumerRecord(TOPIC, 0, firstOffset + index, "k".toByteArray(), TelemetryEnvelopeCodec.encode(message))
+		}
+		return ConsumerRecords(mapOf(partition to records), emptyMap())
+	}
+
+	private fun logs(session: String): ExportLogsServiceRequest = ExportLogsServiceRequest.newBuilder()
+		.addResourceLogs(
+			ResourceLogs.newBuilder().apply {
+				resourceBuilder.addAttributes(attribute("service.name", "claude-code")).addAttributes(attribute("service.version", "2.1.282"))
+				addScopeLogsBuilder().addLogRecordsBuilder().apply {
+					val now = Instant.now()
+					timeUnixNano = now.epochSecond * 1_000_000_000L + now.nano
+					bodyBuilder.stringValue = "claude_code.api_request"
+					addAttributes(attribute("event.name", "api_request"))
+					addAttributes(attribute("session.id", session))
+				}
+			},
+		)
+		.build()
+
+	private fun attribute(key: String, value: String): KeyValue = KeyValue.newBuilder().setKey(key).setValue(AnyValue.newBuilder().setStringValue(value)).build()
+
+	/** 문서마다 PUT 을 세는 메모리 아카이브. [failing] 은 PUT 순번(0부터)을 받아 실패를 고른다. */
+	private class MemoryArchive : ArchiveWriter {
+		val puts = AtomicInteger()
+		val succeeded = AtomicInteger()
+
+		@Volatile
+		var failing: (Int) -> Boolean = { false }
+
+		@Volatile
+		var delay: Duration = Duration.ZERO
+
+		override fun write(product: Product, signal: Signal, body: ByteArray): ArchivedObject {
+			val n = puts.getAndIncrement()
+			if (!delay.isZero) Thread.sleep(delay.toMillis())
+			if (failing(n)) throw IllegalStateException("s3 put failed")
+			succeeded.incrementAndGet()
+			return ArchivedObject("mem://raw/${product.archiveSegment}/${signal.name.lowercase()}/$n.json")
+		}
+	}
+
+	private companion object {
+		const val TOPIC = "pulsemetry-test-telemetry-ingress"
+		const val GROUP = "pulsemetry-test-telemetry-ingest"
+		const val POISON = "s-poison"
+		const val LEDGER = "telemetry_ingest_ledger"
+		val ACCEPTED_AT: Instant = Instant.parse("2026-11-20T06:30:00.123456789Z")
+	}
+}

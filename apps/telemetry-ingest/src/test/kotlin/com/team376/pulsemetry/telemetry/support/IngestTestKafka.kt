@@ -60,12 +60,22 @@ object IngestTestKafka {
 	}
 
 	/** 다른 컨텍스트용 topic. 이미 있으면 그대로 둔다. */
-	fun createTopic(topic: String) {
+	fun createTopic(topic: String, partitions: Int = 1) {
 		admin().use { admin ->
 			if (topic !in admin.listTopics().names().get()) {
-				admin.createTopics(listOf(NewTopic(topic, 1, 1.toShort()))).all().get()
+				admin.createTopics(listOf(NewTopic(topic, partitions, 1.toShort()))).all().get()
 			}
 		}
+	}
+
+	/** [topic] 에 envelope 를 발행한다 — 배치 모드 컨텍스트처럼 기본과 다른 topic 을 쓰는 테스트용. */
+	fun publishTo(topic: String, message: AcceptedTelemetry): RecordMetadata =
+		producer.send(ProducerRecord(topic, TelemetryRecordKey.of(message.auth.tenantId, message.auth.installationId), TelemetryEnvelopeCodec.encode(message)))
+			.get(10, TimeUnit.SECONDS)
+
+	/** [group] 이 [topic] 의 그 partition 에 확정한 다음 offset. 없으면 -1. */
+	fun committed(group: String, topic: String, partition: Int): Long = admin().use { admin ->
+		admin.listConsumerGroupOffsets(group).partitionsToOffsetAndMetadata().get(10, TimeUnit.SECONDS)[TopicPartition(topic, partition)]?.offset() ?: -1
 	}
 
 	private fun admin(bootstrap: String = container.bootstrapServers): AdminClient =
