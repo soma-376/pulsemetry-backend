@@ -42,6 +42,10 @@ public enum class PipelineStage(public val label: String) {
     ENRICH("enrich"), RETENTION("retention"), INSERT("insert"), OPS("ops"),
     /** S3 넘김 목록 쓰기(PROJ-341). */
     HANDOFF("handoff"),
+    /** 배치 소비 호출 하나의 자격 묶음 조회와 판정(PROJ-345 · ADR 0084). 호출당 한 번 잰다 — 레코드 단위 [AUTHORIZE] 와 섞지 않는다. */
+    AUTHORIZE_BATCH("authorize_batch"),
+    /** 배치 소비 호출 하나의 보강(구성원·소속 묶음 조회 포함, PROJ-345 · ADR 0084). 호출당 한 번 잰다 — 레코드 단위 [ENRICH] 와 섞지 않는다. */
+    ENRICH_BATCH("enrich_batch"),
 }
 
 /** value는 timer의 경우 초, bytes는 byte, counter/gauge는 개수다. gauge만 음수 증감을 허용한다. */
