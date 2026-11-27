@@ -37,6 +37,8 @@ import com.team376.pulsemetry.telemetry.ingress.AcceptedTelemetry
 import com.team376.pulsemetry.telemetry.ingress.GatewayAuthContext
 import com.team376.pulsemetry.telemetry.ingress.RawOtlpPayload
 import com.team376.pulsemetry.telemetry.ingress.TelemetryEnvelopeCodec
+import com.team376.pulsemetry.telemetry.observability.TelemetryMetric
+import com.team376.pulsemetry.telemetry.observability.TelemetryObserver
 import com.team376.pulsemetry.telemetry.otlp.OtlpMediaType
 import com.team376.pulsemetry.telemetry.otlp.OtlpSignal
 import com.team376.pulsemetry.telemetry.pipeline.ClickHouseSchema
@@ -645,7 +647,7 @@ class BatchIngestProcessorTest {
 	// --- 변환: 정규화는 레코드마다, 보강 조회는 호출마다(PROJ-345 · ADR 0084) ---
 
 	@Test
-	@DisplayName("보강의 구성원·소속 조회는 호출마다 묶음 한 번이다 — 단건 조회는 쓰지 않고, 재호출은 다시 읽는다")
+	@DisplayName("보강의 구성원·소속 조회는 호출마다 묶음 한 번이다 — 단건 조회는 쓰지 않고, 다음 배치 호출은 다시 읽는다")
 	fun enrichmentLooksUpOncePerCall() {
 		val tenant = UUID.randomUUID()
 		val records = batch((0 until 5).map { record(tenant) })
@@ -727,6 +729,76 @@ class BatchIngestProcessorTest {
 		verify(installations, never()).findMemberIdById(anything())
 	}
 
+	@Test
+	@DisplayName("보강 일시 장애 뒤 재호출이 성공하면 제외·사용량 계약 지표는 레코드마다 한 번이다 — 정규화 시간은 정규화할 때마다 잰다")
+	fun transientEnrichmentFailureCountsNormalizeStatsOnce() {
+		val observer = RecordingObserver()
+		val tenant = UUID.randomUUID()
+		val records = batch((0 until 3).map { record(tenant) })
+		val listener = listener(observer = observer)
+
+		for (failure in listOf(DataAccessResourceFailureException("rds down"), NonTransientDataAccessResourceException("rds gone"))) {
+			willThrow(failure).given(installations).findMemberIdsByIds(anyCollection())
+			assertThat(catchThrowable { listener.onMessage(records, null, consumer) }).isInstanceOf(DependencyBatchFailure::class.java)
+			state.takeDelay(-1)
+		}
+		// 변환이 남지 않은 호출은 제외·사용량 지표를 남기지 않는다.
+		assertThat(observer.of(TelemetryMetric.PIPELINE_EXCLUDED_OBSERVATIONS)).isEmpty()
+		assertThat(observer.of(TelemetryMetric.PIPELINE_USAGE_CONTRACT)).isEmpty()
+
+		willReturn(emptyList<InstallationMemberRow>()).given(installations).findMemberIdsByIds(anyCollection())
+		listener.onMessage(records, null, consumer)
+
+		assertThat(state.takeCompleted(records)).isTrue()
+		assertThat(observer.of(TelemetryMetric.PIPELINE_EXCLUDED_OBSERVATIONS, "reason" to "excluded_span")).hasSize(3)
+		assertThat(observer.of(TelemetryMetric.PIPELINE_EXCLUDED_OBSERVATIONS, "reason" to "source_time")).hasSize(3)
+		// 토큰 성분이 없는 api_request 라 레코드마다 incomplete 하나다.
+		assertThat(observer.of(TelemetryMetric.PIPELINE_USAGE_CONTRACT).map { it.value to it.tags })
+			.containsExactlyElementsOf(List(3) { 1.0 to mapOf("product" to "claude_code", "outcome" to "incomplete") })
+		assertThat(observer.stageOutcomes("normalize")).hasSize(9).containsOnly("success")
+		assertThat(observer.stageOutcomes("enrich_batch")).containsExactly("failure", "failure", "success")
+	}
+
+	// --- 계측 위치(ADR 0084 Decision 6) ---
+
+	@Test
+	@DisplayName("배치 한 호출은 authorize_batch·enrich_batch 를 한 번씩 재고 레코드 단위 authorize·enrich 는 재지 않는다 — normalize 는 레코드마다다")
+	fun batchStagesAreMeasuredOncePerCall() {
+		val observer = RecordingObserver()
+		val tenant = UUID.randomUUID()
+		val records = batch((0 until 5).map { record(tenant) })
+
+		listener(observer = observer).onMessage(records, null, consumer)
+
+		assertThat(state.takeCompleted(records)).isTrue()
+		assertThat(observer.stageOutcomes("authorize_batch")).containsExactly("success")
+		assertThat(observer.stageOutcomes("enrich_batch")).containsExactly("success")
+		assertThat(observer.stageOutcomes("authorize")).isEmpty()
+		assertThat(observer.stageOutcomes("enrich")).isEmpty()
+		assertThat(observer.stageOutcomes("normalize")).hasSize(5).containsOnly("success")
+	}
+
+	@Test
+	@DisplayName("묶음 보강이 비자원 영구 오류면 enrich_batch 실패 1회와, 대상 레코드마다 레코드 단위 enrich 가 남는다")
+	fun permanentEnrichmentFailureMeasuresPerRecordEnrich() {
+		val observer = RecordingObserver()
+		val tenant = UUID.randomUUID()
+		val messages = (0 until 4).map { record(tenant) }
+		willThrow(InvalidDataAccessResourceUsageException("column gone")).given(installations).findMemberIdsByIds(anyCollection())
+		willThrow(InvalidDataAccessResourceUsageException("column gone")).given(installations).findMemberIdById(messages[1].auth.installationId)
+		val records = batch(messages)
+
+		listener(observer = observer).onMessage(records, null, consumer)
+
+		assertThat(state.takeCompleted(records)).isTrue()
+		assertThat(observer.stageOutcomes("enrich_batch")).containsExactly("failure")
+		// 되돌림은 정규화한 레코드를 순서대로 하나씩 보강한다 — 둘째 레코드만 영구 오류다.
+		assertThat(observer.stageOutcomes("enrich")).containsExactly("success", "failure", "success", "success")
+		assertThat(observer.stageOutcomes("authorize_batch")).containsExactly("success")
+		assertThat(observer.stageOutcomes("authorize")).isEmpty()
+		assertThat(observer.stageOutcomes("normalize")).hasSize(4)
+	}
+
 	// --- 시험 도구 ---
 
 	private fun settings(
@@ -756,12 +828,12 @@ class BatchIngestProcessorTest {
 
 	private fun TelemetryBatchListener.processorForTest(): BatchIngestProcessor = processors.getValue(this)
 
-	private fun listener(settings: BatchSettings = settings()): TelemetryBatchListener {
+	private fun listener(settings: BatchSettings = settings(), observer: TelemetryObserver = TelemetryObserver.NONE): TelemetryBatchListener {
 		val client = ClickHouseHttpClient("http://127.0.0.1:${server.address.port}")
 		val schema = ClickHouseSchema(ClickHouseSchemaMigrator(client), startupAttempts = 1, startupBackoff = Duration.ZERO).also { it.afterPropertiesSet() }
 		val enricher = ObservationEnricher(installations, memberships, listOf(GithubProvider(), JiraProvider(), AiAnalysisProvider()))
 		val normalizer = ObservationPipeline(ObservationNormalizer(ProfileRegistry(listOf(ClaudeCodeProfile))))
-		val stages = IngestStages({ request, context -> if (normalizeFails(request)) error("unreadable") else normalizer.run(request, context) }, enricher)
+		val stages = IngestStages({ request, context -> if (normalizeFails(request)) error("unreadable") else normalizer.run(request, context) }, enricher, observer)
 		val processor = BatchIngestProcessor(
 			authorizer = authorizer,
 			preparer = OtlpIngestProcessor(archive, SignalConsumer { _, _, _ -> error("배치 경로는 다음 단계를 직접 부르지 않는다") }),
@@ -780,6 +852,7 @@ class BatchIngestProcessorTest {
 			probe = { client.execute("SELECT 1", operation = "select", requestTimeout = Duration.ofSeconds(2)) },
 			settings = settings,
 			archiveExecutor = executor,
+			observer = observer,
 		)
 		return TelemetryBatchListener(processor, state, settings).also { processors[it] = processor }
 	}
@@ -832,6 +905,25 @@ class BatchIngestProcessorTest {
 		.build()
 
 	private fun attribute(key: String, value: String): KeyValue = KeyValue.newBuilder().setKey(key).setValue(AnyValue.newBuilder().setStringValue(value)).build()
+
+	/** 기록한 지표를 순서대로 쌓는 observer — 변환·자격 단계의 계측 위치를 단언한다. */
+	private class RecordingObserver : TelemetryObserver {
+		data class Recorded(val metric: TelemetryMetric, val value: Double, val tags: Map<String, String>)
+
+		private val recorded: MutableList<Recorded> = Collections.synchronizedList(mutableListOf())
+
+		override fun record(metric: TelemetryMetric, value: Double, vararg tags: Pair<String, String>) {
+			recorded += Recorded(metric, value, tags.toMap())
+		}
+
+		/** [metric] 기록 중 [tags] 를 모두 가진 것, 기록 순서대로. */
+		fun of(metric: TelemetryMetric, vararg tags: Pair<String, String>): List<Recorded> = synchronized(recorded) {
+			recorded.filter { it.metric == metric && tags.all { (key, value) -> it.tags[key] == value } }
+		}
+
+		/** `stage` 라벨이 [stage] 인 단계 시간 기록의 outcome, 기록 순서대로. */
+		fun stageOutcomes(stage: String): List<String> = of(TelemetryMetric.PIPELINE_STAGE_DURATION, "stage" to stage).map { it.tags.getValue("outcome") }
+	}
 
 	/** 문서마다 PUT 을 세는 메모리 아카이브. [failing] 은 PUT 순번(0부터)을 받아 실패를 고른다. */
 	private class MemoryArchive : ArchiveWriter {
