@@ -40,6 +40,9 @@ import java.util.UUID
  * 캐시는 호출을 넘지 않는다 — 소속 변경은 다음 push 부터 반영되고, 이미 적재된 행은 재처리로 갱신된다.
  * `enrollment` 스키마는 읽기만 한다(허브 `contracts/data-model.md` D-2).
  *
+ * [enrichAll] 한 번은 Kafka 배치 소비 호출 하나다(ADR 0084). 구성원·소속을 보강 전에 IN 조회 두 번으로 미리 읽고, 그 호출의 push 들이
+ * 함께 쓴다. 이 캐시도 호출을 넘지 않는다. provider 문맥은 그대로 push 마다다([EnrichmentProvider.annotate]).
+ *
  * 오류 분류: 연결·트랜잭션 시작 실패·실행 중 끊김만 [EnrichmentUnavailableException](앱이 503)이고 나머지는 그대로
  * 전파한다 — 스키마 드리프트 같은 영구 오류는 앱이 400 으로 돌린다. **넓히지 마라**(그 예외의 KDoc).
  *
@@ -68,26 +71,43 @@ public class ObservationEnricher(
 	 * 결과는 입력 배치와 같은 순서다.
 	 */
 	public fun enrich(batches: List<ObservationBatch>): List<EnrichedBatch> {
-		val push = Push()
-		return batches.map { batch ->
-			EnrichedBatch(
-				events = batch.events.map { event ->
-					val (org, flags) = push.attribute(event.envelope)
-					EnrichedEvent(event.withFlags(*flags), org)
-				},
-				metricPoints = batch.metricPoints.map { point ->
-					val (org, flags) = push.attribute(point.envelope)
-					EnrichedMetricPoint(point.copy(envelope = point.envelope.withFlags(*flags)), org)
-				},
-				stats = batch.stats,
-			)
+		val push = Push(HashMap())
+		return batches.map(push::enrich)
+	}
+
+	/**
+	 * 배치 소비 호출 하나(ADR 0084)의 push 들을 보강한다 — 원소 하나가 push 하나의 배치 목록이고, 결과는 입력과 같은 순서다. 호출을 넘지 않는다.
+	 *
+	 * 관측 envelope 의 서로 다른 installation 을 모아 구성원을 IN 조회 한 번, 그 구성원들의 소속을 IN 조회 한 번으로 미리 읽는다. 결과는
+	 * push 마다 [enrich] 를 부른 것과 같다. 빈 입력이나 관측이 없으면 조회하지 않는다. 오류 분류는 [enrich] 와 같다 — 다만 어느 push 의
+	 * installation 에서 난 오류인지는 가르지 않고 호출 전체가 실패한다. 귀속은 부르는 쪽이 정한다.
+	 */
+	public fun enrichAll(pushes: List<List<ObservationBatch>>): List<List<EnrichedBatch>> {
+		val resolved = prefetch(pushes)
+		return pushes.map { batches ->
+			val push = Push(resolved)
+			batches.map(push::enrich)
 		}
 	}
 
-	/** push 하나의 작업 공간 — installation 조회 캐시와 provider 문맥. */
-	private inner class Push {
-		private val resolved = HashMap<String, Membership>()
+	/**
+	 * push 하나의 작업 공간 — installation 조회 캐시와 provider 문맥. [resolved] 는 [enrich] 면 이 push 의 것이고 [enrichAll] 이면 호출의
+	 * push 들이 함께 쓴다. provider 문맥은 늘 push 하나의 것이다.
+	 */
+	private inner class Push(private val resolved: MutableMap<String, Membership>) {
 		private val ctx: MutableMap<String, Any?> = HashMap()
+
+		fun enrich(batch: ObservationBatch): EnrichedBatch = EnrichedBatch(
+			events = batch.events.map { event ->
+				val (org, flags) = attribute(event.envelope)
+				EnrichedEvent(event.withFlags(*flags), org)
+			},
+			metricPoints = batch.metricPoints.map { point ->
+				val (org, flags) = attribute(point.envelope)
+				EnrichedMetricPoint(point.copy(envelope = point.envelope.withFlags(*flags)), org)
+			},
+			stats = batch.stats,
+		)
 
 		fun attribute(envelope: ObservationEnvelope): Pair<OrgAttribution, Array<QualityFlag>> {
 			val membership = resolved.getOrPut(envelope.installationId) { resolve(envelope.installationId) }
@@ -121,16 +141,54 @@ public class ObservationEnricher(
 	 * 인증 경로는 그런 ID 를 내지 않지만, 여기서 던지면 분류되지 않은 예외가 되어 재시도만 반복된다.
 	 */
 	private fun resolve(installationId: String): Membership {
-		val id = try {
-			UUID.fromString(installationId)
-		} catch (_: IllegalArgumentException) {
-			return Membership(null, emptyList())
-		}
+		val id = uuidOrNull(installationId) ?: return Membership(null, emptyList())
 		return classified {
 			val memberId = installations.findMemberIdById(id) ?: return@classified Membership(null, emptyList())
 			Membership(memberId, teamMemberships.findAllByMemberId(memberId))
 		}
 	}
+
+	/**
+	 * [enrichAll] 의 push 들에 나오는 installation 을 모두 푼다 — 구성원 IN 조회 한 번, 구성원이 있으면 소속 IN 조회 한 번. [resolve] 와
+	 * 같은 결과다: UUID 가 아닌 ID 와 행이 없는 installation 은 미해결이고, 구성원이 없으면 소속을 읽지 않는다.
+	 */
+	private fun prefetch(pushes: List<List<ObservationBatch>>): MutableMap<String, Membership> {
+		val resolved = HashMap<String, Membership>()
+		val ids = LinkedHashMap<String, UUID>()
+		fun collect(installationId: String) {
+			if (installationId in resolved || installationId in ids) return
+			val id = uuidOrNull(installationId)
+			if (id == null) resolved[installationId] = Membership(null, emptyList()) else ids[installationId] = id
+		}
+		for (batches in pushes) {
+			for (batch in batches) {
+				batch.events.forEach { collect(it.envelope.installationId) }
+				batch.metricPoints.forEach { collect(it.envelope.installationId) }
+			}
+		}
+		if (ids.isEmpty()) return resolved
+
+		val members = classified { installations.findMemberIdsByIds(ids.values.toSet()) }.associate { it.installationId to it.memberId }
+		val memberIds = members.values.toSet()
+		val histories = if (memberIds.isEmpty()) {
+			emptyMap()
+		} else {
+			classified { teamMemberships.findAllByMemberIdIn(memberIds) }.groupBy { it.memberId }
+		}
+		for ((installationId, id) in ids) {
+			val memberId = members[id]
+			resolved[installationId] = if (memberId == null) Membership(null, emptyList()) else Membership(memberId, histories[memberId].orEmpty())
+		}
+		return resolved
+	}
+
+	/** UUID 가 아닌 ID 는 어느 행과도 맞지 않는다 — 조회하지 않는다. */
+	private fun uuidOrNull(installationId: String): UUID? =
+		try {
+			UUID.fromString(installationId)
+		} catch (_: IllegalArgumentException) {
+			null
+		}
 
 	/** 일시 장애만 [EnrichmentUnavailableException] 으로 감싼다. */
 	private inline fun <T> classified(block: () -> T): T =

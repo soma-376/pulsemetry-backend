@@ -257,4 +257,53 @@ class ObservationEnricherTest : AbstractEnricherIntegrationTest() {
 		assertThat(batch.metricPoints.map { it.observation.envelope.qualityFlags })
 			.containsExactly(emptyList(), listOf(QualityFlag.MEMBER_UNRESOLVED))
 	}
+
+	// ── 배치 소비 호출 단위(enrichAll · ADR 0084) ───────────────────────────
+
+	@Test
+	@DisplayName("enrichAll 의 결과는 레코드(push)마다 enrich 를 부른 것과 같다 — org·플래그·enrichment_json")
+	fun enrichAllMatchesEnrichPerRecord() {
+		val archived = team(TeamStatus.archived)
+		val active = team()
+		join(archived, joinedAt = at.minus(90, ChronoUnit.DAYS), leftAt = at)
+		join(active, joinedAt = at.minus(5, ChronoUnit.DAYS))
+		val otherMember = members.saveAndFlush(EnrollmentFixtures.member(tenantId)).id
+		val otherInvitation = invitations.saveAndFlush(EnrollmentFixtures.invitation(tenantId, otherMember)).id
+		val otherInstallation = installations.saveAndFlush(EnrollmentFixtures.installation(tenantId, otherMember, otherInvitation)).id
+		val otherTeam = team()
+		memberships.saveAndFlush(EnrollmentFixtures.teamMembership(otherTeam, otherMember, joinedAt = at.minus(1, ChronoUnit.DAYS)))
+		val lonelyMember = members.saveAndFlush(EnrollmentFixtures.member(tenantId)).id
+		val lonelyInvitation = invitations.saveAndFlush(EnrollmentFixtures.invitation(tenantId, lonelyMember)).id
+		val lonely = installations.saveAndFlush(EnrollmentFixtures.installation(tenantId, lonelyMember, lonelyInvitation)).id
+		val mine = installationId.toString()
+		val pushes = listOf(
+			// 같은 설치의 관측이 소속 경계 양쪽에 걸친다 — 두 팀 동시 소속(앞)과 archived 팀을 떠난 뒤(뒤).
+			listOf(
+				TestObservations.batch(
+					events = listOf(TestObservations.event(mine, at.minusNanos(1)), TestObservations.event(mine, at)),
+					metricPoints = listOf(TestObservations.metricPoint(mine, at), TestObservations.metricPoint(otherInstallation.toString(), at)),
+				),
+			),
+			listOf(
+				TestObservations.batch(events = listOf(TestObservations.event(otherInstallation.toString(), at), TestObservations.event(lonely.toString(), at))),
+				TestObservations.batch(events = listOf(TestObservations.event(UUID.randomUUID().toString(), at), TestObservations.event("not-a-uuid", at))),
+			),
+			listOf(TestObservations.batch(events = listOf(TestObservations.event(mine, at.minus(30, ChronoUnit.DAYS)), TestObservations.event(lonely.toString(), at)))),
+		)
+
+		val bulk = enricher.enrichAll(pushes)
+		val single = pushes.map { enricher.enrich(it) }
+
+		assertThat(bulk.map { push -> push.map { it.events } }).isEqualTo(single.map { push -> push.map { it.events } })
+		assertThat(bulk.map { push -> push.map { it.metricPoints } }).isEqualTo(single.map { push -> push.map { it.metricPoints } })
+		val first = bulk[0].single().events
+		assertThat(first.map { it.org.teamIdAsOf }).containsExactly(null, active.toString())
+		assertThat(first.map { it.observation.envelope.qualityFlags }).containsExactly(listOf(QualityFlag.MULTI_TEAM_MEMBERSHIP), emptyList())
+		assertThat(first[0].org.enrichmentJson).isEqualTo(enrichmentJson(*listOf(archived, active).sortedBy { it.toString() }.toTypedArray()))
+		assertThat(bulk[1][0].events.map { it.org.memberId }).containsExactly(otherMember.toString(), lonelyMember.toString())
+		assertThat(bulk[1][0].events.map { it.org.teamIdAsOf }).containsExactly(otherTeam.toString(), null)
+		assertThat(bulk[1][1].events.map { it.observation.envelope.qualityFlags })
+			.containsOnly(listOf(QualityFlag.MEMBER_UNRESOLVED))
+		assertThat(bulk[2].single().events.map { it.org.teamIdAsOf }).containsExactly(archived.toString(), null)
+	}
 }
