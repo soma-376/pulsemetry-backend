@@ -64,7 +64,11 @@ class IngestStages(
 	private val observer: TelemetryObserver = TelemetryObserver.NONE,
 ) {
 
-	fun transform(signal: Signal, request: Message, receipt: ArchiveReceipt): TransformedPush = enrichOne(normalizeParts(signal, request, receipt))
+	fun transform(signal: Signal, request: Message, receipt: ArchiveReceipt): TransformedPush {
+		val push = normalizeParts(signal, request, receipt)
+		emitNormalizeStats(push.batches)
+		return enrichOne(push)
+	}
 
 	/**
 	 * Kafka 배치 소비 호출 하나의 push 들을 바꾼다(PROJ-345 · ADR 0084). 결과는 입력과 같은 순서다.
@@ -76,6 +80,10 @@ class IngestStages(
 	 * [NonTransientDataAccessResourceException])는 그대로 던진다 — 부르는 쪽이 기다린다. 그 밖의 [NonTransientDataAccessException] 은 묶음
 	 * 조회로는 어느 레코드의 것인지 알 수 없으므로, 정규화한 레코드를 하나씩 [transform] 의 보강으로 다시 돌려 영구 오류를 그 레코드의
 	 * `enrich` 거부로 귀속한다. 정규화는 다시 하지 않는다.
+	 *
+	 * 제외·사용량 계약 지표는 이 호출이 정상 반환할 때만, 정규화에 성공한 레코드마다 한 번 남긴다 — 보강이 일시 장애로 던지면 변환이 하나도
+	 * 남지 않고 재호출이 다시 정규화하므로, 바로 남기면 재호출마다 같은 레코드를 다시 센다. 정규화 시간(`normalize`)은 실제로 쓴 시간이라
+	 * 정규화할 때마다 잰다.
 	 */
 	fun transformAll(inputs: List<TransformInput>): List<TransformOutcome> {
 		val outcomes = arrayOfNulls<TransformOutcome>(inputs.size)
@@ -104,6 +112,8 @@ class IngestStages(
 					}
 				}
 			}
+			// 보강까지 끝났다(성공 또는 그 레코드의 영구 거부) — 이제 재호출이 이 레코드들을 다시 정규화하지 않는다.
+			normalized.forEach { (_, record) -> emitNormalizeStats(record.batches) }
 		}
 		return outcomes.map { checkNotNull(it) }
 	}
@@ -111,7 +121,7 @@ class IngestStages(
 	/** 정규화까지 마친 push 하나 — 문서 조각과, 조각마다의 정규화 배치(같은 순서). */
 	private class Normalized(val parts: List<ReceiptPart>, val batches: List<ObservationBatch>)
 
-	/** 문서 조각마다 정규화하고 제외·사용량 계약 지표를 남긴다. 신원 없는 영수증은 그대로 던지고, 정규화 실패는 [TransformRejectedException] 이다. */
+	/** 문서 조각마다 정규화한다. 신원 없는 영수증은 그대로 던지고, 정규화 실패는 [TransformRejectedException] 이다. 지표는 [emitNormalizeStats] 가 남긴다. */
 	private fun normalizeParts(signal: Signal, request: Message, receipt: ArchiveReceipt): Normalized {
 		val parts = ReceiptPart.of(request, receipt)
 		// 신원이 없으면 여기서 멈춘다(503) — 정규화 실패(400)로 섞지 않는다.
@@ -123,6 +133,11 @@ class IngestStages(
 			throw TransformRejectedException("normalize", parts, "normalize ${signal.path}: ${exception.message}", exception)
 		}
 
+		return Normalized(parts, batches)
+	}
+
+	/** 정규화 배치의 제외·사용량 계약 지표. [transform] 은 정규화 직후, [transformAll] 은 보강이 끝난 뒤에 부른다. */
+	private fun emitNormalizeStats(batches: List<ObservationBatch>) {
 		batches.forEach { batch ->
 			observer.observe(TelemetryMetric.PIPELINE_EXCLUDED_OBSERVATIONS, batch.stats.excludedSpans.toDouble(), "reason" to "excluded_span")
 			observer.observe(TelemetryMetric.PIPELINE_EXCLUDED_OBSERVATIONS, batch.stats.sourceTimeRejections.values.sum().toDouble(), "reason" to "source_time")
@@ -130,7 +145,6 @@ class IngestStages(
 				observer.observe(TelemetryMetric.PIPELINE_USAGE_CONTRACT, count.toDouble(), "product" to result.product.wire, "outcome" to result.outcome.wire)
 			}
 		}
-		return Normalized(parts, batches)
 	}
 
 	/** push 하나를 보강한다(push 단위 캐시). 비자원 `NonTransientDataAccessException` 만 그 push 의 [TransformRejectedException] 이다. */

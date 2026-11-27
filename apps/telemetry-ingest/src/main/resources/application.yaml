@@ -35,6 +35,9 @@ spring:
     properties:
       hibernate:
         default_schema: enrollment
+        # 배치 묶음 조회의 IN 길이가 호출마다 달라 SQL 문자열이 수백 가지로 늘어나는 것을 2의 거듭제곱 길이로 줄인다(ADR 0084).
+        query:
+          in_clause_parameter_padding: true
     open-in-view: false
 
   flyway:

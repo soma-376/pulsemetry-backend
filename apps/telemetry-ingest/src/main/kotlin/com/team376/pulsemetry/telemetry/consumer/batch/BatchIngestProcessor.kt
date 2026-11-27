@@ -270,6 +270,7 @@ class BatchIngestProcessor(
 		} catch (e: DataAccessException) {
 			throw DependencyCallException("enrich", e)
 		}
+		check(outcomes.size == targets.size) { "transformAll returned ${outcomes.size} outcomes for ${targets.size} records" }
 		for ((item, outcome) in targets.zip(outcomes)) {
 			when (outcome) {
 				is TransformOutcome.Transformed -> item.transformed = outcome.push
