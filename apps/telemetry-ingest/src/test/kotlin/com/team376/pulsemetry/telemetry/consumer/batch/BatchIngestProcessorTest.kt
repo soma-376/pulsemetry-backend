@@ -24,6 +24,8 @@ import com.team376.pulsemetry.telemetry.collector.archive.Product
 import com.team376.pulsemetry.telemetry.config.TelemetryIngestProperties.Batch.PartialDefectPolicy
 import com.team376.pulsemetry.telemetry.config.TelemetryIngestProperties.Batch.SingleRecordFailurePolicy
 import com.team376.pulsemetry.telemetry.credential.AuthorizedTelemetryCredential
+import com.team376.pulsemetry.telemetry.credential.CredentialDecision
+import com.team376.pulsemetry.telemetry.credential.CredentialRequest
 import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
 import com.team376.pulsemetry.telemetry.enricher.observation.ObservationEnricher
 import com.team376.pulsemetry.telemetry.enricher.provider.AiAnalysisProvider
@@ -57,6 +59,7 @@ import org.mockito.ArgumentMatchers
 import org.mockito.BDDMockito.given
 import org.mockito.BDDMockito.willThrow
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import tools.jackson.databind.json.JsonMapper
@@ -102,8 +105,14 @@ class BatchIngestProcessorTest {
 	@Volatile
 	private var handoffFails = false
 
-	/** 남은 인가 실패 횟수 — 인증 DB 장애를 그 횟수만큼 흉내 낸다. */
+	/** 남은 인가 실패 횟수 — 인증 DB 장애를 묶음 판정 호출 그 횟수만큼 흉내 낸다. */
 	private val authFailuresLeft = AtomicInteger()
+
+	/** 묶음 판정 호출마다 받은 요청. */
+	private val authorizeCalls: MutableList<List<CredentialRequest>> = Collections.synchronizedList(mutableListOf())
+
+	/** 이 자격은 판정에서 보안 폐기로 거부한다 — 재시도 사이의 폐기를 흉내 낸다. */
+	private val revokedCredentials: MutableSet<UUID> = Collections.synchronizedSet(mutableSetOf())
 
 	private val summaries: TenantIngestSummaryStore = mock(TenantIngestSummaryStore::class.java)
 	private val authorizer: TelemetryCredentialAuthorizer = mock(TelemetryCredentialAuthorizer::class.java)
@@ -147,10 +156,17 @@ class BatchIngestProcessorTest {
 			exchange.close()
 		}
 		server.start()
-		given(authorizer.authorize(anything(), anything())).willAnswer { invocation ->
+		given(authorizer.authorizeAll(anything())).willAnswer { invocation ->
+			val requests = invocation.getArgument<List<CredentialRequest>>(0)
+			authorizeCalls += requests
 			if (authFailuresLeft.getAndDecrement() > 0) throw IllegalStateException("rds down")
-			val auth = invocation.getArgument<GatewayAuthContext>(0)
-			AuthorizedTelemetryCredential(auth.credentialId, auth.tenantId, auth.installationId, UUID.randomUUID())
+			requests.map { (auth, _) ->
+				if (auth.credentialId in revokedCredentials) {
+					CredentialDecision.Rejected("credential_security_revoked")
+				} else {
+					CredentialDecision.Authorized(AuthorizedTelemetryCredential(auth.credentialId, auth.tenantId, auth.installationId, UUID.randomUUID()))
+				}
+			}
 		}
 	}
 
@@ -176,6 +192,47 @@ class BatchIngestProcessorTest {
 		verify(summaries, times(1)).record(anything<UUID>(), anything<SummaryOrigin>(), anything<Instant>(), anything<Instant>(), anything<Instant?>())
 		assertThat(state.takeCompleted(records)).isTrue()
 		assertThat(archive.puts.get()).isEqualTo(20)
+	}
+
+	// --- 자격 확인(ADR 0084) ---
+
+	@Test
+	@DisplayName("자격 확인은 호출당 묶음 판정 한 번이다 — 레코드 순서대로 자기 접수 시각을 넘기고 단건 판정은 부르지 않는다")
+	fun authorizesOncePerCall() {
+		val messages = (0 until 20).map { record(UUID.randomUUID()) }
+		val records = batch(messages)
+
+		listener().onMessage(records, null, consumer)
+
+		assertThat(authorizeCalls).hasSize(1)
+		// envelope 의 iat·exp 는 초 단위라 claim 전체가 아니라 자격 ID·신원·접수 시각을 맞춘다.
+		assertThat(authorizeCalls.single().map { listOf(it.auth.credentialId, it.auth.tenantId, it.auth.installationId, it.acceptedAt) })
+			.containsExactlyElementsOf(messages.map { listOf(it.auth.credentialId, it.auth.tenantId, it.auth.installationId, it.acceptedAt) })
+		verify(authorizer, times(1)).authorizeAll(anything())
+		verify(authorizer, never()).authorize(anything(), anything())
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(20)
+	}
+
+	@Test
+	@DisplayName("재호출마다 미완료 레코드의 자격을 다시 판정한다 — 그 사이 폐기된 레코드만 거부하고 나머지를 끝낸다")
+	fun reauthorizesOnEveryCall() {
+		val firstWrite = AtomicBoolean(true)
+		failWith = { table, _ -> if (table == TelemetryEventsSink.TABLE && firstWrite.getAndSet(false)) StubFailure(503, null) else null }
+		val tenant = UUID.randomUUID()
+		val messages = (0 until 3).map { record(tenant) }
+		val records = batch(messages)
+		val listener = listener()
+
+		assertThat(catchThrowable { listener.onMessage(records, null, consumer) }).isInstanceOf(ClickHouseBatchFailure::class.java)
+		state.takeDelay(-1)
+		revokedCredentials += messages[1].auth.credentialId
+		listener.onMessage(records, null, consumer)
+
+		assertThat(authorizeCalls).hasSize(2)
+		assertThat(authorizeCalls).allSatisfy { assertThat(it.map { request -> request.auth.credentialId }).containsExactlyElementsOf(messages.map { m -> m.auth.credentialId }) }
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(2)
+		assertThat(rows(LEDGER)).describedAs("자격 거부는 ledger 에 남기지 않는다").hasSize(2)
+		assertThat(state.takeCompleted(records)).isTrue()
 	}
 
 	@Test
@@ -346,14 +403,17 @@ class BatchIngestProcessorTest {
 	@Test
 	@DisplayName("인증 DB 장애는 넘기지 않고 기다린다")
 	fun authorizationOutageWaits() {
-		willThrow(IllegalStateException("rds down")).given(authorizer).authorize(anything(), anything())
-		val records = batch(listOf(record(UUID.randomUUID())))
+		willThrow(IllegalStateException("rds down")).given(authorizer).authorizeAll(anything())
+		val records = batch((0 until 3).map { record(UUID.randomUUID()) })
 
 		val thrown = catchThrowable { listener().onMessage(records, null, consumer) }
 
 		assertThat(thrown).isInstanceOf(DependencyBatchFailure::class.java)
 		assertThat((thrown as BatchIncompleteException).stage).isEqualTo("authorize")
 		assertThat(archive.puts.get()).isZero()
+		assertThat(rows(LEDGER)).describedAs("장애는 어느 레코드의 거부도 아니다").isEmpty()
+		assertThat(state.takeCompleted(records)).isFalse()
+		verify(authorizer, times(1)).authorizeAll(anything())
 	}
 
 	// --- 한 건 반복 실패 · 메모리 진단 ---
