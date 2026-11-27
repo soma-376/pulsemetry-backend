@@ -264,7 +264,10 @@ class BatchIngestProcessor(
 		if (targets.isEmpty()) return
 		call.ensureTime()
 		val outcomes = try {
-			stages.transformAll(targets.map { checkNotNull(it.prepared).let { prepared -> TransformInput(prepared.signal, prepared.message, prepared.receipt) } })
+			// 묶음 보강이 영구 오류로 레코드별 보강에 되돌아가면 레코드마다 RDB 를 조회한다 — 그 앞에서도 마감을 본다.
+			stages.transformAll(targets.map { checkNotNull(it.prepared).let { prepared -> TransformInput(prepared.signal, prepared.message, prepared.receipt) } }) {
+				call.ensureTime()
+			}
 		} catch (e: EnrichmentUnavailableException) {
 			throw DependencyCallException("enrich", e)
 		} catch (e: DataAccessException) {

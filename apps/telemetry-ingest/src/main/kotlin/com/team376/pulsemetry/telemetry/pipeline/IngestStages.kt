@@ -84,8 +84,11 @@ class IngestStages(
 	 * 제외·사용량 계약 지표는 이 호출이 정상 반환할 때만, 정규화에 성공한 레코드마다 한 번 남긴다 — 보강이 일시 장애로 던지면 변환이 하나도
 	 * 남지 않고 재호출이 다시 정규화하므로, 바로 남기면 재호출마다 같은 레코드를 다시 센다. 정규화 시간(`normalize`)은 실제로 쓴 시간이라
 	 * 정규화할 때마다 잰다.
+	 *
+	 * @param beforeRecordEnrich 되돌림 경로에서 레코드마다 보강 조회를 시작하기 전에 부른다 — 배치 경로는 호출 마감 검사(`ensureTime`)를 넘겨,
+	 *   마감 뒤에는 새 RDB 조회를 시작하지 않는다. 던진 예외는 그대로 나간다(변환도 지표도 남기지 않는다).
 	 */
-	fun transformAll(inputs: List<TransformInput>): List<TransformOutcome> {
+	fun transformAll(inputs: List<TransformInput>, beforeRecordEnrich: () -> Unit = {}): List<TransformOutcome> {
 		val outcomes = arrayOfNulls<TransformOutcome>(inputs.size)
 		val normalized = ArrayList<Pair<Int, Normalized>>(inputs.size)
 		inputs.forEachIndexed { index, input ->
@@ -105,6 +108,7 @@ class IngestStages(
 				// 자원 계열은 일시 장애다 — transform 과 같다. EnrichmentUnavailableException 은 여기 오지 않고 그대로 나간다.
 				if (exception is NonTransientDataAccessResourceException) throw exception
 				for ((index, record) in normalized) {
+					beforeRecordEnrich()
 					outcomes[index] = try {
 						TransformOutcome.Transformed(enrichOne(record))
 					} catch (rejected: TransformRejectedException) {

@@ -62,6 +62,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers
 import org.mockito.ArgumentMatchers.anyCollection
 import org.mockito.BDDMockito.given
+import org.mockito.BDDMockito.willAnswer
 import org.mockito.BDDMockito.willReturn
 import org.mockito.BDDMockito.willThrow
 import org.mockito.Mockito.mock
@@ -698,6 +699,27 @@ class BatchIngestProcessorTest {
 		assertThat(handoffs).isEmpty()
 		verify(installations, times(1)).findMemberIdsByIds(anyCollection())
 		messages.forEach { verify(installations, times(1)).findMemberIdById(it.auth.installationId) }
+	}
+
+	@Test
+	@DisplayName("보강 영구 오류의 레코드별 되돌림도 마감 뒤에는 새 조회를 시작하지 않는다")
+	fun permanentEnrichmentFallbackStopsAtDeadline() {
+		// 시작 가능 창 2초 — 되돌림의 첫 조회가 창보다 길면, 둘째 레코드 앞의 마감 검사가 멈춘다.
+		val listener = listener(settings(callDeadline = Duration.ofSeconds(5), minRemaining = Duration.ofSeconds(3)))
+		val tenant = UUID.randomUUID()
+		val messages = (0 until 3).map { record(tenant) }
+		willThrow(InvalidDataAccessResourceUsageException("column gone")).given(installations).findMemberIdsByIds(anyCollection())
+		willAnswer {
+			Thread.sleep(2_500)
+			null
+		}.given(installations).findMemberIdById(anything())
+		val records = batch(messages)
+
+		val thrown = catchThrowable { listener.onMessage(records, null, consumer) }
+
+		assertThat(thrown).isInstanceOf(BatchDeadlineReached::class.java)
+		verify(installations, times(1)).findMemberIdById(anything())
+		assertThat(rows(TelemetryEventsSink.TABLE)).isEmpty()
 	}
 
 	@Test
