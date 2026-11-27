@@ -35,7 +35,8 @@ import com.team376.pulsemetry.telemetry.pipeline.ClickHouseSchema
 import com.team376.pulsemetry.telemetry.pipeline.IngestStages
 import com.team376.pulsemetry.telemetry.pipeline.ReceiptPart
 import com.team376.pulsemetry.telemetry.pipeline.RetentionBoundaries
-import com.team376.pulsemetry.telemetry.pipeline.TransformRejectedException
+import com.team376.pulsemetry.telemetry.pipeline.TransformInput
+import com.team376.pulsemetry.telemetry.pipeline.TransformOutcome
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataAccessException
 import java.time.Clock
@@ -254,21 +255,27 @@ class BatchIngestProcessor(
 
 	// --- 2. 변환 ---
 
+	/**
+	 * 남은 레코드를 [IngestStages.transformAll] 한 번으로 바꾼다 — 정규화는 레코드마다, 보강의 구성원·소속 조회는 호출마다 묶는다(ADR 0084).
+	 * 보강이 일시 장애로 실패하면 그 호출의 변환은 하나도 남지 않고 재호출에서 정규화부터 다시 한다(장애 때만의 비용).
+	 */
 	private fun transform(work: BatchWork, call: BatchCall) {
-		for (item in work.items.filter { it.status == BatchRecord.Status.PENDING && it.prepared != null && it.transformed == null && !it.handoffPending }) {
-			call.ensureTime()
-			val prepared = checkNotNull(item.prepared)
-			try {
-				item.transformed = stages.transform(prepared.signal, prepared.message, prepared.receipt)
-				call.progressed = true
-			} catch (e: TransformRejectedException) {
-				reject(work, item, "pipeline", "pipeline_rejected", ledger = true, parts = e.parts)
-				call.progressed = true
-			} catch (e: EnrichmentUnavailableException) {
-				throw DependencyCallException("enrich", e)
-			} catch (e: DataAccessException) {
-				throw DependencyCallException("enrich", e)
+		val targets = work.items.filter { it.status == BatchRecord.Status.PENDING && it.prepared != null && it.transformed == null && !it.handoffPending }
+		if (targets.isEmpty()) return
+		call.ensureTime()
+		val outcomes = try {
+			stages.transformAll(targets.map { checkNotNull(it.prepared).let { prepared -> TransformInput(prepared.signal, prepared.message, prepared.receipt) } })
+		} catch (e: EnrichmentUnavailableException) {
+			throw DependencyCallException("enrich", e)
+		} catch (e: DataAccessException) {
+			throw DependencyCallException("enrich", e)
+		}
+		for ((item, outcome) in targets.zip(outcomes)) {
+			when (outcome) {
+				is TransformOutcome.Transformed -> item.transformed = outcome.push
+				is TransformOutcome.Rejected -> reject(work, item, "pipeline", "pipeline_rejected", ledger = true, parts = outcome.error.parts)
 			}
+			call.progressed = true
 		}
 	}
 

@@ -1,6 +1,8 @@
 package com.team376.pulsemetry.telemetry.consumer.batch
 
+import com.google.protobuf.Message
 import com.sun.net.httpserver.HttpServer
+import com.team376.pulsemetry.persistence.enrollment.repository.InstallationMemberRow
 import com.team376.pulsemetry.persistence.enrollment.repository.InstallationRepository
 import com.team376.pulsemetry.persistence.enrollment.repository.TeamMembershipRepository
 import com.team376.pulsemetry.persistence.telemetry.AnalysisWriteBoundary
@@ -56,12 +58,17 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers
+import org.mockito.ArgumentMatchers.anyCollection
 import org.mockito.BDDMockito.given
+import org.mockito.BDDMockito.willReturn
 import org.mockito.BDDMockito.willThrow
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
+import org.springframework.dao.DataAccessResourceFailureException
+import org.springframework.dao.InvalidDataAccessResourceUsageException
+import org.springframework.dao.NonTransientDataAccessResourceException
 import tools.jackson.databind.json.JsonMapper
 import java.net.InetSocketAddress
 import java.net.URLDecoder
@@ -116,6 +123,14 @@ class BatchIngestProcessorTest {
 
 	private val summaries: TenantIngestSummaryStore = mock(TenantIngestSummaryStore::class.java)
 	private val authorizer: TelemetryCredentialAuthorizer = mock(TelemetryCredentialAuthorizer::class.java)
+
+	/** 보강의 구성원·소속 저장소 대역. 스텁이 없으면 빈 결과라 모든 설치가 미해결로 보강된다. */
+	private val installations: InstallationRepository = mock(InstallationRepository::class.java)
+	private val memberships: TeamMembershipRepository = mock(TeamMembershipRepository::class.java)
+
+	/** 정규화를 실패시킬 요청을 고른다. */
+	@Volatile
+	private var normalizeFails: (Message) -> Boolean = { false }
 	private val state = BatchDeliveryState()
 	private val executor = Executors.newVirtualThreadPerTaskExecutor()
 	@Suppress("UNCHECKED_CAST")
@@ -627,6 +642,91 @@ class BatchIngestProcessorTest {
 		assertThat(state.takeDelay(-1)).isEqualTo(200)
 	}
 
+	// --- 변환: 정규화는 레코드마다, 보강 조회는 호출마다(PROJ-345 · ADR 0084) ---
+
+	@Test
+	@DisplayName("보강의 구성원·소속 조회는 호출마다 묶음 한 번이다 — 단건 조회는 쓰지 않고, 재호출은 다시 읽는다")
+	fun enrichmentLooksUpOncePerCall() {
+		val tenant = UUID.randomUUID()
+		val records = batch((0 until 5).map { record(tenant) })
+
+		listener().onMessage(records, null, consumer)
+
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(5)
+		assertThat(state.takeCompleted(records)).isTrue()
+		verify(installations, times(1)).findMemberIdsByIds(anyCollection())
+		verify(installations, never()).findMemberIdById(anything())
+		// 묶음 조회의 결과가 비었다 — 구성원이 없으니 소속은 읽지 않는다.
+		verify(memberships, never()).findAllByMemberIdIn(anyCollection())
+
+		listener().onMessage(batch((0 until 3).map { record(tenant) }, firstOffset = 5), null, consumer)
+		verify(installations, times(2)).findMemberIdsByIds(anyCollection())
+	}
+
+	@Test
+	@DisplayName("정규화 실패는 그 레코드만 거부하고 나머지는 한 번에 보강해 적재한다")
+	fun normalizationFailureRejectsOnlyThatRecord() {
+		val tenant = UUID.randomUUID()
+		normalizeFails = { POISON in it.toString() }
+		val records = batch((0 until 5).map { record(tenant, poison = it == 2) })
+
+		listener().onMessage(records, null, consumer)
+
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(4).noneMatch { POISON in it }
+		assertThat(rows(LEDGER)).hasSize(5)
+		assertThat(state.takeCompleted(records)).isTrue()
+		verify(installations, times(1)).findMemberIdsByIds(anyCollection())
+	}
+
+	@Test
+	@DisplayName("보강 영구 오류는 레코드별 보강으로 되돌아가 그 레코드만 거부한다 — 나머지는 적재하고 기다리지 않는다")
+	fun permanentEnrichmentFailureFallsBackPerRecord() {
+		val tenant = UUID.randomUUID()
+		val messages = (0 until 4).map { record(tenant) }
+		val poisoned = messages[1].auth.installationId
+		willThrow(InvalidDataAccessResourceUsageException("column gone")).given(installations).findMemberIdsByIds(anyCollection())
+		willThrow(InvalidDataAccessResourceUsageException("column gone")).given(installations).findMemberIdById(poisoned)
+		val records = batch(messages)
+
+		listener().onMessage(records, null, consumer)
+
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(3).noneMatch { poisoned.toString() in it }
+		assertThat(rows(LEDGER)).hasSize(4)
+		assertThat(state.takeCompleted(records)).isTrue()
+		assertThat(handoffs).isEmpty()
+		verify(installations, times(1)).findMemberIdsByIds(anyCollection())
+		messages.forEach { verify(installations, times(1)).findMemberIdById(it.auth.installationId) }
+	}
+
+	@Test
+	@DisplayName("보강 일시 장애는 거부하지 않고 기다린다 — 재호출은 정규화부터 다시 하고, 아카이브는 다시 하지 않는다")
+	fun transientEnrichmentFailureWaits() {
+		val tenant = UUID.randomUUID()
+		val records = batch((0 until 3).map { record(tenant) })
+		val listener = listener()
+
+		// 연결 실패(보강이 EnrichmentUnavailableException 으로 감싼다)와, 감싸지 않은 자원 계열 오류 둘 다 일시 장애다.
+		for (failure in listOf(DataAccessResourceFailureException("rds down"), NonTransientDataAccessResourceException("rds gone"))) {
+			willThrow(failure).given(installations).findMemberIdsByIds(anyCollection())
+
+			val thrown = catchThrowable { listener.onMessage(records, null, consumer) }
+
+			assertThat(thrown).isInstanceOf(DependencyBatchFailure::class.java)
+			assertThat((thrown as BatchIncompleteException).stage).isEqualTo("enrich")
+			assertThat(rows(TelemetryEventsSink.TABLE)).isEmpty()
+			assertThat(rows(LEDGER)).isEmpty()
+			state.takeDelay(-1)
+		}
+		willReturn(emptyList<InstallationMemberRow>()).given(installations).findMemberIdsByIds(anyCollection())
+		listener.onMessage(records, null, consumer)
+
+		assertThat(rows(TelemetryEventsSink.TABLE)).hasSize(3)
+		assertThat(state.takeCompleted(records)).isTrue()
+		assertThat(archive.puts.get()).isEqualTo(3)
+		verify(installations, times(3)).findMemberIdsByIds(anyCollection())
+		verify(installations, never()).findMemberIdById(anything())
+	}
+
 	// --- 시험 도구 ---
 
 	private fun settings(
@@ -659,12 +759,9 @@ class BatchIngestProcessorTest {
 	private fun listener(settings: BatchSettings = settings()): TelemetryBatchListener {
 		val client = ClickHouseHttpClient("http://127.0.0.1:${server.address.port}")
 		val schema = ClickHouseSchema(ClickHouseSchemaMigrator(client), startupAttempts = 1, startupBackoff = Duration.ZERO).also { it.afterPropertiesSet() }
-		val enricher = ObservationEnricher(
-			mock(InstallationRepository::class.java),
-			mock(TeamMembershipRepository::class.java),
-			listOf(GithubProvider(), JiraProvider(), AiAnalysisProvider()),
-		)
-		val stages = IngestStages(ObservationPipeline(ObservationNormalizer(ProfileRegistry(listOf(ClaudeCodeProfile))))::run, enricher)
+		val enricher = ObservationEnricher(installations, memberships, listOf(GithubProvider(), JiraProvider(), AiAnalysisProvider()))
+		val normalizer = ObservationPipeline(ObservationNormalizer(ProfileRegistry(listOf(ClaudeCodeProfile))))
+		val stages = IngestStages({ request, context -> if (normalizeFails(request)) error("unreadable") else normalizer.run(request, context) }, enricher)
 		val processor = BatchIngestProcessor(
 			authorizer = authorizer,
 			preparer = OtlpIngestProcessor(archive, SignalConsumer { _, _, _ -> error("배치 경로는 다음 단계를 직접 부르지 않는다") }),
