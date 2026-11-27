@@ -26,6 +26,19 @@ class AuthorizedTelemetryCredential(
 class TelemetryCredentialRejectedException(val code: String) :
 	RuntimeException("telemetry credential rejected: $code", null, false, false)
 
+/** 묶음 판정([TelemetryCredentialAuthorizer.authorizeAll])의 요청 하나 — 레코드의 전달된 claim 과 그 레코드의 접수 시각이다. */
+data class CredentialRequest(val auth: GatewayAuthContext, val acceptedAt: Instant)
+
+/**
+ * 판정 하나의 결과. [Rejected.code] 는 [TelemetryCredentialRejectedException.code] 와 같은 문자열이다.
+ * **DB 장애는 결과가 아니다** — 조회 예외는 [TelemetryCredentialAuthorizer.authorizeAll] 호출 전체의 예외로 나간다.
+ */
+sealed interface CredentialDecision {
+	class Authorized(val credential: AuthorizedTelemetryCredential) : CredentialDecision
+
+	data class Rejected(val code: String) : CredentialDecision
+}
+
 /**
  * telemetry JWT 의 RDB 판정(ADR 0065 Decision 6). Kafka Consumer 는 매 시도, HTTP 호환 경로는 요청마다 부른다.
  *
@@ -43,38 +56,66 @@ class TelemetryCredentialRejectedException(val code: String) :
  *
  * **DB 장애는 거부가 아니다** — 조회 예외를 그대로 올린다. Kafka 는 일시 실패로 재시도하고 HTTP 는 503 이다.
  *
+ * **배치는 한 번에 읽고 같은 표로 판정한다(ADR 0084).** Kafka 배치 소비는 호출마다 [authorizeAll] 로 미완료 레코드의 행을 IN 조회 한 번에
+ * 읽고, 레코드마다 자기 [acceptedAt] 으로 위 표를 적용한다. 호출을 넘는 캐시는 없다 — 재호출은 다시 읽는다(ADR 0066 Decision 6).
+ * HTTP·단건 Kafka 경로는 [authorize] 로 요청마다 한 행을 읽는다.
+ *
  * 조립 앱의 클래스다 — 라이브러리가 아니므로 스테레오타입을 달아도 되지만, 배선을 한 곳에 모으려고 `@Bean` 으로 등록한다.
  */
 class TelemetryCredentialAuthorizer(private val telemetryTokens: TelemetryTokenRepository) {
 
-	fun authorize(auth: GatewayAuthContext, acceptedAt: Instant): AuthorizedTelemetryCredential {
-		val row = telemetryTokens.findCredentialRowById(auth.credentialId) ?: reject("credential_unknown")
-		if (row.tokenFormat != JWT_FORMAT) reject("credential_format")
-		if (!matches(row, auth)) reject("credential_mismatch")
+	fun authorize(auth: GatewayAuthContext, acceptedAt: Instant): AuthorizedTelemetryCredential =
+		when (val decision = judge(telemetryTokens.findCredentialRowById(auth.credentialId), auth, acceptedAt)) {
+			is CredentialDecision.Authorized -> decision.credential
+			is CredentialDecision.Rejected -> throw TelemetryCredentialRejectedException(decision.code)
+		}
 
-		val expiresAt = row.expiresAt ?: reject("credential_format")
+	/**
+	 * 배치 소비 호출 하나의 묶음 판정(ADR 0084). 고유 `credentialId` 를 [TelemetryTokenRepository.findCredentialRowsByIds] 한 번으로 읽고,
+	 * 요청마다 [authorize] 와 같은 판정을 그 요청의 접수 시각으로 적용해 **요청 순서대로** 돌려준다. 같은 자격이 여러 번 와도 조회는 한 번이다.
+	 * 빈 입력이면 조회하지 않는다.
+	 *
+	 * 거부는 [CredentialDecision.Rejected] 이고 다른 요청의 판정에 영향을 주지 않는다. **조회 예외는 그대로 던진다** — 호출 전체가 일시 실패이고
+	 * 어느 요청도 거부가 아니다. 결과를 호출 밖에 두지 않는다 — 부르는 쪽이 재호출마다 다시 부른다.
+	 */
+	fun authorizeAll(requests: List<CredentialRequest>): List<CredentialDecision> {
+		if (requests.isEmpty()) return emptyList()
+		val ids = requests.mapTo(LinkedHashSet()) { it.auth.credentialId }
+		val rows = telemetryTokens.findCredentialRowsByIds(ids).associateBy { it.tokenId }
+		return requests.map { judge(rows[it.auth.credentialId], it.auth, it.acceptedAt) }
+	}
+
+	/** 클래스 KDoc 의 판정표 그대로다. 행이 없으면([row] 가 null) `credential_unknown` 이다. 조회하지 않는다. */
+	private fun judge(row: TelemetryCredentialRow?, auth: GatewayAuthContext, acceptedAt: Instant): CredentialDecision {
+		if (row == null) return rejected("credential_unknown")
+		if (row.tokenFormat != JWT_FORMAT) return rejected("credential_format")
+		if (!matches(row, auth)) return rejected("credential_mismatch")
+
+		val expiresAt = row.expiresAt ?: return rejected("credential_format")
 		if (acceptedAt.isBefore(row.issuedAt.minus(TelemetryJwtContract.CLOCK_SKEW)) ||
 			acceptedAt.isAfter(expiresAt.plus(TelemetryJwtContract.CLOCK_SKEW))
 		) {
-			reject("credential_expired")
+			return rejected("credential_expired")
 		}
 
 		val revokedAt = row.revokedAt
 		if (revokedAt != null) {
 			when (row.revokeReason) {
-				ROTATED -> if (!acceptedAt.isBefore(revokedAt)) reject("credential_rotated")
-				SECURITY -> reject("credential_security_revoked")
-				else -> reject("credential_revoked_unknown")
+				ROTATED -> if (!acceptedAt.isBefore(revokedAt)) return rejected("credential_rotated")
+				SECURITY -> return rejected("credential_security_revoked")
+				else -> return rejected("credential_revoked_unknown")
 			}
 		}
 
-		TelemetryTokenDecision.rejectHolder(row)?.let { reject(it.code) }
+		TelemetryTokenDecision.rejectHolder(row)?.let { return rejected(it.code) }
 
-		return AuthorizedTelemetryCredential(
-			credentialId = row.tokenId,
-			tenantId = row.tenantId,
-			installationId = row.installationId,
-			memberId = row.memberId,
+		return CredentialDecision.Authorized(
+			AuthorizedTelemetryCredential(
+				credentialId = row.tokenId,
+				tenantId = row.tenantId,
+				installationId = row.installationId,
+				memberId = row.memberId,
+			),
 		)
 	}
 
@@ -87,7 +128,7 @@ class TelemetryCredentialAuthorizer(private val telemetryTokens: TelemetryTokenR
 			row.issuedAt == auth.issuedAt &&
 			row.expiresAt == auth.expiresAt
 
-	private fun reject(code: String): Nothing = throw TelemetryCredentialRejectedException(code)
+	private fun rejected(code: String): CredentialDecision = CredentialDecision.Rejected(code)
 
 	private companion object {
 		const val JWT_FORMAT = "jwt"
