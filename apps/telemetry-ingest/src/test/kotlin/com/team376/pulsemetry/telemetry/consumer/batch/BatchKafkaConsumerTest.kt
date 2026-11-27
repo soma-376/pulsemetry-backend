@@ -13,7 +13,9 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers
+import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.doThrow
+import org.mockito.Mockito.mockingDetails
 import org.mockito.Mockito.reset
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
@@ -66,11 +68,12 @@ class BatchKafkaConsumerTest : AbstractIngestIntegrationTest() {
 	}
 
 	@Test
-	@DisplayName("배치 컨테이너는 AckMode.BATCH 로 서고, 30건을 레코드 수보다 적은 분석 INSERT 로 적재해 확정한다")
+	@DisplayName("배치 컨테이너는 AckMode.BATCH 로 서고, 30건을 레코드 수보다 적은 분석 INSERT 와 RDB 묶음 조회로 적재해 확정한다")
 	fun loadsInBatches() {
 		assertThat(container.containerProperties.ackMode).isEqualTo(ContainerProperties.AckMode.BATCH)
 		val seeded = data.seedJwt()
 		val inserts = inserts()
+		clearInvocations(telemetryTokens, installations)
 
 		val published = (0 until 30).map { IngestTestKafka.publishTo(TOPIC, IngestTestKafka.accepted(seeded, prompt("batch-$it"))) }
 		awaitCommitted(published)
@@ -78,6 +81,11 @@ class BatchKafkaConsumerTest : AbstractIngestIntegrationTest() {
 		assertThat(clickHouse("SELECT count() FROM telemetry_events FINAL WHERE tenant_id = '${seeded.tenantId}' FORMAT TSV").trim()).isEqualTo("30")
 		assertThat(clickHouse("SELECT count() FROM telemetry_ingest_ledger FINAL WHERE tenant_id = '${seeded.tenantId}' FORMAT TSV").trim()).isEqualTo("30")
 		assertThat(inserts() - inserts).isGreaterThan(0.0).isLessThan(30.0)
+		// ADR 0084 — 배치 경로는 자격·구성원을 호출마다 IN 조회로 묶는다. 단건 조회는 쓰지 않고, 묶음 조회는 레코드 수보다 적다.
+		assertThat(calls(telemetryTokens, "findCredentialRowById")).isZero()
+		assertThat(calls(telemetryTokens, "findCredentialRowsByIds")).isGreaterThan(0).isLessThan(30)
+		assertThat(calls(installations, "findMemberIdById")).isZero()
+		assertThat(calls(installations, "findMemberIdsByIds")).isGreaterThan(0).isLessThan(30)
 	}
 
 	@Test
@@ -109,6 +117,8 @@ class BatchKafkaConsumerTest : AbstractIngestIntegrationTest() {
 		if (!Files.exists(root)) return emptyList()
 		return Files.walk(root).use { paths -> paths.filter { it.isRegularFile() && it.toString().endsWith(".json") }.toList() }
 	}
+
+	private fun calls(spy: Any, method: String): Int = mockingDetails(spy).invocations.count { it.method.name == method }
 
 	private fun inserts(): Double = registry.find("pulsemetry.clickhouse.requests").tags("operation", "insert", "table", "telemetry_events").counters().sumOf { it.count() }
 
