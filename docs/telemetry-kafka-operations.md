@@ -102,6 +102,7 @@ record key `tenant_id:installation_id`. Gateway 에는 DB·HMAC·S3·ClickHouse 
 | `pulsemetry.telemetry.kafka.consumer.shutdown-timeout` | — | `45s` | 컨테이너 종료 대기. Pod grace 90초 안 |
 | `pulsemetry.telemetry.kafka.consumer.auth-exception-retry-interval` | — | `10s` | Kafka 인증·인가 실패에서 멈추지 않고 다시 시도 |
 | `pulsemetry.telemetry.kafka.consumer.concurrency` | — | `1` | listener 스레드 수. 메모리(§7)가 비례한다 |
+| `pulsemetry.telemetry.archive.s3-max-connections` | `PULSEMETRY_ARCHIVE_S3_MAX_CONNECTIONS` | 비어 있음(계산) | `type=s3` 클라이언트의 최대 연결 수. 1 이상. 계산식과 배치 모드의 하한은 §1.5 「S3 연결 풀」 |
 | `spring.lifecycle.timeout-per-shutdown-phase` | — | `50s` | 컨테이너 종료(45초)보다 길고 Pod grace 안 |
 
 고정: auto commit 끔, `AckMode.RECORD`, 동기 commit, `auto.offset.reset=earliest`, `allow.auto.create.topics=false`(topic 은 infra 가 만든다),
@@ -132,7 +133,7 @@ ClickHouse 장애가 단기 예산(위 `retry-intervals`, 최초 포함 4회)을
 | `max-poll-records` | `100` | 배치 모드의 `max.poll.records`(단건의 `max-poll-records` 와 따로) |
 | `fetch-min-bytes` · `fetch-max-wait` | `64KB` · `1s` | Kafka 에서 모으는 대기 창 |
 | `max-insert-bytes` | `10000000` | INSERT 본문 상한(미만). 한 행만으로 이상이면 독립 INSERT |
-| `archive-concurrency` | `8` | 배치 안 동시 S3 PUT |
+| `archive-concurrency` | `8` | 배치 안 동시 S3 PUT 상한(1~64). 프로세스 전체가 아니라 **소비 스레드마다**의 상한이다 — 아래 「S3 연결 풀」 |
 | `call-deadline` · `min-remaining-to-start` | `420s` · `35s` | 리스너 호출 마감. 남은 시간이 모자라면 새 외부 작업을 시작하지 않는다. `max-poll-interval` 보다 짧아야 한다 |
 | `progress-interval` | `200ms` | 진척 있는 마감 뒤 대기 |
 | `long-wait` | `5m` | 넘길 수 없는 장애에서 단기 예산 뒤의 대기 |
@@ -140,6 +141,23 @@ ClickHouse 장애가 단기 예산(위 `retry-intervals`, 최초 포함 4회)을
 | `max-diagnostic-writes` | `32` | 메모리 한도(241) 진단의 작은 쓰기 상한 |
 | `partial-defect` | `REJECT` | 팀 결정 3번(미정) — 일부 적재된 결함 레코드. `HOLD` 면 확정하지 않고 기다린다 |
 | `single-record-failure` | `HANDOFF` | 팀 결정 4번 — 한 레코드만 반복 실패. `HOLD` 면 기다린다 |
+
+**S3 연결 풀(PROJ-347).** 원본 아카이브·넘김 목록·HTTP 경로는 S3 클라이언트 하나(동기 HTTP 구현 Apache5)를 함께 쓴다.
+최대 연결 수는 `PULSEMETRY_ARCHIVE_S3_MAX_CONNECTIONS`(§1.4)이고, 비어 있으면 아래처럼 계산한다.
+
+| 경우 | 최대 연결 수 | 예 |
+|---|---|---|
+| 명시값이 있음 | 그 값 | — |
+| 배치 모드(`enabled=true`) | max(50, 소비자 수 × (`archive-concurrency` + 1)) | 소비자 3·동시 16 → 51, 6·16 → 102, 6·8 → 54 |
+| 배치 꺼짐 | 50 | SDK 기본값과 같다 |
+
+- 소비자 수는 `pulsemetry.telemetry.kafka.consumer.concurrency`(`PULSEMETRY_TELEMETRY_KAFKA_CONSUMER_CONCURRENCY`)다. `+1` 은 소비 스레드가 직접 쓰는 넘김 목록 PUT 몫이다.
+  50 은 배치가 아닌 경로(HTTP·단건 소비)가 지금 쓰는 상한을 줄이지 않는 하한이다.
+- 배치 모드는 수신 모드와 무관하게 `enabled` 로 정한다. `http` 모드에서는 소비 스레드가 돌지 않지만, 계산값은 상한일 뿐 연결을 미리 열지 않는다.
+- 배치 모드에서 명시값이 소비자 수 × (`archive-concurrency` + 1) 보다 작으면 기동이 실패한다. 모자라면 연결을 기다리다(SDK 기본 10초) 아카이브가 실패하고 배치가 긴 대기로 간다.
+- `dual` 모드의 HTTP 요청도 같은 풀을 쓴다. 계산값이 50 을 넘으면 소비 스레드 몫만 덮는다. HTTP 몫이 더 필요하면 명시값으로 올린다.
+- 기동 로그에 결정한 값이 한 줄 남는다 — `telemetry archive s3 client: http=apache5 maxConnections=<n> configured=<명시 여부> batch=<배치 모드> consumers=<소비자 수> archiveConcurrency=<동시 수>`.
+  배포 뒤 이 줄로 확인한다.
 
 **RDB 조회 묶기(PROJ-345 · [ADR 0084](adr/0084-Kafka-배치-소비는-자격과-소속-조회를-호출마다-묶고-판정은-레코드마다-한다.md)).** 호출 한 번에서 미완료 레코드의 자격 행을 IN 조회 한 번으로 읽고, 판정은 레코드마다 자기 접수 시각으로 한다.
 보강의 구성원·소속도 IN 조회 두 번으로 읽어 그 호출 안에서만 함께 쓴다. 호출을 넘는 캐시는 없다 — 재호출마다 자격을 다시 판정하므로 보안 폐기(§5)·설치 차단은 다음 호출부터 반영된다.
@@ -159,6 +177,8 @@ ClickHouse 장애가 단기 예산(위 `retry-intervals`, 최초 포함 4회)을
   TestMetricFilter 를 확인한다(`docs/runbooks/dev-observability.md` 「로그 손실 경계와 회귀 검증」).
 - dev 켜기: 부하 비교 때 `helm/dev/workloads/telemetry-ingest.yaml` 의 `env` 에 `PULSEMETRY_TELEMETRY_KAFKA_CONSUMER_BATCH_ENABLED: "true"` 를 둔다.
   infra 머지 → `Dev CDK Deploy` 게시 → Argo sync 로 반영된다. 수동 helm 은 Argo 가 되돌린다.
+- 동시 수(PROJ-347): 같은 `env` 에 `PULSEMETRY_TELEMETRY_KAFKA_CONSUMER_BATCH_ARCHIVE_CONCURRENCY: "16"` 을 둔다. backend 기본값 8 은 그대로다.
+  연결 풀은 계산값을 쓰므로 `PULSEMETRY_ARCHIVE_S3_MAX_CONNECTIONS` 는 넣지 않는다.
 - 스크립트를 더하거나 지우거나 호출 경로를 바꾸면(예: 넘김 목록 재적재 도구를 infra 에 둘 때) 같은 PR 에서 `scripts/README.md` 를 고친다.
   지울 때는 CI·npm·import·Dockerfile·Terraform·Helm·수동 런북 순으로 참조를 대조한다. 기존 스크립트의 표본만 늘리면 인덱스는 그대로다.
 
@@ -281,7 +301,7 @@ UPDATE enrollment.installations
 - Gateway 기한(7.5초)을 넘겨 503 을 받은 요청은 실제로는 발행됐을 수 있고 데몬이 재전송한다. 이 중복은 message ID 가 달라 새 receipt 다 —
   ledger 행과 아카이브 객체가 늘고, 분석 행만 observation ID 로 수렴한다.
 
-## 7. 메모리 산정 근거
+## 7. 메모리·연결 산정 근거
 
 실측이 아니라 상한 추정이다. 이미지 JVM 옵션은 `-XX:MaxRAMPercentage=75.0` 이다. 실제 사용량은 배포 뒤 관측으로 확인한다.
 
@@ -300,6 +320,16 @@ protobuf 는 본문을 `unsafeWrap` 해 다시 복사하지 않는다). producer
 **ingest Consumer** — fetch 버퍼는 broker 마다 최대 13 MiB(MSK 3대면 약 39 MiB), poll 한 번에 record 최대 5건(최대 5 × 12 MiB).
 record 하나의 처리는 기존 HTTP 경로와 같다 — 압축 해제 상한 20 MiB 와 디코딩·마스킹·정규화 객체가 그 몇 배다. `concurrency=1` 이면 동시에 하나만 처리한다.
 `dual` 모드는 기존 HTTP 경로의 메모리가 그대로 더해진다. `concurrency` 를 올리면 record 처리 메모리가 그 배수로 는다.
+
+**ingest S3 연결(배치 모드)** — 동시 S3 연결의 상한은 소비 스레드 수 × (`archive-concurrency` + 1)이다. 스레드마다 원본 PUT 이
+`archive-concurrency` 개, 넘김 목록 PUT 이 하나다. 동시 수의 세마포어는 배치 호출마다 새로 만들므로 프로세스 전체 상한이 아니다.
+연결 풀은 이 값과 50 중 큰 값으로 잡는다(§1.5 「S3 연결 풀」).
+
+| 구성 | 소비 스레드 × (동시 + 1) | 최대 연결 |
+|---|---|---|
+| Pod 1·소비자 6·동시 8 | 54 | 54 |
+| Pod당 소비자 3·동시 16 | 51 | 51 |
+| Pod당 소비자 6·동시 16 | 102 | 102 |
 
 ## 8. 로컬
 
