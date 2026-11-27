@@ -233,6 +233,47 @@ class TelemetryCredentialRecordTest : AbstractPersistenceIntegrationTest() {
 		assertThat(telemetryTokens.findCredentialRowById(UUID.randomUUID())).isNull()
 	}
 
+	@Test
+	@DisplayName("여러 jti 를 한 번에 읽으면 ID 마다의 단건 결과와 같고, 없는 jti 는 결과에서 빠진다(ADR 0084)")
+	fun findCredentialRows() {
+		// 설치당 활성 하나 제약(V3) 때문에 폐기된 행과 활성 행을 섞는다. 다른 조직·정지된 회원의 행도 섞어 상태가 행마다 따로 읽히는지 본다.
+		val rotated = telemetryTokens.saveAndFlush(
+			EnrollmentFixtures.jwtCredential(
+				installationId,
+				issuedAt = Instant.parse("2026-10-21T01:02:03Z"),
+				revokedAt = Instant.parse("2026-10-21T02:00:00.123456Z"),
+				revokeReason = TelemetryTokenRevokeReason.rotated,
+			),
+		).id
+		val opaque = telemetryTokens.saveAndFlush(EnrollmentFixtures.telemetryToken(installationId, revokedAt = Instant.now().truncatedTo(ChronoUnit.MICROS))).id
+		val active = telemetryTokens.saveAndFlush(EnrollmentFixtures.jwtCredential(installationId, signingKid = "tk-2")).id
+		val otherTenant = tenants.saveAndFlush(EnrollmentFixtures.tenant()).id
+		val suspended = members.saveAndFlush(EnrollmentFixtures.member(otherTenant, status = MemberStatus.suspended)).id
+		val otherInstallation = installations.saveAndFlush(
+			EnrollmentFixtures.installation(otherTenant, suspended, invitations.saveAndFlush(EnrollmentFixtures.invitation(otherTenant, suspended)).id),
+		).id
+		val other = telemetryTokens.saveAndFlush(EnrollmentFixtures.jwtCredential(otherInstallation)).id
+		val unknown = UUID.randomUUID()
+
+		val rows = telemetryTokens.findCredentialRowsByIds(listOf(rotated, opaque, unknown, active, other, active))
+
+		assertThat(rows.map { it.tokenId }).containsExactlyInAnyOrder(rotated, opaque, active, other)
+		rows.forEach { row -> assertThat(snapshot(row)).isEqualTo(snapshot(telemetryTokens.findCredentialRowById(row.tokenId)!!)) }
+		val byId = rows.associateBy { it.tokenId }
+		assertThat(byId.getValue(other).tenantId).isEqualTo(otherTenant)
+		assertThat(byId.getValue(other).memberStatus).isEqualTo("suspended")
+		assertThat(byId.getValue(opaque).tokenFormat).isEqualTo("opaque")
+		assertThat(byId.getValue(rotated).revokeReason).isEqualTo("rotated")
+		assertThat(telemetryTokens.findCredentialRowsByIds(listOf(unknown))).isEmpty()
+	}
+
+	/** 투영의 모든 값 — 프록시끼리 equals 를 기대하지 않고 값으로 비교한다. */
+	private fun snapshot(row: TelemetryCredentialRow): List<Any?> = listOf(
+		row.tokenId, row.tokenRevoked, row.tenantId, row.installationId, row.memberId, row.installationStatus, row.installationRevoked,
+		row.memberStatus, row.tenantStatus, row.tenantDeleted, row.tokenFormat, row.issuedAt, row.expiresAt, row.signingKid,
+		row.revokedAt, row.revokeReason,
+	)
+
 	private fun insertRaw(
 		format: String = "opaque",
 		issuedAt: Instant = Instant.now(),
