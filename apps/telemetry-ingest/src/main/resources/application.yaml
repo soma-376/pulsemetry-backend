@@ -74,6 +74,8 @@ pulsemetry:
       dir: ${PULSEMETRY_ARCHIVE_DIR:./archive}
       bucket: ${PULSEMETRY_ARCHIVE_BUCKET:}
       base-prefix: ${PULSEMETRY_ARCHIVE_PREFIX:}
+      # S3 클라이언트의 최대 연결 수(PROJ-347). 비어 있으면 계산한다 — 배치 모드는 max(50, 소비자 수 × (archive-concurrency + 1)), 아니면 50.
+      s3-max-connections: ${PULSEMETRY_ARCHIVE_S3_MAX_CONNECTIONS:}
 
     clickhouse:
       url: ${PULSEMETRY_CLICKHOUSE_URL:http://localhost:8123}

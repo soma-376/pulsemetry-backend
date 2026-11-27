@@ -46,6 +46,8 @@ dependencies {
 	// S3ArchiveWriter 의 빈 등록이 이 앱에 있으므로 SDK 타입이 컴파일 의존이다 (ADR 0012).
 	implementation(platform(libs.awssdk.bom))
 	implementation(libs.awssdk.s3)
+	// S3 클라이언트의 동기 HTTP 구현과 최대 연결 수를 ArchiveConfig 가 정한다(PROJ-347). 전이 의존에 기대지 않는다.
+	implementation(libs.awssdk.apache5.client)
 
 	testImplementation(libs.spring.boot.starter.webmvc.test)
 	testImplementation(testFixtures(project(":libs:telemetry-ingress-contract")))
