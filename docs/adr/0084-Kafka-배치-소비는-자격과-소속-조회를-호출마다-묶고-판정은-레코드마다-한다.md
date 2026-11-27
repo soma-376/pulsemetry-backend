@@ -50,8 +50,10 @@ ADR 0083 은 Proposed 로 남아 있다. 이 ADR 은 배치 경로의 자격·�
 5. **HTTP 와 단건 Kafka 경로는 바꾸지 않는다.** 레코드(push)마다 자격을 읽고, 보강 캐시는 push 하나를 넘지 않는다.
 6. **계측.** `pulsemetry_pipeline_stage_duration_seconds` 에 `stage="authorize_batch"`·`stage="enrich_batch"` 를 더한다. 둘 다 배치 소비 호출당 한 번 잰다.
    배치 경로에서는 레코드 단위 `authorize`·`enrich` 를 재지 않고, `normalize` 는 레코드마다 그대로 잰다. 단건·HTTP 경로의 stage 는 그대로다.
-   예외는 하나다 — 묶음 보강이 영구 오류로 끝나 레코드별 보강으로 되돌아갈 때는 그 레코드들의 `enrich` 가 레코드 단위로 남는다(정규화는 다시 하지 않는다).
    `authorize_batch` 의 `outcome` 은 묶음 조회의 성패다 — 레코드 거부가 섞여도 조회가 성공하면 `success` 이고, `failure` 는 DB 예외일 때뿐이다.
+   "호출당 한 번" 의 예외는 둘이다.
+   - 묶음 보강이 영구 오류로 끝나 레코드별 보강으로 되돌아갈 때는 그 레코드들의 `enrich` 가 레코드 단위로 남는다(정규화는 다시 하지 않는다).
+   - 넘김 전 재준비(`handoffAfterPrepare`)가 같은 호출 안에서 준비를 다시 부르면 자격도 다시 읽으므로(Decision 1) `authorize_batch` 가 그 호출에 두 번 남는다.
 7. **오류 분류는 바뀌지 않는다.** 자격 조회의 DB 장애와 보강의 일시 장애는 거부하지 않고 기다린다(ADR 0083 Decision 5).
    보강의 영구 오류(자원 계열이 아닌 `NonTransientDataAccessException`)는 레코드별 경로로 되돌아가 해당 레코드만 거부한다 — 어느 레코드의 오류인지 지금처럼 정해진다.
 
@@ -84,8 +86,8 @@ ADR 0083 은 Proposed 로 남아 있다. 이 ADR 은 배치 경로의 자격·�
 - 소속 변경이 반영되지 않는 창이 push 하나에서 배치 소비 호출 하나로 넓어진다(보통 약 1.3초, 최악 420초). 그 사이 잘못 붙은 행은 재처리로 갱신한다.
 - 보강이 장애로 실패하면 그 호출의 변환 결과가 남지 않아 재호출에서 정규화를 다시 한다(100건에 약 0.2초). 장애 경로에서만 생긴다.
 - 지표 의미가 바뀐다. 배치 모드의 레코드 단위 `authorize`·`enrich` 가 사라져 ⑧ 값과 바로 비교할 수 없다.
-  `authorize_batch`·`enrich_batch` 합을 처리 레코드 수로 나눠 비교한다.
-- 넘김 전 재준비에서는 같은 호출 안에서 자격을 한 번 더 읽는다.
+  `authorize_batch`·`enrich_batch` 합을 판정·보강 대상 레코드 수로 나눠 비교한다. 재시도(재호출)가 섞이면 대상 수가 처리 수보다 커진다.
+- 넘김 전 재준비에서는 같은 호출 안에서 자격을 한 번 더 읽고, `authorize_batch` 도 그 호출에 두 번 남는다.
 - CPU 가 함께 줄지 않으면 처리량 이득은 작다. 그때는 RDS 부하·대기 감소로 보고하고 PROJ-346(확장·노드 유형)과 함께 본다.
 
 ## Follow-up
@@ -103,7 +105,7 @@ ADR 0083 은 Proposed 로 남아 있다. 이 ADR 은 배치 경로의 자격·�
   - 인증 DB 장애와 보강 일시 장애는 기다리고, 보강 영구 오류는 해당 레코드만 거부한다.
   - `BatchKafkaConsumerTest`(실제 Kafka·ClickHouse·PostgreSQL)에서 배치 모드의 단건 자격 조회(`findCredentialRowById`)가 0회다.
 - 배치 모드를 끈 기본 설정의 HTTP·단건 시험과 로컬 E2E(`tools/loadtest/local/run.sh`)가 그대로 통과한다.
-- dev hold 500 에서 Hikari 빌림/레코드가 3.0 에서 0.1 이하로 줄고, `authorize_batch`·`enrich_batch` 합을 레코드 수로 나눈 값이 ⑧ 의 authorize + enrich(5.23 ms/건)보다 작다.
+- dev hold 500 에서 Hikari 빌림/레코드가 3.0 에서 0.1 이하로 줄고, `authorize_batch`·`enrich_batch` 합을 판정·보강 대상 레코드 수로 나눈 값이 ⑧ 의 authorize + enrich(5.23 ms/건)보다 작다.
   ClickHouse `FINAL` 행 수가 k6 기대치와 같다.
 
 ## References
