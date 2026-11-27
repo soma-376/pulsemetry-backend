@@ -50,6 +50,8 @@ ADR 0083 은 Proposed 로 남아 있다. 이 ADR 은 배치 경로의 자격·�
 5. **HTTP 와 단건 Kafka 경로는 바꾸지 않는다.** 레코드(push)마다 자격을 읽고, 보강 캐시는 push 하나를 넘지 않는다.
 6. **계측.** `pulsemetry_pipeline_stage_duration_seconds` 에 `stage="authorize_batch"`·`stage="enrich_batch"` 를 더한다. 둘 다 배치 소비 호출당 한 번 잰다.
    배치 경로에서는 레코드 단위 `authorize`·`enrich` 를 재지 않고, `normalize` 는 레코드마다 그대로 잰다. 단건·HTTP 경로의 stage 는 그대로다.
+   예외는 하나다 — 묶음 보강이 영구 오류로 끝나 레코드별 보강으로 되돌아갈 때는 그 레코드들의 `enrich` 가 레코드 단위로 남는다(정규화는 다시 하지 않는다).
+   `authorize_batch` 의 `outcome` 은 묶음 조회의 성패다 — 레코드 거부가 섞여도 조회가 성공하면 `success` 이고, `failure` 는 DB 예외일 때뿐이다.
 7. **오류 분류는 바뀌지 않는다.** 자격 조회의 DB 장애와 보강의 일시 장애는 거부하지 않고 기다린다(ADR 0083 Decision 5).
    보강의 영구 오류(자원 계열이 아닌 `NonTransientDataAccessException`)는 레코드별 경로로 되돌아가 해당 레코드만 거부한다 — 어느 레코드의 오류인지 지금처럼 정해진다.
 
