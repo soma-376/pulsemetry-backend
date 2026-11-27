@@ -14,6 +14,8 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
+import org.junit.jupiter.api.parallel.ResourceLock
+import org.junit.jupiter.api.parallel.Resources
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.boot.test.system.CapturedOutput
@@ -34,6 +36,8 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 돌리고, 끝나면 되돌린다. 연결 풀의 실제 상한은 Apache5 가 요청마다 내는 SDK 지표(`MaxConcurrency`)로 읽는다.
  */
 @ExtendWith(OutputCaptureExtension::class)
+// JVM 전역 시스템 속성(aws.*)을 바꾸므로 병렬 실행을 켜도 다른 시험과 겹치지 않게 잠근다.
+@ResourceLock(Resources.SYSTEM_PROPERTIES)
 class ArchiveConfigTest {
 
 	@Configuration(proxyBeanMethods = false)

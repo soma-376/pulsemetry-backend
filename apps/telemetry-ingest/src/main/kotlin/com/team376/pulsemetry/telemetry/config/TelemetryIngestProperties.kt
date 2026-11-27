@@ -59,7 +59,8 @@ data class TelemetryIngestProperties(
 				"pulsemetry.telemetry.kafka.consumer.batch.call-deadline - min-remaining-to-start + pulsemetry.telemetry.clickhouse.timeout 은 " +
 					"pulsemetry.telemetry.kafka.consumer.max-poll-interval 보다 짧아야 한다"
 			}
-			// 명시한 S3 연결 수가 배치 소비 스레드 전부의 동시 PUT 보다 적으면 연결을 기다리다(SDK 기본 10초) 아카이브가 실패하고 배치가 긴 대기로 간다.
+			// 명시한 S3 연결 수가 배치 소비 스레드 전부의 동시 PUT 보다 적으면 연결을 기다리느라 아카이브가 늦어지고, 10초(SDK 기본)를 넘으면 실패한다.
+			// 요구값은 계산값과 같은 식(스레드마다 여유 하나 포함)이다.
 			val configured = archive.s3MaxConnections
 			val required = batchS3Connections(consumer.concurrency, batch.archiveConcurrency)
 			require(configured == null || !batch.enabled || configured >= required) {
@@ -85,7 +86,10 @@ data class TelemetryIngestProperties(
 			/** SDK 동기 HTTP 클라이언트의 기본 최대 연결 수. 계산값의 하한이다 — 배치가 아닌 경로(HTTP·단건 소비)가 지금 쓰는 상한을 줄이지 않는다. */
 			const val DEFAULT_S3_MAX_CONNECTIONS: Int = 50
 
-			/** 배치 소비 스레드 전부가 동시에 쓸 수 있는 S3 연결 수. 스레드마다 원본 PUT [archiveConcurrency] 개와 그 스레드가 직접 쓰는 넘김 목록 PUT 하나다. */
+			/**
+			 * 배치 소비 스레드 전부에 잡는 S3 연결 수. 스레드마다 원본 PUT [archiveConcurrency] 개에 여유 하나를 더한다 —
+			 * 넘김 목록 PUT 은 아카이브 단계가 모두 끝난 뒤라 원본 PUT 과 겹치지 않으므로, 여유는 dual 모드 HTTP 등 다른 경로의 몫이다.
+			 */
 			fun batchS3Connections(consumers: Int, archiveConcurrency: Int): Int = Math.multiplyExact(consumers, archiveConcurrency + 1)
 
 			/** 명시값이 있으면 그 값, 없으면 배치 모드에서 `max(50, 소비자 수 × (동시 수 + 1))`, 배치가 꺼져 있으면 50 이다. */
@@ -188,8 +192,8 @@ data class TelemetryIngestProperties(
 		/** INSERT 본문 하나의 상한(미만, UTF-8 바이트·줄바꿈 포함). 한 행만 담은 본문이 이 값 이상이면 그 행은 독립 INSERT 로 보낸다. */
 		val maxInsertBytes: Long = 10_000_000,
 		/**
-		 * 한 배치 안에서 동시에 진행하는 원본 아카이브(S3 PUT) 수. 프로세스 전체가 아니라 **소비 스레드마다**의 상한이다 —
-		 * S3 연결은 스레드 수 × (이 값 + 1)까지 쓴다([Telemetry.s3MaxConnections]).
+		 * 한 배치 안에서 동시에 준비하는 레코드 수. 허가 하나가 압축 해제·디코딩·마스킹·직렬화와 원본 아카이브(S3 PUT)를 함께 덮는다.
+		 * 프로세스 전체가 아니라 **소비 스레드마다**의 상한이며, S3 연결 풀은 스레드 수 × (이 값 + 1)로 잡는다([Telemetry.s3MaxConnections]).
 		 */
 		val archiveConcurrency: Int = 8,
 		/**

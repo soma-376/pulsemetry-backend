@@ -133,7 +133,7 @@ ClickHouse 장애가 단기 예산(위 `retry-intervals`, 최초 포함 4회)을
 | `max-poll-records` | `100` | 배치 모드의 `max.poll.records`(단건의 `max-poll-records` 와 따로) |
 | `fetch-min-bytes` · `fetch-max-wait` | `64KB` · `1s` | Kafka 에서 모으는 대기 창 |
 | `max-insert-bytes` | `10000000` | INSERT 본문 상한(미만). 한 행만으로 이상이면 독립 INSERT |
-| `archive-concurrency` | `8` | 배치 안 동시 S3 PUT 상한(1~64). 프로세스 전체가 아니라 **소비 스레드마다**의 상한이다 — 아래 「S3 연결 풀」 |
+| `archive-concurrency` | `8` | 배치 안에서 동시에 준비하는 레코드 수(1~64). 허가 하나가 압축 해제·마스킹·직렬화와 원본 S3 PUT을 덮는다. 프로세스 전체가 아니라 **소비 스레드마다**의 상한이다 — 아래 「S3 연결 풀」 |
 | `call-deadline` · `min-remaining-to-start` | `420s` · `35s` | 리스너 호출 마감. 남은 시간이 모자라면 새 외부 작업을 시작하지 않는다. `max-poll-interval` 보다 짧아야 한다 |
 | `progress-interval` | `200ms` | 진척 있는 마감 뒤 대기 |
 | `long-wait` | `5m` | 넘길 수 없는 장애에서 단기 예산 뒤의 대기 |
@@ -151,11 +151,11 @@ ClickHouse 장애가 단기 예산(위 `retry-intervals`, 최초 포함 4회)을
 | 배치 모드(`enabled=true`) | max(50, 소비자 수 × (`archive-concurrency` + 1)) | 소비자 3·동시 16 → 51, 6·16 → 102, 6·8 → 54 |
 | 배치 꺼짐 | 50 | SDK 기본값과 같다 |
 
-- 소비자 수는 `pulsemetry.telemetry.kafka.consumer.concurrency`(`PULSEMETRY_TELEMETRY_KAFKA_CONSUMER_CONCURRENCY`)다. `+1` 은 소비 스레드가 직접 쓰는 넘김 목록 PUT 몫이다.
+- 소비자 수는 `pulsemetry.telemetry.kafka.consumer.concurrency`(`PULSEMETRY_TELEMETRY_KAFKA_CONSUMER_CONCURRENCY`)다. `+1` 은 스레드마다 두는 여유다. 넘김 목록 PUT 은 아카이브 단계가 끝난 뒤라 원본 PUT 과 겹치지 않으므로, 실제 최대는 소비자 수 × `archive-concurrency` 다.
   50 은 배치가 아닌 경로(HTTP·단건 소비)가 지금 쓰는 상한을 줄이지 않는 하한이다.
 - 배치 모드는 수신 모드와 무관하게 `enabled` 로 정한다. `http` 모드에서는 소비 스레드가 돌지 않지만, 계산값은 상한일 뿐 연결을 미리 열지 않는다.
-- 배치 모드에서 명시값이 소비자 수 × (`archive-concurrency` + 1) 보다 작으면 기동이 실패한다. 모자라면 연결을 기다리다(SDK 기본 10초) 아카이브가 실패하고 배치가 긴 대기로 간다.
-- `dual` 모드의 HTTP 요청도 같은 풀을 쓴다. 계산값이 50 을 넘으면 소비 스레드 몫만 덮는다. HTTP 몫이 더 필요하면 명시값으로 올린다.
+- 배치 모드에서 명시값이 소비자 수 × (`archive-concurrency` + 1) 보다 작으면 기동이 실패한다. 모자라면 연결을 기다리느라 아카이브가 늦어지고, 대기가 10초(SDK 기본)를 넘으면 실패해 배치가 긴 대기로 간다.
+- `dual` 모드의 HTTP 요청도 같은 풀을 쓴다. 계산값이 50 을 넘으면 HTTP 에 남는 몫은 `+1` 여유(소비자 수만큼)뿐이다. 더 필요하면 명시값으로 올린다.
 - 기동 로그에 결정한 값이 한 줄 남는다 — `telemetry archive s3 client: http=apache5 maxConnections=<n> configured=<명시 여부> batch=<배치 모드> consumers=<소비자 수> archiveConcurrency=<동시 수>`.
   배포 뒤 이 줄로 확인한다.
 
@@ -321,11 +321,12 @@ protobuf 는 본문을 `unsafeWrap` 해 다시 복사하지 않는다). producer
 record 하나의 처리는 기존 HTTP 경로와 같다 — 압축 해제 상한 20 MiB 와 디코딩·마스킹·정규화 객체가 그 몇 배다. `concurrency=1` 이면 동시에 하나만 처리한다.
 `dual` 모드는 기존 HTTP 경로의 메모리가 그대로 더해진다. `concurrency` 를 올리면 record 처리 메모리가 그 배수로 는다.
 
-**ingest S3 연결(배치 모드)** — 동시 S3 연결의 상한은 소비 스레드 수 × (`archive-concurrency` + 1)이다. 스레드마다 원본 PUT 이
-`archive-concurrency` 개, 넘김 목록 PUT 이 하나다. 동시 수의 세마포어는 배치 호출마다 새로 만들므로 프로세스 전체 상한이 아니다.
+**ingest S3 연결(배치 모드)** — 배치 소비가 동시에 쓰는 S3 연결은 소비 스레드 수 × `archive-concurrency` 까지다. 넘김 목록 PUT 은
+아카이브 단계가 끝난 뒤라 겹치지 않는다. 풀은 스레드마다 여유 하나를 더해 잡는다. 동시 수의 세마포어는 배치 호출마다 새로 만들므로 프로세스 전체 상한이 아니다.
+같은 수만큼 레코드를 동시에 준비하므로 record 처리 메모리도 소비 스레드 수 × `archive-concurrency` 배로 는다(record 하나의 압축 해제 상한 20 MiB).
 연결 풀은 이 값과 50 중 큰 값으로 잡는다(§1.5 「S3 연결 풀」).
 
-| 구성 | 소비 스레드 × (동시 + 1) | 최대 연결 |
+| 구성 | 풀 계산(스레드 × (동시 + 1)) | 최대 연결 |
 |---|---|---|
 | Pod 1·소비자 6·동시 8 | 54 | 54 |
 | Pod당 소비자 3·동시 16 | 51 | 51 |
