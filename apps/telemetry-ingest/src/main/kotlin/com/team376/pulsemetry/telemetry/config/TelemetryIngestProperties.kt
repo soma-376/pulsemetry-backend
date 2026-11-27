@@ -59,6 +59,45 @@ data class TelemetryIngestProperties(
 				"pulsemetry.telemetry.kafka.consumer.batch.call-deadline - min-remaining-to-start + pulsemetry.telemetry.clickhouse.timeout 은 " +
 					"pulsemetry.telemetry.kafka.consumer.max-poll-interval 보다 짧아야 한다"
 			}
+			// 명시한 S3 연결 수가 배치 소비 스레드 전부의 동시 PUT 보다 적으면 연결을 기다리느라 아카이브가 늦어지고, 10초(SDK 기본)를 넘으면 실패한다.
+			// 요구값은 계산값과 같은 식(스레드마다 여유 하나 포함)이다.
+			val configured = archive.s3MaxConnections
+			val required = batchS3Connections(consumer.concurrency, batch.archiveConcurrency)
+			require(configured == null || !batch.enabled || configured >= required) {
+				"pulsemetry.telemetry.archive.s3-max-connections(PULSEMETRY_ARCHIVE_S3_MAX_CONNECTIONS) 는 배치 모드에서 " +
+					"pulsemetry.telemetry.kafka.consumer.concurrency × (pulsemetry.telemetry.kafka.consumer.batch.archive-concurrency + 1) = $required 이상이어야 한다"
+			}
+		}
+
+		/**
+		 * S3 클라이언트의 최대 연결 수(PROJ-347). 원본 아카이브·넘김 목록·HTTP 경로가 이 클라이언트 하나를 함께 쓴다.
+		 *
+		 * 배치 모드는 수신 모드와 무관하게 `batch.enabled` 로 정한다 — 배치 빈([KafkaBatchConfig])과 위 배치 검증이 같은 기준이다.
+		 * `http` 모드에서는 소비 스레드가 돌지 않지만, 계산값은 상한일 뿐 연결을 미리 열지 않는다.
+		 */
+		fun s3MaxConnections(): Int = resolveS3MaxConnections(
+			configured = archive.s3MaxConnections,
+			batchEnabled = kafka.consumer.batch.enabled,
+			consumers = kafka.consumer.concurrency,
+			archiveConcurrency = kafka.consumer.batch.archiveConcurrency,
+		)
+
+		companion object {
+			/** SDK 동기 HTTP 클라이언트의 기본 최대 연결 수. 계산값의 하한이다 — 배치가 아닌 경로(HTTP·단건 소비)가 지금 쓰는 상한을 줄이지 않는다. */
+			const val DEFAULT_S3_MAX_CONNECTIONS: Int = 50
+
+			/**
+			 * 배치 소비 스레드 전부에 잡는 S3 연결 수. 스레드마다 원본 PUT [archiveConcurrency] 개에 여유 하나를 더한다 —
+			 * 넘김 목록 PUT 은 아카이브 단계가 모두 끝난 뒤라 원본 PUT 과 겹치지 않으므로, 여유는 dual 모드 HTTP 등 다른 경로의 몫이다.
+			 */
+			fun batchS3Connections(consumers: Int, archiveConcurrency: Int): Int = Math.multiplyExact(consumers, archiveConcurrency + 1)
+
+			/** 명시값이 있으면 그 값, 없으면 배치 모드에서 `max(50, 소비자 수 × (동시 수 + 1))`, 배치가 꺼져 있으면 50 이다. */
+			fun resolveS3MaxConnections(configured: Int?, batchEnabled: Boolean, consumers: Int, archiveConcurrency: Int): Int = when {
+				configured != null -> configured
+				batchEnabled -> maxOf(DEFAULT_S3_MAX_CONNECTIONS, batchS3Connections(consumers, archiveConcurrency))
+				else -> DEFAULT_S3_MAX_CONNECTIONS
+			}
 		}
 	}
 
@@ -152,7 +191,10 @@ data class TelemetryIngestProperties(
 		val fetchMaxWait: Duration = Duration.ofSeconds(1),
 		/** INSERT 본문 하나의 상한(미만, UTF-8 바이트·줄바꿈 포함). 한 행만 담은 본문이 이 값 이상이면 그 행은 독립 INSERT 로 보낸다. */
 		val maxInsertBytes: Long = 10_000_000,
-		/** 한 배치 안에서 동시에 진행하는 원본 아카이브(S3 PUT) 수. */
+		/**
+		 * 한 배치 안에서 동시에 준비하는 레코드 수. 허가 하나가 압축 해제·디코딩·마스킹·직렬화와 원본 아카이브(S3 PUT)를 함께 덮는다.
+		 * 프로세스 전체가 아니라 **소비 스레드마다**의 상한이며, S3 연결 풀은 스레드 수 × (이 값 + 1)로 잡는다([Telemetry.s3MaxConnections]).
+		 */
 		val archiveConcurrency: Int = 8,
 		/**
 		 * 한 리스너 호출의 마감(단조 시계). 마감 뒤에는 새 외부 작업을 시작하지 않는다. 진행 중인 요청의 기한·커밋 여유를 더해도
@@ -179,7 +221,10 @@ data class TelemetryIngestProperties(
 		init {
 			require(maxPollRecords >= 1) { "pulsemetry.telemetry.kafka.consumer.batch.max-poll-records 는 1 이상이어야 한다" }
 			require(maxInsertBytes >= 1024) { "pulsemetry.telemetry.kafka.consumer.batch.max-insert-bytes 는 1024 이상이어야 한다" }
-			require(archiveConcurrency >= 1) { "pulsemetry.telemetry.kafka.consumer.batch.archive-concurrency 는 1 이상이어야 한다" }
+			// 상한은 오타(예: 160)를 막는다. 소비 스레드마다 이만큼 S3 연결을 더 쓴다.
+			require(archiveConcurrency in 1..MAX_ARCHIVE_CONCURRENCY) {
+				"pulsemetry.telemetry.kafka.consumer.batch.archive-concurrency 는 1 이상 $MAX_ARCHIVE_CONCURRENCY 이하여야 한다"
+			}
 			require(maxDiagnosticWrites >= 2) { "pulsemetry.telemetry.kafka.consumer.batch.max-diagnostic-writes 는 2 이상이어야 한다" }
 			listOf(fetchMaxWait, callDeadline, minRemainingToStart, progressInterval, longWait, breakerProbeInterval, probeTimeout).forEach {
 				require(!it.isNegative && !it.isZero) { "pulsemetry.telemetry.kafka.consumer.batch 의 시간 설정은 양수여야 한다: $it" }
@@ -202,6 +247,10 @@ data class TelemetryIngestProperties(
 			/** 확정하지 않고 긴 대기·경보로 보류한다. */
 			HOLD,
 		}
+
+		companion object {
+			const val MAX_ARCHIVE_CONCURRENCY: Int = 64
+		}
 	}
 
 	/**
@@ -213,6 +262,8 @@ data class TelemetryIngestProperties(
 		val dir: String = "./archive",
 		val bucket: String = "",
 		val basePrefix: String = "",
+		/** `s3` 클라이언트의 최대 연결 수. 비어 있으면 계산한다([Telemetry.s3MaxConnections]). */
+		val s3MaxConnections: Int? = null,
 	) {
 		enum class Type { file, s3 }
 
@@ -220,6 +271,9 @@ data class TelemetryIngestProperties(
 			// 빈 버킷으로 조용히 쓰면 복구 원천이 사라진다. 기동에서 끊는다.
 			require(type != Type.s3 || bucket.isNotBlank()) {
 				"pulsemetry.telemetry.archive.bucket 이 비어 있다. type=s3 에는 버킷이 필요하다."
+			}
+			require(s3MaxConnections == null || s3MaxConnections >= 1) {
+				"pulsemetry.telemetry.archive.s3-max-connections 는 1 이상이어야 한다"
 			}
 		}
 	}
