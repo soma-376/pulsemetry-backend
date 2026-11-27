@@ -71,6 +71,15 @@ interface TeamMembershipRepository : JpaRepository<TeamMembership, UUID> {
 	 * `source_time` 으로 판정하므로, 구성원당 한 번만 읽어 두고 각 관측을 [TeamMembership.coversAt] 으로 거른다.
 	 */
 	fun findAllByMemberId(memberId: UUID): List<TeamMembership>
+
+	/**
+	 * 여러 구성원의 소속 이력 전부 — [findAllByMemberId] 를 구성원마다 부른 결과를 합친 것과 같다. 팀 상태로 거르지 않고 시점 필터도
+	 * 부르는 쪽의 일이다.
+	 *
+	 * Kafka 배치 소비 호출 하나의 보강이 구성원을 묶어 한 번에 읽는다(ADR 0084). 순서는 정하지 않는다 — 구성원별로 나누는 것도 부르는 쪽이다.
+	 * **빈 컬렉션을 넘기지 않는다** — 부르는 쪽이 조회를 건너뛴다.
+	 */
+	fun findAllByMemberIdIn(memberIds: Collection<UUID>): List<TeamMembership>
 }
 
 interface InstallationRepository : JpaRepository<Installation, UUID> {
@@ -97,6 +106,15 @@ interface InstallationRepository : JpaRepository<Installation, UUID> {
 	fun findMemberIdById(@Param("id") id: UUID): UUID?
 
 	/**
+	 * 여러 installation 의 구성원 ID — [findMemberIdById] 를 ID 마다 부른 결과와 같다. 없는 ID 는 행이 없다.
+	 *
+	 * [findMemberIdById] 와 같은 의미로 **상태를 보지 않는다**. Kafka 배치 소비 호출 하나의 보강이 설치를 묶어 한 번에 읽는다(ADR 0084).
+	 * 순서는 정하지 않는다. **빈 컬렉션을 넘기지 않는다** — 부르는 쪽이 조회를 건너뛴다.
+	 */
+	@Query("SELECT i.id AS installationId, i.memberId AS memberId FROM Installation i WHERE i.id IN :ids")
+	fun findMemberIdsByIds(@Param("ids") ids: Collection<UUID>): List<InstallationMemberRow>
+
+	/**
 	 * 설치가 보고한 생존 시각과 데몬 버전을 남긴다 (ADR 0040). `updated_at` 은 건드리지 않는다 — 주기 보고는 설치의 변경이 아니다.
 	 *
 	 * 엔티티 setter 대신 UPDATE 문이다. 같은 트랜잭션의 다른 수정 쿼리가 영속성 컨텍스트를 비워도 순서에 의존하지 않는다.
@@ -104,6 +122,12 @@ interface InstallationRepository : JpaRepository<Installation, UUID> {
 	@Modifying(flushAutomatically = true, clearAutomatically = true)
 	@Query("UPDATE Installation i SET i.lastSeenAt = :now, i.clientVersion = :version WHERE i.id = :id")
 	fun recordSeen(@Param("id") id: UUID, @Param("now") now: Instant, @Param("version") version: String): Int
+}
+
+/** [InstallationRepository.findMemberIdsByIds] 의 투영 — installation 과 그 구성원. `member_id` 는 NOT NULL 이다. */
+interface InstallationMemberRow {
+	val installationId: UUID
+	val memberId: UUID
 }
 
 interface InstallationCredentialRepository : JpaRepository<InstallationCredential, UUID> {

@@ -69,4 +69,35 @@ class InstallationRepositoryTest : AbstractPersistenceIntegrationTest() {
 	fun unknownInstallationIsNull() {
 		assertThat(installations.findMemberIdById(UUID.randomUUID())).isNull()
 	}
+
+	// ── 여러 ID 조회(ADR 0084) ─────────────────────────────────────────────
+
+	@Test
+	@DisplayName("여러 installation 을 한 번에 읽으면 ID 마다의 단건 조회와 같다 — revoked 도 오고, 없는 ID 는 빠진다")
+	fun findsMembersOfSeveralInstallations() {
+		val otherMemberId = members.saveAndFlush(EnrollmentFixtures.member(tenantId)).id
+		val otherInvitationId = invitations.saveAndFlush(EnrollmentFixtures.invitation(tenantId, otherMemberId)).id
+		val active = installations.saveAndFlush(EnrollmentFixtures.installation(tenantId, memberId, invitationId)).id
+		val revoked = installations.saveAndFlush(
+			EnrollmentFixtures.installation(tenantId, memberId, invitationId).apply {
+				status = InstallationStatus.revoked
+				revokedAt = Instant.parse("2026-06-01T00:00:00Z")
+			},
+		).id
+		val other = installations.saveAndFlush(EnrollmentFixtures.installation(tenantId, otherMemberId, otherInvitationId)).id
+		val unknown = UUID.randomUUID()
+
+		val rows = installations.findMemberIdsByIds(listOf(active, revoked, other, unknown))
+
+		assertThat(rows.map { it.installationId }).containsExactlyInAnyOrder(active, revoked, other)
+		assertThat(rows.associate { it.installationId to it.memberId })
+			.isEqualTo(listOf(active, revoked, other).associateWith { installations.findMemberIdById(it) })
+			.containsEntry(other, otherMemberId)
+	}
+
+	@Test
+	@DisplayName("없는 ID 만 넘기면 빈 목록이다")
+	fun unknownInstallationsAreEmpty() {
+		assertThat(installations.findMemberIdsByIds(listOf(UUID.randomUUID(), UUID.randomUUID()))).isEmpty()
+	}
 }

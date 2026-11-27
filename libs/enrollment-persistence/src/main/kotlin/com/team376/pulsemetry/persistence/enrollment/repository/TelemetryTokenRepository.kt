@@ -86,9 +86,26 @@ interface TelemetryTokenRepository : JpaRepository<TelemetryToken, UUID> {
 	 * [findAuthRowByTokenHash] 와 같은 이유로 네이티브이고 상태를 `::text` 로 투영한다. 형식·사유도 문자열로 받는다 —
 	 * 판정이 모르는 값을 거부할 수 있어야 한다.
 	 */
-	@Query(
-		nativeQuery = true,
-		value = """
+	@Query(nativeQuery = true, value = "$CREDENTIAL_ROW_SELECT WHERE tt.id = :credentialId")
+	fun findCredentialRowById(@Param("credentialId") credentialId: UUID): TelemetryCredentialRow?
+
+	/**
+	 * [findCredentialRowById] 의 묶음판 — Kafka 배치 소비 호출 하나의 미완료 레코드 자격을 한 번에 읽는다(ADR 0084).
+	 * 같은 SELECT·조인·`::text` 투영이고 조건만 `IN` 이다. 행이 없는 ID 는 결과에서 빠진다 — 판정은 부르는 쪽이 ID 로 맞춰 한다.
+	 * 조인이 모두 PK 라 ID 하나에 행은 많아야 하나다. 결과 순서는 보장하지 않는다.
+	 *
+	 * **빈 컬렉션을 넘기지 않는다** — 빈 `IN ()` 은 SQL 이 아니다. 부르는 쪽이 대상이 없으면 조회를 건너뛴다.
+	 * 한 번에 넘기는 ID 는 많아야 배치 크기(`max.poll.records`, 100)만큼이다.
+	 */
+	@Query(nativeQuery = true, value = "$CREDENTIAL_ROW_SELECT WHERE tt.id IN (:credentialIds)")
+	fun findCredentialRowsByIds(@Param("credentialIds") credentialIds: Collection<UUID>): List<TelemetryCredentialRow>
+}
+
+/**
+ * [TelemetryTokenRepository.findCredentialRowById]·[TelemetryTokenRepository.findCredentialRowsByIds] 가 함께 쓰는 SELECT·조인.
+ * 단건과 묶음이 같은 투영을 읽게 하려고 한 벌만 둔다 — 조건(`WHERE`)은 각 메서드가 붙인다.
+ */
+private const val CREDENTIAL_ROW_SELECT = """
 		SELECT tt.id                       AS tokenId,
 		       (tt.revoked_at IS NOT NULL) AS tokenRevoked,
 		       i.tenant_id                 AS tenantId,
@@ -109,11 +126,7 @@ interface TelemetryTokenRepository : JpaRepository<TelemetryToken, UUID> {
 		  JOIN enrollment.installations AS i ON i.id = tt.installation_id
 		  JOIN enrollment.members AS m ON m.id = i.member_id
 		  JOIN enrollment.tenants AS t ON t.id = i.tenant_id
-		 WHERE tt.id = :credentialId
-		""",
-	)
-	fun findCredentialRowById(@Param("credentialId") credentialId: UUID): TelemetryCredentialRow?
-}
+		"""
 
 /**
  * [TelemetryTokenRepository.findAuthRowByTokenHash] 의 투영.

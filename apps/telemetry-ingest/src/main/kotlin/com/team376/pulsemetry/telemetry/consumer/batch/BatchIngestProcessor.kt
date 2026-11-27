@@ -17,8 +17,9 @@ import com.team376.pulsemetry.telemetry.collector.archive.ArchivedObject
 import com.team376.pulsemetry.telemetry.collector.archive.Product
 import com.team376.pulsemetry.telemetry.config.TelemetryIngestProperties.Batch.PartialDefectPolicy
 import com.team376.pulsemetry.telemetry.config.TelemetryIngestProperties.Batch.SingleRecordFailurePolicy
+import com.team376.pulsemetry.telemetry.credential.CredentialDecision
+import com.team376.pulsemetry.telemetry.credential.CredentialRequest
 import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialAuthorizer
-import com.team376.pulsemetry.telemetry.credential.TelemetryCredentialRejectedException
 import com.team376.pulsemetry.telemetry.enricher.EnrichmentUnavailableException
 import com.team376.pulsemetry.telemetry.ingress.InvalidEnvelopeException
 import com.team376.pulsemetry.telemetry.ingress.TelemetryEnvelopeCodec
@@ -34,7 +35,8 @@ import com.team376.pulsemetry.telemetry.pipeline.ClickHouseSchema
 import com.team376.pulsemetry.telemetry.pipeline.IngestStages
 import com.team376.pulsemetry.telemetry.pipeline.ReceiptPart
 import com.team376.pulsemetry.telemetry.pipeline.RetentionBoundaries
-import com.team376.pulsemetry.telemetry.pipeline.TransformRejectedException
+import com.team376.pulsemetry.telemetry.pipeline.TransformInput
+import com.team376.pulsemetry.telemetry.pipeline.TransformOutcome
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataAccessException
 import java.time.Clock
@@ -133,9 +135,11 @@ class BatchIngestProcessor(
 	private fun prepare(work: BatchWork, call: BatchCall) {
 		for (item in work.items.filter { it.status == BatchRecord.Status.PENDING && !it.decoded }) decode(work, item)
 		// 재호출마다 미완료 레코드의 자격을 다시 확인한다 — 재시도 사이의 보안 폐기·설치 차단을 반영한다(ADR 0066 Decision 6).
-		for (item in work.items.filter { it.status == BatchRecord.Status.PENDING && !it.handoffPending }) {
+		// 이 호출의 대상은 IN 조회 한 번으로 읽고 레코드마다 자기 접수 시각으로 판정한다. 결과는 호출을 넘지 않는다(ADR 0084).
+		val targets = work.items.filter { it.status == BatchRecord.Status.PENDING && !it.handoffPending }
+		if (targets.isNotEmpty()) {
 			call.ensureTime()
-			authorize(work, item)
+			authorizeAll(work, targets)
 		}
 		val todo = work.items.filter { it.status == BatchRecord.Status.PENDING && it.prepared == null }
 		if (todo.isNotEmpty()) archiveAll(work, call, todo)
@@ -153,17 +157,21 @@ class BatchIngestProcessor(
 		observer.observe(TelemetryMetric.PIPELINE_ACCEPTED_TO_ATTEMPT_START, ageSeconds(message.acceptedAt), "signal" to item.signalLabel)
 	}
 
-	private fun authorize(work: BatchWork, item: BatchRecord) {
-		val message = checkNotNull(item.message)
-		val credential = try {
-			observer.measure(PipelineStage.AUTHORIZE) { authorizer.authorize(message.auth, message.acceptedAt) }
-		} catch (e: TelemetryCredentialRejectedException) {
-			reject(work, item, "authorize", e.code, ledger = false)
-			return
+	/** 조회 예외는 어느 레코드의 거부도 아니다 — 호출 전체가 인증 DB 장애로 기다린다. 판정 거부만 그 레코드의 영구 실패다. */
+	private fun authorizeAll(work: BatchWork, items: List<BatchRecord>) {
+		val requests = items.map { item -> checkNotNull(item.message).let { CredentialRequest(it.auth, it.acceptedAt) } }
+		val decisions = try {
+			observer.measure(PipelineStage.AUTHORIZE_BATCH) { authorizer.authorizeAll(requests) }
 		} catch (e: RuntimeException) {
 			throw DependencyCallException("authorize", e)
 		}
-		item.identity = credential.identity()
+		check(decisions.size == items.size) { "authorizeAll returned ${decisions.size} decisions for ${items.size} records" }
+		items.forEachIndexed { index, item ->
+			when (val decision = decisions[index]) {
+				is CredentialDecision.Rejected -> reject(work, item, "authorize", decision.code, ledger = false)
+				is CredentialDecision.Authorized -> item.identity = decision.credential.identity()
+			}
+		}
 	}
 
 	/**
@@ -247,21 +255,31 @@ class BatchIngestProcessor(
 
 	// --- 2. 변환 ---
 
+	/**
+	 * 남은 레코드를 [IngestStages.transformAll] 한 번으로 바꾼다 — 정규화는 레코드마다, 보강의 구성원·소속 조회는 호출마다 묶는다(ADR 0084).
+	 * 보강이 일시 장애로 실패하면 그 호출의 변환은 하나도 남지 않고 재호출에서 정규화부터 다시 한다(장애 때만의 비용).
+	 */
 	private fun transform(work: BatchWork, call: BatchCall) {
-		for (item in work.items.filter { it.status == BatchRecord.Status.PENDING && it.prepared != null && it.transformed == null && !it.handoffPending }) {
-			call.ensureTime()
-			val prepared = checkNotNull(item.prepared)
-			try {
-				item.transformed = stages.transform(prepared.signal, prepared.message, prepared.receipt)
-				call.progressed = true
-			} catch (e: TransformRejectedException) {
-				reject(work, item, "pipeline", "pipeline_rejected", ledger = true, parts = e.parts)
-				call.progressed = true
-			} catch (e: EnrichmentUnavailableException) {
-				throw DependencyCallException("enrich", e)
-			} catch (e: DataAccessException) {
-				throw DependencyCallException("enrich", e)
+		val targets = work.items.filter { it.status == BatchRecord.Status.PENDING && it.prepared != null && it.transformed == null && !it.handoffPending }
+		if (targets.isEmpty()) return
+		call.ensureTime()
+		val outcomes = try {
+			// 묶음 보강이 영구 오류로 레코드별 보강에 되돌아가면 레코드마다 RDB 를 조회한다 — 그 앞에서도 마감을 본다.
+			stages.transformAll(targets.map { checkNotNull(it.prepared).let { prepared -> TransformInput(prepared.signal, prepared.message, prepared.receipt) } }) {
+				call.ensureTime()
 			}
+		} catch (e: EnrichmentUnavailableException) {
+			throw DependencyCallException("enrich", e)
+		} catch (e: DataAccessException) {
+			throw DependencyCallException("enrich", e)
+		}
+		check(outcomes.size == targets.size) { "transformAll returned ${outcomes.size} outcomes for ${targets.size} records" }
+		for ((item, outcome) in targets.zip(outcomes)) {
+			when (outcome) {
+				is TransformOutcome.Transformed -> item.transformed = outcome.push
+				is TransformOutcome.Rejected -> reject(work, item, "pipeline", "pipeline_rejected", ledger = true, parts = outcome.error.parts)
+			}
+			call.progressed = true
 		}
 	}
 

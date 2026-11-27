@@ -42,9 +42,9 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 | `pulsemetry_gateway_publish_duration_seconds` | signal,outcome | producer send/ack 대기 시간 |
 | `pulsemetry_pipeline_attempts_total` | signal,outcome | Kafka listener 시도 하나. completed·permanent_rejected·transient_failed |
 | `pulsemetry_pipeline_failures_total` | stage,reason | 영구/일시 처리 실패·컨테이너 실패 사건. attempts와 중복 의미가 있어 합산하지 않음 |
-| `pulsemetry_pipeline_retry_exhausted_total` | stage | 재시도 예산 소진 recoverer 호출. ingest 기동 때 stage 12종을 0으로 노출 |
+| `pulsemetry_pipeline_retry_exhausted_total` | stage | 재시도 예산 소진 recoverer 호출. ingest 기동 때 stage 15종(아래 단계 12종과 process·commit·container)을 0으로 노출 |
 | `pulsemetry_pipeline_commit_failures_total` | 없음 | offset commit 실패 callback. ingest 기동 때 0으로 노출 |
-| `pulsemetry_pipeline_stage_duration_seconds` | stage,outcome | authorize·decode(압축 해제 포함)·mask·archive·normalize·enrich·retention·insert·ops, success/failure |
+| `pulsemetry_pipeline_stage_duration_seconds` | stage,outcome | authorize·decode(압축 해제 포함)·mask·archive·normalize·enrich·retention·insert·ops, 배치 경로의 handoff(S3 넘김 목록 쓰기, PROJ-341)·authorize_batch·enrich_batch(배치 소비 호출당 1회, ADR 0084), success/failure |
 | `pulsemetry_pipeline_accepted_to_attempt_start_seconds` | signal | Gateway acceptedAt부터 각 시도 시작까지의 age. 순수 broker 대기시간이 아님 |
 | `pulsemetry_pipeline_accepted_to_completion_seconds` | signal | acceptedAt부터 성공한 시도 완료까지. backlog·재시도·처리시간 포함 |
 | `pulsemetry_pipeline_inflight` | 없음 | 실행 중 listener 수. ingest에만 있다 |
@@ -55,6 +55,8 @@ Gateway와 ingest는 `MANAGEMENT_SERVER_PORT`(기본 **9404**)의 `GET /actuator
 | `pulsemetry_clickhouse_requests_total` | operation,table,outcome | HTTP 요청의 success·permanent_error·transient_error. operation은 insert/select/delete/schema, 분류하지 않은 호출만 other. table은 telemetry_events·telemetry_metric_points·telemetry_ingest_ledger·telemetry_retention_fence, 그 밖은 other |
 | `pulsemetry_clickhouse_request_duration_seconds` | operation,table,outcome | ClickHouse HTTP 왕복 시간 |
 | `pulsemetry_clickhouse_rows_submitted_total` | table | INSERT에 제출한 행. 실패·재시도·server retention fence를 포함하므로 실제 적재 수가 아님 |
+
+Kafka 배치 경로([ADR 0084](adr/0084-Kafka-배치-소비는-자격과-소속-조회를-호출마다-묶고-판정은-레코드마다-한다.md))는 자격·소속 조회를 호출마다 묶으므로 `authorize_batch`·`enrich_batch`를 호출당 한 번 재고, 레코드 단위 `authorize`·`enrich`는 재지 않는다. `normalize`는 레코드마다 그대로다. "호출당 한 번"의 예외는 둘이다. 묶음 보강이 영구 오류로 끝나 레코드별 보강으로 되돌아갈 때는 그 레코드들의 `enrich`가 레코드 단위로 남는다. 넘김 전 재준비(`handoffAfterPrepare`)가 같은 호출 안에서 준비를 다시 부르면 자격도 다시 읽으므로 `authorize_batch`가 그 호출에 두 번 남는다. `authorize_batch`의 `outcome`은 묶음 조회의 성패라 레코드 거부가 섞여도 `success`이고, `failure`는 DB 예외일 때뿐이다(자격 거부 레코드 수는 `pulsemetry_pipeline_failures_total{stage="authorize"}`로 본다). HTTP·단건 Kafka 경로는 지금처럼 `authorize`·`enrich`다. 배치 이전 측정값과 비교할 때는 `authorize_batch`·`enrich_batch`의 합을 판정·보강 대상 레코드 수로 나눈다. 재시도(재호출)가 섞이면 대상 수가 처리 수보다 커진다. 배치 경로의 제외(`excluded_span`·`source_time`)·사용량 계약 지표는 보강까지 끝난 레코드에만 남긴다 — 보강 일시 장애 뒤 재호출이 같은 레코드를 다시 세지 않는다.
 
 `completed`에는 빈 push와 모든 관측이 제외된 push도 포함된다. 영구 거부는 정상 반환해 offset을 확정하지만 completed가 아니다. 소진한 일시 실패도 오류 처리기가 확정하므로 offset 전진만으로 처리 성공을 주장하지 않는다. commit 실패로 같은 record를 다시 처리하면 attempts와 rows submitted가 다시 증가할 수 있다. 두 분석 테이블과 ops 기록은 하나의 트랜잭션이 아니다.
 
