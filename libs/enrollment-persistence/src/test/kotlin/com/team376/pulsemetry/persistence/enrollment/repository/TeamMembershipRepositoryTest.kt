@@ -125,6 +125,36 @@ class TeamMembershipRepositoryTest : AbstractPersistenceIntegrationTest() {
 		assertThat(memberships.findAllByMemberId(memberId)).isEmpty()
 	}
 
+	@Test
+	@DisplayName("여러 구성원을 한 번에 읽으면 구성원마다의 단건 조회를 합친 것과 같다 — archived 팀도 오고, 없는 구성원은 빠진다")
+	fun findsMembershipsOfSeveralMembers() {
+		val otherMemberId = members.saveAndFlush(EnrollmentFixtures.member(tenantId)).id
+		val loneMemberId = members.saveAndFlush(EnrollmentFixtures.member(tenantId)).id
+		val outsiderId = members.saveAndFlush(EnrollmentFixtures.member(tenantId)).id
+		val archived = teams.saveAndFlush(EnrollmentFixtures.team(tenantId, name = "해체된팀", status = TeamStatus.archived)).id
+		val active = teams.saveAndFlush(EnrollmentFixtures.team(tenantId, name = "살아있는팀")).id
+		memberships.saveAndFlush(EnrollmentFixtures.teamMembership(archived, memberId, joinedAt = at.minus(90, ChronoUnit.DAYS), leftAt = at))
+		memberships.saveAndFlush(EnrollmentFixtures.teamMembership(active, memberId, joinedAt = at))
+		memberships.saveAndFlush(EnrollmentFixtures.teamMembership(active, otherMemberId))
+		memberships.saveAndFlush(EnrollmentFixtures.teamMembership(active, outsiderId))
+		val asked = listOf(memberId, otherMemberId, loneMemberId, UUID.randomUUID())
+
+		val rows = memberships.findAllByMemberIdIn(asked)
+
+		assertThat(rows).extracting<UUID> { it.id }
+			.containsExactlyInAnyOrderElementsOf(asked.flatMap { memberships.findAllByMemberId(it) }.map { it.id })
+		assertThat(rows.groupBy({ it.memberId }, { it.teamId }))
+			.containsOnlyKeys(memberId, otherMemberId)
+			.containsEntry(otherMemberId, listOf(active))
+		assertThat(rows.filter { it.memberId == memberId }.map { it.teamId }).containsExactlyInAnyOrder(archived, active)
+	}
+
+	@Test
+	@DisplayName("소속이 없는 구성원만 넘기면 빈 목록이다")
+	fun membersWithoutMembershipsAreEmpty() {
+		assertThat(memberships.findAllByMemberIdIn(listOf(memberId, UUID.randomUUID()))).isEmpty()
+	}
+
 	// ── as-of 경계 (좌폐우개) ────────────────────────────────────────────────
 
 	@Test
